@@ -15,7 +15,7 @@ namespace ImgProcessWpfApp.ViewModels
 {
     public class MainViewModel : ObservableObject
     {
-        // ───────── フォルダツリー / ファイル一覧 ─────────
+        // ───────── 左ペイン ─────────
         public ObservableCollection<FileSystemItem> DirectoryRoots { get; } = new();
         public ObservableCollection<FileItem> Files { get; } = new();
 
@@ -34,10 +34,10 @@ namespace ImgProcessWpfApp.ViewModels
             }
         }
 
-        // ───────── コンストラクタ ─────────
+        // ───────── Ctor ─────────
         public MainViewModel()
         {
-            // 前回設定（初回は 1920x1080 / header=0）
+            // 前回保存(初回は 1920x1080 / header 0)
             var prefs = SettingsStore.Load();
             _rawWidth = prefs.RawWidth;
             _rawHeight = prefs.RawHeight;
@@ -45,38 +45,37 @@ namespace ImgProcessWpfApp.ViewModels
 
             BuildInitialRoots();
 
-            // アドレスバー
+            // コマンド
             NavigateAddressCommand = new RelayCommand(_ => NavigateFromAddress());
-
-            // 履歴
             BrowseBackCommand = new RelayCommand(_ => BrowseBack(), _ => _backStack.Count > 0);
             BrowseForwardCommand = new RelayCommand(_ => BrowseForward(), _ => _forwardStack.Count > 0);
 
-            // ズーム（ボタン操作時はFit解除）
             ZoomInCommand = new RelayCommand(_ => { IsFitToScreen = false; ZoomPercent = Math.Min(ZoomPercent + 10, 400); });
             ZoomOutCommand = new RelayCommand(_ => { IsFitToScreen = false; ZoomPercent = Math.Max(ZoomPercent - 10, 10); });
             ZoomResetCommand = new RelayCommand(_ => { IsFitToScreen = false; ZoomPercent = 100; });
 
-            // プレビュー
             PreviewCommand = new RelayCommand(_ => UpdatePreview(), _ => SelectedFile != null);
 
-            // Export
             ExportCurrentCommand = new RelayCommand(_ => ExportCurrent(), _ => SelectedFile != null && !IsExporting);
             ExportBatchCommand = new RelayCommand(_ => ExportBatch(), _ => Files.Any() && !IsExporting);
             BrowseExportFolderCommand = new RelayCommand(_ => BrowseExportFolder());
+            Files.CollectionChanged += (_, __) => ExportBatchCommand.RaiseCanExecuteChanged();
 
-            // 画像処理（プレースホルダ）
             ColorizeCommand = new RelayCommand(_ => { });
             ConditionCommand = new RelayCommand(_ => { });
         }
 
         // ───────── アドレスバー ─────────
         private string? _addressPath;
-        public string? AddressPath { get => _addressPath; set => SetProperty(ref _addressPath, value); }
+        public string? AddressPath
+        {
+            get => _addressPath;
+            set => SetProperty(ref _addressPath, value);
+        }
         public ICommand NavigateAddressCommand { get; }
         private void NavigateFromAddress() => TryNavigateTo(AddressPath ?? string.Empty);
 
-        // ───────── 現在のフォルダ ─────────
+        // ───────── フォルダ / ファイル ─────────
         private string? _selectedFolderPath;
         public string? SelectedFolderPath
         {
@@ -91,7 +90,6 @@ namespace ImgProcessWpfApp.ViewModels
             }
         }
 
-        // ───────── ファイルリスト制御 ─────────
         public enum FileFilterMode { RawOnly, ImagesOnly, All }
         public Array FilterModes => Enum.GetValues(typeof(FileFilterMode));
 
@@ -124,7 +122,7 @@ namespace ImgProcessWpfApp.ViewModels
                     Files.Add(fi);
                 }
             }
-            catch { }
+            catch { /* ignore */ }
         }
 
         private bool PassesFilter(FileItem item) =>
@@ -141,7 +139,7 @@ namespace ImgProcessWpfApp.ViewModels
             return item.Name.IndexOf(FileSearchText, StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
-        // ───────── 履歴（戻る/進む）─────────
+        // ───────── 履歴 ─────────
         private readonly Stack<string> _backStack = new();
         private readonly Stack<string> _forwardStack = new();
 
@@ -181,7 +179,7 @@ namespace ImgProcessWpfApp.ViewModels
             BrowseForwardCommand.RaiseCanExecuteChanged();
         }
 
-        // ───────── RAW読込設定 ─────────
+        // ───────── RAW 読込設定 ─────────
         private int _rawWidth = 1024;
         public int RawWidth { get => _rawWidth; set { if (SetProperty(ref _rawWidth, value) && LivePreview) UpdatePreview(); } }
 
@@ -197,33 +195,42 @@ namespace ImgProcessWpfApp.ViewModels
         private int _usedBits = 12; // 8/10/12/14/16
         public int UsedBits { get => _usedBits; set { if (SetProperty(ref _usedBits, value) && LivePreview) UpdatePreview(); } }
 
-        private BitAlignment _bitAlignment = BitAlignment.MSB; // 上詰め
+        private BitAlignment _bitAlignment = BitAlignment.MSB;
         public BitAlignment BitAlignment { get => _bitAlignment; set { if (SetProperty(ref _bitAlignment, value) && LivePreview) UpdatePreview(); } }
 
         private Endianness _endian = Endianness.Little;
         public Endianness Endian { get => _endian; set { if (SetProperty(ref _endian, value) && LivePreview) UpdatePreview(); } }
 
-        // XAML から使う選択肢
+        // Bayer CFA
+        private CfaPattern _cfa = CfaPattern.RGGB;
+        public CfaPattern Cfa { get => _cfa; set { if (SetProperty(ref _cfa, value) && LivePreview) UpdatePreview(); } }
+        public Array CfaOptions => Enum.GetValues(typeof(CfaPattern));
+
         public IReadOnlyList<KeyValuePair<BitAlignment, string>> AlignOptions { get; } =
-            new[] {
-                new KeyValuePair<BitAlignment, string>(BitAlignment.MSB, "MSB（上詰め）"),
-                new KeyValuePair<BitAlignment, string>(BitAlignment.LSB, "LSB（下詰め）"),
+            new[]
+            {
+                new KeyValuePair<BitAlignment, string>(BitAlignment.MSB, "MSB (left-aligned)"),
+                new KeyValuePair<BitAlignment, string>(BitAlignment.LSB, "LSB (right-aligned)")
             };
 
         public IReadOnlyList<KeyValuePair<Endianness, string>> EndianOptions { get; } =
-            new[] {
+            new[]
+            {
                 new KeyValuePair<Endianness, string>(Endianness.Little, "Little Endian"),
-                new KeyValuePair<Endianness, string>(Endianness.Big,    "Big Endian"),
+                new KeyValuePair<Endianness, string>(Endianness.Big,    "Big Endian")
             };
 
         public IReadOnlyList<int> FileBitsOptions { get; } = new[] { 8, 16, 32 };
         public IReadOnlyList<int> UsedBitsOptions { get; } = new[] { 8, 10, 12, 14, 16 };
 
-        // ───────── 現像パラメータ（WB/マトリクス/飽和/デモザイク）─────────
+        // ───────── Develop パラメータ ─────────
         private double _gainR = 1.0, _gainG = 1.0, _gainB = 1.0;
         public double GainR { get => _gainR; set { if (SetProperty(ref _gainR, value) && LivePreview) UpdatePreview(); } }
         public double GainG { get => _gainG; set { if (SetProperty(ref _gainG, value) && LivePreview) UpdatePreview(); } }
         public double GainB { get => _gainB; set { if (SetProperty(ref _gainB, value) && LivePreview) UpdatePreview(); } }
+
+        private int _blackLevelOffset = 0;
+        public int BlackLevelOffset { get => _blackLevelOffset; set { if (SetProperty(ref _blackLevelOffset, Math.Max(0, value)) && LivePreview) UpdatePreview(); } }
 
         private bool _useColorMatrix = false;
         public bool UseColorMatrix { get => _useColorMatrix; set { if (SetProperty(ref _useColorMatrix, value) && LivePreview) UpdatePreview(); } }
@@ -246,33 +253,15 @@ namespace ImgProcessWpfApp.ViewModels
 
         private DemosaicAlgorithm _demosaic = DemosaicAlgorithm.Bilinear;
         public DemosaicAlgorithm Demosaic { get => _demosaic; set { if (SetProperty(ref _demosaic, value) && LivePreview) UpdatePreview(); } }
-
         public Array DemosaicOptions => Enum.GetValues(typeof(DemosaicAlgorithm));
 
-        // ───────── 追加：トーン（ガンマ / コントラスト）─────────
-        private double _gamma = 1.0;             // 0.10～3.00（ガンマ>1で明るく）
-        public double Gamma
-        {
-            get => _gamma;
-            set
-            {
-                var g = Math.Clamp(value, 0.10, 3.00);
-                if (SetProperty(ref _gamma, g) && LivePreview) UpdatePreview();
-            }
-        }
+        private double _gamma = 1.0;
+        public double Gamma { get => _gamma; set { var g = Math.Clamp(value, 0.10, 3.00); if (SetProperty(ref _gamma, g) && LivePreview) UpdatePreview(); } }
 
-        private double _contrast = 0.0;          // -100～+100（%）
-        public double Contrast
-        {
-            get => _contrast;
-            set
-            {
-                var c = Math.Clamp(value, -100.0, 100.0);
-                if (SetProperty(ref _contrast, c) && LivePreview) UpdatePreview();
-            }
-        }
+        private double _contrast = 0.0;
+        public double Contrast { get => _contrast; set { var c = Math.Clamp(value, -100, 100); if (SetProperty(ref _contrast, c) && LivePreview) UpdatePreview(); } }
 
-        // ───────── プレビュー画像（Before/After）─────────
+        // ───────── プレビュー画像 ─────────
         private ImageSource? _imageProcessed;
         public ImageSource? ImageSource { get => _imageProcessed; set => SetProperty(ref _imageProcessed, value); }
 
@@ -305,50 +294,26 @@ namespace ImgProcessWpfApp.ViewModels
         public ICommand ConditionCommand { get; }
         public RelayCommand PreviewCommand { get; }
 
-        // ───────── Export 設定 ─────────
+        // ───────── Export ─────────
         private ExportFormat _exportFormat = ExportFormat.Png;
-        public ExportFormat ExportFormat
-        {
-            get => _exportFormat;
-            set { if (SetProperty(ref _exportFormat, value)) OnPropertyChanged(nameof(IsJpeg)); }
-        }
+        public ExportFormat ExportFormat { get => _exportFormat; set { if (SetProperty(ref _exportFormat, value)) OnPropertyChanged(nameof(IsJpeg)); } }
         public Array ExportFormats => Enum.GetValues(typeof(ExportFormat));
         public bool IsJpeg => ExportFormat == ExportFormat.Jpeg;
 
-        private int _jpegQuality = 90; // 1-100
-        public int JpegQuality
-        {
-            get => _jpegQuality;
-            set => SetProperty(ref _jpegQuality, Math.Clamp(value, 1, 100));
-        }
+        private int _jpegQuality = 90;
+        public int JpegQuality { get => _jpegQuality; set => SetProperty(ref _jpegQuality, Math.Clamp(value, 1, 100)); }
 
         private bool _exportToSameFolder = true;
-        public bool ExportToSameFolder
-        {
-            get => _exportToSameFolder;
-            set => SetProperty(ref _exportToSameFolder, value);
-        }
+        public bool ExportToSameFolder { get => _exportToSameFolder; set => SetProperty(ref _exportToSameFolder, value); }
 
         private string _exportFolderPath = "";
-        public string ExportFolderPath
-        {
-            get => _exportFolderPath;
-            set => SetProperty(ref _exportFolderPath, value);
-        }
+        public string ExportFolderPath { get => _exportFolderPath; set => SetProperty(ref _exportFolderPath, value); }
 
         private string _fileNameSuffix = "_dev";
-        public string FileNameSuffix
-        {
-            get => _fileNameSuffix;
-            set => SetProperty(ref _fileNameSuffix, value ?? "");
-        }
+        public string FileNameSuffix { get => _fileNameSuffix; set => SetProperty(ref _fileNameSuffix, value ?? ""); }
 
         private bool _overwriteExisting = false;
-        public bool OverwriteExisting
-        {
-            get => _overwriteExisting;
-            set => SetProperty(ref _overwriteExisting, value);
-        }
+        public bool OverwriteExisting { get => _overwriteExisting; set => SetProperty(ref _overwriteExisting, value); }
 
         private bool _isExporting;
         public bool IsExporting
@@ -365,11 +330,7 @@ namespace ImgProcessWpfApp.ViewModels
         }
 
         private double _exportProgress;
-        public double ExportProgress
-        {
-            get => _exportProgress;
-            set => SetProperty(ref _exportProgress, value);
-        }
+        public double ExportProgress { get => _exportProgress; set => SetProperty(ref _exportProgress, value); }
 
         public RelayCommand ExportCurrentCommand { get; }
         public RelayCommand ExportBatchCommand { get; }
@@ -377,7 +338,6 @@ namespace ImgProcessWpfApp.ViewModels
 
         private void BrowseExportFolder()
         {
-            // WinForms無しの簡易フォルダ選択
             var dlg = new OpenFileDialog
             {
                 Title = "Choose export folder",
@@ -406,8 +366,7 @@ namespace ImgProcessWpfApp.ViewModels
                 ExportFormat.Tiff => ".tif",
                 _ => ".bmp",
             };
-            var outName = name + FileNameSuffix + ext;
-            return Path.Combine(dir, outName);
+            return Path.Combine(dir, name + FileNameSuffix + ext);
         }
 
         private void ExportCurrent()
@@ -479,118 +438,6 @@ namespace ImgProcessWpfApp.ViewModels
                 ng == 0 ? System.Windows.MessageBoxImage.Information : System.Windows.MessageBoxImage.Warning);
         }
 
-        private BitmapSource ProcessFileToBitmap(FileItem fi)
-        {
-            if (fi.Kind == FileKind.Image)
-            {
-                var src = LoadStandardImage(fi.FullPath);
-                // ゲイン→マトリクス→白飛び→ガンマ/コントラスト
-                return ApplyGainMatrixAndClipToBgr32(
-                    src, GainR, GainG, GainB,
-                    UseColorMatrix, M11, M12, M13, M21, M22, M23, M31, M32, M33,
-                    ClipSaturatedToWhite,
-                    Gamma, Contrast);
-            }
-            else
-            {
-                int maxVal;
-                var raw = ReadRawToUShort(fi.FullPath, RawWidth, RawHeight,
-                                          HeaderBytes, FileBits, UsedBits, BitAlignment, Endian, out maxVal);
-
-                var procBgr = DemosaicToBgr32(raw, RawWidth, RawHeight, maxVal,
-                                              GainR, GainG, GainB,
-                                              UseColorMatrix, M11, M12, M13, M21, M22, M23, M31, M32, M33,
-                                              ClipSaturatedToWhite, Demosaic);
-                // ガンマ/コントラスト
-                ApplyGammaContrast(procBgr, Gamma, Contrast);
-
-                return MakeBitmapFromBgr32(procBgr, RawWidth, RawHeight);
-            }
-        }
-
-        private void SaveBitmap(BitmapSource bmp, string outPath)
-        {
-            BitmapEncoder enc = ExportFormat switch
-            {
-                ExportFormat.Png => new PngBitmapEncoder(),
-                ExportFormat.Jpeg => new JpegBitmapEncoder() { QualityLevel = JpegQuality },
-                ExportFormat.Tiff => new TiffBitmapEncoder(),
-                _ => new BmpBitmapEncoder(),
-            };
-            enc.Frames.Add(BitmapFrame.Create(bmp));
-            using var fs = File.Create(outPath);
-            enc.Save(fs);
-        }
-
-        // ───────── アドレス入力から移動 ─────────
-        public bool TryNavigateTo(string input)
-        {
-            if (string.IsNullOrWhiteSpace(input)) return false;
-            var s = input.Trim();
-
-            if (s.Length >= 2 && ((s[0] == '"' && s[^1] == '"') || (s[0] == '\'' && s[^1] == '\'')))
-                s = s[1..^1];
-
-            s = Environment.ExpandEnvironmentVariables(s);
-
-            if (s.StartsWith("~"))
-            {
-                var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-                s = Path.Combine(home, s.TrimStart('~', '\\', '/'));
-            }
-
-            if (!Path.IsPathRooted(s))
-            {
-                var baseDir = SelectedFolderPath;
-                if (string.IsNullOrEmpty(baseDir)) baseDir = Environment.CurrentDirectory;
-                s = Path.GetFullPath(Path.Combine(baseDir, s));
-            }
-
-            if (File.Exists(s)) s = Path.GetDirectoryName(s)!;
-            if (!Directory.Exists(s)) return false;
-
-            PushHistory(SelectedFolderPath, s);
-            SelectedFolderPath = s;
-            return true;
-        }
-
-        // ───────── 起動時のルート構築 ─────────
-        private void BuildInitialRoots()
-        {
-            var quick = FileSystemItem.Group("Quick Access");
-            AddIfExists(quick, Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), "Desktop");
-            AddIfExists(quick, Environment.GetFolderPath(Environment.SpecialFolder.MyPictures), "Pictures");
-            AddIfExists(quick, Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "Documents");
-            if (quick.Children.Count > 0) DirectoryRoots.Add(quick);
-
-            var thisPc = FileSystemItem.Group("This PC");
-            foreach (var d in DriveInfo.GetDrives())
-            {
-                var label = SafeDriveLabel(d);
-                thisPc.Children.Add(new FileSystemItem(label, d.RootDirectory.FullName, isDrive: true));
-            }
-            DirectoryRoots.Add(thisPc);
-        }
-
-        private static void AddIfExists(FileSystemItem group, string path, string? displayName = null)
-        {
-            if (string.IsNullOrWhiteSpace(path) || !Directory.Exists(path)) return;
-            var name = displayName ?? new DirectoryInfo(path).Name;
-            group.Children.Add(new FileSystemItem(name, path));
-        }
-
-        private static string SafeDriveLabel(DriveInfo d)
-        {
-            var name = d.Name.TrimEnd(Path.DirectorySeparatorChar);
-            try
-            {
-                if (d.IsReady && !string.IsNullOrWhiteSpace(d.VolumeLabel))
-                    return $"{d.VolumeLabel} ({name})";
-            }
-            catch { }
-            return name;
-        }
-
         // ───────── プレビュー生成 ─────────
         private void UpdatePreview()
         {
@@ -603,11 +450,12 @@ namespace ImgProcessWpfApp.ViewModels
                     var src = LoadStandardImage(SelectedFile.FullPath);
                     OriginalImageSource = src;
 
-                    ImageSource = ApplyGainMatrixAndClipToBgr32(
-                        src, GainR, GainG, GainB,
-                        UseColorMatrix, M11, M12, M13, M21, M22, M23, M31, M32, M33,
-                        ClipSaturatedToWhite,
-                        Gamma, Contrast);
+                    ImageSource = ApplyGainMatrixClipAndTone(
+                        src, blackOffset8: BlackLevelOffset,
+                        gr: GainR, gg: GainG, gb: GainB,
+                        useMat: UseColorMatrix,
+                        m11: M11, m12: M12, m13: M13, m21: M21, m22: M22, m23: M23, m31: M31, m32: M32, m33: M33,
+                        clipWhite: ClipSaturatedToWhite, gamma: Gamma, contrast: Contrast);
                 }
                 else
                 {
@@ -616,14 +464,19 @@ namespace ImgProcessWpfApp.ViewModels
                                               HeaderBytes, FileBits, UsedBits, BitAlignment, Endian, out maxVal);
 
                     var baseBgr = DemosaicToBgr32(raw, RawWidth, RawHeight, maxVal,
-                                                  1.0, 1.0, 1.0, false, 1, 0, 0, 0, 1, 0, 0, 0, 1,
-                                                  ClipSaturation: false, Demosaic);
+                                                  blackOffsetRaw: BlackLevelOffset,
+                                                  gr: 1.0, gg: 1.0, gb: 1.0,
+                                                  useMat: false,
+                                                  m11: 1, m12: 0, m13: 0, m21: 0, m22: 1, m23: 0, m31: 0, m32: 0, m33: 1,
+                                                  ClipSaturation: false, algo: Demosaic, pattern: Cfa);
                     OriginalImageSource = MakeBitmapFromBgr32(baseBgr, RawWidth, RawHeight);
 
                     var procBgr = DemosaicToBgr32(raw, RawWidth, RawHeight, maxVal,
-                                                  GainR, GainG, GainB,
-                                                  UseColorMatrix, M11, M12, M13, M21, M22, M23, M31, M32, M33,
-                                                  ClipSaturatedToWhite, Demosaic);
+                                                  blackOffsetRaw: BlackLevelOffset,
+                                                  gr: GainR, gg: GainG, gb: GainB,
+                                                  useMat: UseColorMatrix,
+                                                  m11: M11, m12: M12, m13: M13, m21: M21, m22: M22, m23: M23, m31: M31, m32: M32, m33: M33,
+                                                  ClipSaturation: ClipSaturatedToWhite, algo: Demosaic, pattern: Cfa);
                     ApplyGammaContrast(procBgr, Gamma, Contrast);
 
                     ImageSource = MakeBitmapFromBgr32(procBgr, RawWidth, RawHeight);
@@ -636,28 +489,26 @@ namespace ImgProcessWpfApp.ViewModels
             }
         }
 
+        // ───────── 画像 I/O / 変換ユーティリティ ─────────
         private static BitmapSource LoadStandardImage(string path)
         {
             var bi = new BitmapImage();
-            using (var fs = File.OpenRead(path))
-            {
-                bi.BeginInit();
-                bi.CacheOption = BitmapCacheOption.OnLoad;
-                bi.StreamSource = fs;
-                bi.EndInit();
-                bi.Freeze();
-            }
+            using var fs = File.OpenRead(path);
+            bi.BeginInit();
+            bi.CacheOption = BitmapCacheOption.OnLoad;
+            bi.StreamSource = fs;
+            bi.EndInit();
+            bi.Freeze();
             return bi;
         }
 
-        // 標準画像：Bgr32 に変換し、ゲイン→マトリクス→白飛び→ガンマ/コントラスト
-        private static BitmapSource ApplyGainMatrixAndClipToBgr32(
-            BitmapSource src, double gr, double gg, double gb,
-            bool useMat, double m11, double m12, double m13,
-            double m21, double m22, double m23,
-            double m31, double m32, double m33,
-            bool clipWhite,
-            double gamma, double contrast)
+        // 標準画像: 黒引き→WB→行列→白クリップ→ガンマ/コントラスト
+        private static BitmapSource ApplyGainMatrixClipAndTone(
+            BitmapSource src, int blackOffset8,
+            double gr, double gg, double gb,
+            bool useMat,
+            double m11, double m12, double m13, double m21, double m22, double m23, double m31, double m32, double m33,
+            bool clipWhite, double gamma, double contrast)
         {
             var conv = new FormatConvertedBitmap(src, PixelFormats.Bgr32, null, 0);
             int w = conv.PixelWidth, h = conv.PixelHeight, stride = w * 4;
@@ -668,9 +519,13 @@ namespace ImgProcessWpfApp.ViewModels
             {
                 for (int x = 0; x < w; x++, p += 4)
                 {
-                    double B = buf[p + 0] / 255.0;
-                    double G = buf[p + 1] / 255.0;
-                    double R = buf[p + 2] / 255.0;
+                    int b8 = Math.Max(0, buf[p + 0] - blackOffset8);
+                    int g8 = Math.Max(0, buf[p + 1] - blackOffset8);
+                    int r8 = Math.Max(0, buf[p + 2] - blackOffset8);
+
+                    double B = b8 / 255.0;
+                    double G = g8 / 255.0;
+                    double R = r8 / 255.0;
 
                     R *= gr; G *= gg; B *= gb;
 
@@ -682,8 +537,7 @@ namespace ImgProcessWpfApp.ViewModels
                         R = r2; G = g2; B = b2;
                     }
 
-                    if (clipWhite && (R >= 1.0 || G >= 1.0 || B >= 1.0))
-                    { R = G = B = 1.0; }
+                    if (clipWhite && (R >= 1.0 || G >= 1.0 || B >= 1.0)) { R = G = B = 1.0; }
 
                     R = Math.Clamp(R, 0, 1);
                     G = Math.Clamp(G, 0, 1);
@@ -695,9 +549,7 @@ namespace ImgProcessWpfApp.ViewModels
                 }
             }
 
-            // 追加：ガンマ／コントラスト
             ApplyGammaContrast(buf, gamma, contrast);
-
             var bmp = BitmapSource.Create(w, h, 96, 96, PixelFormats.Bgr32, null, buf, stride);
             bmp.Freeze();
             return bmp;
@@ -734,9 +586,8 @@ namespace ImgProcessWpfApp.ViewModels
                     for (int i = 0; i < n && i < input.Length; i++)
                     {
                         int raw = input[i];
-                        int val = (align == BitAlignment.MSB)
-                            ? (raw >> (8 - usedBits))
-                            : (raw & ((1 << usedBits) - 1));
+                        int val = (align == BitAlignment.MSB) ? (raw >> (8 - usedBits))
+                                                              : (raw & ((1 << usedBits) - 1));
                         dst[i] = (ushort)val;
                     }
                     break;
@@ -746,9 +597,8 @@ namespace ImgProcessWpfApp.ViewModels
                     {
                         int b0 = input[s + 0], b1 = input[s + 1];
                         int word = (endian == Endianness.Little) ? (b0 | (b1 << 8)) : ((b0 << 8) | b1);
-                        int val = (align == BitAlignment.MSB)
-                            ? (word >> (16 - usedBits))
-                            : (word & ((1 << usedBits) - 1));
+                        int val = (align == BitAlignment.MSB) ? (word >> (16 - usedBits))
+                                                              : (word & ((1 << usedBits) - 1));
                         dst[i] = (ushort)val;
                     }
                     break;
@@ -766,25 +616,36 @@ namespace ImgProcessWpfApp.ViewModels
                     }
                     break;
             }
-
             return dst;
         }
 
-        // RGGB バイリニア（簡易）。戻り値は BGR32 バッファ
+        // Bayer (RGGB/GRBG/GBRG/BGGR) bilinear
         private static byte[] DemosaicToBgr32(
             ushort[] raw, int w, int h, int maxVal,
+            int blackOffsetRaw,
             double gr, double gg, double gb,
-            bool useMat, double m11, double m12, double m13,
-            double m21, double m22, double m23,
-            double m31, double m32, double m33,
-            bool ClipSaturation, DemosaicAlgorithm algo)
+            bool useMat,
+            double m11, double m12, double m13, double m21, double m22, double m23, double m31, double m32, double m33,
+            bool ClipSaturation, DemosaicAlgorithm algo, CfaPattern pattern)
         {
             int n = w * h;
             byte[] bgr = new byte[n * 4];
-            double inv = 1.0 / Math.Max(1, maxVal);
+
+            double denom = Math.Max(1.0, maxVal - blackOffsetRaw);
+            double inv = 1.0 / denom;
 
             int Clamp(int v, int lo, int hi) => v < lo ? lo : (v > hi ? hi : v);
             int Idx(int x, int y) => y * w + x;
+            double s(int xx, int yy) => Math.Max(0, raw[Idx(xx, yy)] - blackOffsetRaw);
+
+            static char Cfa(bool xOdd, bool yOdd, CfaPattern p) => p switch
+            {
+                CfaPattern.RGGB => (!xOdd && !yOdd) ? 'R' : (xOdd && yOdd) ? 'B' : 'G',
+                CfaPattern.GRBG => (!xOdd && !yOdd) ? 'G' : (xOdd && !yOdd) ? 'R' : (!xOdd && yOdd) ? 'B' : 'G',
+                CfaPattern.GBRG => (!xOdd && !yOdd) ? 'G' : (xOdd && !yOdd) ? 'B' : (!xOdd && yOdd) ? 'R' : 'G',
+                CfaPattern.BGGR => (!xOdd && !yOdd) ? 'B' : (xOdd && !yOdd) ? 'G' : (!xOdd && yOdd) ? 'G' : 'R',
+                _ => 'G'
+            };
 
             for (int y = 0; y < h; y++)
             {
@@ -793,45 +654,59 @@ namespace ImgProcessWpfApp.ViewModels
                 {
                     bool xOdd = (x & 1) == 1;
 
-                    double R, G, B;
                     int xm1 = Clamp(x - 1, 0, w - 1);
                     int xp1 = Clamp(x + 1, 0, w - 1);
                     int ym1 = Clamp(y - 1, 0, h - 1);
                     int yp1 = Clamp(y + 1, 0, h - 1);
 
-                    ushort r(int xx, int yy) => raw[Idx(xx, yy)];
+                    char c = Cfa(xOdd, yOdd, pattern);
+                    double R, G, B;
 
-                    if (!xOdd && !yOdd) // R site
+                    if (c == 'R')
                     {
-                        R = r(x, y);
-                        G = (r(xm1, y) + r(xp1, y) + r(x, ym1) + r(x, yp1)) * 0.25;
-                        B = (r(xm1, ym1) + r(xp1, ym1) + r(xm1, yp1) + r(xp1, yp1)) * 0.25;
+                        R = s(x, y);
+                        G = (s(xm1, y) + s(xp1, y) + s(x, ym1) + s(x, yp1)) * 0.25;
+                        B = (s(xm1, ym1) + s(xp1, ym1) + s(xm1, yp1) + s(xp1, yp1)) * 0.25;
                     }
-                    else if (xOdd && yOdd) // B site
+                    else if (c == 'B')
                     {
-                        B = r(x, y);
-                        G = (r(xm1, y) + r(xp1, y) + r(x, ym1) + r(x, yp1)) * 0.25;
-                        R = (r(xm1, ym1) + r(xp1, ym1) + r(xm1, yp1) + r(xp1, yp1)) * 0.25;
+                        B = s(x, y);
+                        G = (s(xm1, y) + s(xp1, y) + s(x, ym1) + s(x, yp1)) * 0.25;
+                        R = (s(xm1, ym1) + s(xp1, ym1) + s(xm1, yp1) + s(xp1, yp1)) * 0.25;
                     }
-                    else if (xOdd && !yOdd) // G on R row
+                    else // G
                     {
-                        G = r(x, y);
-                        R = (r(xm1, y) + r(xp1, y)) * 0.5;
-                        B = (r(x, ym1) + r(x, yp1)) * 0.5;
-                    }
-                    else // (!xOdd && yOdd)  G on B row
-                    {
-                        G = r(x, y);
-                        R = (r(x, ym1) + r(x, yp1)) * 0.5;
-                        B = (r(xm1, y) + r(xp1, y)) * 0.5;
+                        // 近傍の偶奇を bool で明確に計算
+                        bool xOddLeft = (((x - 1) & 1) == 1);
+                        bool xOddRight = (((x + 1) & 1) == 1);
+                        bool yOddUp = (((y - 1) & 1) == 1);
+                        bool yOddDown = (((y + 1) & 1) == 1);
+
+                        char left = Cfa(xOddLeft, yOdd, pattern);
+                        char right = Cfa(xOddRight, yOdd, pattern);
+                        char up = Cfa(xOdd, yOddUp, pattern);
+                        char down = Cfa(xOdd, yOddDown, pattern);
+
+                        G = s(x, y);
+                        bool horizR = (left == 'R') || (right == 'R') || !((up == 'R') || (down == 'R'));
+                        if (horizR)
+                        {
+                            R = (s(xm1, y) + s(xp1, y)) * 0.5;
+                            B = (s(x, ym1) + s(x, yp1)) * 0.5;
+                        }
+                        else
+                        {
+                            R = (s(x, ym1) + s(x, yp1)) * 0.5;
+                            B = (s(xm1, y) + s(xp1, y)) * 0.5;
+                        }
                     }
 
-                    // 正規化＋ゲイン
+                    // 正規化・ゲイン
                     R = (R * inv) * gr;
                     G = (G * inv) * gg;
                     B = (B * inv) * gb;
 
-                    // 色変換
+                    // 行列
                     if (useMat)
                     {
                         double r2 = m11 * R + m12 * G + m13 * B;
@@ -840,8 +715,7 @@ namespace ImgProcessWpfApp.ViewModels
                         R = r2; G = g2; B = b2;
                     }
 
-                    if (ClipSaturation && (R >= 1.0 || G >= 1.0 || B >= 1.0))
-                        R = G = B = 1.0;
+                    if (ClipSaturation && (R >= 1.0 || G >= 1.0 || B >= 1.0)) { R = G = B = 1.0; }
 
                     R = Math.Clamp(R, 0, 1);
                     G = Math.Clamp(G, 0, 1);
@@ -857,16 +731,13 @@ namespace ImgProcessWpfApp.ViewModels
             return bgr;
         }
 
-        // BGR32 バッファにガンマ/コントラストを適用（インプレース）
         private static void ApplyGammaContrast(byte[] bgr, double gamma, double contrastPercent)
         {
             if (bgr == null || bgr.Length == 0) return;
 
-            double g = Math.Clamp(gamma, 0.10, 3.00);
-            double e = 1.0 / g;                   // gamma>1 → 明るく
-            double k = 1.0 + (contrastPercent / 100.0); // -100～+100 → 0～2
+            double e = 1.0 / Math.Clamp(gamma, 0.10, 3.00);
+            double k = 1.0 + (contrastPercent / 100.0);
 
-            // LUT で高速適用
             byte[] lut = new byte[256];
             for (int i = 0; i < 256; i++)
             {
@@ -882,7 +753,6 @@ namespace ImgProcessWpfApp.ViewModels
                 bgr[p + 0] = lut[bgr[p + 0]];
                 bgr[p + 1] = lut[bgr[p + 1]];
                 bgr[p + 2] = lut[bgr[p + 2]];
-                // bgr[p + 3] は未使用（Bgr32）
             }
         }
 
@@ -891,6 +761,119 @@ namespace ImgProcessWpfApp.ViewModels
             var bmp = BitmapSource.Create(w, h, 96, 96, PixelFormats.Bgr32, null, bgr, w * 4);
             bmp.Freeze();
             return bmp;
+        }
+
+        // ───────── ナビ / 初期化 ─────────
+        public bool TryNavigateTo(string input)
+        {
+            if (string.IsNullOrWhiteSpace(input)) return false;
+            var s = input.Trim();
+
+            if (s.Length >= 2 && ((s[0] == '"' && s[^1] == '"') || (s[0] == '\'' && s[^1] == '\'')))
+                s = s[1..^1];
+
+            s = Environment.ExpandEnvironmentVariables(s);
+
+            if (s.StartsWith("~"))
+            {
+                var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+                s = Path.Combine(home, s.TrimStart('~', '\\', '/'));
+            }
+
+            if (!Path.IsPathRooted(s))
+            {
+                var baseDir = SelectedFolderPath;
+                if (string.IsNullOrEmpty(baseDir)) baseDir = Environment.CurrentDirectory;
+                s = Path.GetFullPath(Path.Combine(baseDir, s));
+            }
+
+            if (File.Exists(s)) s = Path.GetDirectoryName(s)!;
+            if (!Directory.Exists(s)) return false;
+
+            PushHistory(SelectedFolderPath, s);
+            SelectedFolderPath = s;
+            return true;
+        }
+
+        private void BuildInitialRoots()
+        {
+            var quick = FileSystemItem.Group("Quick Access");
+            AddIfExists(quick, Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), "Desktop");
+            AddIfExists(quick, Environment.GetFolderPath(Environment.SpecialFolder.MyPictures), "Pictures");
+            AddIfExists(quick, Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "Documents");
+            if (quick.Children.Count > 0) DirectoryRoots.Add(quick);
+
+            var thisPc = FileSystemItem.Group("This PC");
+            foreach (var d in DriveInfo.GetDrives())
+            {
+                var label = SafeDriveLabel(d);
+                thisPc.Children.Add(new FileSystemItem(label, d.RootDirectory.FullName, isDrive: true));
+            }
+            DirectoryRoots.Add(thisPc);
+        }
+
+        private static void AddIfExists(FileSystemItem group, string path, string? displayName = null)
+        {
+            if (string.IsNullOrWhiteSpace(path) || !Directory.Exists(path)) return;
+            var name = displayName ?? new DirectoryInfo(path).Name;
+            group.Children.Add(new FileSystemItem(name, path));
+        }
+
+        private static string SafeDriveLabel(DriveInfo d)
+        {
+            var name = d.Name.TrimEnd(Path.DirectorySeparatorChar);
+            try
+            {
+                if (d.IsReady && !string.IsNullOrWhiteSpace(d.VolumeLabel))
+                    return $"{d.VolumeLabel} ({name})";
+            }
+            catch { }
+            return name;
+        }
+
+        // ───────── Export 用処理 ─────────
+        private BitmapSource ProcessFileToBitmap(FileItem fi)
+        {
+            if (fi.Kind == FileKind.Image)
+            {
+                var src = LoadStandardImage(fi.FullPath);
+                return ApplyGainMatrixClipAndTone(
+                    src, blackOffset8: BlackLevelOffset,
+                    gr: GainR, gg: GainG, gb: GainB,
+                    useMat: UseColorMatrix,
+                    m11: M11, m12: M12, m13: M13, m21: M21, m22: M22, m23: M23, m31: M31, m32: M32, m33: M33,
+                    clipWhite: ClipSaturatedToWhite, gamma: Gamma, contrast: Contrast);
+            }
+            else
+            {
+                int maxVal;
+                var raw = ReadRawToUShort(fi.FullPath, RawWidth, RawHeight,
+                                          HeaderBytes, FileBits, UsedBits, BitAlignment, Endian, out maxVal);
+
+                var procBgr = DemosaicToBgr32(raw, RawWidth, RawHeight, maxVal,
+                                              blackOffsetRaw: BlackLevelOffset,
+                                              gr: GainR, gg: GainG, gb: GainB,
+                                              useMat: UseColorMatrix,
+                                              m11: M11, m12: M12, m13: M13, m21: M21, m22: M22, m23: M23, m31: M31, m32: M32, m33: M33,
+                                              ClipSaturation: ClipSaturatedToWhite, algo: Demosaic, pattern: Cfa);
+                ApplyGammaContrast(procBgr, Gamma, Contrast);
+
+                return MakeBitmapFromBgr32(procBgr, RawWidth, RawHeight);
+            }
+        }
+
+        private void SaveBitmap(BitmapSource bmp, string outPath)
+        {
+            BitmapEncoder enc = ExportFormat switch
+            {
+                ExportFormat.Png => new PngBitmapEncoder(),
+                ExportFormat.Jpeg => new JpegBitmapEncoder() { QualityLevel = JpegQuality },
+                ExportFormat.Tiff => new TiffBitmapEncoder(),
+                _ => new BmpBitmapEncoder(),
+            };
+            enc.Frames.Add(BitmapFrame.Create(bmp));
+            using var fs = File.Create(outPath);
+            enc.Save(fs);
         }
     }
 }

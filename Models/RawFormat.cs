@@ -2,12 +2,16 @@
 namespace ImgProcessWpfApp.Models
 {
     public enum Endianness { Little, Big }
-    public enum BitAlignment { MSB, LSB } // 上詰め=MSB, 下詰め=LSB
+    public enum BitAlignment { MSB, LSB }
+    public enum DemosaicAlgorithm { Bilinear, Bicubic }
 
-    public enum DemosaicAlgorithm
+    // ★ 追加: Bayer カラーフィルター配列
+    public enum CfaPattern
     {
-        Bilinear,
-        Bicubic // ※現在はバイリニアと同等のロジック。後で本物の双三次へ差し替えやすい設計です
+        RGGB,
+        GRBG,
+        GBRG,
+        BGGR
     }
 
     public enum ExportFormat

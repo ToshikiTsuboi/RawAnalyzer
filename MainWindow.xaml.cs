@@ -1,6 +1,7 @@
 ﻿// MainWindow.xaml.cs
 using System;
 using System.IO;
+using System.Reflection;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media.Imaging;
@@ -24,7 +25,26 @@ namespace ImgProcessWpfApp
 
         private MainViewModel VM => (MainViewModel)DataContext;
 
-        // ───────── ディレクトリ／アドレスバー ─────────
+        // Help → About
+        private void MenuAbout_Click(object sender, RoutedEventArgs e)
+        {
+            var asm = Assembly.GetExecutingAssembly();
+            var name = asm.GetName().Name ?? "ImgProcessWpfApp";
+            var ver = asm.GetName().Version?.ToString() ?? "(unknown)";
+            string msg =
+$@"{name}
+Version: {ver}
+
+License: MIT License
+(c) 2025 Your Name
+
+Processing pipeline
+RAW: 1) Subtract black level (offset) → 2) Demosaic (RGGB, bilinear) → 3) White balance (RGB gains) → 4) Color matrix (optional) → 5) Clip saturated pixels to white → 6) Gamma correction → 7) Contrast adjustment
+Standard images: 1) Subtract black level (8-bit) → 2) White balance (RGB gains) → 3) Color matrix (optional) → 4) Clip saturated pixels to white → 5) Gamma correction → 6) Contrast adjustment";
+            MessageBox.Show(this, msg, "About", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+
+        // Directory selection
         private void DirectoryTree_SelectedItemChanged(object sender, RoutedPropertyChangedEventArgs<object> e)
         {
             if (e.NewValue is FileSystemItem node)
@@ -37,13 +57,14 @@ namespace ImgProcessWpfApp
             }
         }
 
+        // Address bar
         private void AddressBox_KeyDown(object sender, KeyEventArgs e)
         {
             if (e.Key != Key.Enter) return;
 
             if (!VM.TryNavigateTo(VM.AddressPath ?? string.Empty))
             {
-                MessageBox.Show(this, "フォルダ/ファイルが見つかりません。", "移動できません",
+                MessageBox.Show(this, "Folder/file not found.", "Navigation failed",
                                 MessageBoxButton.OK, MessageBoxImage.Warning);
                 AddressBox.SelectAll();
                 return;
@@ -142,7 +163,7 @@ namespace ImgProcessWpfApp
             current.IsSelected = true;
         }
 
-        // ───────── ズーム（ホイール位置中心 / Fit / 比較ビュー対応）─────────
+        // Zoom (pointer-centered) + Fit
         private System.Windows.Controls.ScrollViewer ActiveScrollViewer =>
             (VM.IsCompare ? CompareScroll : ImageScroll);
 

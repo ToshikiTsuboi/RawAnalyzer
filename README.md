@@ -1,8 +1,8 @@
 ﻿# ImgProcessWpfApp
 
-Windows / C# / WPF で作った **ヘッダ無し RAW/BIN 画像の簡易現像ビューア**です。  
+C# / WPF で作った **ヘッダ無し RAW/BIN 画像の簡易現像ビューア**です。  
 Bayer(RGGB) のデモザイク、RGBゲイン(ホワイトバランス)、カラーマトリクス、飽和クリップ、**ガンマ/コントラスト**、  
-比較表示（Before/After）と **一括書き出し（PNG/JPEG/TIFF/BMP）** をサポート。
+比較表示（Before/After）と **一括書き出し（PNG/JPEG/TIFF/BMP）** 等を実行できます。
 
 ---
 
@@ -17,9 +17,9 @@ Bayer(RGGB) のデモザイク、RGBゲイン(ホワイトバランス)、カラ
 - **ズーム**: Ctrl+ホイール（ポインタ中心）、100%、Fit、ステータスバーのボタン
 - **書き出し**: 1枚保存 / 一括保存（PNG/JPEG/TIFF/BMP、JPEG品質設定）
 - **設定の永続化**: 直前の **サイズ/ヘッダー** を次回起動時に復元  
-  - 保存場所: `%LocalAppData%\ImgProcessWpfApp\prefs.json`（リポジトリ外）
+  - 保存場所: `\ImgProcessWpfApp\prefs.json`
 
-> 既知: **10/12bit のバイト境界をまたぐパック形式**（例 5B=4pix 等）は未対応。必要なら将来対応予定。
+**10/12bit のバイト境界をまたぐパック形式**（例 5B=4pix 等）は未対応です。
 
 ---
 
@@ -29,7 +29,6 @@ Bayer(RGGB) のデモザイク、RGBゲイン(ホワイトバランス)、カラ
 - **.NET 8 (Windows)**（7 でも可）
 - **Visual Studio 2022**（.NET デスクトップ開発）
 
-クローン後に **ビルド**するだけで動作します（NuGet 自動復元）。
 
 ---
 

@@ -4,9 +4,9 @@
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="d"
-        Title="ImageApp" Height="800" Width="1200">
+        Title="ImageApp" Height="800" Width="1600">
 
-    <!-- ショートカット -->
+    <!-- Shortcuts -->
     <Window.InputBindings>
         <KeyBinding Command="{Binding BrowseBackCommand}"    Key="Left"  Modifiers="Alt"/>
         <KeyBinding Command="{Binding BrowseForwardCommand}" Key="Right" Modifiers="Alt"/>
@@ -17,6 +17,8 @@
         <KeyBinding Command="{Binding ZoomResetCommand}" Key="D0"       Modifiers="Control"/>
         <KeyBinding Command="{Binding ZoomResetCommand}" Key="NumPad0"  Modifiers="Control"/>
     </Window.InputBindings>
+    
+    
 
     <Grid>
         <Grid.RowDefinitions>
@@ -26,41 +28,44 @@
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <!-- メニュー -->
+        <!-- Menu -->
         <Menu Grid.Row="0">
             <MenuItem Header="_File">
-                <MenuItem Header="_Open..." />
-                <MenuItem Header="_Save As..." />
+                <MenuItem Header="_Open..."/>
+                <MenuItem Header="_Save As..."/>
                 <Separator/>
-                <MenuItem Header="_Export Current..." Command="{Binding ExportCurrentCommand}" />
-                <MenuItem Header="Export _Batch..."    Command="{Binding ExportBatchCommand}" />
+                <MenuItem Header="_Export Current..." Command="{Binding ExportCurrentCommand}"/>
+                <MenuItem Header="Export _Batch..."    Command="{Binding ExportBatchCommand}"/>
                 <Separator/>
                 <MenuItem Header="E_xit" Command="ApplicationCommands.Close"/>
             </MenuItem>
-            <MenuItem Header="_Edit"/>
-            <MenuItem Header="_View"/>
-            <MenuItem Header="_Help"/>
+            <MenuItem Header="_View">
+                <MenuItem Header="Zoom _In"  Command="{Binding ZoomInCommand}"  InputGestureText="Ctrl++"/>
+                <MenuItem Header="Zoom _Out" Command="{Binding ZoomOutCommand}" InputGestureText="Ctrl+-"/>
+                <MenuItem Header="_100%"     Command="{Binding ZoomResetCommand}" InputGestureText="Ctrl+0"/>
+            </MenuItem>
+            <MenuItem Header="_Help">
+                <MenuItem Header="_About..." Click="MenuAbout_Click"/>
+            </MenuItem>
         </Menu>
 
-        <!-- ツールバー（戻る/進む＋Export） -->
+        <!-- Top toolbar -->
         <ToolBarTray Grid.Row="1" IsLocked="True">
             <ToolBar>
-                <Button Command="{Binding BrowseBackCommand}" ToolTip="戻る (Alt+←)">
+                <Button Command="{Binding BrowseBackCommand}" ToolTip="Back (Alt+Left)">
                     <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE72B;" FontSize="16"/>
                 </Button>
-                <Button Command="{Binding BrowseForwardCommand}" ToolTip="進む (Alt+→)">
+                <Button Command="{Binding BrowseForwardCommand}" ToolTip="Forward (Alt+Right)">
                     <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE72A;" FontSize="16"/>
                 </Button>
-
                 <Separator/>
-
-                <Button Command="{Binding ExportCurrentCommand}" ToolTip="今表示中を保存">
+                <Button Command="{Binding ExportCurrentCommand}" ToolTip="Export current">
                     <StackPanel Orientation="Horizontal">
                         <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE74E;" FontSize="16"/>
                         <TextBlock Text=" Export Current" Margin="4,0,0,0"/>
                     </StackPanel>
                 </Button>
-                <Button Command="{Binding ExportBatchCommand}" ToolTip="一覧のファイルを一括書き出し" Margin="6,0,0,0">
+                <Button Command="{Binding ExportBatchCommand}" ToolTip="Export all listed files" Margin="6,0,0,0">
                     <StackPanel Orientation="Horizontal">
                         <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE7C3;" FontSize="16"/>
                         <TextBlock Text=" Batch Export" Margin="4,0,0,0"/>
@@ -69,27 +74,26 @@
             </ToolBar>
         </ToolBarTray>
 
-        <!-- 本文 -->
+        <!-- Body -->
         <DockPanel Grid.Row="2">
-            <!-- アドレスバー -->
+            <!-- Address bar -->
             <ToolBar DockPanel.Dock="Top">
                 <TextBlock Text="Path:" Margin="0,0,6,0" VerticalAlignment="Center"/>
                 <TextBox x:Name="AddressBox" Width="600"
-                         Text="{Binding AddressPath, UpdateSourceTrigger=PropertyChanged}"
-                         KeyDown="AddressBox_KeyDown"
-                         ToolTip="パスを貼り付けて Enter で移動"/>
-                <Button Command="{Binding NavigateAddressCommand}" Margin="6,0,0,0" ToolTip="移動">
+                 Text="{Binding AddressPath, UpdateSourceTrigger=PropertyChanged}"
+                 KeyDown="AddressBox_KeyDown"
+                 ToolTip="Paste a folder path and press Enter"/>
+                <Button Command="{Binding NavigateAddressCommand}" Margin="6,0,0,0" ToolTip="Go">
                     <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE72A;" FontSize="16"/>
                 </Button>
-                <Button Margin="2,0,0,0" ToolTip="1つ上へ" Click="UpFolder_Click">
+                <Button Margin="2,0,0,0" ToolTip="Up" Click="UpFolder_Click">
                     <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE110;" FontSize="16"/>
                 </Button>
-                <Button Margin="2,0,0,0" ToolTip="パスをコピー" Click="CopyPath_Click">
+                <Button Margin="2,0,0,0" ToolTip="Copy path" Click="CopyPath_Click">
                     <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE8C8;" FontSize="16"/>
                 </Button>
             </ToolBar>
 
-            <!-- 3カラム -->
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="260"/>
@@ -99,7 +103,7 @@
                     <ColumnDefinition Width="320"/>
                 </Grid.ColumnDefinitions>
 
-                <!-- 左：Directory / Files -->
+                <!-- Left: Directory / Files -->
                 <Grid Grid.Column="0" Margin="6">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="2*"/>
@@ -107,11 +111,10 @@
                         <RowDefinition Height="3*"/>
                     </Grid.RowDefinitions>
 
-                    <!-- Directory -->
                     <GroupBox Header="Directory" Grid.Row="0" Margin="0,0,0,6">
                         <TreeView x:Name="DirectoryTree"
-                                  ItemsSource="{Binding DirectoryRoots}"
-                                  SelectedItemChanged="DirectoryTree_SelectedItemChanged">
+                      ItemsSource="{Binding DirectoryRoots}"
+                      SelectedItemChanged="DirectoryTree_SelectedItemChanged">
                             <TreeView.ItemContainerStyle>
                                 <Style TargetType="TreeViewItem">
                                     <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}"/>
@@ -128,26 +131,26 @@
 
                     <Separator Grid.Row="1" Margin="0,6"/>
 
-                    <!-- Files -->
                     <GroupBox Header="Files" Grid.Row="2">
                         <DockPanel>
+                            <!-- Filter / Search -->
                             <ToolBar DockPanel.Dock="Top">
                                 <TextBlock Text="Filter:" Margin="0,0,6,0"/>
                                 <ComboBox Width="140"
-                                          ItemsSource="{Binding FilterModes}"
-                                          SelectedItem="{Binding CurrentFilter}"/>
+                          ItemsSource="{Binding FilterModes}"
+                          SelectedItem="{Binding CurrentFilter}"/>
                                 <Separator/>
                                 <TextBlock Text="Search:" Margin="8,0,6,0"/>
                                 <TextBox Width="150"
-                                         Text="{Binding FileSearchText, UpdateSourceTrigger=PropertyChanged}"/>
+                         Text="{Binding FileSearchText, UpdateSourceTrigger=PropertyChanged}"/>
                             </ToolBar>
 
-                            <!-- RAW設定バー -->
+                            <!-- RAW settings toolbar -->
                             <ToolBar DockPanel.Dock="Top">
                                 <TextBlock Text="Size:" Margin="0,0,6,0"/>
-                                <TextBox Width="70" Text="{Binding RawWidth,  UpdateSourceTrigger=LostFocus}"/>
+                                <TextBox Width="50" Text="{Binding RawWidth,  UpdateSourceTrigger=LostFocus}"/>
                                 <TextBlock Text="×" Margin="4,0"/>
-                                <TextBox Width="70" Text="{Binding RawHeight, UpdateSourceTrigger=LostFocus}"/>
+                                <TextBox Width="50" Text="{Binding RawHeight, UpdateSourceTrigger=LostFocus}"/>
 
                                 <Separator/>
 
@@ -156,43 +159,39 @@
 
                                 <Separator/>
 
-                                <TextBlock Text="File bits:" Margin="8,0,6,0"/>
-                                <ComboBox Width="70"
-                                          ItemsSource="{Binding FileBitsOptions}"
-                                          SelectedItem="{Binding FileBits}"/>
+                                <TextBlock Text="File bits:" Margin="8,0,40,0"/>
+                                <ComboBox Width="80"
+                          ItemsSource="{Binding FileBitsOptions}"
+                          SelectedItem="{Binding FileBits}"/>
 
-                                <TextBlock Text="Used bits:" Margin="8,0,6,0"/>
-                                <ComboBox Width="70"
-                                          ItemsSource="{Binding UsedBitsOptions}"
-                                          SelectedItem="{Binding UsedBits}"/>
+                                <TextBlock Text="Used bits:" Margin="8,0,30,0"/>
+                                <ComboBox Width="80"
+                          ItemsSource="{Binding UsedBitsOptions}"
+                          SelectedItem="{Binding UsedBits}"/>
 
-                                <TextBlock Text="Align:" Margin="8,0,6,0"/>
+                                <TextBlock Text="Align:" Margin="8,0,22,0"/>
                                 <ComboBox Width="110"
-                                          ItemsSource="{Binding AlignOptions}"
-                                          SelectedValuePath="Key"
-                                          DisplayMemberPath="Value"
-                                          SelectedValue="{Binding BitAlignment, Mode=TwoWay}"/>
+                          ItemsSource="{Binding AlignOptions}"
+                          SelectedValuePath="Key"
+                          DisplayMemberPath="Value"
+                          SelectedValue="{Binding BitAlignment, Mode=TwoWay}"/>
 
-                                <TextBlock Text="Endian:" Margin="8,0,6,0"/>
-                                <ComboBox Width="120"
-                                          ItemsSource="{Binding EndianOptions}"
-                                          SelectedValuePath="Key"
-                                          DisplayMemberPath="Value"
-                                          SelectedValue="{Binding Endian, Mode=TwoWay}"/>
-
-                                <Separator/>
-                                <Button Command="{Binding PreviewCommand}" ToolTip="プレビュー更新">
-                                    <StackPanel Orientation="Horizontal">
-                                        <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE722;" FontSize="14"/>
-                                        <TextBlock Text=" Preview"/>
-                                    </StackPanel>
-                                </Button>
+                                <TextBlock Text="Endian:" Margin="8,0,14,0"/>
+                                <ComboBox Width="110"
+                          ItemsSource="{Binding EndianOptions}"
+                          SelectedValuePath="Key"
+                          DisplayMemberPath="Value"
+                          SelectedValue="{Binding Endian, Mode=TwoWay}"/>
+                                <TextBlock Text="Bayer:" Margin="8,0,20,0" ToolTip="Color filter array (CFA) pattern"/>
+                                <ComboBox Width="110"
+              ItemsSource="{Binding CfaOptions}"
+              SelectedItem="{Binding Cfa, Mode=TwoWay}"/>
                             </ToolBar>
 
                             <ListView ItemsSource="{Binding Files}"
-                                      Name="FilesList"
-                                      SelectionMode="Extended"
-                                      SelectedItem="{Binding SelectedFile}">
+                        Name="FilesList"
+                        SelectionMode="Extended"
+                        SelectedItem="{Binding SelectedFile}">
                                 <ListView.View>
                                     <GridView>
                                         <GridViewColumn Header="Name" DisplayMemberBinding="{Binding Name}" Width="180"/>
@@ -213,19 +212,19 @@
                     </GroupBox>
                 </Grid>
 
-                <!-- 左スプリッタ -->
+                <!-- Splitter -->
                 <GridSplitter Grid.Column="1" Width="5"
-                              HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
-                              ShowsPreview="True" Background="#22000000"/>
+                      HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
+                      ShowsPreview="True" Background="#22000000"/>
 
-                <!-- 中央：Single / Compare -->
+                <!-- Center: single / compare -->
                 <Border Grid.Column="2" Margin="6" BorderBrush="Gray" BorderThickness="1">
                     <Grid>
-                        <!-- 単体表示 -->
+                        <!-- Single view -->
                         <ScrollViewer x:Name="ImageScroll"
-                                      HorizontalScrollBarVisibility="Auto"
-                                      VerticalScrollBarVisibility="Auto"
-                                      SizeChanged="ImageScroll_SizeChanged">
+                          HorizontalScrollBarVisibility="Auto"
+                          VerticalScrollBarVisibility="Auto"
+                          SizeChanged="ImageScroll_SizeChanged">
                             <ScrollViewer.Style>
                                 <Style TargetType="ScrollViewer">
                                     <Setter Property="Visibility" Value="Visible"/>
@@ -237,22 +236,22 @@
                                 </Style>
                             </ScrollViewer.Style>
                             <Image x:Name="MainImage"
-                                   Source="{Binding ImageSource}"
-                                   Stretch="None"
-                                   RenderOptions.BitmapScalingMode="Fant"
-                                   SnapsToDevicePixels="True"
-                                   PreviewMouseWheel="MainImage_PreviewMouseWheel">
+                     Source="{Binding ImageSource}"
+                     Stretch="None"
+                     RenderOptions.BitmapScalingMode="Fant"
+                     SnapsToDevicePixels="True"
+                     PreviewMouseWheel="MainImage_PreviewMouseWheel">
                                 <Image.LayoutTransform>
                                     <ScaleTransform ScaleX="{Binding ZoomScale}" ScaleY="{Binding ZoomScale}"/>
                                 </Image.LayoutTransform>
                             </Image>
                         </ScrollViewer>
 
-                        <!-- 比較表示 -->
+                        <!-- Compare view -->
                         <ScrollViewer x:Name="CompareScroll"
-                                      HorizontalScrollBarVisibility="Auto"
-                                      VerticalScrollBarVisibility="Auto"
-                                      SizeChanged="CompareScroll_SizeChanged">
+                          HorizontalScrollBarVisibility="Auto"
+                          VerticalScrollBarVisibility="Auto"
+                          SizeChanged="CompareScroll_SizeChanged">
                             <ScrollViewer.Style>
                                 <Style TargetType="ScrollViewer">
                                     <Setter Property="Visibility" Value="Collapsed"/>
@@ -273,53 +272,79 @@
                                     <ColumnDefinition Width="Auto"/>
                                 </Grid.ColumnDefinitions>
                                 <Image Source="{Binding OriginalImageSource}" Stretch="None"
-                                       PreviewMouseWheel="MainImage_PreviewMouseWheel"/>
+                       PreviewMouseWheel="MainImage_PreviewMouseWheel"/>
                                 <Border Grid.Column="1" Background="#DDDDDD"/>
                                 <Image Grid.Column="2" Source="{Binding ImageSource}" Stretch="None"
-                                       PreviewMouseWheel="MainImage_PreviewMouseWheel"/>
+                       PreviewMouseWheel="MainImage_PreviewMouseWheel"/>
                             </Grid>
                         </ScrollViewer>
                     </Grid>
                 </Border>
 
-                <!-- 右スプリッタ -->
+                <!-- Splitter -->
                 <GridSplitter Grid.Column="3" Width="5"
-                              HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
-                              ShowsPreview="True" Background="#22000000"/>
+                      HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
+                      ShowsPreview="True" Background="#22000000"/>
 
-                <!-- 右：現像パネル -->
+                <!-- Right: Develop + Export -->
                 <ScrollViewer Grid.Column="4" Margin="6" VerticalScrollBarVisibility="Auto">
                     <StackPanel>
-                        <GroupBox Header="Develop (RAW)">
+
+                        <!-- Develop (RAW) with English tooltip -->
+                        <GroupBox>
+                            <GroupBox.Header>
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="Develop (RAW)"/>
+                                    <Border Margin="6,0,0,0" Width="18" Height="18" CornerRadius="9"
+                          Background="#EEE" BorderBrush="#CCC" BorderThickness="1"
+                          ToolTipService.ShowDuration="120000">
+                                        <TextBlock Text="?" HorizontalAlignment="Center" VerticalAlignment="Center" FontWeight="Bold">
+                                            <TextBlock.ToolTip>
+                                                <StackPanel MaxWidth="380">
+                                                    <TextBlock Text="Processing pipeline" FontWeight="Bold" Margin="0,0,0,4"/>
+                                                    <TextBlock Text="RAW:"/>
+                                                    <TextBlock Text="1) Subtract black level (offset) → 2) Demosaic (RGGB, bilinear) → 3) White balance (RGB gains) → 4) Color matrix (optional) → 5) Clip saturated pixels to white → 6) Gamma correction → 7) Contrast adjustment" TextWrapping="Wrap"/>
+                                                    <TextBlock Text="Standard images (PNG/JPEG/TIFF):" Margin="0,8,0,0"/>
+                                                    <TextBlock Text="1) Subtract black level (8-bit) → 2) White balance (RGB gains) → 3) Color matrix (optional) → 4) Clip saturated pixels to white → 5) Gamma correction → 6) Contrast adjustment" TextWrapping="Wrap"/>
+                                                </StackPanel>
+                                            </TextBlock.ToolTip>
+                    </TextBlock>
+                                    </Border>
+                                </StackPanel>
+                            </GroupBox.Header>
+
                             <StackPanel Margin="6">
-                                <!-- デモザイク -->
+                                <!-- Demosaic -->
                                 <StackPanel Orientation="Horizontal">
                                     <TextBlock Text="Demosaic:" VerticalAlignment="Center" Margin="0,0,8,0"/>
                                     <ComboBox Width="140"
-                                              ItemsSource="{Binding DemosaicOptions}"
-                                              SelectedItem="{Binding Demosaic}"/>
+                            ItemsSource="{Binding DemosaicOptions}"
+                            SelectedItem="{Binding Demosaic}"/>
                                 </StackPanel>
 
                                 <Separator Margin="0,6"/>
 
-                                <!-- ゲイン（小数・F3表示） -->
-                                <TextBlock Text="White Balance (Gain)"/>
-                                <UniformGrid Columns="6" Margin="0,4,0,0">
-                                    <TextBlock Text="R" VerticalAlignment="Center" Margin="0,0,4,0"/>
-                                    <TextBox Width="70" Text="{Binding GainR, Mode=TwoWay, UpdateSourceTrigger=LostFocus, StringFormat=F3}"/>
-                                    <TextBlock Text="G" VerticalAlignment="Center" Margin="10,0,4,0"/>
-                                    <TextBox Width="70" Text="{Binding GainG, Mode=TwoWay, UpdateSourceTrigger=LostFocus, StringFormat=F3}"/>
-                                    <TextBlock Text="B" VerticalAlignment="Center" Margin="10,0,4,0"/>
-                                    <TextBox Width="70" Text="{Binding GainB, Mode=TwoWay, UpdateSourceTrigger=LostFocus, StringFormat=F3}"/>
+                                <!-- Gains + Black offset -->
+                                <TextBlock Text="White Balance (Gain / Black offset)"/>
+                                <UniformGrid Columns="8" Margin="0,4,0,0">
+                                    <TextBlock Text="R" VerticalAlignment="Center" Margin="0,0,4,0" Width="20"/>
+                                    <TextBox Width="35" Text="{Binding GainR, Mode=TwoWay, UpdateSourceTrigger=LostFocus, StringFormat=F3}"/>
+                                    <TextBlock Text="G" VerticalAlignment="Center" Margin="10,0,4,0" Width="20"/>
+                                    <TextBox Width="35" Text="{Binding GainG, Mode=TwoWay, UpdateSourceTrigger=LostFocus, StringFormat=F3}"/>
+                                    <TextBlock Text="B" VerticalAlignment="Center" Margin="10,0,4,0" Width="20"/>
+                                    <TextBox Width="35" Text="{Binding GainB, Mode=TwoWay, UpdateSourceTrigger=LostFocus, StringFormat=F3}"/>
+                                    <TextBlock Text="Offset" VerticalAlignment="Center" Margin="10,0,4,0"
+                             ToolTip="RAW: subtract ADC counts before normalization / Images: subtract 8-bit level"/>
+                                    <TextBox Width="35" Text="{Binding BlackLevelOffset, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"/>
                                 </UniformGrid>
 
                                 <CheckBox Content="Clip saturated pixels to white"
-                                          Margin="0,8,0,0"
-                                          IsChecked="{Binding ClipSaturatedToWhite}"/>
+                          Margin="0,8,0,0"
+                          IsChecked="{Binding ClipSaturatedToWhite}"/>
 
                                 <Separator Margin="0,6"/>
 
-                                <!-- カラーマトリクス -->
+                                <!-- Color matrix -->
                                 <Expander Header="Color Matrix (optional)" IsExpanded="False">
                                     <StackPanel Margin="4">
                                         <CheckBox Content="Use matrix" IsChecked="{Binding UseColorMatrix}" Margin="0,0,0,6"/>
@@ -352,24 +377,22 @@
 
                                 <Separator Margin="0,6"/>
 
-                                <!-- 追加：Tone（ガンマ／コントラスト） -->
+                                <!-- Tone -->
                                 <GroupBox Header="Tone (Gamma / Contrast)" Margin="0,0,0,0">
                                     <StackPanel Margin="6">
-                                        <!-- Gamma -->
                                         <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
                                             <TextBlock Text="Gamma:" VerticalAlignment="Center" Width="60"/>
                                             <Slider Width="160" Minimum="0.10" Maximum="3.00" TickFrequency="0.10"
-                                                    Value="{Binding Gamma, Mode=TwoWay}"/>
-                                            <TextBox Width="60" Margin="6,0,0,0"
-                                                     Text="{Binding Gamma, Mode=TwoWay, StringFormat=F2, UpdateSourceTrigger=LostFocus}"/>
+                              Value="{Binding Gamma, Mode=TwoWay}"/>
+                                            <TextBox Width="30" Margin="6,0,0,0"
+                               Text="{Binding Gamma, Mode=TwoWay, StringFormat=F2, UpdateSourceTrigger=LostFocus}"/>
                                         </StackPanel>
-                                        <!-- Contrast -->
                                         <StackPanel Orientation="Horizontal">
                                             <TextBlock Text="Contrast:" VerticalAlignment="Center" Width="60"/>
                                             <Slider Width="160" Minimum="-100" Maximum="100" TickFrequency="10"
-                                                    Value="{Binding Contrast, Mode=TwoWay}"/>
-                                            <TextBox Width="60" Margin="6,0,0,0"
-                                                     Text="{Binding Contrast, Mode=TwoWay, StringFormat=F0, UpdateSourceTrigger=LostFocus}"/>
+                              Value="{Binding Contrast, Mode=TwoWay}"/>
+                                            <TextBox Width="30" Margin="6,0,0,0"
+                               Text="{Binding Contrast, Mode=TwoWay, StringFormat=F0, UpdateSourceTrigger=LostFocus}"/>
                                             <TextBlock Text=" %" VerticalAlignment="Center" Margin="4,0,0,0"/>
                                         </StackPanel>
                                     </StackPanel>
@@ -389,42 +412,33 @@
                             </StackPanel>
                         </GroupBox>
 
-                        <!-- Export 設定＆ボタン -->
+                        <!-- Export -->
                         <GroupBox Header="Export" Margin="0,10,0,0">
                             <StackPanel Margin="6">
                                 <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
                                     <TextBlock Text="Format:" VerticalAlignment="Center" Margin="0,0,8,0"/>
                                     <ComboBox Width="140"
-                                        ItemsSource="{Binding ExportFormats}"
-                                        SelectedItem="{Binding ExportFormat, Mode=TwoWay}"/>
+                            ItemsSource="{Binding ExportFormats}"
+                            SelectedItem="{Binding ExportFormat, Mode=TwoWay}"/>
+
+                                    <!-- Quality (JPEG only) -->
                                     <StackPanel Orientation="Horizontal" Margin="12,0,0,0">
-                                        <TextBlock Text="Quality:" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                                        <StackPanel.Style>
+                                            <Style TargetType="StackPanel">
+                                                <Setter Property="Visibility" Value="Collapsed"/>
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsJpeg}" Value="True">
+                                                        <Setter Property="Visibility" Value="Visible"/>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </StackPanel.Style>
+                                        <TextBlock Text="Quality:" VerticalAlignment="Center" Margin="0,0,6,0"
+                               ToolTip="JPEG compression quality (1–100). Higher = better quality, larger file."/>
                                         <Slider Width="120" Minimum="1" Maximum="100" TickFrequency="10" IsSnapToTickEnabled="True"
-                                        Value="{Binding JpegQuality, Mode=TwoWay}">
-                                            <Slider.Style>
-                                                <Style TargetType="Slider">
-                                                    <Setter Property="Visibility" Value="Collapsed"/>
-                                                    <Style.Triggers>
-                                                        <DataTrigger Binding="{Binding IsJpeg}" Value="True">
-                                                            <Setter Property="Visibility" Value="Visible"/>
-                                                        </DataTrigger>
-                                                    </Style.Triggers>
-                                                </Style>
-                                            </Slider.Style>
-                                        </Slider>
+                            Value="{Binding JpegQuality, Mode=TwoWay}"/>
                                         <TextBlock Margin="6,0,0,0" VerticalAlignment="Center"
-                                           Text="{Binding JpegQuality, StringFormat={}{0}%}">
-                                            <TextBlock.Style>
-                                                <Style TargetType="TextBlock">
-                                                    <Setter Property="Visibility" Value="Collapsed"/>
-                                                    <Style.Triggers>
-                                                        <DataTrigger Binding="{Binding IsJpeg}" Value="True">
-                                                            <Setter Property="Visibility" Value="Visible"/>
-                                                        </DataTrigger>
-                                                    </Style.Triggers>
-                                                </Style>
-                                            </TextBlock.Style>
-                                        </TextBlock>
+                               Text="{Binding JpegQuality, StringFormat={}{0}%}"/>
                                     </StackPanel>
                                 </StackPanel>
 
@@ -434,99 +448,77 @@
 
                                 <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
                                     <TextBlock Text="Destination:" VerticalAlignment="Center" Margin="0,0,8,0"/>
-                                    <TextBox Width="240" Text="{Binding ExportFolderPath, Mode=TwoWay}"/>
+                                    <TextBox Width="149" Text="{Binding ExportFolderPath, Mode=TwoWay}"/>
                                     <Button Content="Browse..." Margin="6,0,0,0" Command="{Binding BrowseExportFolderCommand}"/>
                                 </StackPanel>
 
                                 <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
                                     <TextBlock Text="Filename suffix:" VerticalAlignment="Center" Margin="0,0,8,0"/>
-                                    <TextBox Width="120" Text="{Binding FileNameSuffix, Mode=TwoWay}"/>
+                                    <TextBox Width="80" Text="{Binding FileNameSuffix, Mode=TwoWay}"/>
                                     <CheckBox Content="Overwrite existing" Margin="12,0,0,0"
-                                        IsChecked="{Binding OverwriteExisting, Mode=TwoWay}"/>
+                            IsChecked="{Binding OverwriteExisting, Mode=TwoWay}"/>
                                 </StackPanel>
 
                                 <StackPanel Orientation="Horizontal">
                                     <Button Command="{Binding ExportCurrentCommand}">
                                         <StackPanel Orientation="Horizontal">
                                             <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE74E;" FontSize="14"/>
-                                            <TextBlock Text=" Export Current" Margin="4,0,0,0"/>
+                                            <TextBlock Text=" Export Current" Margin="4,0,0,0" Width="87"/>
                                         </StackPanel>
                                     </Button>
                                     <Button Command="{Binding ExportBatchCommand}" Margin="8,0,0,0">
                                         <StackPanel Orientation="Horizontal">
                                             <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE7C3;" FontSize="14"/>
-                                            <TextBlock Text=" Batch Export" Margin="4,0,0,0"/>
+                                            <TextBlock Text=" Batch Export" Margin="4,0,0,0" Width="80"/>
                                         </StackPanel>
                                     </Button>
                                 </StackPanel>
-                            </StackPanel>
+                        </StackPanel>
                         </GroupBox>
+
                     </StackPanel>
                 </ScrollViewer>
+
             </Grid>
         </DockPanel>
 
-        <!-- ステータスバー（ズーム＋比較＆進捗） -->
+        <!-- Status bar: [-][100%][Fit][+] -->
         <StatusBar Grid.Row="3">
             <StatusBarItem>
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                    <!-- − -->
-                    <Button Width="32" Height="24" Padding="0" Command="{Binding ZoomOutCommand}" ToolTip="縮小 (Ctrl+-)">
-                        <Viewbox Width="16" Height="16" Stretch="Uniform">
-                            <Canvas Width="16" Height="16" SnapsToDevicePixels="True" RenderOptions.EdgeMode="Aliased">
-                                <Ellipse Canvas.Left="1.5" Canvas.Top="1.5" Width="9" Height="9" StrokeThickness="1.25"
-                                         Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
-                                <Line X1="9.8" Y1="9.8" X2="14.5" Y2="14.5" StrokeThickness="1.25"
-                                      StrokeStartLineCap="Round" StrokeEndLineCap="Round"
-                                      Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
-                                <Line X1="4.2" Y1="6.0" X2="9.8" Y2="6.0" StrokeThickness="1.25"
-                                      Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
-                            </Canvas>
-                        </Viewbox>
+
+                    <Button Width="32" Height="24" Padding="0"
+                  Command="{Binding ZoomOutCommand}" ToolTip="Zoom out (Ctrl+-)">
+                        <TextBlock Text="−" FontSize="16"/>
                     </Button>
 
-                    <!-- 100% -->
-                    <Button Height="24" Margin="6,0,0,0" Command="{Binding ZoomResetCommand}" ToolTip="100%に戻す (Ctrl+0)">
-                        <StackPanel Orientation="Horizontal">
-                            <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE11A;" FontSize="16"/>
-                            <TextBlock Text=" 100%"/>
-                        </StackPanel>
+                    <Button Height="24" Margin="6,0,0,0"
+                  Command="{Binding ZoomResetCommand}" ToolTip="Actual size (Ctrl+0)">
+                        <TextBlock Text="100%"/>
                     </Button>
 
-                    <!-- Fit -->
-                    <Button Height="24" Margin="6,0,0,0" Click="FitButton_Click" ToolTip="画面にフィット">
+                    <Button Height="24" Margin="6,0,0,0" Click="FitButton_Click" ToolTip="Fit to window">
                         <TextBlock Text="Fit"/>
                     </Button>
 
-                    <!-- ＋ -->
-                    <Button Width="32" Height="24" Margin="6,0,0,0" Padding="0" Command="{Binding ZoomInCommand}" ToolTip="拡大 (Ctrl++)">
-                        <Viewbox Width="16" Height="16" Stretch="Uniform">
-                            <Canvas Width="16" Height="16" SnapsToDevicePixels="True" RenderOptions.EdgeMode="Aliased">
-                                <Ellipse Canvas.Left="1.5" Canvas.Top="1.5" Width="9" Height="9" StrokeThickness="1.25"
-                                         Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
-                                <Line X1="9.8" Y1="9.8" X2="14.5" Y2="14.5" StrokeThickness="1.25"
-                                      StrokeStartLineCap="Round" StrokeEndLineCap="Round"
-                                      Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
-                                <Line X1="4.2" Y1="6.0" X2="9.8" Y2="6.0" StrokeThickness="1.25"
-                                      Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
-                                <Line X1="7.0" Y1="3.2" X2="7.0" Y2="8.8" StrokeThickness="1.25"
-                                      Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
-                            </Canvas>
-                        </Viewbox>
+                    <Button Width="32" Height="24" Margin="6,0,0,0" Padding="0"
+                  Command="{Binding ZoomInCommand}" ToolTip="Zoom in (Ctrl++)">
+                        <TextBlock Text="＋" FontSize="16"/>
                     </Button>
 
                     <Separator Margin="10,0"/>
-                    <TextBlock Text="{Binding ZoomPercent, StringFormat={}{0:0}%}" MinWidth="60" TextAlignment="Right" VerticalAlignment="Center"/>
+                    <TextBlock Text="{Binding ZoomPercent, StringFormat={}{0:0}%}"
+                     MinWidth="60" TextAlignment="Right" VerticalAlignment="Center"/>
 
                     <Separator Margin="10,0"/>
-                    <ToggleButton Content="Compare" IsChecked="{Binding IsCompare}" ToolTip="Before / After を左右で比較"/>
+                    <ToggleButton Content="Compare" IsChecked="{Binding IsCompare}" ToolTip="Before / After compare"/>
 
                     <Separator Margin="10,0"/>
                     <TextBlock Text="Export:" VerticalAlignment="Center"/>
-                    <ProgressBar Width="120" Height="12" Minimum="0" Maximum="100"
-                                 Value="{Binding ExportProgress}"/>
+                    <ProgressBar Width="120" Height="12" Minimum="0" Maximum="100" Value="{Binding ExportProgress}"/>
                 </StackPanel>
             </StatusBarItem>
         </StatusBar>
+
     </Grid>
 </Window>
