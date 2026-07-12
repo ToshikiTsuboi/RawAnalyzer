@@ -44,6 +44,9 @@ public enum ViewportInteractionMode
 
     /// <summary>クリックでラインプロファイル位置指定。</summary>
     LineProfile,
+
+    /// <summary>クリックでホワイトバランス基準点指定(スポイト)。</summary>
+    WhiteBalancePick,
 }
 
 /// <summary>
@@ -70,6 +73,8 @@ public sealed class ImageViewport : FrameworkElement
     private int _frame;
     private TilePyramid? _pyramid;
     private DisplayLut _lut = DisplayLut.Create(new DisplayParameters());
+    private DevelopLuts _developLuts = DevelopLuts.Create(new DevelopParameters());
+    private ViewportDisplayMode _displayMode = ViewportDisplayMode.Raw;
 
     private double _zoom = 1.0;
     private double _originX;
@@ -118,6 +123,12 @@ public sealed class ImageViewport : FrameworkElement
 
     /// <summary>ラインプロファイルモードで画素がクリックされたときに発火する。</summary>
     public event EventHandler<CursorPixelEventArgs>? ProfilePointClicked;
+
+    /// <summary>スポイトモードで画素がクリックされたときに発火する。</summary>
+    public event EventHandler<CursorPixelEventArgs>? WhiteBalancePicked;
+
+    /// <summary>現在の表示モード。</summary>
+    public ViewportDisplayMode DisplayMode => _displayMode;
 
     /// <summary>マウス操作モード。</summary>
     public ViewportInteractionMode InteractionMode { get; set; } = ViewportInteractionMode.Pan;
@@ -202,6 +213,27 @@ public sealed class ImageViewport : FrameworkElement
         _lut = lut;
         RequestRender(fast: true);
         RestartIdleTimer();
+    }
+
+    /// <summary>表示モードを切り替えて再描画する。</summary>
+    /// <param name="mode">表示モード。</param>
+    public void SetDisplayMode(ViewportDisplayMode mode)
+    {
+        _displayMode = mode;
+        _overlay = null;
+        RequestRender(fast: false);
+    }
+
+    /// <summary>カラー現像LUTを差し替え、現像モードなら再描画する。</summary>
+    /// <param name="luts">現像LUT。</param>
+    public void SetDevelopLuts(DevelopLuts luts)
+    {
+        _developLuts = luts;
+        if (_displayMode == ViewportDisplayMode.ColorDevelop)
+        {
+            RequestRender(fast: true);
+            RestartIdleTimer();
+        }
     }
 
     /// <summary>1段階ズームインする(ビュー中心基準)。</summary>
@@ -320,18 +352,22 @@ public sealed class ImageViewport : FrameworkElement
             return;
         }
 
-        if (InteractionMode == ViewportInteractionMode.LineProfile)
+        if (InteractionMode is ViewportInteractionMode.LineProfile
+            or ViewportInteractionMode.WhiteBalancePick)
         {
             int px = (int)Math.Floor(_originX + pos.X / _zoom);
             int py = (int)Math.Floor(_originY + pos.Y / _zoom);
             if (px >= 0 && py >= 0 && px < _image.Width && py < _image.Height)
             {
-                ProfilePointClicked?.Invoke(this, new CursorPixelEventArgs
+                var args = new CursorPixelEventArgs { X = px, Y = py, IsInsideImage = true };
+                if (InteractionMode == ViewportInteractionMode.LineProfile)
                 {
-                    X = px,
-                    Y = py,
-                    IsInsideImage = true,
-                });
+                    ProfilePointClicked?.Invoke(this, args);
+                }
+                else
+                {
+                    WhiteBalancePicked?.Invoke(this, args);
+                }
             }
 
             return;
@@ -457,6 +493,19 @@ public sealed class ImageViewport : FrameworkElement
             return null;
         }
 
+        if (_displayMode == ViewportDisplayMode.ChannelSplit
+            && _format?.Bayer != BayerPattern.None)
+        {
+            return new ChannelSplitRenderSource(_image, _frame);
+        }
+
+        if (_displayMode is ViewportDisplayMode.BayerColor or ViewportDisplayMode.ColorDevelop
+            && _format?.Bayer != BayerPattern.None)
+        {
+            // カラー系はBayer位相が必要なため常に等倍データから描画する
+            return new RawImageRenderSource(_image, _frame);
+        }
+
         int factor = _pyramid?.SelectFactor(_zoom) ?? 1;
         if (fast && _pyramid is not null)
         {
@@ -500,15 +549,22 @@ public sealed class ImageViewport : FrameworkElement
         double zoom = _zoom;
         double originX = _originX;
         double originY = _originY;
-        DisplayLut lut = _lut;
+        var request = new RenderRequest
+        {
+            Source = source,
+            Lut = _lut,
+            Mode = _displayMode,
+            Pattern = _format?.Bayer ?? BayerPattern.None,
+            DevelopLuts = _developLuts,
+        };
 
         _renderTask = Task.Run(() =>
         {
-            byte[] buffer = ArrayPool<byte>.Shared.Rent(destW * destH);
+            byte[] buffer = ArrayPool<byte>.Shared.Rent(destW * destH * 4);
             try
             {
                 ViewportRenderer.Render(
-                    source, lut, zoom, originX, originY, destW, destH, buffer, cts.Token);
+                    request, zoom, originX, originY, destW, destH, buffer, cts.Token);
                 Dispatcher.Invoke(() =>
                 {
                     if (cts.IsCancellationRequested)
@@ -533,12 +589,15 @@ public sealed class ImageViewport : FrameworkElement
     {
         if (_bitmap is null || _bitmap.PixelWidth != width || _bitmap.PixelHeight != height)
         {
-            _bitmap = new WriteableBitmap(width, height, 96, 96, PixelFormats.Gray8, null);
+            _bitmap = new WriteableBitmap(width, height, 96, 96, PixelFormats.Bgra32, null);
         }
 
-        _bitmap.WritePixels(new Int32Rect(0, 0, width, height), buffer, width, 0);
+        _bitmap.WritePixels(new Int32Rect(0, 0, width, height), buffer, width * 4, 0);
         _renderedFactor = factor;
-        _overlay = !fast && zoom >= RawOverlayMinZoom ? FetchOverlayData() : null;
+        _overlay = !fast && zoom >= RawOverlayMinZoom
+            && _displayMode != ViewportDisplayMode.ChannelSplit
+            ? FetchOverlayData()
+            : null;
         InvalidateVisual();
         ViewportStateChanged?.Invoke(this, new ViewportStateEventArgs
         {

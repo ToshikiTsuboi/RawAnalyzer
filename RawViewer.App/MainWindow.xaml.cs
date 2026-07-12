@@ -6,6 +6,7 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using Microsoft.Win32;
 using RawViewer.App.Controls;
+using RawViewer.App.Rendering;
 using RawViewer.App.ViewModels;
 using RawViewer.App.Views;
 using RawViewer.Core;
@@ -43,6 +44,7 @@ public partial class MainWindow : Window
         Viewport.CursorPixelChanged += OnCursorPixelChanged;
         Viewport.RoiChanged += OnViewportRoiChanged;
         Viewport.ProfilePointClicked += OnProfilePointClicked;
+        Viewport.WhiteBalancePicked += OnWhiteBalancePicked;
         InputBindings.Add(new KeyBinding(
             new Mvvm.RelayCommand(_ => OnOpenFileClick(this, new RoutedEventArgs())),
             new KeyGesture(Key.O, ModifierKeys.Control)));
@@ -200,8 +202,11 @@ public partial class MainWindow : Window
             + (image.FrameCount > 1 ? $" · {image.FrameCount}fr" : "");
         _vm.HasImage = true;
 
+        DisplayModeCombo.SelectedIndex = 0;
+        Viewport.SetDisplayMode(ViewportDisplayMode.Raw);
         Viewport.SetImage(image, image.Format);
         Viewport.SetLut(BuildLut());
+        UpdateDevelopLuts();
 
         RefreshHistogram(roi: null);
         await BuildPyramidAsync(image, cts.Token);
@@ -369,6 +374,7 @@ public partial class MainWindow : Window
         if (RoiToggle.IsChecked == true)
         {
             ProfileToggle.IsChecked = false;
+            WbPickToggle.IsChecked = false;
             Viewport.InteractionMode = ViewportInteractionMode.RoiSelect;
         }
         else
@@ -387,6 +393,7 @@ public partial class MainWindow : Window
         if (ProfileToggle.IsChecked == true)
         {
             RoiToggle.IsChecked = false;
+            WbPickToggle.IsChecked = false;
             Viewport.InteractionMode = ViewportInteractionMode.LineProfile;
         }
         else if (Viewport.InteractionMode == ViewportInteractionMode.LineProfile)
@@ -461,8 +468,111 @@ public partial class MainWindow : Window
             if (_vm.HasImage)
             {
                 Viewport.SetLut(BuildLut());
+                if (e.PropertyName is nameof(MainViewModel.Gamma)
+                    or nameof(MainViewModel.BlackLevel))
+                {
+                    UpdateDevelopLuts();
+                }
             }
         }
+
+        if (e.PropertyName is nameof(MainViewModel.WbGainR) or nameof(MainViewModel.WbGainB)
+            && _vm.HasImage)
+        {
+            UpdateDevelopLuts();
+        }
+    }
+
+    private void UpdateDevelopLuts()
+    {
+        double gamma = _vm.Gamma > 0 ? _vm.Gamma : 1.0;
+        Viewport.SetDevelopLuts(DevelopLuts.Create(new DevelopParameters(
+            _blackPoint, _vm.WbGainR, _vm.WbGainB, gamma)));
+    }
+
+    // ---- 表示モード・ホワイトバランス ----
+
+    private void OnDisplayModeChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+    {
+        if (Viewport is null || _currentFormat is null)
+        {
+            return;
+        }
+
+        ViewportDisplayMode mode = DisplayModeCombo.SelectedIndex switch
+        {
+            1 => ViewportDisplayMode.BayerColor,
+            2 => ViewportDisplayMode.ColorDevelop,
+            3 => ViewportDisplayMode.ChannelSplit,
+            _ => ViewportDisplayMode.Raw,
+        };
+
+        if (mode != ViewportDisplayMode.Raw && _currentFormat.Bayer == BayerPattern.None)
+        {
+            MessageBox.Show(this, "この表示モードにはBayerパターンの指定が必要です。",
+                "RawViewer", MessageBoxButton.OK, MessageBoxImage.Information);
+            DisplayModeCombo.SelectedIndex = 0;
+            return;
+        }
+
+        Viewport.SetDisplayMode(mode);
+    }
+
+    private async void OnGrayWorldClick(object sender, RoutedEventArgs e)
+    {
+        if (_currentImage is null || _currentFormat is null
+            || _currentFormat.Bayer == BayerPattern.None)
+        {
+            return;
+        }
+
+        RawImage image = _currentImage;
+        BayerPattern pattern = _currentFormat.Bayer;
+        WhiteBalanceGains gains;
+        try
+        {
+            gains = await Task.Run(() => WhiteBalance.ComputeGrayWorld(image, 0, pattern));
+        }
+        catch (Exception)
+        {
+            return;
+        }
+
+        if (!ReferenceEquals(image, _currentImage))
+        {
+            return;
+        }
+
+        _vm.WbGainR = Math.Clamp(gains.GainR, 0.5, 4.0);
+        _vm.WbGainB = Math.Clamp(gains.GainB, 0.5, 4.0);
+    }
+
+    private void OnWbPickToggleChanged(object sender, RoutedEventArgs e)
+    {
+        if (WbPickToggle.IsChecked == true)
+        {
+            RoiToggle.IsChecked = false;
+            ProfileToggle.IsChecked = false;
+            Viewport.InteractionMode = ViewportInteractionMode.WhiteBalancePick;
+        }
+        else if (Viewport.InteractionMode == ViewportInteractionMode.WhiteBalancePick)
+        {
+            Viewport.InteractionMode = ViewportInteractionMode.Pan;
+        }
+    }
+
+    private void OnWhiteBalancePicked(object? sender, CursorPixelEventArgs e)
+    {
+        if (_currentImage is null || _currentFormat is null
+            || _currentFormat.Bayer == BayerPattern.None)
+        {
+            return;
+        }
+
+        WhiteBalanceGains gains = WhiteBalance.ComputeSpotGains(
+            _currentImage, 0, _currentFormat.Bayer, e.X, e.Y);
+        _vm.WbGainR = Math.Clamp(gains.GainR, 0.5, 4.0);
+        _vm.WbGainB = Math.Clamp(gains.GainB, 0.5, 4.0);
     }
 
     private DisplayLut BuildLut()
@@ -569,10 +679,25 @@ public partial class MainWindow : Window
             return;
         }
 
+        // チャネル分割表示ではタイル座標を元画像座標へ写像する
+        int sourceX = e.X;
+        int sourceY = e.Y;
+        if (Viewport.DisplayMode == ViewportDisplayMode.ChannelSplit)
+        {
+            int evenW = _currentImage.Width & ~1;
+            int evenH = _currentImage.Height & ~1;
+            if (e.X >= evenW || e.Y >= evenH)
+            {
+                return;
+            }
+
+            (sourceX, sourceY) = BayerSplit.MapTiledToSource(e.X, e.Y, evenW, evenH);
+        }
+
         ushort value;
         try
         {
-            value = _currentImage.GetPixel(e.X, e.Y);
+            value = _currentImage.GetPixel(sourceX, sourceY);
         }
         catch (ObjectDisposedException)
         {
@@ -582,9 +707,9 @@ public partial class MainWindow : Window
         int code = value >> CurrentShift;
         int maxCode = (1 << _currentFormat.BitDepth) - 1;
         string channel = BayerHelper.GetLabel(
-            BayerHelper.GetChannel(_currentFormat.Bayer, e.X, e.Y));
-        _vm.CursorStatusText = $"({e.X}, {e.Y}) raw={code}";
-        _vm.CursorOverlayText = $"({e.X}, {e.Y})  raw: {code} / {maxCode}  {channel}";
+            BayerHelper.GetChannel(_currentFormat.Bayer, sourceX, sourceY));
+        _vm.CursorStatusText = $"({sourceX}, {sourceY}) raw={code}";
+        _vm.CursorOverlayText = $"({sourceX}, {sourceY})  raw: {code} / {maxCode}  {channel}";
     }
 
     // ---- ズーム操作 ----

@@ -32,6 +32,8 @@ public sealed class MainViewModel : ObservableObject
     private bool _histogramIsSampled;
     private bool _hasRoi;
     private string _roiOverlayText = "";
+    private double _wbGainR = 1.0;
+    private double _wbGainB = 1.0;
     private ImageSource? _histogramSource;
     private string _histMeanSigmaText = "— / —";
     private string _histMinMaxText = "— / —";
@@ -167,6 +169,20 @@ public sealed class MainViewModel : ObservableObject
     {
         get => _roiOverlayText;
         set => SetProperty(ref _roiOverlayText, value);
+    }
+
+    /// <summary>ホワイトバランスRゲイン。</summary>
+    public double WbGainR
+    {
+        get => _wbGainR;
+        set => SetProperty(ref _wbGainR, value);
+    }
+
+    /// <summary>ホワイトバランスBゲイン。</summary>
+    public double WbGainB
+    {
+        get => _wbGainB;
+        set => SetProperty(ref _wbGainB, value);
     }
 
     /// <summary>ヒストグラム画像。</summary>

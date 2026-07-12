@@ -90,11 +90,13 @@
                 <Border Style="{StaticResource ToolSep}" />
                 <TextBlock Text="表示:" Foreground="{StaticResource TextDim}"
                            VerticalAlignment="Center" Margin="0,0,4,0" FontSize="12" />
-                <ComboBox SelectedIndex="0" VerticalAlignment="Center" FontSize="12" MinWidth="110">
+                <ComboBox x:Name="DisplayModeCombo" SelectedIndex="0" VerticalAlignment="Center"
+                          FontSize="12" MinWidth="110" IsEnabled="{Binding HasImage}"
+                          SelectionChanged="OnDisplayModeChanged">
                     <ComboBoxItem Content="Raw表示" />
-                    <ComboBoxItem Content="Bayerカラー" IsEnabled="False" />
-                    <ComboBoxItem Content="カラー現像" IsEnabled="False" />
-                    <ComboBoxItem Content="チャネル分割 (R/Gr/Gb/B)" IsEnabled="False" />
+                    <ComboBoxItem Content="Bayerカラー" />
+                    <ComboBoxItem Content="カラー現像" />
+                    <ComboBoxItem Content="チャネル分割 (R/Gr/Gb/B)" />
                     <ComboBoxItem Content="HDR分割 (長/短)" IsEnabled="False" />
                     <ComboBoxItem Content="HDR合成" IsEnabled="False" />
                 </ComboBox>
@@ -267,24 +269,39 @@
                             </StackPanel>
                         </Border>
 
-                        <!-- ホワイトバランス (未実装) -->
+                        <!-- ホワイトバランス -->
                         <Border BorderBrush="{StaticResource BorderBrushDark}"
                                 BorderThickness="0,0,0,1" Padding="12,10">
                             <StackPanel>
                                 <TextBlock Style="{StaticResource SectionHeader}" Text="ホワイトバランス" />
                                 <DockPanel Margin="0,2">
-                                    <TextBlock Style="{StaticResource RowLabel}" Text="Rゲイン" />
-                                    <TextBlock DockPanel.Dock="Right" Style="{StaticResource RowValue}" Text="—" />
-                                    <Border />
+                                    <TextBlock Style="{StaticResource RowLabel}" Text="Rゲイン" Width="64" />
+                                    <TextBlock DockPanel.Dock="Right" Style="{StaticResource RowValue}"
+                                               Text="{Binding WbGainR, StringFormat={}{0:F2}}" Width="36"
+                                               TextAlignment="Right" />
+                                    <Slider Minimum="0.5" Maximum="4" Value="{Binding WbGainR}"
+                                            SmallChange="0.02" LargeChange="0.2" />
                                 </DockPanel>
                                 <DockPanel Margin="0,2">
-                                    <TextBlock Style="{StaticResource RowLabel}" Text="Bゲイン" />
-                                    <TextBlock DockPanel.Dock="Right" Style="{StaticResource RowValue}" Text="—" />
-                                    <Border />
+                                    <TextBlock Style="{StaticResource RowLabel}" Text="Bゲイン" Width="64" />
+                                    <TextBlock DockPanel.Dock="Right" Style="{StaticResource RowValue}"
+                                               Text="{Binding WbGainB, StringFormat={}{0:F2}}" Width="36"
+                                               TextAlignment="Right" />
+                                    <Slider Minimum="0.5" Maximum="4" Value="{Binding WbGainB}"
+                                            SmallChange="0.02" LargeChange="0.2" />
                                 </DockPanel>
                                 <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
                                     <Button Style="{StaticResource ToolButton}" Content="グレーワールド"
-                                            IsEnabled="False" FontSize="11" />
+                                            Click="OnGrayWorldClick" FontSize="11"
+                                            IsEnabled="{Binding HasImage}" />
+                                    <ToggleButton x:Name="WbPickToggle" Content="スポイト"
+                                                  Background="{StaticResource Panel2Brush}"
+                                                  Foreground="#FFD8D8D4"
+                                                  BorderBrush="{StaticResource BorderBrushDark}"
+                                                  Padding="10,3" Margin="2,0" FontSize="11"
+                                                  IsEnabled="{Binding HasImage}"
+                                                  Checked="OnWbPickToggleChanged"
+                                                  Unchecked="OnWbPickToggleChanged" />
                                 </StackPanel>
                             </StackPanel>
                         </Border>
