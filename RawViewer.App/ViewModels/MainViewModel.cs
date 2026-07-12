@@ -4,10 +4,11 @@ using RawViewer.App.Mvvm;
 
 namespace RawViewer.App.ViewModels;
 
-/// <summary>ファイルリストの1項目。</summary>
+/// <summary>ファイルリストの1項目(ファイルまたはディレクトリ)。</summary>
 /// <param name="Name">表示名。</param>
 /// <param name="FullPath">フルパス。</param>
-public sealed record FileEntry(string Name, string FullPath);
+/// <param name="IsDirectory">ディレクトリかどうか(ダブルクリックで移動)。</param>
+public sealed record FileEntry(string Name, string FullPath, bool IsDirectory = false);
 
 /// <summary>
 /// メインウィンドウのViewModel。表示状態(テキスト・スライダー値・ヒストグラム)を保持する。

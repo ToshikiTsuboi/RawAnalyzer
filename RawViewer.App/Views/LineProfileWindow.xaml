@@ -7,10 +7,10 @@
     <DockPanel Margin="10">
         <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,8">
             <RadioButton x:Name="HorizontalRadio" Content="水平" IsChecked="True"
-                         Foreground="#FFD8D8D4" Margin="0,0,12,0" VerticalAlignment="Center"
+                         Margin="0,0,12,0" VerticalAlignment="Center"
                          Checked="OnDirectionChanged" />
             <RadioButton x:Name="VerticalRadio" Content="垂直"
-                         Foreground="#FFD8D8D4" Margin="0,0,20,0" VerticalAlignment="Center"
+                         Margin="0,0,20,0" VerticalAlignment="Center"
                          Checked="OnDirectionChanged" />
             <TextBlock x:Name="InfoText" FontFamily="Consolas" FontSize="12"
                        Foreground="#FF9A9A95" VerticalAlignment="Center" />

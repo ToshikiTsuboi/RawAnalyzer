@@ -8,11 +8,10 @@
     <StackPanel Margin="16,14">
         <TextBlock x:Name="MessageText" FontSize="12" Margin="0,0,0,10"
                    TextTrimming="CharacterEllipsis" />
-        <ProgressBar x:Name="Bar" Height="16" Minimum="0" Maximum="100" />
+        <ProgressBar x:Name="Bar" Height="10" Minimum="0" Maximum="100" />
         <TextBlock x:Name="PercentText" FontFamily="Consolas" FontSize="11"
                    Foreground="#FF9A9A95" Margin="0,4,0,10" HorizontalAlignment="Right" />
         <Button x:Name="CancelButton" Content="キャンセル" HorizontalAlignment="Right"
-                Padding="16,4" Background="#FF38383D" Foreground="#FFD8D8D4"
-                BorderBrush="#FF48484E" Click="OnCancelClick" />
+                Click="OnCancelClick" />
     </StackPanel>
 </Window>

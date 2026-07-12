@@ -6,17 +6,11 @@
         WindowStartupLocation="CenterOwner" ResizeMode="NoResize" ShowInTaskbar="False">
     <Window.Resources>
         <Style TargetType="TextBlock">
-            <Setter Property="Foreground" Value="#FF9A9A95" />
+            <Setter Property="Foreground" Value="{StaticResource TextDim}" />
             <Setter Property="FontSize" Value="12" />
         </Style>
-        <Style TargetType="ComboBox">
+        <Style TargetType="ComboBox" BasedOn="{StaticResource {x:Type ComboBox}}">
             <Setter Property="Margin" Value="0,3,0,0" />
-        </Style>
-        <Style TargetType="Button">
-            <Setter Property="Padding" Value="14,5" />
-            <Setter Property="Background" Value="#FF38383D" />
-            <Setter Property="Foreground" Value="#FFD8D8D4" />
-            <Setter Property="BorderBrush" Value="#FF48484E" />
         </Style>
     </Window.Resources>
     <StackPanel Margin="16,14">

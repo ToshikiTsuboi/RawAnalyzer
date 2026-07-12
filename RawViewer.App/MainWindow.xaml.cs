@@ -103,16 +103,30 @@ public partial class MainWindow : Window
 
     private void LoadFolder(string folder, string? selectPath)
     {
-        _vm.FolderPath = $"📂 {folder}";
-        _vm.Files.Clear();
+        folder = Path.GetFullPath(folder);
+        var entries = new List<FileEntry>();
         try
         {
+            // 上位ディレクトリへ移動する「..」+ サブディレクトリ + 対応ファイル
+            string? parent = Path.GetDirectoryName(folder);
+            if (!string.IsNullOrEmpty(parent))
+            {
+                entries.Add(new FileEntry("📁 ..", parent, IsDirectory: true));
+            }
+
+            foreach (string dir in Directory.EnumerateDirectories(folder)
+                .OrderBy(p => p, StringComparer.OrdinalIgnoreCase))
+            {
+                entries.Add(new FileEntry(
+                    $"📁 {Path.GetFileName(dir)}", dir, IsDirectory: true));
+            }
+
             foreach (string path in Directory.EnumerateFiles(folder)
                 .Where(p => SupportedExtensions.Contains(
                     Path.GetExtension(p), StringComparer.OrdinalIgnoreCase))
                 .OrderBy(p => p, StringComparer.OrdinalIgnoreCase))
             {
-                _vm.Files.Add(new FileEntry(Path.GetFileName(path), path));
+                entries.Add(new FileEntry(Path.GetFileName(path), path));
             }
         }
         catch (Exception ex)
@@ -120,6 +134,13 @@ public partial class MainWindow : Window
             MessageBox.Show(this, $"フォルダを読み込めません: {ex.Message}", "RawViewer",
                 MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
+        }
+
+        _vm.FolderPath = $"📂 {folder}";
+        _vm.Files.Clear();
+        foreach (FileEntry entry in entries)
+        {
+            _vm.Files.Add(entry);
         }
 
         if (selectPath is not null)
@@ -131,9 +152,18 @@ public partial class MainWindow : Window
 
     private void OnFileListDoubleClick(object sender, MouseButtonEventArgs e)
     {
-        if (_vm.SelectedFile is not null)
+        if (_vm.SelectedFile is not { } entry)
         {
-            OpenPath(_vm.SelectedFile.FullPath);
+            return;
+        }
+
+        if (entry.IsDirectory)
+        {
+            LoadFolder(entry.FullPath, selectPath: null);
+        }
+        else
+        {
+            OpenPath(entry.FullPath);
         }
     }
 
