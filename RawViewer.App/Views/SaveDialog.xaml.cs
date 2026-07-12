@@ -20,6 +20,9 @@ public enum SaveFormat
 
     /// <summary>8bit JPEG(表示LUT/現像焼き込み)。</summary>
     Jpeg8,
+
+    /// <summary>float32 raw(HDR合成結果)。</summary>
+    FloatRaw,
 }
 
 /// <summary>保存ダイアログの選択結果。</summary>
@@ -34,13 +37,24 @@ public sealed record SaveChoice(SaveFormat Format, BitPacking Packing, Endiannes
 public partial class SaveDialog : Window
 {
     private readonly long _totalPixels;
+    private readonly bool _allowFloatRaw;
 
     /// <summary>ダイアログを生成する。</summary>
     /// <param name="totalPixels">対象画像の総画素数(巨大画像の形式制限判定用)。</param>
-    public SaveDialog(long totalPixels)
+    /// <param name="allowFloatRaw">HDR合成中のfloat raw保存を選択肢に含めるか。</param>
+    public SaveDialog(long totalPixels, bool allowFloatRaw = false)
     {
         InitializeComponent();
         _totalPixels = totalPixels;
+        _allowFloatRaw = allowFloatRaw;
+        if (allowFloatRaw)
+        {
+            FormatCombo.Items.Add(new System.Windows.Controls.ComboBoxItem
+            {
+                Content = "float raw (32bit・HDR合成結果)",
+            });
+        }
+
         FormatCombo.SelectedIndex = 0;
     }
 
@@ -53,6 +67,7 @@ public partial class SaveDialog : Window
         2 => SaveFormat.Png16,
         3 => SaveFormat.Png8,
         4 => SaveFormat.Jpeg8,
+        5 when _allowFloatRaw => SaveFormat.FloatRaw,
         _ => SaveFormat.Raw,
     };
 

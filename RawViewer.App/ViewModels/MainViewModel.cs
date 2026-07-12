@@ -34,6 +34,7 @@ public sealed class MainViewModel : ObservableObject
     private string _roiOverlayText = "";
     private double _wbGainR = 1.0;
     private double _wbGainB = 1.0;
+    private bool _hdrTargetVisible;
     private ImageSource? _histogramSource;
     private string _histMeanSigmaText = "— / —";
     private string _histMinMaxText = "— / —";
@@ -183,6 +184,13 @@ public sealed class MainViewModel : ObservableObject
     {
         get => _wbGainB;
         set => SetProperty(ref _wbGainB, value);
+    }
+
+    /// <summary>HDR分割表示中の調整対象コンボを表示するか。</summary>
+    public bool HdrTargetVisible
+    {
+        get => _hdrTargetVisible;
+        set => SetProperty(ref _hdrTargetVisible, value);
     }
 
     /// <summary>ヒストグラム画像。</summary>

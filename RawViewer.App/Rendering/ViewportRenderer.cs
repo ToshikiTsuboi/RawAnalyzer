@@ -36,6 +36,15 @@ public sealed class RenderRequest
 
     /// <summary>カラー現像LUT(ColorDevelopで必須)。</summary>
     public DevelopLuts? DevelopLuts { get; init; }
+
+    /// <summary>
+    /// HDR分割表示用のフレーム別LUT。設定時はX座標をSegmentWidthで区切って
+    /// セグメントごとに適用する(Rawモードのみ)。
+    /// </summary>
+    public IReadOnlyList<DisplayLut>? SegmentLuts { get; init; }
+
+    /// <summary>セグメント幅(元画像px)。</summary>
+    public int SegmentWidth { get; init; }
 }
 
 /// <summary>
@@ -182,12 +191,18 @@ public static class ViewportRenderer
                 source.ReadRow(s.LevelY, s.LevelX0, s.Count, rowBuffer.AsSpan(0, s.Count));
                 FillBackground(destRow[..(s.Dx0 * 4)]);
                 FillBackground(destRow[((s.Dx1 + 1) * 4)..]);
+                IReadOnlyList<DisplayLut>? segmentLuts = request.SegmentLuts;
+                int segmentWidth = Math.Max(1, request.SegmentWidth);
                 for (int dx = s.Dx0; dx <= s.Dx1; dx++)
                 {
+                    double srcX = originX + (dx + 0.5) * invZoom;
                     int levelX = Math.Clamp(
-                        (int)((originX + (dx + 0.5) * invZoom) / factor) - s.LevelX0,
-                        0, s.Count - 1);
-                    byte d = lut.Map(rowBuffer[levelX]);
+                        (int)(srcX / factor) - s.LevelX0, 0, s.Count - 1);
+                    DisplayLut activeLut = segmentLuts is null
+                        ? lut
+                        : segmentLuts[Math.Clamp(
+                            (int)srcX / segmentWidth, 0, segmentLuts.Count - 1)];
+                    byte d = activeLut.Map(rowBuffer[levelX]);
                     int o = dx * 4;
                     destRow[o] = d;
                     destRow[o + 1] = d;

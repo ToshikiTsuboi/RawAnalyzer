@@ -100,8 +100,8 @@
                     <ComboBoxItem Content="Bayerカラー" />
                     <ComboBoxItem Content="カラー現像" />
                     <ComboBoxItem Content="チャネル分割 (R/Gr/Gb/B)" />
-                    <ComboBoxItem Content="HDR分割 (長/短)" IsEnabled="False" />
-                    <ComboBoxItem Content="HDR合成" IsEnabled="False" />
+                    <ComboBoxItem Content="HDR分割 (長/短)" />
+                    <ComboBoxItem Content="HDR合成" />
                 </ComboBox>
                 <Border Style="{StaticResource ToolSep}" />
                 <Button Style="{StaticResource ToolButton}" Content="−" Click="OnZoomOutClick" />
@@ -230,6 +230,13 @@
                                     <Slider Minimum="0" Maximum="{Binding BlackLevelMax}"
                                             Value="{Binding BlackLevel}"
                                             SmallChange="1" LargeChange="64" />
+                                </DockPanel>
+                                <DockPanel Margin="0,6,0,0"
+                                           Visibility="{Binding HdrTargetVisible,
+                                               Converter={StaticResource BoolToVis}}">
+                                    <TextBlock Style="{StaticResource RowLabel}" Text="調整対象"
+                                               Width="64" VerticalAlignment="Center" />
+                                    <ComboBox x:Name="HdrTargetCombo" FontSize="11" />
                                 </DockPanel>
                                 <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
                                     <Button Style="{StaticResource ToolButton}" Content="自動 (0.35%クリップ)"

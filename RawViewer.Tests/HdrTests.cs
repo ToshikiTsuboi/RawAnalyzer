@@ -1,0 +1,351 @@
+using RawViewer.Core;
+using Xunit;
+
+namespace RawViewer.Tests;
+
+public class HdrSplitterTests
+{
+    private static RawImage LoadImage(ushort[] values, RawFormat format)
+    {
+        string path = TestData.WriteTempFile(TestData.EncodeRawFile(values, format));
+        try
+        {
+            return RawLoader.Load(path, format);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void Split_LineInterleaved2Stages_SeparatesEvenOddRows()
+    {
+        const int width = 4;
+        const int height = 6;
+        var values = new ushort[width * height];
+        for (int y = 0; y < height; y++)
+        {
+            for (int x = 0; x < width; x++)
+            {
+                values[y * width + x] = (ushort)(y * 1000 + x);
+            }
+        }
+
+        var format = new RawFormat
+        {
+            Width = width, Height = height, BitDepth = 16, Hdr = HdrMode.Dol, HdrStages = 2,
+        };
+        using RawImage image = LoadImage(values, format);
+
+        IReadOnlyList<RawImage> frames = HdrSplitter.Split(image);
+
+        Assert.Equal(2, frames.Count);
+        Assert.All(frames, f => Assert.Equal(3, f.Height));
+        Assert.All(frames, f => Assert.Equal(HdrMode.None, f.Format.Hdr));
+        for (int y = 0; y < 3; y++)
+        {
+            for (int x = 0; x < width; x++)
+            {
+                Assert.Equal((ushort)(y * 2 * 1000 + x), frames[0].GetPixel(x, y));
+                Assert.Equal((ushort)((y * 2 + 1) * 1000 + x), frames[1].GetPixel(x, y));
+            }
+        }
+    }
+
+    [Fact]
+    public void Split_LineInterleaved3Stages_SeparatesByRowPeriod()
+    {
+        const int width = 2;
+        const int height = 9;
+        var values = new ushort[width * height];
+        for (int y = 0; y < height; y++)
+        {
+            values[y * width] = (ushort)(y * 100);
+            values[y * width + 1] = (ushort)(y * 100 + 1);
+        }
+
+        var format = new RawFormat
+        {
+            Width = width, Height = height, BitDepth = 16,
+            Hdr = HdrMode.Staggered, HdrStages = 3,
+        };
+        using RawImage image = LoadImage(values, format);
+
+        IReadOnlyList<RawImage> frames = HdrSplitter.Split(image);
+
+        Assert.Equal(3, frames.Count);
+        for (int stage = 0; stage < 3; stage++)
+        {
+            for (int y = 0; y < 3; y++)
+            {
+                Assert.Equal((ushort)((y * 3 + stage) * 100), frames[stage].GetPixel(0, y));
+            }
+        }
+    }
+
+    [Fact]
+    public void Split_FrameSequential_ReturnsEachFrame()
+    {
+        const int width = 4;
+        const int height = 3;
+        ushort[] values = TestData.MakePattern(width * height * 2, 16);
+        var format = new RawFormat
+        {
+            Width = width, Height = height, BitDepth = 16,
+            FrameCount = 2, Hdr = HdrMode.Dol, HdrStages = 2,
+        };
+        using RawImage image = LoadImage(values, format);
+
+        IReadOnlyList<RawImage> frames = HdrSplitter.Split(image);
+
+        Assert.Equal(2, frames.Count);
+        for (int f = 0; f < 2; f++)
+        {
+            Assert.Equal(height, frames[f].Height);
+            for (int y = 0; y < height; y++)
+            {
+                for (int x = 0; x < width; x++)
+                {
+                    Assert.Equal(image.GetPixel(x, y, f), frames[f].GetPixel(x, y));
+                }
+            }
+        }
+    }
+
+    [Fact]
+    public void Split_NoHdrMode_Throws()
+    {
+        ushort[] values = TestData.MakePattern(4, 16);
+        var format = new RawFormat { Width = 2, Height = 2, BitDepth = 16 };
+        using RawImage image = LoadImage(values, format);
+        Assert.Throws<InvalidOperationException>(() => HdrSplitter.Split(image));
+    }
+
+    [Fact]
+    public void Split_FrameCountMismatch_Throws()
+    {
+        ushort[] values = TestData.MakePattern(2 * 3 * 2, 16);
+        var format = new RawFormat
+        {
+            Width = 2, Height = 3, BitDepth = 16,
+            FrameCount = 2, Hdr = HdrMode.Dol, HdrStages = 3,
+        };
+        using RawImage image = LoadImage(values, format);
+        Assert.Throws<InvalidOperationException>(() => HdrSplitter.Split(image));
+    }
+}
+
+public class HdrMergerTests
+{
+    private static RawImage MakeFrame(ushort[] values, int width, int height)
+    {
+        var format = new RawFormat { Width = width, Height = height, BitDepth = 16 };
+        string path = TestData.WriteTempFile(TestData.EncodeRawFile(values, format));
+        try
+        {
+            return RawLoader.Load(path, format);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    /// <summary>整合するシーン(S)から長秒/短秒フレームを合成用に生成する。</summary>
+    private static (RawImage Longer, RawImage Shorter, double[] Scene) MakeConsistentPair(
+        int width, int height, int ratio, int step, int black = 0)
+    {
+        int count = width * height;
+        var scene = new double[count];
+        var longer = new ushort[count];
+        var shorter = new ushort[count];
+        for (int i = 0; i < count; i++)
+        {
+            long s = (long)i * step;
+            scene[i] = s;
+            longer[i] = (ushort)Math.Min(65535, s + black);
+            shorter[i] = (ushort)Math.Min(65535, s / ratio + black);
+        }
+
+        return (MakeFrame(longer, width, height), MakeFrame(shorter, width, height), scene);
+    }
+
+    [Fact]
+    public void Merge_ConsistentScene_RecoversSceneExactly()
+    {
+        // S = i*512, 最大 ≈ 16×65535。短秒 = S/16 (整数厳密)
+        const int width = 128;
+        const int height = 16;
+        (RawImage longFrame, RawImage shortFrame, double[] scene) =
+            MakeConsistentPair(width, height, ratio: 16, step: 512);
+        using (longFrame)
+        using (shortFrame)
+        {
+            HdrImage merged = HdrMerger.Merge(
+                new[] { longFrame, shortFrame }, new HdrMergeParameters(ExposureRatio: 16));
+
+            for (int i = 0; i < scene.Length; i++)
+            {
+                Assert.True(Math.Abs(merged.Pixels[i] - scene[i]) <= 0.5,
+                    $"i={i}: merged={merged.Pixels[i]} scene={scene[i]}");
+            }
+
+            Assert.Equal(65535f * 16, merged.FullScale, 1);
+        }
+    }
+
+    [Fact]
+    public void Merge_RampIsMonotonicAcrossSaturationBoundary()
+    {
+        const int width = 256;
+        const int height = 8;
+        (RawImage longFrame, RawImage shortFrame, _) =
+            MakeConsistentPair(width, height, ratio: 16, step: 512);
+        using (longFrame)
+        using (shortFrame)
+        {
+            HdrImage merged = HdrMerger.Merge(
+                new[] { longFrame, shortFrame }, new HdrMergeParameters(ExposureRatio: 16));
+
+            for (int i = 1; i < merged.Pixels.Length; i++)
+            {
+                Assert.True(merged.Pixels[i] >= merged.Pixels[i - 1] - 0.01f,
+                    $"単調増加が崩れています: i={i}, {merged.Pixels[i - 1]} → {merged.Pixels[i]}");
+            }
+        }
+    }
+
+    [Fact]
+    public void Merge_WithBlackLevel_SubtractsBeforeScaling()
+    {
+        const int width = 64;
+        const int height = 8;
+        const int black = 1000;
+        (RawImage longFrame, RawImage shortFrame, double[] scene) =
+            MakeConsistentPair(width, height, ratio: 16, step: 256, black: black);
+        using (longFrame)
+        using (shortFrame)
+        {
+            HdrImage merged = HdrMerger.Merge(
+                new[] { longFrame, shortFrame },
+                new HdrMergeParameters(ExposureRatio: 16, BlackLevel: black));
+
+            // 長秒が飽和しない範囲(S+black ≤ 65535)ではシーンを厳密復元
+            for (int i = 0; i < scene.Length; i++)
+            {
+                if (scene[i] + black > 65535 * 0.8)
+                {
+                    break;
+                }
+
+                Assert.True(Math.Abs(merged.Pixels[i] - scene[i]) <= 0.5,
+                    $"i={i}: merged={merged.Pixels[i]} scene={scene[i]}");
+            }
+        }
+    }
+
+    [Fact]
+    public void Merge_ThreeStages_RecoversWideScene()
+    {
+        // S = i*2048, 最大 ≈ 64×65535。r=8: mid=S/8, short=S/64 (整数厳密)
+        const int width = 128;
+        const int height = 16;
+        int count = width * height;
+        var scene = new double[count];
+        var longFrame = new ushort[count];
+        var midFrame = new ushort[count];
+        var shortFrame = new ushort[count];
+        for (int i = 0; i < count; i++)
+        {
+            long s = (long)i * 2048;
+            scene[i] = s;
+            longFrame[i] = (ushort)Math.Min(65535, s);
+            midFrame[i] = (ushort)Math.Min(65535, s / 8);
+            shortFrame[i] = (ushort)Math.Min(65535, s / 64);
+        }
+
+        using RawImage f0 = MakeFrame(longFrame, width, height);
+        using RawImage f1 = MakeFrame(midFrame, width, height);
+        using RawImage f2 = MakeFrame(shortFrame, width, height);
+
+        HdrImage merged = HdrMerger.Merge(
+            new[] { f0, f1, f2 }, new HdrMergeParameters(ExposureRatio: 8));
+
+        for (int i = 0; i < count; i++)
+        {
+            Assert.True(Math.Abs(merged.Pixels[i] - scene[i]) <= 1.0,
+                $"i={i}: merged={merged.Pixels[i]} scene={scene[i]}");
+        }
+
+        Assert.Equal(65535f * 64, merged.FullScale, 0);
+    }
+
+    [Fact]
+    public void ToRawImage16_ScalesFullScaleTo65535()
+    {
+        const int width = 32;
+        const int height = 4;
+        (RawImage longFrame, RawImage shortFrame, _) =
+            MakeConsistentPair(width, height, ratio: 16, step: 8192);
+        using (longFrame)
+        using (shortFrame)
+        {
+            HdrImage merged = HdrMerger.Merge(
+                new[] { longFrame, shortFrame }, new HdrMergeParameters(ExposureRatio: 16));
+            using RawImage quantized = merged.ToRawImage16();
+
+            Assert.Equal(width, quantized.Width);
+            Assert.Equal(height, quantized.Height);
+            float scale = 65535f / merged.FullScale;
+            for (int x = 0; x < width; x++)
+            {
+                ushort expected = (ushort)Math.Clamp(
+                    (int)MathF.Round(merged.Pixels[x] * scale), 0, 65535);
+                Assert.Equal(expected, quantized.GetPixel(x, 0));
+            }
+        }
+    }
+
+    [Fact]
+    public void SaveFloatRaw_RoundTripsBytes()
+    {
+        const int width = 16;
+        const int height = 4;
+        (RawImage longFrame, RawImage shortFrame, _) =
+            MakeConsistentPair(width, height, ratio: 16, step: 4096);
+        using (longFrame)
+        using (shortFrame)
+        {
+            HdrImage merged = HdrMerger.Merge(
+                new[] { longFrame, shortFrame }, new HdrMergeParameters(ExposureRatio: 16));
+
+            string dir = Path.Combine(Path.GetTempPath(), "RawViewerTests");
+            Directory.CreateDirectory(dir);
+            string path = Path.Combine(dir, Guid.NewGuid().ToString("N") + ".fraw");
+            try
+            {
+                merged.SaveFloatRaw(path);
+                byte[] bytes = File.ReadAllBytes(path);
+                Assert.Equal(width * height * 4, bytes.Length);
+                for (int i = 0; i < width * height; i++)
+                {
+                    Assert.Equal(merged.Pixels[i], BitConverter.ToSingle(bytes, i * 4));
+                }
+            }
+            finally
+            {
+                File.Delete(path);
+            }
+        }
+    }
+
+    [Fact]
+    public void Merge_MismatchedSizes_Throws()
+    {
+        using RawImage a = MakeFrame(TestData.MakePattern(4, 16), 2, 2);
+        using RawImage b = MakeFrame(TestData.MakePattern(8, 16), 4, 2);
+        Assert.Throws<ArgumentException>(() =>
+            HdrMerger.Merge(new[] { a, b }, new HdrMergeParameters()));
+    }
+}

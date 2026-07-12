@@ -53,8 +53,10 @@ public partial class RawImportDialog : Window
         }
 
         HdrCombo.Items.Add("なし");
-        HdrCombo.Items.Add("DOL");
-        HdrCombo.Items.Add("Staggered");
+        HdrCombo.Items.Add("DOL 2段");
+        HdrCombo.Items.Add("DOL 3段");
+        HdrCombo.Items.Add("Staggered 2段");
+        HdrCombo.Items.Add("Staggered 3段");
 
         RefreshPresetCombo();
 
@@ -109,10 +111,12 @@ public partial class RawImportDialog : Window
         };
         HeaderOffsetBox.Text = format.HeaderOffset.ToString(CultureInfo.InvariantCulture);
         FrameCountBox.Text = format.FrameCount.ToString(CultureInfo.InvariantCulture);
-        HdrCombo.SelectedIndex = format.Hdr switch
+        HdrCombo.SelectedIndex = (format.Hdr, format.HdrStages) switch
         {
-            HdrMode.Dol => 1,
-            HdrMode.Staggered => 2,
+            (HdrMode.Dol, 3) => 2,
+            (HdrMode.Dol, _) => 1,
+            (HdrMode.Staggered, 3) => 4,
+            (HdrMode.Staggered, _) => 3,
             _ => 0,
         };
         ExposureRatioBox.Text = format.ExposureRatio.ToString(CultureInfo.InvariantCulture);
@@ -171,10 +175,11 @@ public partial class RawImportDialog : Window
             FrameCount = frameCount,
             Hdr = HdrCombo.SelectedIndex switch
             {
-                1 => HdrMode.Dol,
-                2 => HdrMode.Staggered,
+                1 or 2 => HdrMode.Dol,
+                3 or 4 => HdrMode.Staggered,
                 _ => HdrMode.None,
             },
+            HdrStages = HdrCombo.SelectedIndex is 2 or 4 ? 3 : 2,
             ExposureRatio = exposureRatio,
         };
     }

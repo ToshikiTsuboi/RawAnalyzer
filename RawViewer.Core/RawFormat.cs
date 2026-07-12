@@ -38,7 +38,13 @@ public sealed record RawFormat
     /// <summary>HDRフレームの格納方式。</summary>
     public HdrMode Hdr { get; init; } = HdrMode.None;
 
-    /// <summary>HDRの露光比(長秒:短秒)。HDR合成時のスケーリングに使う。</summary>
+    /// <summary>
+    /// HDRの段数(2または3)。FrameCountが段数と等しい場合はフレーム連結、
+    /// FrameCount=1 の場合はライン交互として解釈される。
+    /// </summary>
+    public int HdrStages { get; init; } = 2;
+
+    /// <summary>HDRの露光比(長秒:短秒、1段あたり)。HDR合成時のスケーリングに使う。</summary>
     public double ExposureRatio { get; init; } = 16.0;
 
     /// <summary>1画素あたりのファイル上のバイト数(8bit=1、それ以外=2)。</summary>
@@ -82,6 +88,11 @@ public sealed record RawFormat
         if (FrameCount <= 0)
         {
             throw new ArgumentException($"フレーム数は正の値である必要があります: {FrameCount}");
+        }
+
+        if (Hdr != HdrMode.None && HdrStages is < 2 or > 3)
+        {
+            throw new ArgumentException($"HDR段数は2または3である必要があります: {HdrStages}");
         }
     }
 }

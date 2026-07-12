@@ -75,6 +75,8 @@ public sealed class ImageViewport : FrameworkElement
     private DisplayLut _lut = DisplayLut.Create(new DisplayParameters());
     private DevelopLuts _developLuts = DevelopLuts.Create(new DevelopParameters());
     private ViewportDisplayMode _displayMode = ViewportDisplayMode.Raw;
+    private DisplayLut[]? _segmentLuts;
+    private int _segmentWidth;
 
     private double _zoom = 1.0;
     private double _originX;
@@ -180,6 +182,7 @@ public sealed class ImageViewport : FrameworkElement
         _frame = frame;
         _pyramid = null;
         _overlay = null;
+        _segmentLuts = null;
         ClearRoi();
         FitToView();
     }
@@ -234,6 +237,20 @@ public sealed class ImageViewport : FrameworkElement
             RequestRender(fast: true);
             RestartIdleTimer();
         }
+    }
+
+    /// <summary>
+    /// HDR分割表示用のフレーム別LUTを設定する(nullで解除)。
+    /// X座標をsegmentWidthで区切ってセグメントごとに適用する。
+    /// </summary>
+    /// <param name="luts">フレーム別LUT(左から順)。</param>
+    /// <param name="segmentWidth">セグメント幅(元画像px)。</param>
+    public void SetSplitLuts(DisplayLut[]? luts, int segmentWidth)
+    {
+        _segmentLuts = luts;
+        _segmentWidth = segmentWidth;
+        RequestRender(fast: true);
+        RestartIdleTimer();
     }
 
     /// <summary>1段階ズームインする(ビュー中心基準)。</summary>
@@ -556,6 +573,8 @@ public sealed class ImageViewport : FrameworkElement
             Mode = _displayMode,
             Pattern = _format?.Bayer ?? BayerPattern.None,
             DevelopLuts = _developLuts,
+            SegmentLuts = _segmentLuts,
+            SegmentWidth = _segmentWidth,
         };
 
         _renderTask = Task.Run(() =>

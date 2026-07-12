@@ -35,6 +35,25 @@ public sealed unsafe class RawImage : IDisposable
         _mapBase = pointer + accessor.PointerOffset;
     }
 
+    /// <summary>
+    /// 正規化済み(16bitフルスケール)画素配列から画像を生成する。
+    /// 派生ビュー(HDR分割合成・チャネル分割など)の構築に使う。
+    /// </summary>
+    /// <param name="format">フォーマット記述子。</param>
+    /// <param name="pixels">TotalPixels以上の長さの画素配列。</param>
+    /// <returns>生成された画像。</returns>
+    /// <exception cref="ArgumentException">フォーマットが不正、または配列長が不足する場合。</exception>
+    public static RawImage FromPixels(RawFormat format, ushort[] pixels)
+    {
+        format.Validate();
+        if (pixels.Length < format.TotalPixels)
+        {
+            throw new ArgumentException("画素配列がフォーマットの画素数より短いです。", nameof(pixels));
+        }
+
+        return new RawImage(format, pixels);
+    }
+
     /// <summary>この画像のフォーマット記述子。</summary>
     public RawFormat Format { get; }
 

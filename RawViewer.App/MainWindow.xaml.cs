@@ -34,6 +34,13 @@ public partial class MainWindow : Window
     private ushort _whitePoint = 65535;
     private bool _updatingSliders;
 
+    // HDR分割/合成の派生ビュー
+    private RawImage? _derivedImage;
+    private HdrImage? _hdrFloatImage;
+    private TilePyramid? _mainPyramid;
+    private DisplayParameters[]? _hdrFrameParams;
+    private int _hdrSegmentWidth;
+
     /// <summary>メインウィンドウを生成する。</summary>
     public MainWindow()
     {
@@ -57,11 +64,18 @@ public partial class MainWindow : Window
             _analysisCts?.Cancel();
             _profileWindow?.Close();
             await Viewport.ClearImageAsync();
+            _derivedImage?.Dispose();
             _currentImage?.Dispose();
         };
     }
 
-    private int CurrentShift => 16 - (_currentFormat?.BitDepth ?? 16);
+    /// <summary>表示中の画像(HDR派生ビューがあればそちら)。</summary>
+    private RawImage? ActiveImage => _derivedImage ?? _currentImage;
+
+    /// <summary>表示中の画像のフォーマット。</summary>
+    private RawFormat? ActiveFormat => ActiveImage?.Format;
+
+    private int CurrentShift => 16 - (ActiveFormat?.BitDepth ?? 16);
 
     // ---- ファイル読込 ----
 
@@ -188,6 +202,12 @@ public partial class MainWindow : Window
 
         // 旧画像の描画を止めてから破棄し、新画像へ差し替える
         await Viewport.ClearImageAsync();
+        _derivedImage?.Dispose();
+        _derivedImage = null;
+        _hdrFloatImage = null;
+        _hdrFrameParams = null;
+        _mainPyramid = null;
+        _vm.HdrTargetVisible = false;
         _currentImage?.Dispose();
         _currentImage = image;
         _currentFormat = image.Format;
@@ -232,7 +252,11 @@ public partial class MainWindow : Window
             return;
         }
 
-        Viewport.SetPyramid(pyramid);
+        _mainPyramid = pyramid;
+        if (_derivedImage is null)
+        {
+            Viewport.SetPyramid(pyramid);
+        }
     }
 
     private void UpdateFormatPanel(RawFormat format)
@@ -245,8 +269,9 @@ public partial class MainWindow : Window
             : format.Bayer.ToString().ToUpperInvariant();
         _vm.FmtHdrText = format.Hdr switch
         {
-            HdrMode.Dol => $"DOL (露光比 {format.ExposureRatio:F0})",
-            HdrMode.Staggered => $"Staggered (露光比 {format.ExposureRatio:F0})",
+            HdrMode.Dol => $"DOL {format.HdrStages}段 (露光比 {format.ExposureRatio:F0})",
+            HdrMode.Staggered =>
+                $"Staggered {format.HdrStages}段 (露光比 {format.ExposureRatio:F0})",
             _ => "なし",
         };
     }
@@ -255,7 +280,7 @@ public partial class MainWindow : Window
 
     private async void RefreshHistogram(RegionOfInterest? roi)
     {
-        if (_currentImage is null)
+        if (ActiveImage is null)
         {
             return;
         }
@@ -263,7 +288,7 @@ public partial class MainWindow : Window
         _analysisCts?.Cancel();
         var cts = new CancellationTokenSource();
         _analysisCts = cts;
-        RawImage image = _currentImage;
+        RawImage image = ActiveImage;
 
         HistogramResult result;
         RegionStatistics? exactStats = null;
@@ -287,7 +312,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (cts.IsCancellationRequested || !ReferenceEquals(image, _currentImage))
+        if (cts.IsCancellationRequested || !ReferenceEquals(image, ActiveImage))
         {
             return;
         }
@@ -407,12 +432,12 @@ public partial class MainWindow : Window
 
     private async void OnProfilePointClicked(object? sender, CursorPixelEventArgs e)
     {
-        if (_currentImage is null || _currentFormat is null)
+        if (ActiveImage is null || ActiveFormat is null)
         {
             return;
         }
 
-        RawImage image = _currentImage;
+        RawImage image = ActiveImage;
         ushort[] row;
         ushort[] column;
         try
@@ -426,7 +451,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (!ReferenceEquals(image, _currentImage))
+        if (!ReferenceEquals(image, ActiveImage))
         {
             return;
         }
@@ -438,7 +463,7 @@ public partial class MainWindow : Window
             _profileWindow.Show();
         }
 
-        int maxCode = (1 << _currentFormat.BitDepth) - 1;
+        int maxCode = (1 << ActiveFormat!.BitDepth) - 1;
         _profileWindow.SetProfiles(row, column, e.X, e.Y, maxCode);
         _profileWindow.Activate();
     }
@@ -470,6 +495,28 @@ public partial class MainWindow : Window
 
             if (_vm.HasImage)
             {
+                if (_hdrFrameParams is not null)
+                {
+                    // HDR分割表示中は調整対象フレームのLUTのみ更新する
+                    DisplayParameters parameters = CurrentDisplayParameters();
+                    int target = HdrTargetCombo.SelectedIndex;
+                    if (target <= 0)
+                    {
+                        for (int i = 0; i < _hdrFrameParams.Length; i++)
+                        {
+                            _hdrFrameParams[i] = parameters;
+                        }
+                    }
+                    else
+                    {
+                        int frame = Math.Min(target - 1, _hdrFrameParams.Length - 1);
+                        _hdrFrameParams[frame] = parameters;
+                    }
+
+                    ApplySplitLuts();
+                    return;
+                }
+
                 Viewport.SetLut(BuildLut());
                 if (e.PropertyName is nameof(MainViewModel.Gamma)
                     or nameof(MainViewModel.BlackLevel))
@@ -497,12 +544,16 @@ public partial class MainWindow : Window
 
     private void OnSaveClick(object sender, RoutedEventArgs e)
     {
-        if (_currentImage is null || _currentFormat is null)
+        if (ActiveImage is null || _currentFormat is null)
         {
             return;
         }
 
-        var dialog = new SaveDialog(_currentImage.Format.TotalPixels) { Owner = this };
+        var dialog = new SaveDialog(
+            ActiveImage.Format.TotalPixels, allowFloatRaw: _hdrFloatImage is not null)
+        {
+            Owner = this,
+        };
         if (dialog.ShowDialog() != true || dialog.Result is null)
         {
             return;
@@ -514,6 +565,7 @@ public partial class MainWindow : Window
             SaveFormat.Tiff16 => ("TIFF (*.tif)|*.tif", ".tif"),
             SaveFormat.Png16 or SaveFormat.Png8 => ("PNG (*.png)|*.png", ".png"),
             SaveFormat.Jpeg8 => ("JPEG (*.jpg)|*.jpg", ".jpg"),
+            SaveFormat.FloatRaw => ("float raw (*.fraw)|*.fraw", ".fraw"),
             _ => ("Raw (*.raw)|*.raw", ".raw"),
         };
         var fileDialog = new SaveFileDialog
@@ -531,10 +583,11 @@ public partial class MainWindow : Window
 
     private void ExecuteSave(SaveChoice choice, string path)
     {
-        RawImage image = _currentImage!;
+        RawImage image = ActiveImage!;
+        HdrImage? hdrFloat = _hdrFloatImage;
         DisplayLut lut = BuildLut();
         ViewportDisplayMode mode = Viewport.DisplayMode;
-        BayerPattern pattern = _currentFormat!.Bayer;
+        BayerPattern pattern = image.Format.Bayer;
         double gamma = _vm.Gamma > 0 ? _vm.Gamma : 1.0;
         var devLuts = DevelopLuts.Create(new DevelopParameters(
             _blackPoint, _vm.WbGainR, _vm.WbGainB, gamma));
@@ -546,6 +599,9 @@ public partial class MainWindow : Window
             {
                 switch (choice.Format)
                 {
+                    case SaveFormat.FloatRaw:
+                        hdrFloat!.SaveFloatRaw(path, progress, ct);
+                        break;
                     case SaveFormat.Raw:
                         RawSaver.Save(image, path, choice.Packing, choice.Endianness, progress, ct);
                         break;
@@ -668,14 +724,43 @@ public partial class MainWindow : Window
 
     // ---- 表示モード・ホワイトバランス ----
 
-    private void OnDisplayModeChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+    private async void OnDisplayModeChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
     {
-        if (Viewport is null || _currentFormat is null)
+        if (Viewport is null || _currentFormat is null || _currentImage is null)
         {
             return;
         }
 
-        ViewportDisplayMode mode = DisplayModeCombo.SelectedIndex switch
+        int index = DisplayModeCombo.SelectedIndex;
+        if (index is 4 or 5)
+        {
+            if (_currentFormat.Hdr == HdrMode.None)
+            {
+                MessageBox.Show(this, "この表示モードにはHDR方式の指定が必要です(フォーマット変更…から設定)。",
+                    "RawViewer", MessageBoxButton.OK, MessageBoxImage.Information);
+                DisplayModeCombo.SelectedIndex = 0;
+                return;
+            }
+
+            if (index == 4)
+            {
+                await EnterHdrSplitAsync();
+            }
+            else
+            {
+                await EnterHdrMergeAsync();
+            }
+
+            return;
+        }
+
+        // 通常モード: HDR派生ビューから復帰
+        if (_derivedImage is not null)
+        {
+            RestoreMainImage();
+        }
+
+        ViewportDisplayMode mode = index switch
         {
             1 => ViewportDisplayMode.BayerColor,
             2 => ViewportDisplayMode.ColorDevelop,
@@ -692,6 +777,200 @@ public partial class MainWindow : Window
         }
 
         Viewport.SetDisplayMode(mode);
+    }
+
+    private async Task EnterHdrSplitAsync()
+    {
+        RawImage image = _currentImage!;
+        IReadOnlyList<RawImage> frames;
+        try
+        {
+            frames = await Task.Run(() => HdrSplitter.Split(image));
+        }
+        catch (InvalidOperationException ex)
+        {
+            MessageBox.Show(this, ex.Message, "HDR分割", MessageBoxButton.OK, MessageBoxImage.Warning);
+            DisplayModeCombo.SelectedIndex = 0;
+            return;
+        }
+
+        if (!ReferenceEquals(image, _currentImage))
+        {
+            return;
+        }
+
+        // 長秒/短秒を左右並置した合成画像を作る
+        int stages = frames.Count;
+        int subWidth = frames[0].Width;
+        int subHeight = frames[0].Height;
+        int compositeWidth = subWidth * stages;
+        RawImage composite = await Task.Run(() =>
+        {
+            var pixels = new ushort[(long)compositeWidth * subHeight];
+            Parallel.For(0, subHeight, y =>
+            {
+                for (int stage = 0; stage < stages; stage++)
+                {
+                    frames[stage].CopyRegion(0, 0, y, subWidth, 1,
+                        pixels.AsSpan(y * compositeWidth + stage * subWidth, subWidth));
+                }
+            });
+            RawFormat format = image.Format with
+            {
+                Width = compositeWidth,
+                Height = subHeight,
+                FrameCount = 1,
+                Hdr = HdrMode.None,
+            };
+            return RawImage.FromPixels(format, pixels);
+        });
+        foreach (RawImage frame in frames)
+        {
+            frame.Dispose();
+        }
+
+        if (!ReferenceEquals(image, _currentImage))
+        {
+            composite.Dispose();
+            return;
+        }
+
+        ApplyDerivedView(composite);
+        _hdrSegmentWidth = subWidth;
+        _hdrFrameParams = new DisplayParameters[stages];
+        DisplayParameters current = CurrentDisplayParameters();
+        for (int i = 0; i < stages; i++)
+        {
+            _hdrFrameParams[i] = current;
+        }
+
+        HdrTargetCombo.Items.Clear();
+        HdrTargetCombo.Items.Add("全体");
+        HdrTargetCombo.Items.Add("長秒");
+        if (stages == 3)
+        {
+            HdrTargetCombo.Items.Add("中秒");
+        }
+
+        HdrTargetCombo.Items.Add("短秒");
+        HdrTargetCombo.SelectedIndex = 0;
+        _vm.HdrTargetVisible = true;
+        ApplySplitLuts();
+        _vm.LevelOverlayText = $"HDR分割表示 (左: 長秒 → 右: 短秒, {stages}段)";
+    }
+
+    private async Task EnterHdrMergeAsync()
+    {
+        RawImage image = _currentImage!;
+        RawFormat format = _currentFormat!;
+        HdrImage merged;
+        RawImage quantized;
+        try
+        {
+            (merged, quantized) = await Task.Run(() =>
+            {
+                IReadOnlyList<RawImage> frames = HdrSplitter.Split(image);
+                try
+                {
+                    HdrImage result = HdrMerger.Merge(frames, new HdrMergeParameters(
+                        format.ExposureRatio, _blackPoint));
+                    return (result, result.ToRawImage16());
+                }
+                finally
+                {
+                    foreach (RawImage frame in frames)
+                    {
+                        frame.Dispose();
+                    }
+                }
+            });
+        }
+        catch (InvalidOperationException ex)
+        {
+            MessageBox.Show(this, ex.Message, "HDR合成", MessageBoxButton.OK, MessageBoxImage.Warning);
+            DisplayModeCombo.SelectedIndex = 0;
+            return;
+        }
+
+        if (!ReferenceEquals(image, _currentImage))
+        {
+            quantized.Dispose();
+            return;
+        }
+
+        ApplyDerivedView(quantized);
+        _hdrFloatImage = merged;
+        _vm.HdrTargetVisible = false;
+        _vm.LevelOverlayText =
+            $"HDR合成表示 (フルスケール {merged.FullScale:F0}, ゲイン=露出)";
+    }
+
+    private void ApplyDerivedView(RawImage derived)
+    {
+        _derivedImage?.Dispose();
+        _derivedImage = derived;
+        _hdrFloatImage = null;
+        _hdrFrameParams = null;
+        _vm.HasRoi = false;
+        Viewport.SetDisplayMode(ViewportDisplayMode.Raw);
+        Viewport.SetImage(derived, derived.Format);
+        Viewport.SetLut(BuildLut());
+        RefreshHistogram(roi: null);
+        _ = BuildDerivedPyramidAsync(derived);
+    }
+
+    private async Task BuildDerivedPyramidAsync(RawImage derived)
+    {
+        TilePyramid pyramid;
+        try
+        {
+            pyramid = await TilePyramid.CreateAsync(derived);
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+
+        if (ReferenceEquals(derived, _derivedImage))
+        {
+            Viewport.SetPyramid(pyramid);
+        }
+    }
+
+    private void RestoreMainImage()
+    {
+        _derivedImage?.Dispose();
+        _derivedImage = null;
+        _hdrFloatImage = null;
+        _hdrFrameParams = null;
+        _vm.HdrTargetVisible = false;
+        _vm.HasRoi = false;
+        Viewport.SetImage(_currentImage!, _currentFormat!);
+        Viewport.SetPyramid(_mainPyramid);
+        Viewport.SetLut(BuildLut());
+        RefreshHistogram(roi: null);
+    }
+
+    private DisplayParameters CurrentDisplayParameters()
+    {
+        return new DisplayParameters(
+            _blackPoint, _whitePoint, _vm.Gain, _vm.Gamma, _vm.Contrast);
+    }
+
+    private void ApplySplitLuts()
+    {
+        if (_hdrFrameParams is null)
+        {
+            return;
+        }
+
+        var luts = new DisplayLut[_hdrFrameParams.Length];
+        for (int i = 0; i < luts.Length; i++)
+        {
+            luts[i] = DisplayLut.Create(_hdrFrameParams[i]);
+        }
+
+        Viewport.SetSplitLuts(luts, _hdrSegmentWidth);
     }
 
     private async void OnGrayWorldClick(object sender, RoutedEventArgs e)
@@ -848,7 +1127,9 @@ public partial class MainWindow : Window
 
     private void OnCursorPixelChanged(object? sender, CursorPixelEventArgs e)
     {
-        if (_currentImage is null || _currentFormat is null || !e.IsInsideImage)
+        RawImage? image = ActiveImage;
+        RawFormat? format = ActiveFormat;
+        if (image is null || format is null || !e.IsInsideImage)
         {
             _vm.CursorStatusText = "";
             _vm.CursorOverlayText = "";
@@ -860,8 +1141,8 @@ public partial class MainWindow : Window
         int sourceY = e.Y;
         if (Viewport.DisplayMode == ViewportDisplayMode.ChannelSplit)
         {
-            int evenW = _currentImage.Width & ~1;
-            int evenH = _currentImage.Height & ~1;
+            int evenW = image.Width & ~1;
+            int evenH = image.Height & ~1;
             if (e.X >= evenW || e.Y >= evenH)
             {
                 return;
@@ -873,7 +1154,7 @@ public partial class MainWindow : Window
         ushort value;
         try
         {
-            value = _currentImage.GetPixel(sourceX, sourceY);
+            value = image.GetPixel(sourceX, sourceY);
         }
         catch (ObjectDisposedException)
         {
@@ -881,9 +1162,9 @@ public partial class MainWindow : Window
         }
 
         int code = value >> CurrentShift;
-        int maxCode = (1 << _currentFormat.BitDepth) - 1;
+        int maxCode = (1 << format.BitDepth) - 1;
         string channel = BayerHelper.GetLabel(
-            BayerHelper.GetChannel(_currentFormat.Bayer, sourceX, sourceY));
+            BayerHelper.GetChannel(format.Bayer, sourceX, sourceY));
         _vm.CursorStatusText = $"({sourceX}, {sourceY}) raw={code}";
         _vm.CursorOverlayText = $"({sourceX}, {sourceY})  raw: {code} / {maxCode}  {channel}";
     }
