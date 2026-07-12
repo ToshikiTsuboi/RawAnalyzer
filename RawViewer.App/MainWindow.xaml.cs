@@ -48,6 +48,9 @@ public partial class MainWindow : Window
         InputBindings.Add(new KeyBinding(
             new Mvvm.RelayCommand(_ => OnOpenFileClick(this, new RoutedEventArgs())),
             new KeyGesture(Key.O, ModifierKeys.Control)));
+        InputBindings.Add(new KeyBinding(
+            new Mvvm.RelayCommand(_ => OnSaveClick(this, new RoutedEventArgs())),
+            new KeyGesture(Key.S, ModifierKeys.Control)));
         Closed += async (_, _) =>
         {
             _loadCts?.Cancel();
@@ -488,6 +491,179 @@ public partial class MainWindow : Window
         double gamma = _vm.Gamma > 0 ? _vm.Gamma : 1.0;
         Viewport.SetDevelopLuts(DevelopLuts.Create(new DevelopParameters(
             _blackPoint, _vm.WbGainR, _vm.WbGainB, gamma)));
+    }
+
+    // ---- 保存 ----
+
+    private void OnSaveClick(object sender, RoutedEventArgs e)
+    {
+        if (_currentImage is null || _currentFormat is null)
+        {
+            return;
+        }
+
+        var dialog = new SaveDialog(_currentImage.Format.TotalPixels) { Owner = this };
+        if (dialog.ShowDialog() != true || dialog.Result is null)
+        {
+            return;
+        }
+
+        SaveChoice choice = dialog.Result;
+        (string filter, string extension) = choice.Format switch
+        {
+            SaveFormat.Tiff16 => ("TIFF (*.tif)|*.tif", ".tif"),
+            SaveFormat.Png16 or SaveFormat.Png8 => ("PNG (*.png)|*.png", ".png"),
+            SaveFormat.Jpeg8 => ("JPEG (*.jpg)|*.jpg", ".jpg"),
+            _ => ("Raw (*.raw)|*.raw", ".raw"),
+        };
+        var fileDialog = new SaveFileDialog
+        {
+            Filter = filter,
+            FileName = Path.GetFileNameWithoutExtension(_currentPath ?? "image") + extension,
+        };
+        if (fileDialog.ShowDialog(this) != true)
+        {
+            return;
+        }
+
+        ExecuteSave(choice, fileDialog.FileName);
+    }
+
+    private void ExecuteSave(SaveChoice choice, string path)
+    {
+        RawImage image = _currentImage!;
+        DisplayLut lut = BuildLut();
+        ViewportDisplayMode mode = Viewport.DisplayMode;
+        BayerPattern pattern = _currentFormat!.Bayer;
+        double gamma = _vm.Gamma > 0 ? _vm.Gamma : 1.0;
+        var devLuts = DevelopLuts.Create(new DevelopParameters(
+            _blackPoint, _vm.WbGainR, _vm.WbGainB, gamma));
+
+        ProgressWindow result = ProgressWindow.Run(
+            this,
+            $"保存中: {Path.GetFileName(path)}",
+            (progress, ct) => Task.Run(() =>
+            {
+                switch (choice.Format)
+                {
+                    case SaveFormat.Raw:
+                        RawSaver.Save(image, path, choice.Packing, choice.Endianness, progress, ct);
+                        break;
+                    case SaveFormat.Tiff16:
+                        if (image.Format.TotalPixels > RawLoader.DefaultInMemoryPixelThreshold)
+                        {
+                            // 巨大画像は自前ライタで行単位ストリーミング
+                            TiffWriter.SaveGray16(image, 0, path, progress, ct);
+                        }
+                        else
+                        {
+                            SaveWithWic(image, path, choice.Format, mode, pattern,
+                                lut, devLuts, progress, ct);
+                        }
+
+                        break;
+                    default:
+                        SaveWithWic(image, path, choice.Format, mode, pattern,
+                            lut, devLuts, progress, ct);
+                        break;
+                }
+            }, ct));
+
+        if (result.Error is not null)
+        {
+            MessageBox.Show(this, $"保存に失敗しました: {result.Error.Message}", "RawViewer",
+                MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+        else if (!result.WasCanceled)
+        {
+            _vm.ImageInfoText = $"保存完了: {Path.GetFileName(path)}";
+        }
+    }
+
+    private static void SaveWithWic(
+        RawImage image, string path, SaveFormat format, ViewportDisplayMode mode,
+        BayerPattern pattern, DisplayLut lut, DevelopLuts devLuts,
+        IProgress<double> progress, CancellationToken ct)
+    {
+        int width = image.Width;
+        int height = image.Height;
+        try
+        {
+            BitmapSource source;
+            switch (format)
+            {
+                case SaveFormat.Tiff16:
+                case SaveFormat.Png16:
+                {
+                    var pixels = new ushort[(long)width * height];
+                    for (int y = 0; y < height; y++)
+                    {
+                        ct.ThrowIfCancellationRequested();
+                        image.CopyRegion(0, 0, y, width, 1, pixels.AsSpan(y * width, width));
+                        if ((y & 511) == 0)
+                        {
+                            progress.Report(0.5 * y / height);
+                        }
+                    }
+
+                    source = BitmapSource.Create(
+                        width, height, 96, 96, PixelFormats.Gray16, null, pixels, width * 2);
+                    break;
+                }
+
+                default:
+                {
+                    // 8bit系は現在の表示(現像モードなら現像結果)を焼き込む
+                    bool color = mode is ViewportDisplayMode.ColorDevelop
+                        or ViewportDisplayMode.BayerColor
+                        && pattern != BayerPattern.None;
+                    if (color)
+                    {
+                        byte[] rgb = ImageExport.DevelopRgb24(
+                            image, 0, pattern, devLuts,
+                            new Progress<double>(p => progress.Report(p * 0.7)), ct);
+                        source = BitmapSource.Create(
+                            width, height, 96, 96, PixelFormats.Rgb24, null, rgb, width * 3);
+                    }
+                    else
+                    {
+                        byte[] gray = ImageExport.RenderGray8(image, 0, lut, ct);
+                        progress.Report(0.7);
+                        source = BitmapSource.Create(
+                            width, height, 96, 96, PixelFormats.Gray8, null, gray, width);
+                    }
+
+                    break;
+                }
+            }
+
+            ct.ThrowIfCancellationRequested();
+            BitmapEncoder encoder = format switch
+            {
+                SaveFormat.Tiff16 => new TiffBitmapEncoder { Compression = TiffCompressOption.None },
+                SaveFormat.Jpeg8 => new JpegBitmapEncoder { QualityLevel = 95 },
+                _ => new PngBitmapEncoder(),
+            };
+            encoder.Frames.Add(BitmapFrame.Create(source));
+            using var stream = new FileStream(path, FileMode.Create, FileAccess.Write);
+            encoder.Save(stream);
+            progress.Report(1.0);
+        }
+        catch (Exception)
+        {
+            try
+            {
+                if (File.Exists(path))
+                {
+                    File.Delete(path);
+                }
+            }
+            catch (IOException)
+            {
+            }
+
+            throw;
+        }
     }
 
     // ---- 表示モード・ホワイトバランス ----

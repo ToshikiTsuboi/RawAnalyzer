@@ -67,6 +67,9 @@
                 <MenuItem Header="開く…" InputGestureText="Ctrl+O" Click="OnOpenFileClick" />
                 <MenuItem Header="フォルダを開く…" Click="OnOpenFolderClick" />
                 <Separator />
+                <MenuItem Header="保存…" InputGestureText="Ctrl+S" Click="OnSaveClick"
+                          IsEnabled="{Binding HasImage}" />
+                <Separator />
                 <MenuItem Header="終了" Click="OnExitClick" />
             </MenuItem>
             <MenuItem Header="表示">
@@ -120,6 +123,9 @@
                               BorderBrush="{StaticResource BorderBrushDark}" Padding="10,3"
                               Margin="2,0" FontSize="12" IsEnabled="{Binding HasImage}"
                               Checked="OnRoiToggleChanged" Unchecked="OnRoiToggleChanged" />
+                <Border Style="{StaticResource ToolSep}" />
+                <Button Style="{StaticResource ToolButton}" Content="💾 保存"
+                        Click="OnSaveClick" IsEnabled="{Binding HasImage}" />
             </StackPanel>
         </Border>
 
