@@ -1,18 +1,180 @@
+using System.Collections.ObjectModel;
+using System.Windows.Media;
 using RawViewer.App.Mvvm;
 
 namespace RawViewer.App.ViewModels;
 
+/// <summary>ファイルリストの1項目。</summary>
+/// <param name="Name">表示名。</param>
+/// <param name="FullPath">フルパス。</param>
+public sealed record FileEntry(string Name, string FullPath);
+
 /// <summary>
-/// メインウィンドウのViewModel。
+/// メインウィンドウのViewModel。表示状態(テキスト・スライダー値・ヒストグラム)を保持する。
 /// </summary>
 public sealed class MainViewModel : ObservableObject
 {
-    private string _statusText = "Ready";
+    private string _folderPath = "";
+    private FileEntry? _selectedFile;
+    private bool _hasImage;
+    private string _imageInfoText = "画像未読込";
+    private string _cursorStatusText = "";
+    private string _zoomStatusText = "";
+    private string _zoomPercentText = "—";
+    private string _cursorOverlayText = "";
+    private string _levelOverlayText = "";
+    private double _gain = 1.0;
+    private double _gamma = 1.0;
+    private double _contrast = 1.0;
+    private string _blackLevelText = "0";
+    private ImageSource? _histogramSource;
+    private string _histMeanSigmaText = "— / —";
+    private string _histMinMaxText = "— / —";
+    private string _fmtBitDepthText = "—";
+    private string _fmtEndianText = "—";
+    private string _fmtBayerText = "—";
+    private string _fmtHdrText = "—";
 
-    /// <summary>ステータスバーに表示するテキスト。</summary>
-    public string StatusText
+    /// <summary>左パネルに表示中のフォルダパス。</summary>
+    public string FolderPath
     {
-        get => _statusText;
-        set => SetProperty(ref _statusText, value);
+        get => _folderPath;
+        set => SetProperty(ref _folderPath, value);
+    }
+
+    /// <summary>左パネルのファイル一覧。</summary>
+    public ObservableCollection<FileEntry> Files { get; } = new();
+
+    /// <summary>選択中のファイル。</summary>
+    public FileEntry? SelectedFile
+    {
+        get => _selectedFile;
+        set => SetProperty(ref _selectedFile, value);
+    }
+
+    /// <summary>画像が読み込まれているか。</summary>
+    public bool HasImage
+    {
+        get => _hasImage;
+        set => SetProperty(ref _hasImage, value);
+    }
+
+    /// <summary>ステータスバー左端の画像情報。</summary>
+    public string ImageInfoText
+    {
+        get => _imageInfoText;
+        set => SetProperty(ref _imageInfoText, value);
+    }
+
+    /// <summary>ステータスバー中央のカーソル位置情報。</summary>
+    public string CursorStatusText
+    {
+        get => _cursorStatusText;
+        set => SetProperty(ref _cursorStatusText, value);
+    }
+
+    /// <summary>ステータスバー右端のズーム/レベル情報。</summary>
+    public string ZoomStatusText
+    {
+        get => _zoomStatusText;
+        set => SetProperty(ref _zoomStatusText, value);
+    }
+
+    /// <summary>ツールバーのズーム率表示。</summary>
+    public string ZoomPercentText
+    {
+        get => _zoomPercentText;
+        set => SetProperty(ref _zoomPercentText, value);
+    }
+
+    /// <summary>キャンバス左上のカーソル画素オーバーレイ。</summary>
+    public string CursorOverlayText
+    {
+        get => _cursorOverlayText;
+        set => SetProperty(ref _cursorOverlayText, value);
+    }
+
+    /// <summary>キャンバス右下の間引きレベルオーバーレイ。</summary>
+    public string LevelOverlayText
+    {
+        get => _levelOverlayText;
+        set => SetProperty(ref _levelOverlayText, value);
+    }
+
+    /// <summary>表示ゲイン(LUTパラメータ)。</summary>
+    public double Gain
+    {
+        get => _gain;
+        set => SetProperty(ref _gain, value);
+    }
+
+    /// <summary>表示ガンマ(LUTパラメータ)。</summary>
+    public double Gamma
+    {
+        get => _gamma;
+        set => SetProperty(ref _gamma, value);
+    }
+
+    /// <summary>表示コントラスト(LUTパラメータ)。</summary>
+    public double Contrast
+    {
+        get => _contrast;
+        set => SetProperty(ref _contrast, value);
+    }
+
+    /// <summary>黒レベル表示(raw code)。</summary>
+    public string BlackLevelText
+    {
+        get => _blackLevelText;
+        set => SetProperty(ref _blackLevelText, value);
+    }
+
+    /// <summary>ヒストグラム画像。</summary>
+    public ImageSource? HistogramSource
+    {
+        get => _histogramSource;
+        set => SetProperty(ref _histogramSource, value);
+    }
+
+    /// <summary>ヒストグラム統計 mean/σ。</summary>
+    public string HistMeanSigmaText
+    {
+        get => _histMeanSigmaText;
+        set => SetProperty(ref _histMeanSigmaText, value);
+    }
+
+    /// <summary>ヒストグラム統計 min/max。</summary>
+    public string HistMinMaxText
+    {
+        get => _histMinMaxText;
+        set => SetProperty(ref _histMinMaxText, value);
+    }
+
+    /// <summary>フォーマット欄: ビット深度。</summary>
+    public string FmtBitDepthText
+    {
+        get => _fmtBitDepthText;
+        set => SetProperty(ref _fmtBitDepthText, value);
+    }
+
+    /// <summary>フォーマット欄: エンディアン。</summary>
+    public string FmtEndianText
+    {
+        get => _fmtEndianText;
+        set => SetProperty(ref _fmtEndianText, value);
+    }
+
+    /// <summary>フォーマット欄: Bayerパターン。</summary>
+    public string FmtBayerText
+    {
+        get => _fmtBayerText;
+        set => SetProperty(ref _fmtBayerText, value);
+    }
+
+    /// <summary>フォーマット欄: HDR方式。</summary>
+    public string FmtHdrText
+    {
+        get => _fmtHdrText;
+        set => SetProperty(ref _fmtHdrText, value);
     }
 }

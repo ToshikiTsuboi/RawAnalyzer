@@ -38,6 +38,9 @@ public sealed record RawFormat
     /// <summary>HDRフレームの格納方式。</summary>
     public HdrMode Hdr { get; init; } = HdrMode.None;
 
+    /// <summary>HDRの露光比(長秒:短秒)。HDR合成時のスケーリングに使う。</summary>
+    public double ExposureRatio { get; init; } = 16.0;
+
     /// <summary>1画素あたりのファイル上のバイト数(8bit=1、それ以外=2)。</summary>
     [JsonIgnore]
     public int BytesPerPixel => BitDepth <= 8 ? 1 : 2;
