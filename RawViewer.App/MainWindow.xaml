@@ -106,9 +106,18 @@
                 <Button Style="{StaticResource ToolButton}" Content="1:1" Click="OnActualSizeClick" />
                 <Button Style="{StaticResource ToolButton}" Content="全体" Click="OnFitClick" />
                 <Border Style="{StaticResource ToolSep}" />
-                <Button Style="{StaticResource ToolButton}" Content="ヒストグラム" IsEnabled="False" />
-                <Button Style="{StaticResource ToolButton}" Content="ラインプロファイル" IsEnabled="False" />
-                <Button Style="{StaticResource ToolButton}" Content="ROI" IsEnabled="False" />
+                <Button Style="{StaticResource ToolButton}" Content="ヒストグラム"
+                        Click="OnHistogramRefreshClick" IsEnabled="{Binding HasImage}" />
+                <ToggleButton x:Name="ProfileToggle" Content="ラインプロファイル"
+                              Background="{StaticResource Panel2Brush}" Foreground="#FFD8D8D4"
+                              BorderBrush="{StaticResource BorderBrushDark}" Padding="10,3"
+                              Margin="2,0" FontSize="12" IsEnabled="{Binding HasImage}"
+                              Checked="OnProfileToggleChanged" Unchecked="OnProfileToggleChanged" />
+                <ToggleButton x:Name="RoiToggle" Content="ROI"
+                              Background="{StaticResource Panel2Brush}" Foreground="#FFD8D8D4"
+                              BorderBrush="{StaticResource BorderBrushDark}" Padding="10,3"
+                              Margin="2,0" FontSize="12" IsEnabled="{Binding HasImage}"
+                              Checked="OnRoiToggleChanged" Unchecked="OnRoiToggleChanged" />
             </StackPanel>
         </Border>
 
@@ -159,6 +168,11 @@
                     <TextBlock Style="{StaticResource OverlayText}" Text="{Binding CursorOverlayText}" />
                 </Border>
                 <Border Style="{StaticResource OverlayBox}" HorizontalAlignment="Right"
+                        VerticalAlignment="Top" Margin="14,12"
+                        Visibility="{Binding HasRoi, Converter={StaticResource BoolToVis}}">
+                    <TextBlock Style="{StaticResource OverlayText}" Text="{Binding RoiOverlayText}" />
+                </Border>
+                <Border Style="{StaticResource OverlayBox}" HorizontalAlignment="Right"
                         VerticalAlignment="Bottom" Margin="14,12"
                         Visibility="{Binding HasImage, Converter={StaticResource BoolToVis}}">
                     <TextBlock Style="{StaticResource OverlayText}" Text="{Binding LevelOverlayText}"
@@ -200,11 +214,14 @@
                                     <Slider Minimum="0" Maximum="3" Value="{Binding Contrast}"
                                             SmallChange="0.05" LargeChange="0.2" />
                                 </DockPanel>
-                                <DockPanel Margin="0,4,0,0">
-                                    <TextBlock Style="{StaticResource RowLabel}" Text="黒レベル" />
+                                <DockPanel Margin="0,2">
+                                    <TextBlock Style="{StaticResource RowLabel}" Text="黒レベル" Width="64" />
                                     <TextBlock DockPanel.Dock="Right" Style="{StaticResource RowValue}"
-                                               Text="{Binding BlackLevelText}" />
-                                    <Border />
+                                               Text="{Binding BlackLevel, StringFormat={}{0:F0}}" Width="36"
+                                               TextAlignment="Right" />
+                                    <Slider Minimum="0" Maximum="{Binding BlackLevelMax}"
+                                            Value="{Binding BlackLevel}"
+                                            SmallChange="1" LargeChange="64" />
                                 </DockPanel>
                                 <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
                                     <Button Style="{StaticResource ToolButton}" Content="自動 (0.35%クリップ)"
@@ -219,7 +236,20 @@
                         <Border BorderBrush="{StaticResource BorderBrushDark}"
                                 BorderThickness="0,0,0,1" Padding="12,10">
                             <StackPanel>
-                                <TextBlock Style="{StaticResource SectionHeader}" Text="ヒストグラム (log)" />
+                                <DockPanel Margin="0,0,0,8">
+                                    <CheckBox DockPanel.Dock="Right" Content="log" FontSize="11"
+                                              Foreground="{StaticResource TextDim}"
+                                              IsChecked="{Binding HistogramIsLog}"
+                                              VerticalAlignment="Center" />
+                                    <TextBlock DockPanel.Dock="Right" Text="sampled" FontSize="10"
+                                               Foreground="#FFD99B5B" Margin="0,0,8,0"
+                                               VerticalAlignment="Center"
+                                               Visibility="{Binding HistogramIsSampled,
+                                                   Converter={StaticResource BoolToVis}}" />
+                                    <TextBlock FontSize="11" FontWeight="SemiBold"
+                                               Foreground="{StaticResource TextFaint}"
+                                               Text="ヒストグラム" />
+                                </DockPanel>
                                 <Image Source="{Binding HistogramSource}" Height="70" Stretch="Fill"
                                        SnapsToDevicePixels="True" />
                                 <DockPanel Margin="0,6,0,0">

@@ -26,7 +26,12 @@ public sealed class MainViewModel : ObservableObject
     private double _gain = 1.0;
     private double _gamma = 1.0;
     private double _contrast = 1.0;
-    private string _blackLevelText = "0";
+    private double _blackLevel;
+    private double _blackLevelMax = 65535;
+    private bool _histogramIsLog = true;
+    private bool _histogramIsSampled;
+    private bool _hasRoi;
+    private string _roiOverlayText = "";
     private ImageSource? _histogramSource;
     private string _histMeanSigmaText = "— / —";
     private string _histMinMaxText = "— / —";
@@ -122,11 +127,46 @@ public sealed class MainViewModel : ObservableObject
         set => SetProperty(ref _contrast, value);
     }
 
-    /// <summary>黒レベル表示(raw code)。</summary>
-    public string BlackLevelText
+    /// <summary>黒レベル(raw code、LUTパラメータ)。</summary>
+    public double BlackLevel
     {
-        get => _blackLevelText;
-        set => SetProperty(ref _blackLevelText, value);
+        get => _blackLevel;
+        set => SetProperty(ref _blackLevel, value);
+    }
+
+    /// <summary>黒レベルスライダーの最大値(ビット深度の最大raw code)。</summary>
+    public double BlackLevelMax
+    {
+        get => _blackLevelMax;
+        set => SetProperty(ref _blackLevelMax, value);
+    }
+
+    /// <summary>ヒストグラムをlogスケールで表示するか。</summary>
+    public bool HistogramIsLog
+    {
+        get => _histogramIsLog;
+        set => SetProperty(ref _histogramIsLog, value);
+    }
+
+    /// <summary>ヒストグラムがサンプリング計算されたか(sampled表記)。</summary>
+    public bool HistogramIsSampled
+    {
+        get => _histogramIsSampled;
+        set => SetProperty(ref _histogramIsSampled, value);
+    }
+
+    /// <summary>ROIが選択されているか。</summary>
+    public bool HasRoi
+    {
+        get => _hasRoi;
+        set => SetProperty(ref _hasRoi, value);
+    }
+
+    /// <summary>キャンバス右上のROI統計オーバーレイ。</summary>
+    public string RoiOverlayText
+    {
+        get => _roiOverlayText;
+        set => SetProperty(ref _roiOverlayText, value);
     }
 
     /// <summary>ヒストグラム画像。</summary>

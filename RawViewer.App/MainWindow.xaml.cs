@@ -13,7 +13,7 @@ using RawViewer.Core;
 namespace RawViewer.App;
 
 /// <summary>
-/// メインウィンドウ。ファイル読込・ピラミッド生成・LUT更新のオーケストレーションを行う。
+/// メインウィンドウ。ファイル読込・ピラミッド生成・LUT更新・解析のオーケストレーションを行う。
 /// </summary>
 public partial class MainWindow : Window
 {
@@ -26,7 +26,9 @@ public partial class MainWindow : Window
     private RawFormat? _currentFormat;
     private string? _currentPath;
     private CancellationTokenSource? _loadCts;
-    private uint[]? _histogram;
+    private CancellationTokenSource? _analysisCts;
+    private HistogramResult? _histogram;
+    private LineProfileWindow? _profileWindow;
     private ushort _blackPoint;
     private ushort _whitePoint = 65535;
     private bool _updatingSliders;
@@ -39,16 +41,22 @@ public partial class MainWindow : Window
         _vm.PropertyChanged += OnViewModelPropertyChanged;
         Viewport.ViewportStateChanged += OnViewportStateChanged;
         Viewport.CursorPixelChanged += OnCursorPixelChanged;
+        Viewport.RoiChanged += OnViewportRoiChanged;
+        Viewport.ProfilePointClicked += OnProfilePointClicked;
         InputBindings.Add(new KeyBinding(
             new Mvvm.RelayCommand(_ => OnOpenFileClick(this, new RoutedEventArgs())),
             new KeyGesture(Key.O, ModifierKeys.Control)));
         Closed += async (_, _) =>
         {
             _loadCts?.Cancel();
+            _analysisCts?.Cancel();
+            _profileWindow?.Close();
             await Viewport.ClearImageAsync();
             _currentImage?.Dispose();
         };
     }
+
+    private int CurrentShift => 16 - (_currentFormat?.BitDepth ?? 16);
 
     // ---- ファイル読込 ----
 
@@ -143,6 +151,7 @@ public partial class MainWindow : Window
         }
 
         _loadCts?.Cancel();
+        _analysisCts?.Cancel();
         var cts = new CancellationTokenSource();
         _loadCts = cts;
         _vm.ImageInfoText = "読込中…";
@@ -179,6 +188,8 @@ public partial class MainWindow : Window
         _currentFormat = image.Format;
         _currentPath = path;
         _histogram = null;
+        _vm.HasRoi = false;
+        _vm.BlackLevelMax = (1 << image.Format.BitDepth) - 1;
         ResetDisplayParameters();
 
         Title = $"RawViewer — {Path.GetFileName(path)}";
@@ -192,6 +203,7 @@ public partial class MainWindow : Window
         Viewport.SetImage(image, image.Format);
         Viewport.SetLut(BuildLut());
 
+        RefreshHistogram(roi: null);
         await BuildPyramidAsync(image, cts.Token);
     }
 
@@ -213,7 +225,6 @@ public partial class MainWindow : Window
         }
 
         Viewport.SetPyramid(pyramid);
-        await ComputeHistogramAsync(image, pyramid, ct);
     }
 
     private void UpdateFormatPanel(RawFormat format)
@@ -232,87 +243,74 @@ public partial class MainWindow : Window
         };
     }
 
-    // ---- ヒストグラム ----
+    // ---- ヒストグラム・ROI解析 ----
 
-    private async Task ComputeHistogramAsync(RawImage image, TilePyramid pyramid, CancellationToken ct)
+    private async void RefreshHistogram(RegionOfInterest? roi)
     {
-        PyramidLevel? coarsest = pyramid.Levels.Count > 0 ? pyramid.Levels[^1] : null;
-        (uint[] bins, double mean, double sigma, int min, int max) result;
+        if (_currentImage is null)
+        {
+            return;
+        }
+
+        _analysisCts?.Cancel();
+        var cts = new CancellationTokenSource();
+        _analysisCts = cts;
+        RawImage image = _currentImage;
+
+        HistogramResult result;
+        RegionStatistics? exactStats = null;
         try
         {
-            result = await Task.Run(() =>
+            result = await Task.Run(
+                () => ImageAnalysis.ComputeHistogram(image, 0, roi, cancellationToken: cts.Token),
+                cts.Token);
+            if (roi is { } r)
             {
-                var bins = new uint[65536];
-                long sum = 0;
-                long sumSq = 0;
-                long count = 0;
-                int min = int.MaxValue;
-                int max = int.MinValue;
-                int shift = 16 - image.Format.BitDepth;
-
-                void Accumulate(ReadOnlySpan<ushort> row)
-                {
-                    foreach (ushort v in row)
-                    {
-                        bins[v]++;
-                        int code = v >> shift;
-                        sum += code;
-                        sumSq += (long)code * code;
-                        if (code < min)
-                        {
-                            min = code;
-                        }
-
-                        if (code > max)
-                        {
-                            max = code;
-                        }
-                    }
-
-                    count += row.Length;
-                }
-
-                if (coarsest is not null)
-                {
-                    for (int y = 0; y < coarsest.Height; y++)
-                    {
-                        ct.ThrowIfCancellationRequested();
-                        Accumulate(coarsest.GetRow(y));
-                    }
-                }
-                else
-                {
-                    var buffer = new ushort[image.Width];
-                    for (int y = 0; y < image.Height; y++)
-                    {
-                        ct.ThrowIfCancellationRequested();
-                        image.CopyRegion(0, 0, y, image.Width, 1, buffer);
-                        Accumulate(buffer);
-                    }
-                }
-
-                double mean = count > 0 ? (double)sum / count : 0;
-                double variance = count > 0 ? (double)sumSq / count - mean * mean : 0;
-                return (bins, mean, Math.Sqrt(Math.Max(0, variance)), min, max);
-            }, ct);
+                exactStats = await Task.Run(
+                    () => ImageAnalysis.ComputeStatistics(image, 0, r, cts.Token), cts.Token);
+            }
         }
         catch (OperationCanceledException)
         {
             return;
         }
-
-        if (ct.IsCancellationRequested || !ReferenceEquals(image, _currentImage))
+        catch (ObjectDisposedException)
         {
             return;
         }
 
-        _histogram = result.bins;
-        _vm.HistMeanSigmaText = $"{result.mean:F1} / {result.sigma:F1}";
-        _vm.HistMinMaxText = $"{result.min} / {result.max}";
-        _vm.HistogramSource = RenderHistogram(result.bins);
+        if (cts.IsCancellationRequested || !ReferenceEquals(image, _currentImage))
+        {
+            return;
+        }
+
+        _histogram = result;
+        _vm.HistogramIsSampled = result.IsSampled;
+        RegionStatistics stats = exactStats ?? result.Statistics;
+        _vm.HistMeanSigmaText = $"{stats.Mean:F1} / {stats.Sigma:F1}";
+        _vm.HistMinMaxText = $"{stats.Min} / {stats.Max}";
+        RedrawHistogram();
+
+        if (roi is { } roiRect && exactStats is { } es)
+        {
+            _vm.RoiOverlayText =
+                $"ROI: {roiRect.Width}×{roiRect.Height}  mean {es.Mean:F1}  σ {es.Sigma:F1}";
+            _vm.HasRoi = true;
+        }
     }
 
-    private static ImageSource RenderHistogram(uint[] bins)
+    private void RedrawHistogram()
+    {
+        if (_histogram is null)
+        {
+            _vm.HistogramSource = null;
+            return;
+        }
+
+        _vm.HistogramSource = RenderHistogram(_histogram.Bins, _vm.HistogramIsLog);
+    }
+
+    private static ImageSource RenderHistogram(uint[] bins, bool logScale)
     {
         const int width = 210;
         const int height = 70;
@@ -324,13 +322,13 @@ public partial class MainWindow : Window
             columns[column] += bins[i];
         }
 
-        double maxLog = Math.Log(1 + columns.Max());
+        uint maxCount = columns.Max();
+        double maxScale = logScale ? Math.Log(1 + maxCount) : maxCount;
         var pixels = new byte[width * height * 4];
         for (int x = 0; x < width; x++)
         {
-            int barHeight = maxLog > 0
-                ? (int)(Math.Log(1 + columns[x]) / maxLog * (height - 2))
-                : 0;
+            double value = logScale ? Math.Log(1 + columns[x]) : columns[x];
+            int barHeight = maxScale > 0 ? (int)(value / maxScale * (height - 2)) : 0;
             for (int y = height - barHeight; y < height; y++)
             {
                 int offset = (y * width + x) * 4;
@@ -347,10 +345,104 @@ public partial class MainWindow : Window
         return bitmap;
     }
 
+    private void OnHistogramRefreshClick(object sender, RoutedEventArgs e)
+    {
+        RefreshHistogram(Viewport.Roi);
+    }
+
+    private void OnViewportRoiChanged(object? sender, EventArgs e)
+    {
+        if (Viewport.Roi is { PixelCount: > 0 } roi)
+        {
+            RefreshHistogram(roi);
+        }
+        else
+        {
+            _vm.HasRoi = false;
+            _vm.RoiOverlayText = "";
+            RefreshHistogram(roi: null);
+        }
+    }
+
+    private void OnRoiToggleChanged(object sender, RoutedEventArgs e)
+    {
+        if (RoiToggle.IsChecked == true)
+        {
+            ProfileToggle.IsChecked = false;
+            Viewport.InteractionMode = ViewportInteractionMode.RoiSelect;
+        }
+        else
+        {
+            if (Viewport.InteractionMode == ViewportInteractionMode.RoiSelect)
+            {
+                Viewport.InteractionMode = ViewportInteractionMode.Pan;
+            }
+
+            Viewport.ClearRoi();
+        }
+    }
+
+    private void OnProfileToggleChanged(object sender, RoutedEventArgs e)
+    {
+        if (ProfileToggle.IsChecked == true)
+        {
+            RoiToggle.IsChecked = false;
+            Viewport.InteractionMode = ViewportInteractionMode.LineProfile;
+        }
+        else if (Viewport.InteractionMode == ViewportInteractionMode.LineProfile)
+        {
+            Viewport.InteractionMode = ViewportInteractionMode.Pan;
+        }
+    }
+
+    private async void OnProfilePointClicked(object? sender, CursorPixelEventArgs e)
+    {
+        if (_currentImage is null || _currentFormat is null)
+        {
+            return;
+        }
+
+        RawImage image = _currentImage;
+        ushort[] row;
+        ushort[] column;
+        try
+        {
+            (row, column) = await Task.Run(() => (
+                ImageAnalysis.ExtractRowProfile(image, 0, e.Y),
+                ImageAnalysis.ExtractColumnProfile(image, 0, e.X)));
+        }
+        catch (Exception)
+        {
+            return;
+        }
+
+        if (!ReferenceEquals(image, _currentImage))
+        {
+            return;
+        }
+
+        if (_profileWindow is null)
+        {
+            _profileWindow = new LineProfileWindow { Owner = this };
+            _profileWindow.Closed += (_, _) => _profileWindow = null;
+            _profileWindow.Show();
+        }
+
+        int maxCode = (1 << _currentFormat.BitDepth) - 1;
+        _profileWindow.SetProfiles(row, column, e.X, e.Y, maxCode);
+        _profileWindow.Activate();
+    }
+
     // ---- 表示調整 (LUT) ----
 
     private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
+        if (e.PropertyName == nameof(MainViewModel.HistogramIsLog))
+        {
+            RedrawHistogram();
+            return;
+        }
+
         if (_updatingSliders)
         {
             return;
@@ -358,8 +450,14 @@ public partial class MainWindow : Window
 
         if (e.PropertyName is nameof(MainViewModel.Gain)
             or nameof(MainViewModel.Gamma)
-            or nameof(MainViewModel.Contrast))
+            or nameof(MainViewModel.Contrast)
+            or nameof(MainViewModel.BlackLevel))
         {
+            if (e.PropertyName == nameof(MainViewModel.BlackLevel))
+            {
+                _blackPoint = (ushort)Math.Min(65535, (long)_vm.BlackLevel << CurrentShift);
+            }
+
             if (_vm.HasImage)
             {
                 Viewport.SetLut(BuildLut());
@@ -379,10 +477,10 @@ public partial class MainWindow : Window
         _vm.Gain = 1.0;
         _vm.Gamma = 1.0;
         _vm.Contrast = 1.0;
+        _vm.BlackLevel = 0;
         _updatingSliders = false;
         _blackPoint = 0;
         _whitePoint = 65535;
-        _vm.BlackLevelText = "0";
     }
 
     private void OnResetDisplayClick(object sender, RoutedEventArgs e)
@@ -401,7 +499,8 @@ public partial class MainWindow : Window
             return;
         }
 
-        long total = _histogram.Sum(c => (long)c);
+        uint[] bins = _histogram.Bins;
+        long total = bins.Sum(c => (long)c);
         if (total == 0)
         {
             return;
@@ -409,37 +508,40 @@ public partial class MainWindow : Window
 
         long clip = (long)(total * 0.0035);
         long acc = 0;
-        int black = 0;
-        for (int i = 0; i < _histogram.Length; i++)
+        int blackCode = 0;
+        for (int i = 0; i < bins.Length; i++)
         {
-            acc += _histogram[i];
+            acc += bins[i];
             if (acc > clip)
             {
-                black = i;
+                blackCode = i;
                 break;
             }
         }
 
         acc = 0;
-        int white = 65535;
-        for (int i = _histogram.Length - 1; i >= 0; i--)
+        int whiteCode = bins.Length - 1;
+        for (int i = bins.Length - 1; i >= 0; i--)
         {
-            acc += _histogram[i];
+            acc += bins[i];
             if (acc > clip)
             {
-                white = i;
+                whiteCode = i;
                 break;
             }
         }
 
-        if (white <= black)
+        if (whiteCode <= blackCode)
         {
             return;
         }
 
-        _blackPoint = (ushort)black;
-        _whitePoint = (ushort)white;
-        _vm.BlackLevelText = (black >> (16 - _currentFormat.BitDepth)).ToString();
+        int shift = CurrentShift;
+        _blackPoint = (ushort)(blackCode << shift);
+        _whitePoint = (ushort)Math.Min(65535, ((long)whiteCode << shift) | ((1L << shift) - 1));
+        _updatingSliders = true;
+        _vm.BlackLevel = blackCode;
+        _updatingSliders = false;
         Viewport.SetLut(BuildLut());
     }
 
@@ -477,8 +579,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        int shift = 16 - _currentFormat.BitDepth;
-        int code = value >> shift;
+        int code = value >> CurrentShift;
         int maxCode = (1 << _currentFormat.BitDepth) - 1;
         string channel = BayerHelper.GetLabel(
             BayerHelper.GetChannel(_currentFormat.Bayer, e.X, e.Y));

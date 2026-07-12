@@ -33,6 +33,19 @@ public sealed class CursorPixelEventArgs : EventArgs
     public bool IsInsideImage { get; init; }
 }
 
+/// <summary>ビューポートのマウス操作モード。</summary>
+public enum ViewportInteractionMode
+{
+    /// <summary>ドラッグでパン(既定)。</summary>
+    Pan,
+
+    /// <summary>ドラッグでROI矩形選択。</summary>
+    RoiSelect,
+
+    /// <summary>クリックでラインプロファイル位置指定。</summary>
+    LineProfile,
+}
+
 /// <summary>
 /// WriteableBitmapベースの画像ビューポートコントロール。
 /// ホイールでカーソル中心ズーム、ドラッグでパン、ダブルクリックで全体表示。
@@ -72,6 +85,11 @@ public sealed class ImageViewport : FrameworkElement
     private double _panStartOriginX;
     private double _panStartOriginY;
 
+    private bool _roiDragging;
+    private int _roiStartX;
+    private int _roiStartY;
+    private RegionOfInterest? _roi;
+
     private OverlayData? _overlay;
 
     /// <summary>コントロールを生成する。</summary>
@@ -94,6 +112,18 @@ public sealed class ImageViewport : FrameworkElement
 
     /// <summary>カーソル下の画素が変化したときに発火する。</summary>
     public event EventHandler<CursorPixelEventArgs>? CursorPixelChanged;
+
+    /// <summary>ROIが確定・解除されたときに発火する。</summary>
+    public event EventHandler? RoiChanged;
+
+    /// <summary>ラインプロファイルモードで画素がクリックされたときに発火する。</summary>
+    public event EventHandler<CursorPixelEventArgs>? ProfilePointClicked;
+
+    /// <summary>マウス操作モード。</summary>
+    public ViewportInteractionMode InteractionMode { get; set; } = ViewportInteractionMode.Pan;
+
+    /// <summary>現在のROI(未選択ならnull)。</summary>
+    public RegionOfInterest? Roi => _roi;
 
     /// <summary>現在のズーム率。</summary>
     public double Zoom => _zoom;
@@ -139,7 +169,22 @@ public sealed class ImageViewport : FrameworkElement
         _frame = frame;
         _pyramid = null;
         _overlay = null;
+        ClearRoi();
         FitToView();
+    }
+
+    /// <summary>ROI選択を解除する。</summary>
+    public void ClearRoi()
+    {
+        bool had = _roi is not null;
+        _roi = null;
+        _roiDragging = false;
+        if (had)
+        {
+            RoiChanged?.Invoke(this, EventArgs.Empty);
+        }
+
+        InvalidateVisual();
     }
 
     /// <summary>生成完了したピラミッドを取り付け、高解像度で再描画する。</summary>
@@ -203,6 +248,36 @@ public sealed class ImageViewport : FrameworkElement
         }
 
         DrawRawValueOverlay(dc);
+        DrawRoi(dc);
+    }
+
+    private static readonly Pen RoiPen = CreateRoiPen();
+    private static readonly Brush RoiFill = CreateRoiFill();
+
+    private static Pen CreateRoiPen()
+    {
+        var pen = new Pen(new SolidColorBrush(Color.FromRgb(0x5B, 0x9D, 0xD9)), 1.5);
+        pen.Freeze();
+        return pen;
+    }
+
+    private static Brush CreateRoiFill()
+    {
+        var brush = new SolidColorBrush(Color.FromArgb(0x20, 0x5B, 0x9D, 0xD9));
+        brush.Freeze();
+        return brush;
+    }
+
+    private void DrawRoi(DrawingContext dc)
+    {
+        if (_roi is not { PixelCount: > 0 } roi)
+        {
+            return;
+        }
+
+        double x = (roi.X - _originX) * _zoom;
+        double y = (roi.Y - _originY) * _zoom;
+        dc.DrawRectangle(RoiFill, RoiPen, new Rect(x, y, roi.Width * _zoom, roi.Height * _zoom));
     }
 
     /// <inheritdoc />
@@ -234,8 +309,36 @@ public sealed class ImageViewport : FrameworkElement
             return;
         }
 
+        Point pos = e.GetPosition(this);
+        if (InteractionMode == ViewportInteractionMode.RoiSelect)
+        {
+            _roiStartX = (int)Math.Floor(_originX + pos.X / _zoom);
+            _roiStartY = (int)Math.Floor(_originY + pos.Y / _zoom);
+            _roiDragging = true;
+            _roi = null;
+            CaptureMouse();
+            return;
+        }
+
+        if (InteractionMode == ViewportInteractionMode.LineProfile)
+        {
+            int px = (int)Math.Floor(_originX + pos.X / _zoom);
+            int py = (int)Math.Floor(_originY + pos.Y / _zoom);
+            if (px >= 0 && py >= 0 && px < _image.Width && py < _image.Height)
+            {
+                ProfilePointClicked?.Invoke(this, new CursorPixelEventArgs
+                {
+                    X = px,
+                    Y = py,
+                    IsInsideImage = true,
+                });
+            }
+
+            return;
+        }
+
         _panning = true;
-        _panStartPoint = e.GetPosition(this);
+        _panStartPoint = pos;
         _panStartOriginX = _originX;
         _panStartOriginY = _originY;
         CaptureMouse();
@@ -250,6 +353,16 @@ public sealed class ImageViewport : FrameworkElement
             _panning = false;
             ReleaseMouseCapture();
             RestartIdleTimer();
+        }
+
+        if (_roiDragging)
+        {
+            _roiDragging = false;
+            ReleaseMouseCapture();
+            if (_roi is { PixelCount: > 0 })
+            {
+                RoiChanged?.Invoke(this, EventArgs.Empty);
+            }
         }
     }
 
@@ -270,6 +383,19 @@ public sealed class ImageViewport : FrameworkElement
             ClampOrigin();
             RequestRender(fast: true);
             RestartIdleTimer();
+        }
+
+        if (_roiDragging)
+        {
+            int cx = (int)Math.Floor(_originX + pos.X / _zoom);
+            int cy = (int)Math.Floor(_originY + pos.Y / _zoom);
+            int x0 = Math.Min(_roiStartX, cx);
+            int y0 = Math.Min(_roiStartY, cy);
+            int x1 = Math.Max(_roiStartX, cx);
+            int y1 = Math.Max(_roiStartY, cy);
+            _roi = new RegionOfInterest(x0, y0, x1 - x0 + 1, y1 - y0 + 1)
+                .Clamp(_image.Width, _image.Height);
+            InvalidateVisual();
         }
 
         int px = (int)Math.Floor(_originX + pos.X / _zoom);
