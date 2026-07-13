@@ -78,6 +78,7 @@ public sealed class ImageViewport : FrameworkElement
     private DisplayLut[]? _segmentLuts;
     private int _segmentWidth;
     private bool _zebraEnabled;
+    private IReadOnlyList<DefectPixel>? _defectMarkers;
 
     private double _zoom = 1.0;
     private double _originX;
@@ -298,6 +299,34 @@ public sealed class ImageViewport : FrameworkElement
         RequestRender(fast: false);
     }
 
+    /// <summary>欠陥画素マーカーを設定する(nullで解除)。白点=赤/黒点=青の丸で表示。</summary>
+    /// <param name="defects">欠陥画素リスト。</param>
+    public void SetDefectMarkers(IReadOnlyList<DefectPixel>? defects)
+    {
+        _defectMarkers = defects;
+        InvalidateVisual();
+    }
+
+    /// <summary>
+    /// 指定画素がビュー中央に来るようにズーム・位置を設定する。
+    /// </summary>
+    /// <param name="x">画素X座標。</param>
+    /// <param name="y">画素Y座標。</param>
+    /// <param name="zoom">ズーム率。</param>
+    public void CenterOn(int x, int y, double zoom)
+    {
+        if (_image is null || ActualWidth < 1 || ActualHeight < 1)
+        {
+            return;
+        }
+
+        _zoom = Math.Clamp(zoom, MinZoom, MaxZoom);
+        _originX = x + 0.5 - ActualWidth / (2 * _zoom);
+        _originY = y + 0.5 - ActualHeight / (2 * _zoom);
+        ClampOrigin();
+        RequestRender(fast: false);
+    }
+
     /// <summary>
     /// HDR分割表示用のフレーム別LUTを設定する(nullで解除)。
     /// X座標をsegmentWidthで区切ってセグメントごとに適用する。
@@ -357,6 +386,42 @@ public sealed class ImageViewport : FrameworkElement
 
         DrawRawValueOverlay(dc);
         DrawRoi(dc);
+        DrawDefectMarkers(dc);
+    }
+
+    private static readonly Pen HotMarkerPen = CreateMarkerPen(Color.FromRgb(0xE6, 0x50, 0x3C));
+    private static readonly Pen DeadMarkerPen = CreateMarkerPen(Color.FromRgb(0x3C, 0x78, 0xE6));
+
+    private static Pen CreateMarkerPen(Color color)
+    {
+        var pen = new Pen(new SolidColorBrush(color), 1.5);
+        pen.Freeze();
+        return pen;
+    }
+
+    private void DrawDefectMarkers(DrawingContext dc)
+    {
+        if (_defectMarkers is null || _image is null)
+        {
+            return;
+        }
+
+        double radius = Math.Max(5, _zoom * 0.7);
+        foreach (DefectPixel defect in _defectMarkers)
+        {
+            double cx = (defect.X + 0.5 - _originX) * _zoom;
+            double cy = (defect.Y + 0.5 - _originY) * _zoom;
+            if (cx < -radius || cy < -radius
+                || cx > ActualWidth + radius || cy > ActualHeight + radius)
+            {
+                continue;
+            }
+
+            dc.DrawEllipse(
+                null,
+                defect.Type == DefectType.Hot ? HotMarkerPen : DeadMarkerPen,
+                new Point(cx, cy), radius, radius);
+        }
     }
 
     private static readonly Pen RoiPen = CreateRoiPen();

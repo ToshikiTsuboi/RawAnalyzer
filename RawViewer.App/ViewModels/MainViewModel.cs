@@ -30,6 +30,7 @@ public sealed class MainViewModel : ObservableObject
     private double _blackLevel;
     private double _blackLevelMax = 65535;
     private bool _histogramIsLog = true;
+    private bool _histogramIsCumulative;
     private bool _histogramIsSampled;
     private bool _hasRoi;
     private string _roiOverlayText = "";
@@ -154,6 +155,13 @@ public sealed class MainViewModel : ObservableObject
     {
         get => _histogramIsLog;
         set => SetProperty(ref _histogramIsLog, value);
+    }
+
+    /// <summary>累積ヒストグラム(横軸=出力、縦軸=累積頻度)を表示するか。</summary>
+    public bool HistogramIsCumulative
+    {
+        get => _histogramIsCumulative;
+        set => SetProperty(ref _histogramIsCumulative, value);
     }
 
     /// <summary>ヒストグラムがサンプリング計算されたか(sampled表記)。</summary>

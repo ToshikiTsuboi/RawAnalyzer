@@ -1,0 +1,56 @@
+<Window x:Class="RawViewer.App.Views.DefectPixelWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="欠陥画素検出" Width="520" Height="560"
+        Background="#FF2E2E32" Foreground="#FFD8D8D4"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False">
+    <DockPanel Margin="12">
+        <!-- パラメータ -->
+        <StackPanel DockPanel.Dock="Top" Orientation="Horizontal">
+            <TextBlock Text="閾値: mean ±" Foreground="#FF9A9A95" FontSize="12"
+                       VerticalAlignment="Center" />
+            <TextBox x:Name="SigmaBox" Text="6.0" Width="52" Margin="6,0"
+                     TextAlignment="Right" VerticalAlignment="Center" />
+            <TextBlock Text="σ" Foreground="#FF9A9A95" FontSize="12"
+                       VerticalAlignment="Center" Margin="0,0,14,0" />
+            <CheckBox x:Name="HotCheck" Content="白点" IsChecked="True"
+                      VerticalAlignment="Center" Margin="0,0,10,0" />
+            <CheckBox x:Name="DeadCheck" Content="黒点" IsChecked="True"
+                      VerticalAlignment="Center" Margin="0,0,14,0" />
+            <Button x:Name="RunButton" Content="検出実行" Click="OnRunClick"
+                    BorderBrush="#FF5B9DD9" Foreground="#FF5B9DD9" />
+        </StackPanel>
+
+        <!-- サマリ -->
+        <TextBlock x:Name="SummaryText" DockPanel.Dock="Top" FontFamily="Consolas"
+                   FontSize="12" Foreground="#FF9A9A95" Margin="0,10,0,8"
+                   TextWrapping="Wrap" Text="「検出実行」で全画素を走査します (ダーク→白点 / フラット→黒点)" />
+
+        <!-- フッタ -->
+        <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal"
+                    HorizontalAlignment="Right" Margin="0,10,0,0">
+            <Button Content="コピー (Excel用)" Click="OnCopyClick" Margin="0,0,8,0" />
+            <Button Content="CSVで保存…" Click="OnSaveCsvClick" Margin="0,0,8,0" />
+            <Button Content="閉じる" IsCancel="True" Click="OnCloseClick" />
+        </StackPanel>
+
+        <!-- 結果リスト -->
+        <ListView x:Name="DefectList" MouseDoubleClick="OnListDoubleClick"
+                  ToolTip="ダブルクリックで該当画素へジャンプ">
+            <ListView.View>
+                <GridView>
+                    <GridViewColumn Header="#" Width="52"
+                                    DisplayMemberBinding="{Binding Index}" />
+                    <GridViewColumn Header="X" Width="76"
+                                    DisplayMemberBinding="{Binding X}" />
+                    <GridViewColumn Header="Y" Width="76"
+                                    DisplayMemberBinding="{Binding Y}" />
+                    <GridViewColumn Header="raw値" Width="86"
+                                    DisplayMemberBinding="{Binding Code}" />
+                    <GridViewColumn Header="種別" Width="80"
+                                    DisplayMemberBinding="{Binding TypeLabel}" />
+                </GridView>
+            </ListView.View>
+        </ListView>
+    </DockPanel>
+</Window>

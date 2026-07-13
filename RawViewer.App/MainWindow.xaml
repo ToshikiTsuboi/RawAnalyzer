@@ -120,6 +120,8 @@
                           IsChecked="{Binding IsChecked, ElementName=WbPickToggle, Mode=TwoWay}"
                           IsEnabled="{Binding HasImage}" />
                 <Separator />
+                <MenuItem Header="欠陥画素検出…" Click="OnDefectDetectClick"
+                          IsEnabled="{Binding HasImage}" />
                 <MenuItem Header="ヒストグラム再計算" Click="OnHistogramRefreshClick"
                           IsEnabled="{Binding HasImage}" />
                 <MenuItem Header="ヒストグラムをCSVで保存…" Click="OnHistogramSaveCsvClick"
@@ -194,22 +196,36 @@
         <!-- 本体 3カラム -->
         <Grid>
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="180" />
+                <ColumnDefinition Width="220" />
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="240" />
             </Grid.ColumnDefinitions>
 
-            <!-- 左: ファイルリスト -->
+            <!-- 左: フォルダツリー + ファイルリスト -->
             <Border Grid.Column="0" Background="{StaticResource PanelBrush}"
                     BorderBrush="{StaticResource BorderBrushDark}" BorderThickness="0,0,1,0">
                 <DockPanel Margin="6,8">
                     <TextBlock DockPanel.Dock="Top" Text="{Binding FolderPath}" FontSize="11"
                                Foreground="{StaticResource TextFaint}" Margin="8,0,8,6"
-                               TextTrimming="CharacterEllipsis" />
-                    <ListBox x:Name="FileListBox" ItemsSource="{Binding Files}"
-                             SelectedItem="{Binding SelectedFile}"
-                             DisplayMemberPath="Name"
-                             MouseDoubleClick="OnFileListDoubleClick" />
+                               TextTrimming="CharacterEllipsis" ToolTip="{Binding FolderPath}" />
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="*" MinHeight="80" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="1.4*" MinHeight="80" />
+                        </Grid.RowDefinitions>
+                        <TreeView x:Name="FolderTree" Grid.Row="0"
+                                  ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                  TreeViewItem.Expanded="OnFolderTreeExpanded"
+                                  SelectedItemChanged="OnFolderTreeSelected" />
+                        <GridSplitter Grid.Row="1" Height="3" HorizontalAlignment="Stretch"
+                                      Margin="4,3" />
+                        <ListBox x:Name="FileListBox" Grid.Row="2" ItemsSource="{Binding Files}"
+                                 SelectedItem="{Binding SelectedFile}"
+                                 DisplayMemberPath="Name"
+                                 ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                 MouseDoubleClick="OnFileListDoubleClick" />
+                    </Grid>
                 </DockPanel>
             </Border>
 
@@ -338,6 +354,11 @@
                                               Foreground="{StaticResource TextDim}"
                                               IsChecked="{Binding HistogramIsLog}"
                                               VerticalAlignment="Center" />
+                                    <CheckBox DockPanel.Dock="Right" Content="累積" FontSize="11"
+                                              Foreground="{StaticResource TextDim}"
+                                              IsChecked="{Binding HistogramIsCumulative}"
+                                              Margin="0,0,8,0" VerticalAlignment="Center"
+                                              ToolTip="累積頻度表示 (傷の出力ピーク解析用)" />
                                     <TextBlock DockPanel.Dock="Right" Text="sampled" FontSize="10"
                                                Foreground="#FFD99B5B" Margin="0,0,8,0"
                                                VerticalAlignment="Center"

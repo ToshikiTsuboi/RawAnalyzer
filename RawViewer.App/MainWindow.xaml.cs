@@ -86,6 +86,7 @@ public partial class MainWindow : Window
             new Mvvm.RelayCommand(_ => OnSaveClick(this, new RoutedEventArgs())),
             new KeyGesture(Key.S, ModifierKeys.Control)));
         RebuildRecentMenu();
+        InitFolderTree();
         Loaded += (_, _) =>
         {
             if (_vm.Files.Count == 0 && _session.LastFolder is { } folder
@@ -209,24 +210,10 @@ public partial class MainWindow : Window
         var entries = new List<FileEntry>();
         try
         {
-            // 上位ディレクトリへ移動する「..」+ サブディレクトリ + 対応ファイル
-            string? parent = Path.GetDirectoryName(folder);
-            if (!string.IsNullOrEmpty(parent))
-            {
-                entries.Add(new FileEntry("📁 ..", parent, IsDirectory: true));
-            }
-
-            foreach (string dir in Directory.EnumerateDirectories(folder)
-                .OrderBy(p => p, StringComparer.OrdinalIgnoreCase))
-            {
-                entries.Add(new FileEntry(
-                    $"📁 {Path.GetFileName(dir)}", dir, IsDirectory: true));
-            }
-
             foreach (string path in Directory.EnumerateFiles(folder)
                 .Where(p => SupportedExtensions.Contains(
                     Path.GetExtension(p), StringComparer.OrdinalIgnoreCase))
-                .OrderBy(p => p, StringComparer.OrdinalIgnoreCase))
+                .OrderBy(p => p, NaturalOrderComparer.Instance))
             {
                 entries.Add(new FileEntry(Path.GetFileName(path), path));
             }
@@ -245,6 +232,7 @@ public partial class MainWindow : Window
             _vm.Files.Add(entry);
         }
 
+        ExpandTreeToFolder(folder);
         _session.LastFolder = folder;
         _sessionStore.Save(_session);
 
@@ -365,6 +353,8 @@ public partial class MainWindow : Window
         ResetDisplayParameters();
 
         Title = $"RawViewer — {Path.GetFileName(path)}";
+        Viewport.SetDefectMarkers(null);
+        _defectWindow?.Close();
         _recentFiles.Add(path);
         RebuildRecentMenu();
         if (!IsTiff(path))
@@ -496,14 +486,15 @@ public partial class MainWindow : Window
             return;
         }
 
-        _vm.HistogramSource = RenderHistogram(_histogram.Bins, _vm.HistogramIsLog);
+        _vm.HistogramSource = RenderHistogram(
+            _histogram.Bins, _vm.HistogramIsLog, _vm.HistogramIsCumulative);
     }
 
-    private static ImageSource RenderHistogram(uint[] bins, bool logScale)
+    private static ImageSource RenderHistogram(uint[] bins, bool logScale, bool cumulative)
     {
         const int width = 210;
         const int height = 70;
-        var columns = new uint[width];
+        var columns = new double[width];
         int binsPerColumn = bins.Length / width + 1;
         for (int i = 0; i < bins.Length; i++)
         {
@@ -511,8 +502,19 @@ public partial class MainWindow : Window
             columns[column] += bins[i];
         }
 
-        uint maxCount = columns.Max();
-        double maxScale = logScale ? Math.Log(1 + maxCount) : maxCount;
+        if (cumulative)
+        {
+            // 縦軸=累積頻度(そのcode以下の画素数)
+            double running = 0;
+            for (int x = 0; x < width; x++)
+            {
+                running += columns[x];
+                columns[x] = running;
+            }
+        }
+
+        double maxValue = columns.Max();
+        double maxScale = logScale ? Math.Log(1 + maxValue) : maxValue;
         var pixels = new byte[width * height * 4];
         for (int x = 0; x < width; x++)
         {
@@ -521,9 +523,10 @@ public partial class MainWindow : Window
             for (int y = height - barHeight; y < height; y++)
             {
                 int offset = (y * width + x) * 4;
-                pixels[offset] = 0x85;
-                pixels[offset + 1] = 0x8A;
-                pixels[offset + 2] = 0x8A;
+                bool accent = cumulative;
+                pixels[offset] = accent ? (byte)0xD9 : (byte)0x85;
+                pixels[offset + 1] = accent ? (byte)0x9D : (byte)0x8A;
+                pixels[offset + 2] = accent ? (byte)0x5B : (byte)0x8A;
                 pixels[offset + 3] = 0xFF;
             }
         }
@@ -629,7 +632,8 @@ public partial class MainWindow : Window
 
     private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
-        if (e.PropertyName == nameof(MainViewModel.HistogramIsLog))
+        if (e.PropertyName is nameof(MainViewModel.HistogramIsLog)
+            or nameof(MainViewModel.HistogramIsCumulative))
         {
             RedrawHistogram();
             return;
@@ -804,11 +808,15 @@ public partial class MainWindow : Window
         }
 
         var sb = new StringBuilder();
-        sb.Append("raw_code").Append(separator).Append("count").AppendLine();
+        sb.Append("raw_code").Append(separator).Append("count")
+            .Append(separator).Append("cumulative").AppendLine();
         uint[] bins = _histogram.Bins;
+        long cumulative = 0;
         for (int i = 0; i < bins.Length; i++)
         {
-            sb.Append(i).Append(separator).Append(bins[i]).AppendLine();
+            cumulative += bins[i];
+            sb.Append(i).Append(separator).Append(bins[i])
+                .Append(separator).Append(cumulative).AppendLine();
         }
 
         return sb.ToString();
@@ -1891,6 +1899,7 @@ public partial class MainWindow : Window
         _sequenceBusy = true;
         try
         {
+            Viewport.SetDefectMarkers(null);
             if (_sequenceMode == SequenceMode.Frames)
             {
                 Viewport.SetFrame(index);
@@ -2026,6 +2035,230 @@ public partial class MainWindow : Window
     private void OnSeqLastClick(object sender, RoutedEventArgs e)
     {
         _ = ShowSequenceIndexAsync(SequenceCount - 1, refreshAnalysis: true);
+    }
+
+    // ---- フォルダツリー ----
+
+    private const string TreeDummyChild = "…";
+    private bool _syncingTree;
+
+    private void InitFolderTree()
+    {
+        FolderTree.Items.Clear();
+        foreach (DriveInfo drive in DriveInfo.GetDrives())
+        {
+            string label = "";
+            try
+            {
+                if (drive.IsReady)
+                {
+                    label = drive.VolumeLabel;
+                }
+            }
+            catch (IOException)
+            {
+            }
+
+            var item = new System.Windows.Controls.TreeViewItem
+            {
+                Header = $"💽 {drive.Name.TrimEnd('\\')}"
+                    + (string.IsNullOrEmpty(label) ? "" : $" ({label})"),
+                Tag = drive.RootDirectory.FullName,
+            };
+            item.Items.Add(TreeDummyChild);
+            FolderTree.Items.Add(item);
+        }
+    }
+
+    private void OnFolderTreeExpanded(object sender, RoutedEventArgs e)
+    {
+        if (e.OriginalSource is System.Windows.Controls.TreeViewItem item)
+        {
+            PopulateTreeItem(item);
+        }
+    }
+
+    private static void PopulateTreeItem(System.Windows.Controls.TreeViewItem item)
+    {
+        if (item.Items.Count != 1 || !Equals(item.Items[0], TreeDummyChild)
+            || item.Tag is not string path)
+        {
+            return;
+        }
+
+        item.Items.Clear();
+        try
+        {
+            foreach (string dir in Directory.EnumerateDirectories(path)
+                .OrderBy(p => p, NaturalOrderComparer.Instance))
+            {
+                try
+                {
+                    FileAttributes attributes = File.GetAttributes(dir);
+                    if ((attributes & (FileAttributes.Hidden | FileAttributes.System)) != 0)
+                    {
+                        continue;
+                    }
+                }
+                catch (IOException)
+                {
+                    continue;
+                }
+
+                var child = new System.Windows.Controls.TreeViewItem
+                {
+                    Header = $"📁 {Path.GetFileName(dir)}",
+                    Tag = dir,
+                };
+                child.Items.Add(TreeDummyChild);
+                item.Items.Add(child);
+            }
+        }
+        catch (UnauthorizedAccessException)
+        {
+        }
+        catch (IOException)
+        {
+        }
+    }
+
+    private void OnFolderTreeSelected(object sender, RoutedPropertyChangedEventArgs<object> e)
+    {
+        if (_syncingTree)
+        {
+            return;
+        }
+
+        if (e.NewValue is System.Windows.Controls.TreeViewItem { Tag: string path }
+            && Directory.Exists(path))
+        {
+            LoadFolder(path, selectPath: null);
+        }
+    }
+
+    /// <summary>フォルダツリーを指定パスまで展開して選択する(ベストエフォート)。</summary>
+    private void ExpandTreeToFolder(string folder)
+    {
+        if (_syncingTree)
+        {
+            return;
+        }
+
+        _syncingTree = true;
+        try
+        {
+            string? root = Path.GetPathRoot(folder);
+            if (string.IsNullOrEmpty(root))
+            {
+                return;
+            }
+
+            System.Windows.Controls.TreeViewItem? node = FolderTree.Items
+                .OfType<System.Windows.Controls.TreeViewItem>()
+                .FirstOrDefault(i => string.Equals(
+                    (string)i.Tag, root, StringComparison.OrdinalIgnoreCase));
+            if (node is null)
+            {
+                return;
+            }
+
+            node.IsExpanded = true;
+            PopulateTreeItem(node);
+            string relative = folder[root.Length..].Trim('\\');
+            if (relative.Length > 0)
+            {
+                foreach (string segment in relative.Split('\\'))
+                {
+                    System.Windows.Controls.TreeViewItem? next = node.Items
+                        .OfType<System.Windows.Controls.TreeViewItem>()
+                        .FirstOrDefault(i => string.Equals(
+                            Path.GetFileName((string)i.Tag), segment,
+                            StringComparison.OrdinalIgnoreCase));
+                    if (next is null)
+                    {
+                        return;
+                    }
+
+                    next.IsExpanded = true;
+                    PopulateTreeItem(next);
+                    node = next;
+                }
+            }
+
+            node.IsSelected = true;
+            node.BringIntoView();
+        }
+        finally
+        {
+            _syncingTree = false;
+        }
+    }
+
+    // ---- 欠陥画素検出 ----
+
+    private DefectPixelWindow? _defectWindow;
+
+    private void OnDefectDetectClick(object sender, RoutedEventArgs e)
+    {
+        if (ActiveImage is null)
+        {
+            return;
+        }
+
+        if (_defectWindow is null)
+        {
+            _defectWindow = new DefectPixelWindow { Owner = this };
+            _defectWindow.RunRequested += OnDefectRunRequested;
+            _defectWindow.DefectActivated += OnDefectActivated;
+            _defectWindow.Closed += (_, _) =>
+            {
+                _defectWindow = null;
+                Viewport.SetDefectMarkers(null);
+            };
+            _defectWindow.Show();
+        }
+
+        _defectWindow.Activate();
+    }
+
+    private async void OnDefectRunRequested(double sigma, bool detectHot, bool detectDead)
+    {
+        if (ActiveImage is null)
+        {
+            _defectWindow?.ResetRunButton();
+            return;
+        }
+
+        RawImage image = ActiveImage;
+        int frame = Viewport.Frame;
+        int maxCode = (1 << image.Format.BitDepth) - 1;
+        DefectDetectionResult result;
+        try
+        {
+            result = await Task.Run(() => DefectPixelDetector.Detect(
+                image, frame, sigma, detectHot, detectDead));
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, $"検出に失敗しました: {ex.Message}", "欠陥画素検出",
+                MessageBoxButton.OK, MessageBoxImage.Error);
+            _defectWindow?.ResetRunButton();
+            return;
+        }
+
+        if (_defectWindow is null || !ReferenceEquals(image, ActiveImage))
+        {
+            _defectWindow?.ResetRunButton();
+            return;
+        }
+
+        _defectWindow.ShowResult(result, maxCode);
+        Viewport.SetDefectMarkers(result.Defects);
+    }
+
+    private void OnDefectActivated(DefectPixel defect)
+    {
+        Viewport.CenterOn(defect.X, defect.Y, Math.Max(Viewport.Zoom, 32));
     }
 
     // ---- ゼブラ・ドラッグ&ドロップ ----
