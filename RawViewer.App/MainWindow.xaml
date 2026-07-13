@@ -96,6 +96,9 @@
                           IsEnabled="{Binding HasImage}" />
                 <MenuItem Header="カラーマトリクスをリセット" Click="OnMatrixResetClick"
                           IsEnabled="{Binding HasImage}" />
+                <Separator />
+                <MenuItem Header="バッチ現像 / 動画書き出し…" Click="OnBatchExportClick"
+                          IsEnabled="{Binding HasImage}" />
             </MenuItem>
             <MenuItem Header="HDR">
                 <MenuItem Header="HDR分割表示 (長/短)" Click="OnMenuDisplayModeClick" Tag="4"
@@ -223,8 +226,44 @@
                         Visibility="{Binding HasRoi, Converter={StaticResource BoolToVis}}">
                     <TextBlock Style="{StaticResource OverlayText}" Text="{Binding RoiOverlayText}" />
                 </Border>
+                <!-- シーケンス再生バー -->
+                <Border VerticalAlignment="Bottom" HorizontalAlignment="Stretch"
+                        Background="#E62E2E32" BorderBrush="{StaticResource BorderBrushDark}"
+                        BorderThickness="0,1,0,0" Padding="10,6"
+                        Visibility="{Binding HasSequence, Converter={StaticResource BoolToVis}}">
+                    <DockPanel>
+                        <Button Style="{StaticResource ToolButton}" Content="⏮"
+                                Click="OnSeqFirstClick" Padding="8,3" />
+                        <Button Style="{StaticResource ToolButton}" Content="◀"
+                                Click="OnSeqPrevClick" Padding="8,3" />
+                        <ToggleButton x:Name="PlayToggle" Content="▶ 再生"
+                                      Style="{StaticResource ToolToggle}" Padding="10,3"
+                                      Checked="OnPlayToggleChanged" Unchecked="OnPlayToggleChanged" />
+                        <Button Style="{StaticResource ToolButton}" Content="▶"
+                                Click="OnSeqNextClick" Padding="8,3" />
+                        <Button Style="{StaticResource ToolButton}" Content="⏭"
+                                Click="OnSeqLastClick" Padding="8,3" />
+                        <ComboBox x:Name="FpsCombo" DockPanel.Dock="Right" MinWidth="76"
+                                  SelectedIndex="2" FontSize="11" VerticalAlignment="Center">
+                            <ComboBoxItem Content="5 fps" />
+                            <ComboBoxItem Content="10 fps" />
+                            <ComboBoxItem Content="15 fps" />
+                            <ComboBoxItem Content="24 fps" />
+                            <ComboBoxItem Content="30 fps" />
+                        </ComboBox>
+                        <TextBlock DockPanel.Dock="Right" Text="{Binding SequenceLabel}"
+                                   FontFamily="Consolas" FontSize="12" Margin="10,0"
+                                   VerticalAlignment="Center"
+                                   Foreground="{StaticResource TextDim}" />
+                        <Slider x:Name="SeqSlider" Minimum="0" Maximum="{Binding SequenceMax}"
+                                Value="{Binding SequenceIndex}" Margin="10,0,0,0"
+                                SmallChange="1" LargeChange="5" IsSnapToTickEnabled="True"
+                                TickFrequency="1"
+                                ValueChanged="OnSeqSliderChanged" />
+                    </DockPanel>
+                </Border>
                 <Border Style="{StaticResource OverlayBox}" HorizontalAlignment="Right"
-                        VerticalAlignment="Bottom" Margin="14,12"
+                        VerticalAlignment="Bottom" Margin="14,44"
                         Visibility="{Binding HasImage, Converter={StaticResource BoolToVis}}">
                     <TextBlock Style="{StaticResource OverlayText}" Text="{Binding LevelOverlayText}"
                                Foreground="#FF8A8A85" />

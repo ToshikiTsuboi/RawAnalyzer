@@ -7,6 +7,7 @@ using System.Windows.Media.Imaging;
 using Microsoft.Win32;
 using System.Globalization;
 using System.Text;
+using System.Windows.Threading;
 using RawViewer.App.Controls;
 using RawViewer.App.Rendering;
 using RawViewer.App.Services;
@@ -41,6 +42,22 @@ public partial class MainWindow : Window
     private ushort _blackPoint;
     private ushort _whitePoint = 65535;
     private bool _updatingSliders;
+
+    // シーケンス再生
+    private enum SequenceMode
+    {
+        None,
+        Frames,
+        Files,
+    }
+
+    private static readonly int[] PlaybackFpsValues = { 5, 10, 15, 24, 30 };
+    private SequenceMode _sequenceMode;
+    private List<string> _sequenceFiles = new();
+    private int _sequenceIndex;
+    private DispatcherTimer? _playTimer;
+    private bool _sequenceBusy;
+    private bool _updatingSequenceUi;
 
     // HDR分割/合成の派生ビュー
     private RawImage? _derivedImage;
@@ -367,6 +384,7 @@ public partial class MainWindow : Window
         Viewport.SetImage(image, image.Format);
         Viewport.SetLut(BuildLut());
         UpdateDevelopLuts();
+        DetectSequence();
 
         RefreshHistogram(roi: null);
         await BuildPyramidAsync(image, cts.Token);
@@ -426,18 +444,19 @@ public partial class MainWindow : Window
         var cts = new CancellationTokenSource();
         _analysisCts = cts;
         RawImage image = ActiveImage;
+        int frame = Viewport.Frame;
 
         HistogramResult result;
         RegionStatistics? exactStats = null;
         try
         {
             result = await Task.Run(
-                () => ImageAnalysis.ComputeHistogram(image, 0, roi, cancellationToken: cts.Token),
+                () => ImageAnalysis.ComputeHistogram(image, frame, roi, cancellationToken: cts.Token),
                 cts.Token);
             if (roi is { } r)
             {
                 exactStats = await Task.Run(
-                    () => ImageAnalysis.ComputeStatistics(image, 0, r, cts.Token), cts.Token);
+                    () => ImageAnalysis.ComputeStatistics(image, frame, r, cts.Token), cts.Token);
             }
         }
         catch (OperationCanceledException)
@@ -575,13 +594,14 @@ public partial class MainWindow : Window
         }
 
         RawImage image = ActiveImage;
+        int frame = Viewport.Frame;
         ushort[] row;
         ushort[] column;
         try
         {
             (row, column) = await Task.Run(() => (
-                ImageAnalysis.ExtractRowProfile(image, 0, e.Y),
-                ImageAnalysis.ExtractColumnProfile(image, 0, e.X)));
+                ImageAnalysis.ExtractRowProfile(image, frame, e.Y),
+                ImageAnalysis.ExtractColumnProfile(image, frame, e.X)));
         }
         catch (Exception)
         {
@@ -1084,6 +1104,224 @@ public partial class MainWindow : Window
         }
     }
 
+    // ---- バッチ現像 / 動画書き出し ----
+
+    private void OnBatchExportClick(object sender, RoutedEventArgs e)
+    {
+        if (_currentImage is null || _currentFormat is null || _currentPath is null)
+        {
+            return;
+        }
+
+        if (IsTiff(_currentPath))
+        {
+            MessageBox.Show(this, "バッチ書き出しはrawファイルを開いた状態で実行してください。",
+                "バッチ書き出し", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        RawFormat format = _currentFormat;
+        long size = SafeFileSize(_currentPath);
+        string extension = Path.GetExtension(_currentPath);
+        List<string> targets = _vm.Files
+            .Where(f => !f.IsDirectory && string.Equals(
+                Path.GetExtension(f.FullPath), extension, StringComparison.OrdinalIgnoreCase))
+            .Select(f => f.FullPath)
+            .Where(p => SafeFileSize(p) == size)
+            .OrderBy(p => p, NaturalOrderComparer.Instance)
+            .ToList();
+        if (targets.Count == 0)
+        {
+            return;
+        }
+
+        string folder = Path.GetDirectoryName(_currentPath)!;
+        var dialog = new BatchExportDialog(targets.Count, Path.Combine(folder, "export"))
+        {
+            Owner = this,
+        };
+        if (dialog.ShowDialog() != true || dialog.Result is null)
+        {
+            return;
+        }
+
+        BatchChoice choice = dialog.Result;
+        if (choice.Format != BatchFormat.Tiff16
+            && format.TotalPixels > RawLoader.DefaultInMemoryPixelThreshold)
+        {
+            MessageBox.Show(this, "1億画素を超える画像の現像バッチはサポートされていません(TIFF16は可)。",
+                "バッチ書き出し", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        ExecuteBatch(targets, format, choice);
+    }
+
+    private void ExecuteBatch(List<string> targets, RawFormat format, BatchChoice choice)
+    {
+        BayerPattern pattern = format.Bayer;
+        bool color = pattern != BayerPattern.None;
+        DisplayLut lut = BuildLut();
+        double gamma = _vm.Gamma > 0 ? _vm.Gamma : 1.0;
+        var devLuts = DevelopLuts.Create(new DevelopParameters(
+            _blackPoint, _vm.WbGainR, _vm.WbGainB, gamma,
+            _colorMatrix.IsIdentity ? null : _colorMatrix));
+        int width = format.Width;
+        int height = format.Height;
+        string aviPath = Path.Combine(
+            choice.OutputFolder,
+            Path.GetFileNameWithoutExtension(targets[0]) + "_seq.avi");
+
+        ProgressWindow result = ProgressWindow.Run(
+            this,
+            $"バッチ書き出し中 ({targets.Count}件)",
+            (progress, ct) => Task.Run(() =>
+            {
+                Directory.CreateDirectory(choice.OutputFolder);
+                AviMjpegWriter? avi = null;
+                try
+                {
+                    if (choice.Format == BatchFormat.AviMjpeg)
+                    {
+                        avi = new AviMjpegWriter(aviPath, width, height, choice.Fps);
+                    }
+
+                    for (int i = 0; i < targets.Count; i++)
+                    {
+                        ct.ThrowIfCancellationRequested();
+                        string file = targets[i];
+                        string baseName = Path.GetFileNameWithoutExtension(file);
+                        using RawImage image = RawLoader.Load(file, format);
+                        switch (choice.Format)
+                        {
+                            case BatchFormat.Tiff16:
+                                TiffWriter.SaveGray16(
+                                    image, 0,
+                                    Path.Combine(choice.OutputFolder, baseName + ".tif"),
+                                    null, ct);
+                                break;
+                            case BatchFormat.AviMjpeg:
+                                // マルチフレームファイルは全フレームを動画化する
+                                for (int frame = 0; frame < image.FrameCount; frame++)
+                                {
+                                    ct.ThrowIfCancellationRequested();
+                                    avi!.AddFrame(EncodeJpegFrame(
+                                        image, frame, color, pattern, devLuts, lut, ct));
+                                }
+
+                                break;
+                            default:
+                                SaveBakedImage(
+                                    image, color, pattern, devLuts, lut,
+                                    Path.Combine(choice.OutputFolder,
+                                        baseName + (choice.Format == BatchFormat.Jpeg8 ? ".jpg" : ".png")),
+                                    choice.Format == BatchFormat.Jpeg8, ct);
+                                break;
+                        }
+
+                        progress.Report((double)(i + 1) / targets.Count);
+                    }
+
+                    avi?.Finish();
+                }
+                finally
+                {
+                    avi?.Dispose();
+                }
+            }, ct));
+
+        if (result.WasCanceled && choice.Format == BatchFormat.AviMjpeg)
+        {
+            try
+            {
+                if (File.Exists(aviPath))
+                {
+                    File.Delete(aviPath);
+                }
+            }
+            catch (IOException)
+            {
+            }
+        }
+
+        if (result.Error is not null)
+        {
+            MessageBox.Show(this, $"バッチ書き出しに失敗しました: {result.Error.Message}",
+                "バッチ書き出し", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+        else if (!result.WasCanceled)
+        {
+            _vm.ImageInfoText = choice.Format == BatchFormat.AviMjpeg
+                ? $"動画書き出し完了: {Path.GetFileName(aviPath)}"
+                : $"バッチ書き出し完了: {targets.Count}件 → {choice.OutputFolder}";
+        }
+    }
+
+    private static BitmapSource BakeFrame(
+        RawImage image, int frame, bool color, BayerPattern pattern,
+        DevelopLuts devLuts, DisplayLut lut, bool forceRgb, CancellationToken ct)
+    {
+        int width = image.Width;
+        int height = image.Height;
+        if (color)
+        {
+            byte[] rgb = ImageExport.DevelopRgb24(image, frame, pattern, devLuts, null, ct);
+            return BitmapSource.Create(
+                width, height, 96, 96, PixelFormats.Rgb24, null, rgb, width * 3);
+        }
+
+        byte[] gray = ImageExport.RenderGray8(image, frame, lut, ct);
+        if (!forceRgb)
+        {
+            return BitmapSource.Create(
+                width, height, 96, 96, PixelFormats.Gray8, null, gray, width);
+        }
+
+        // MJPEGはグレースケールJPEG非対応のプレーヤがあるためRGB化する
+        var rgbGray = new byte[(long)width * height * 3];
+        Parallel.For(0, height, y =>
+        {
+            int rowOffset = y * width;
+            for (int x = 0; x < width; x++)
+            {
+                byte v = gray[rowOffset + x];
+                long o = ((long)rowOffset + x) * 3;
+                rgbGray[o] = v;
+                rgbGray[o + 1] = v;
+                rgbGray[o + 2] = v;
+            }
+        });
+        return BitmapSource.Create(
+            width, height, 96, 96, PixelFormats.Rgb24, null, rgbGray, width * 3);
+    }
+
+    private static byte[] EncodeJpegFrame(
+        RawImage image, int frame, bool color, BayerPattern pattern,
+        DevelopLuts devLuts, DisplayLut lut, CancellationToken ct)
+    {
+        BitmapSource source = BakeFrame(image, frame, color, pattern, devLuts, lut,
+            forceRgb: true, ct);
+        var encoder = new JpegBitmapEncoder { QualityLevel = 90 };
+        encoder.Frames.Add(BitmapFrame.Create(source));
+        using var stream = new MemoryStream();
+        encoder.Save(stream);
+        return stream.ToArray();
+    }
+
+    private static void SaveBakedImage(
+        RawImage image, bool color, BayerPattern pattern, DevelopLuts devLuts,
+        DisplayLut lut, string path, bool jpeg, CancellationToken ct)
+    {
+        BitmapSource source = BakeFrame(image, 0, color, pattern, devLuts, lut,
+            forceRgb: false, ct);
+        BitmapEncoder encoder = jpeg
+            ? new JpegBitmapEncoder { QualityLevel = 95 }
+            : new PngBitmapEncoder();
+        encoder.Frames.Add(BitmapFrame.Create(source));
+        using var stream = new FileStream(path, FileMode.Create, FileAccess.Write);
+        encoder.Save(stream);
+    }
+
     // ---- 表示モード・ホワイトバランス ----
 
     private async void OnDisplayModeChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
@@ -1269,6 +1507,8 @@ public partial class MainWindow : Window
 
     private void ApplyDerivedView(RawImage derived)
     {
+        StopPlayback();
+        _vm.HasSequence = false;
         _derivedImage?.Dispose();
         _derivedImage = derived;
         _hdrFloatImage = null;
@@ -1310,6 +1550,7 @@ public partial class MainWindow : Window
         Viewport.SetImage(_currentImage!, _currentFormat!);
         Viewport.SetPyramid(_mainPyramid);
         Viewport.SetLut(BuildLut());
+        DetectSequence();
         RefreshHistogram(roi: null);
     }
 
@@ -1516,9 +1757,13 @@ public partial class MainWindow : Window
         ushort value;
         try
         {
-            value = image.GetPixel(sourceX, sourceY);
+            value = image.GetPixel(sourceX, sourceY, Viewport.Frame);
         }
         catch (ObjectDisposedException)
+        {
+            return;
+        }
+        catch (ArgumentOutOfRangeException)
         {
             return;
         }
@@ -1556,6 +1801,231 @@ public partial class MainWindow : Window
     private void OnExitClick(object sender, RoutedEventArgs e)
     {
         Close();
+    }
+
+    // ---- シーケンス再生 ----
+
+    private int SequenceCount => _sequenceMode switch
+    {
+        SequenceMode.Frames => _currentImage?.FrameCount ?? 0,
+        SequenceMode.Files => _sequenceFiles.Count,
+        _ => 0,
+    };
+
+    private void DetectSequence()
+    {
+        StopPlayback();
+        _sequenceMode = SequenceMode.None;
+        _sequenceFiles = new List<string>();
+        _sequenceIndex = 0;
+
+        if (_currentImage is not null && _derivedImage is null)
+        {
+            if (_currentImage.FrameCount > 1)
+            {
+                _sequenceMode = SequenceMode.Frames;
+                _sequenceIndex = Viewport.Frame;
+            }
+            else if (_currentPath is not null && !IsTiff(_currentPath))
+            {
+                // 同一フォルダ・同一拡張子・同一サイズのファイル群をバーチャルスタックとみなす
+                long size = SafeFileSize(_currentPath);
+                string extension = Path.GetExtension(_currentPath);
+                List<string> files = _vm.Files
+                    .Where(f => !f.IsDirectory && string.Equals(
+                        Path.GetExtension(f.FullPath), extension, StringComparison.OrdinalIgnoreCase))
+                    .Select(f => f.FullPath)
+                    .Where(p => SafeFileSize(p) == size)
+                    .OrderBy(p => p, NaturalOrderComparer.Instance)
+                    .ToList();
+                if (files.Count > 1 && size > 0)
+                {
+                    _sequenceMode = SequenceMode.Files;
+                    _sequenceFiles = files;
+                    _sequenceIndex = Math.Max(0, files.FindIndex(
+                        p => string.Equals(p, _currentPath, StringComparison.OrdinalIgnoreCase)));
+                }
+            }
+        }
+
+        UpdateSequenceUi();
+    }
+
+    private static long SafeFileSize(string path)
+    {
+        try
+        {
+            return new FileInfo(path).Length;
+        }
+        catch (Exception)
+        {
+            return -1;
+        }
+    }
+
+    private void UpdateSequenceUi()
+    {
+        _updatingSequenceUi = true;
+        int count = SequenceCount;
+        _vm.HasSequence = count > 1;
+        _vm.SequenceMax = Math.Max(0, count - 1);
+        _vm.SequenceIndex = _sequenceIndex;
+        _vm.SequenceLabel = count > 1 ? $"{_sequenceIndex + 1} / {count}" : "";
+        _updatingSequenceUi = false;
+    }
+
+    private async Task ShowSequenceIndexAsync(int index, bool refreshAnalysis)
+    {
+        int count = SequenceCount;
+        if (count <= 1 || _sequenceBusy)
+        {
+            return;
+        }
+
+        index = ((index % count) + count) % count;
+        if (index == _sequenceIndex)
+        {
+            return;
+        }
+
+        _sequenceBusy = true;
+        try
+        {
+            if (_sequenceMode == SequenceMode.Frames)
+            {
+                Viewport.SetFrame(index);
+                _sequenceIndex = index;
+            }
+            else
+            {
+                string path = _sequenceFiles[index];
+                RawFormat format = _currentFormat!;
+                RawImage image;
+                try
+                {
+                    image = await Task.Run(() => RawLoader.Load(path, format));
+                }
+                catch (Exception)
+                {
+                    return; // 消えた/読めないファイルはスキップ
+                }
+
+                RawImage? old = await Viewport.ReplaceImageAsync(image, format);
+                _currentImage = image;
+                _currentPath = path;
+                _mainPyramid = null;
+                _sequenceIndex = index;
+                old?.Dispose();
+                Title = $"RawViewer — {Path.GetFileName(path)}";
+                _vm.SelectedFile = _vm.Files.FirstOrDefault(f => string.Equals(
+                    f.FullPath, path, StringComparison.OrdinalIgnoreCase));
+            }
+
+            UpdateSequenceUi();
+        }
+        finally
+        {
+            _sequenceBusy = false;
+        }
+
+        if (refreshAnalysis)
+        {
+            RefreshAfterSequenceMove();
+        }
+    }
+
+    private void RefreshAfterSequenceMove()
+    {
+        if (_currentImage is null)
+        {
+            return;
+        }
+
+        if (_sequenceMode == SequenceMode.Files && _mainPyramid is null)
+        {
+            _ = BuildPyramidAsync(_currentImage, _loadCts?.Token ?? CancellationToken.None);
+        }
+
+        RefreshHistogram(Viewport.Roi is { PixelCount: > 0 } roi ? roi : null);
+    }
+
+    private void OnPlayToggleChanged(object sender, RoutedEventArgs e)
+    {
+        if (PlayToggle.IsChecked == true)
+        {
+            if (SequenceCount <= 1)
+            {
+                PlayToggle.IsChecked = false;
+                return;
+            }
+
+            PlayToggle.Content = "⏸ 停止";
+            _playTimer ??= new DispatcherTimer();
+            _playTimer.Tick -= OnPlayTick;
+            _playTimer.Tick += OnPlayTick;
+            int fps = PlaybackFpsValues[Math.Clamp(FpsCombo.SelectedIndex, 0, 4)];
+            _playTimer.Interval = TimeSpan.FromSeconds(1.0 / fps);
+            _playTimer.Start();
+        }
+        else
+        {
+            StopPlayback();
+        }
+    }
+
+    private void StopPlayback()
+    {
+        bool wasPlaying = _playTimer?.IsEnabled == true;
+        _playTimer?.Stop();
+        if (PlayToggle is not null)
+        {
+            PlayToggle.IsChecked = false;
+            PlayToggle.Content = "▶ 再生";
+        }
+
+        if (wasPlaying)
+        {
+            RefreshAfterSequenceMove();
+        }
+    }
+
+    private void OnPlayTick(object? sender, EventArgs e)
+    {
+        if (!_sequenceBusy)
+        {
+            _ = ShowSequenceIndexAsync(_sequenceIndex + 1, refreshAnalysis: false);
+        }
+    }
+
+    private void OnSeqSliderChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        if (_updatingSequenceUi || !_vm.HasSequence)
+        {
+            return;
+        }
+
+        bool playing = _playTimer?.IsEnabled == true;
+        _ = ShowSequenceIndexAsync((int)Math.Round(e.NewValue), refreshAnalysis: !playing);
+    }
+
+    private void OnSeqFirstClick(object sender, RoutedEventArgs e)
+    {
+        _ = ShowSequenceIndexAsync(0, refreshAnalysis: true);
+    }
+
+    private void OnSeqPrevClick(object sender, RoutedEventArgs e)
+    {
+        _ = ShowSequenceIndexAsync(_sequenceIndex - 1, refreshAnalysis: true);
+    }
+
+    private void OnSeqNextClick(object sender, RoutedEventArgs e)
+    {
+        _ = ShowSequenceIndexAsync(_sequenceIndex + 1, refreshAnalysis: true);
+    }
+
+    private void OnSeqLastClick(object sender, RoutedEventArgs e)
+    {
+        _ = ShowSequenceIndexAsync(SequenceCount - 1, refreshAnalysis: true);
     }
 
     // ---- ゼブラ・ドラッグ&ドロップ ----

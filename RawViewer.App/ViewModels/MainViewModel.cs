@@ -36,6 +36,10 @@ public sealed class MainViewModel : ObservableObject
     private double _wbGainR = 1.0;
     private double _wbGainB = 1.0;
     private bool _hdrTargetVisible;
+    private bool _hasSequence;
+    private double _sequenceIndex;
+    private double _sequenceMax;
+    private string _sequenceLabel = "";
     private ImageSource? _histogramSource;
     private string _histMeanSigmaText = "— / —";
     private string _histMinMaxText = "— / —";
@@ -192,6 +196,34 @@ public sealed class MainViewModel : ObservableObject
     {
         get => _hdrTargetVisible;
         set => SetProperty(ref _hdrTargetVisible, value);
+    }
+
+    /// <summary>再生可能なシーケンス(連番ファイル/マルチフレーム)があるか。</summary>
+    public bool HasSequence
+    {
+        get => _hasSequence;
+        set => SetProperty(ref _hasSequence, value);
+    }
+
+    /// <summary>シーケンスの現在位置(0始まり)。</summary>
+    public double SequenceIndex
+    {
+        get => _sequenceIndex;
+        set => SetProperty(ref _sequenceIndex, value);
+    }
+
+    /// <summary>シーケンスの最終インデックス。</summary>
+    public double SequenceMax
+    {
+        get => _sequenceMax;
+        set => SetProperty(ref _sequenceMax, value);
+    }
+
+    /// <summary>「3 / 25」形式の位置表示。</summary>
+    public string SequenceLabel
+    {
+        get => _sequenceLabel;
+        set => SetProperty(ref _sequenceLabel, value);
     }
 
     /// <summary>ヒストグラム画像。</summary>

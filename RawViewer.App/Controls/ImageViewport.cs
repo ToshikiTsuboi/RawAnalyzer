@@ -145,6 +145,9 @@ public sealed class ImageViewport : FrameworkElement
     /// <summary>表示中の画像(未設定ならnull)。</summary>
     public RawImage? Image => _image;
 
+    /// <summary>表示中のフレーム番号。</summary>
+    public int Frame => _frame;
+
     /// <summary>
     /// 進行中の描画をキャンセルして画像参照を解除する。
     /// 返されたTaskの完了後、旧画像を安全にDisposeできる。
@@ -208,6 +211,53 @@ public sealed class ImageViewport : FrameworkElement
     {
         _pyramid = pyramid;
         RequestRender(fast: false);
+    }
+
+    /// <summary>
+    /// 表示フレームを切り替える(ズーム/位置は維持)。
+    /// ピラミッドはフレーム0のみ有効なため、他フレームは等倍データから描画する。
+    /// </summary>
+    /// <param name="frame">フレーム番号。</param>
+    public void SetFrame(int frame)
+    {
+        if (_image is null || frame == _frame || (uint)frame >= (uint)_image.FrameCount)
+        {
+            return;
+        }
+
+        _frame = frame;
+        _overlay = null;
+        RequestRender(fast: false);
+    }
+
+    /// <summary>
+    /// 表示画像をズーム/位置を維持したまま差し替える(シーケンス再生用)。
+    /// 新しい描画が確定するまで旧ビットマップを表示し続けるためチラつかない。
+    /// </summary>
+    /// <param name="image">新しい画像(同一サイズであること)。</param>
+    /// <param name="format">フォーマット。</param>
+    /// <param name="frame">フレーム番号。</param>
+    /// <returns>差し替え前の画像。呼び出し側でDisposeすること。</returns>
+    public async Task<RawImage?> ReplaceImageAsync(RawImage image, RawFormat format, int frame = 0)
+    {
+        RawImage? old = _image;
+        _renderCts?.Cancel();
+        Task pending = _renderTask;
+        _image = image;
+        _format = format;
+        _frame = frame;
+        _pyramid = null;
+        _overlay = null;
+        RequestRender(fast: false);
+        try
+        {
+            await pending;
+        }
+        catch (OperationCanceledException)
+        {
+        }
+
+        return old;
     }
 
     /// <summary>表示LUTを差し替えて再描画する。</summary>
@@ -532,11 +582,13 @@ public sealed class ImageViewport : FrameworkElement
             return new RawImageRenderSource(_image, _frame);
         }
 
-        int factor = _pyramid?.SelectFactor(_zoom) ?? 1;
-        if (fast && _pyramid is not null)
+        // ピラミッドはフレーム0のデータから生成されるため他フレームでは使わない
+        TilePyramid? pyramid = _frame == 0 ? _pyramid : null;
+        int factor = pyramid?.SelectFactor(_zoom) ?? 1;
+        if (fast && pyramid is not null)
         {
             // 操作中は1段粗いレベルで軽く描く
-            PyramidLevel? coarser = _pyramid.GetLevel(factor * 2);
+            PyramidLevel? coarser = pyramid.GetLevel(factor * 2);
             if (coarser is not null)
             {
                 factor *= 2;
@@ -548,7 +600,7 @@ public sealed class ImageViewport : FrameworkElement
             return new RawImageRenderSource(_image, _frame);
         }
 
-        PyramidLevel level = _pyramid!.GetLevel(factor)!;
+        PyramidLevel level = pyramid!.GetLevel(factor)!;
         return new PyramidLevelRenderSource(level, _image.Width, _image.Height);
     }
 
