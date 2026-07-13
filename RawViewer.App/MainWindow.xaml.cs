@@ -1385,6 +1385,28 @@ public partial class MainWindow : Window
             return;
         }
 
+        // HDR合成ビュー中: Bayer/現像/分割は合成結果に適用する(Raw表示で元画像へ復帰)
+        if (_hdrFloatImage is not null && index is 1 or 2 or 3)
+        {
+            if (ActiveFormat?.Bayer is null or BayerPattern.None)
+            {
+                MessageBox.Show(this,
+                    "HDR合成結果にBayerパターンがありません。\n" +
+                    "元rawのフォーマットでBayerパターンを指定してからHDR合成してください。",
+                    "RawViewer", MessageBoxButton.OK, MessageBoxImage.Information);
+                DisplayModeCombo.SelectedIndex = 5;
+                return;
+            }
+
+            Viewport.SetDisplayMode(index switch
+            {
+                1 => ViewportDisplayMode.BayerColor,
+                2 => ViewportDisplayMode.ColorDevelop,
+                _ => ViewportDisplayMode.ChannelSplit,
+            });
+            return;
+        }
+
         // 通常モード: HDR派生ビューから復帰
         if (_derivedImage is not null)
         {
@@ -1494,6 +1516,13 @@ public partial class MainWindow : Window
 
     private async Task EnterHdrMergeAsync()
     {
+        // すでに合成ビュー表示中ならRaw表示へ戻すだけ(再計算しない)
+        if (_hdrFloatImage is not null && _derivedImage is not null)
+        {
+            Viewport.SetDisplayMode(ViewportDisplayMode.Raw);
+            return;
+        }
+
         RawImage image = _currentImage!;
         RawFormat format = _currentFormat!;
         HdrImage merged;
@@ -1611,14 +1640,14 @@ public partial class MainWindow : Window
 
     private async void OnGrayWorldClick(object sender, RoutedEventArgs e)
     {
-        if (_currentImage is null || _currentFormat is null
-            || _currentFormat.Bayer == BayerPattern.None)
+        if (ActiveImage is null || ActiveFormat is null
+            || ActiveFormat.Bayer == BayerPattern.None)
         {
             return;
         }
 
-        RawImage image = _currentImage;
-        BayerPattern pattern = _currentFormat.Bayer;
+        RawImage image = ActiveImage;
+        BayerPattern pattern = ActiveFormat.Bayer;
         WhiteBalanceGains gains;
         try
         {
@@ -1629,7 +1658,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (!ReferenceEquals(image, _currentImage))
+        if (!ReferenceEquals(image, ActiveImage))
         {
             return;
         }
@@ -1655,14 +1684,14 @@ public partial class MainWindow : Window
 
     private void OnWhiteBalancePicked(object? sender, CursorPixelEventArgs e)
     {
-        if (_currentImage is null || _currentFormat is null
-            || _currentFormat.Bayer == BayerPattern.None)
+        if (ActiveImage is null || ActiveFormat is null
+            || ActiveFormat.Bayer == BayerPattern.None)
         {
             return;
         }
 
         WhiteBalanceGains gains = WhiteBalance.ComputeSpotGains(
-            _currentImage, 0, _currentFormat.Bayer, e.X, e.Y);
+            ActiveImage, 0, ActiveFormat.Bayer, e.X, e.Y);
         _vm.WbGainG = 1.0;
         _vm.WbGainR = Math.Clamp(gains.GainR, 0.5, 4.0);
         _vm.WbGainB = Math.Clamp(gains.GainB, 0.5, 4.0);
@@ -2409,6 +2438,25 @@ public partial class MainWindow : Window
         {
             OpenPath(entry.FullPath);
         }
+    }
+
+    private void OnFileCtxOpenWithFormatClick(object sender, RoutedEventArgs e)
+    {
+        if (_vm.SelectedFile is not { IsDirectory: false } entry)
+        {
+            return;
+        }
+
+        if (IsTiff(entry.FullPath))
+        {
+            OpenPath(entry.FullPath);
+            return;
+        }
+
+        // 記憶フォーマットをスキップして必ずダイアログを表示する
+        RawFormat? initial = TryGetRememberedFormat(
+            entry.FullPath, SafeFileSize(entry.FullPath)) ?? _currentFormat;
+        OpenPath(entry.FullPath, initial ?? new RawFormat { Width = 1920, Height = 1080 });
     }
 
     private void OnFileCtxRevealClick(object sender, RoutedEventArgs e)

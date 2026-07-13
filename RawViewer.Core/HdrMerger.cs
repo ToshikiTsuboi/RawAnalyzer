@@ -20,12 +20,13 @@ public sealed record HdrMergeParameters(
 /// </summary>
 public sealed class HdrImage
 {
-    internal HdrImage(int width, int height, float[] pixels, float fullScale)
+    internal HdrImage(int width, int height, float[] pixels, float fullScale, BayerPattern bayer)
     {
         Width = width;
         Height = height;
         Pixels = pixels;
         FullScale = fullScale;
+        Bayer = bayer;
     }
 
     /// <summary>幅(画素数)。</summary>
@@ -39,6 +40,9 @@ public sealed class HdrImage
 
     /// <summary>合成域のフルスケール値((65535-black)×露光比^(段数-1))。</summary>
     public float FullScale { get; }
+
+    /// <summary>元フレームのBayerパターン(合成後もモザイク構造は保存される)。</summary>
+    public BayerPattern Bayer { get; }
 
     /// <summary>
     /// フルスケールを65535へスケーリングした16bit画像へ量子化する
@@ -59,7 +63,13 @@ public sealed class HdrImage
             }
         });
 
-        var format = new RawFormat { Width = Width, Height = Height, BitDepth = 16 };
+        var format = new RawFormat
+        {
+            Width = Width,
+            Height = Height,
+            BitDepth = 16,
+            Bayer = Bayer,
+        };
         return new RawImage(format, pixels);
     }
 
@@ -179,7 +189,8 @@ public static class HdrMerger
         }
 
         cancellationToken.ThrowIfCancellationRequested();
-        return new HdrImage(width, height, current, currentFullScale);
+        return new HdrImage(
+            width, height, current, currentFullScale, frames[0].Format.Bayer);
     }
 
     private static float[] ToLinear(RawImage frame, float black, CancellationToken ct)

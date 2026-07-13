@@ -239,6 +239,9 @@
                             <ListBox.ContextMenu>
                                 <ContextMenu>
                                     <MenuItem Header="開く" Click="OnFileCtxOpenClick" />
+                                    <MenuItem Header="フォーマットを指定して開く…"
+                                              Click="OnFileCtxOpenWithFormatClick"
+                                              ToolTip="記憶したフォーマットを使わずインポートダイアログを開きます" />
                                     <MenuItem Header="エクスプローラーで表示"
                                               Click="OnFileCtxRevealClick" />
                                     <MenuItem Header="パスをコピー" Click="OnFileCtxCopyPathClick" />

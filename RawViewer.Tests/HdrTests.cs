@@ -85,6 +85,43 @@ public class HdrSplitterTests
     }
 
     [Fact]
+    public void Split_LineInterleavedWithBayer_UsesTwoLineBlocks()
+    {
+        // Bayerセンサは色ペア(2行)単位で長/短が交互になる
+        const int width = 4;
+        const int height = 8;
+        var values = new ushort[width * height];
+        for (int y = 0; y < height; y++)
+        {
+            for (int x = 0; x < width; x++)
+            {
+                values[y * width + x] = (ushort)(y * 100);
+            }
+        }
+
+        var format = new RawFormat
+        {
+            Width = width, Height = height, BitDepth = 16,
+            Hdr = HdrMode.Dol, HdrStages = 2, Bayer = BayerPattern.Rggb,
+        };
+        using RawImage image = LoadImage(values, format);
+
+        IReadOnlyList<RawImage> frames = HdrSplitter.Split(image);
+
+        // 長秒 = 行0,1,4,5 / 短秒 = 行2,3,6,7
+        Assert.Equal(4, frames[0].Height);
+        Assert.Equal(BayerPattern.Rggb, frames[0].Format.Bayer);
+        Assert.Equal(0, frames[0].GetPixel(0, 0));
+        Assert.Equal(100, frames[0].GetPixel(0, 1));
+        Assert.Equal(400, frames[0].GetPixel(0, 2));
+        Assert.Equal(500, frames[0].GetPixel(0, 3));
+        Assert.Equal(200, frames[1].GetPixel(0, 0));
+        Assert.Equal(300, frames[1].GetPixel(0, 1));
+        Assert.Equal(600, frames[1].GetPixel(0, 2));
+        Assert.Equal(700, frames[1].GetPixel(0, 3));
+    }
+
+    [Fact]
     public void Split_FrameSequential_ReturnsEachFrame()
     {
         const int width = 4;
@@ -279,6 +316,47 @@ public class HdrMergerTests
         }
 
         Assert.Equal(65535f * 64, merged.FullScale, 0);
+    }
+
+    [Fact]
+    public void Merge_PreservesBayerPatternForColorDevelop()
+    {
+        var format = new RawFormat
+        {
+            Width = 8, Height = 4, BitDepth = 16, Bayer = BayerPattern.Rggb,
+        };
+        ushort[] values = TestData.MakePattern(8 * 4, 16);
+        string path = TestData.WriteTempFile(TestData.EncodeRawFile(values, format));
+        RawImage longFrame;
+        try
+        {
+            longFrame = RawLoader.Load(path, format);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+
+        string path2 = TestData.WriteTempFile(TestData.EncodeRawFile(values, format));
+        RawImage shortFrame;
+        try
+        {
+            shortFrame = RawLoader.Load(path2, format);
+        }
+        finally
+        {
+            File.Delete(path2);
+        }
+
+        using (longFrame)
+        using (shortFrame)
+        {
+            HdrImage merged = HdrMerger.Merge(
+                new[] { longFrame, shortFrame }, new HdrMergeParameters(ExposureRatio: 16));
+            Assert.Equal(BayerPattern.Rggb, merged.Bayer);
+            using RawImage quantized = merged.ToRawImage16();
+            Assert.Equal(BayerPattern.Rggb, quantized.Format.Bayer);
+        }
     }
 
     [Fact]

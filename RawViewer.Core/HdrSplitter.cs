@@ -77,10 +77,14 @@ public static class HdrSplitter
     private static IReadOnlyList<RawImage> SplitLineInterleaved(RawImage image, int stages)
     {
         int width = image.Width;
-        int subHeight = image.Height / stages;
+
+        // Bayerセンサでは色ペア(2行)単位でライン交互になるためブロック高さを2にする
+        int blockHeight = image.Format.Bayer != BayerPattern.None ? 2 : 1;
+        int period = stages * blockHeight;
+        int subHeight = image.Height / period * blockHeight;
         if (subHeight == 0)
         {
-            throw new InvalidOperationException("高さがHDR段数より小さいため分割できません。");
+            throw new InvalidOperationException("高さがHDR段数の周期より小さいため分割できません。");
         }
 
         RawFormat subFormat = image.Format with
@@ -97,8 +101,9 @@ public static class HdrSplitter
             int stageIndex = stage;
             Parallel.For(0, subHeight, y =>
             {
-                image.CopyRegion(
-                    0, 0, y * stages + stageIndex, width, 1, pixels.AsSpan(y * width, width));
+                int sourceY = y / blockHeight * period
+                    + stageIndex * blockHeight + y % blockHeight;
+                image.CopyRegion(0, 0, sourceY, width, 1, pixels.AsSpan(y * width, width));
             });
             frames[stage] = new RawImage(subFormat, pixels);
         }
