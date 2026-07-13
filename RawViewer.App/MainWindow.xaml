@@ -3,7 +3,8 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:controls="clr-namespace:RawViewer.App.Controls"
         Title="RawViewer" Width="1280" Height="820"
-        Background="#FF252528" Foreground="#FFD8D8D4">
+        Background="#FF252528" Foreground="#FFD8D8D4"
+        AllowDrop="True" Drop="OnFileDrop" DragOver="OnFileDragOver">
     <Window.Resources>
         <BooleanToVisibilityConverter x:Key="BoolToVis" />
 
@@ -73,6 +74,10 @@
                 <MenuItem Header="ズームアウト" Click="OnZoomOutClick" IsEnabled="{Binding HasImage}" />
                 <MenuItem Header="等倍 (1:1)" Click="OnActualSizeClick" IsEnabled="{Binding HasImage}" />
                 <MenuItem Header="全体表示" Click="OnFitClick" IsEnabled="{Binding HasImage}" />
+                <Separator />
+                <MenuItem Header="ゼブラ (飽和/黒潰れ警告)" IsCheckable="True"
+                          IsChecked="{Binding IsChecked, ElementName=ZebraToggle, Mode=TwoWay}"
+                          IsEnabled="{Binding HasImage}" />
                 <Separator />
                 <MenuItem Header="表示モード" IsEnabled="{Binding HasImage}">
                     <MenuItem Header="Raw表示" Click="OnMenuDisplayModeClick" Tag="0" />
@@ -151,6 +156,10 @@
                 <Button Style="{StaticResource ToolButton}" Content="＋" Click="OnZoomInClick" />
                 <Button Style="{StaticResource ToolButton}" Content="1:1" Click="OnActualSizeClick" />
                 <Button Style="{StaticResource ToolButton}" Content="全体" Click="OnFitClick" />
+                <ToggleButton x:Name="ZebraToggle" Content="ゼブラ"
+                              Style="{StaticResource ToolToggle}" IsEnabled="{Binding HasImage}"
+                              ToolTip="飽和(≥98%)を赤 / 黒潰れ(≤2%)を青のストライプで警告"
+                              Checked="OnZebraToggleChanged" Unchecked="OnZebraToggleChanged" />
                 <Border Style="{StaticResource ToolSep}" />
                 <Button Style="{StaticResource ToolButton}" Content="ヒストグラム"
                         Click="OnHistogramRefreshClick" IsEnabled="{Binding HasImage}" />

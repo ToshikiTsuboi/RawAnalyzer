@@ -77,6 +77,7 @@ public sealed class ImageViewport : FrameworkElement
     private ViewportDisplayMode _displayMode = ViewportDisplayMode.Raw;
     private DisplayLut[]? _segmentLuts;
     private int _segmentWidth;
+    private bool _zebraEnabled;
 
     private double _zoom = 1.0;
     private double _originX;
@@ -237,6 +238,14 @@ public sealed class ImageViewport : FrameworkElement
             RequestRender(fast: true);
             RestartIdleTimer();
         }
+    }
+
+    /// <summary>ゼブラ(飽和/黒潰れ警告)の表示を切り替えて再描画する。</summary>
+    /// <param name="enabled">表示するかどうか。</param>
+    public void SetZebra(bool enabled)
+    {
+        _zebraEnabled = enabled;
+        RequestRender(fast: false);
     }
 
     /// <summary>
@@ -575,6 +584,7 @@ public sealed class ImageViewport : FrameworkElement
             DevelopLuts = _developLuts,
             SegmentLuts = _segmentLuts,
             SegmentWidth = _segmentWidth,
+            ZebraEnabled = _zebraEnabled,
         };
 
         _renderTask = Task.Run(() =>

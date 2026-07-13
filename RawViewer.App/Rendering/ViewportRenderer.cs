@@ -43,8 +43,11 @@ public sealed class RenderRequest
     /// </summary>
     public IReadOnlyList<DisplayLut>? SegmentLuts { get; init; }
 
-    /// <summary>セグメント幅(元画像px)。</summary>
+    /// <summary>セグメント幅(元画素px)。</summary>
     public int SegmentWidth { get; init; }
+
+    /// <summary>ゼブラ(飽和/黒潰れ警告)を表示するか(グレー系モードのみ)。</summary>
+    public bool ZebraEnabled { get; init; }
 }
 
 /// <summary>
@@ -59,6 +62,12 @@ public static class ViewportRenderer
 
     /// <summary>この画素数以下の可視領域はバイリニアデモザイクで現像する。</summary>
     public const long BilinearRegionBudget = 6_000_000;
+
+    /// <summary>ゼブラの飽和閾値(フルスケールの98%)。</summary>
+    public const ushort ZebraSaturationThreshold = 64224;
+
+    /// <summary>ゼブラの黒潰れ閾値(フルスケールの2%)。</summary>
+    public const ushort ZebraBlackThreshold = 1310;
 
     /// <summary>
     /// ビューポートを描画する。
@@ -193,6 +202,7 @@ public static class ViewportRenderer
                 FillBackground(destRow[((s.Dx1 + 1) * 4)..]);
                 IReadOnlyList<DisplayLut>? segmentLuts = request.SegmentLuts;
                 int segmentWidth = Math.Max(1, request.SegmentWidth);
+                bool zebra = request.ZebraEnabled;
                 for (int dx = s.Dx0; dx <= s.Dx1; dx++)
                 {
                     double srcX = originX + (dx + 0.5) * invZoom;
@@ -202,8 +212,32 @@ public static class ViewportRenderer
                         ? lut
                         : segmentLuts[Math.Clamp(
                             (int)srcX / segmentWidth, 0, segmentLuts.Count - 1)];
-                    byte d = activeLut.Map(rowBuffer[levelX]);
+                    ushort value = rowBuffer[levelX];
+                    byte d = activeLut.Map(value);
                     int o = dx * 4;
+
+                    // ゼブラ: 斜めストライプで飽和=赤 / 黒潰れ=青
+                    if (zebra && ((dx + destY) & 7) < 4)
+                    {
+                        if (value >= ZebraSaturationThreshold)
+                        {
+                            destRow[o] = 0x3C;
+                            destRow[o + 1] = 0x50;
+                            destRow[o + 2] = 0xE6;
+                            destRow[o + 3] = 255;
+                            continue;
+                        }
+
+                        if (value <= ZebraBlackThreshold)
+                        {
+                            destRow[o] = 0xE6;
+                            destRow[o + 1] = 0x78;
+                            destRow[o + 2] = 0x3C;
+                            destRow[o + 3] = 255;
+                            continue;
+                        }
+                    }
+
                     destRow[o] = d;
                     destRow[o + 1] = d;
                     destRow[o + 2] = d;

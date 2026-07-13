@@ -26,6 +26,8 @@ public partial class MainWindow : Window
     private readonly MainViewModel _vm = new();
     private readonly FormatPresetStore _presetStore = new();
     private readonly RecentFilesStore _recentFiles = new();
+    private readonly SessionStore _sessionStore = new();
+    private readonly SessionState _session;
     private ColorMatrix _colorMatrix = ColorMatrix.Identity;
     private bool _updatingMatrixBoxes;
 
@@ -51,6 +53,8 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        _session = _sessionStore.Load();
+        ApplyWindowPlacement();
         DataContext = _vm;
         _vm.PropertyChanged += OnViewModelPropertyChanged;
         Viewport.ViewportStateChanged += OnViewportStateChanged;
@@ -65,6 +69,15 @@ public partial class MainWindow : Window
             new Mvvm.RelayCommand(_ => OnSaveClick(this, new RoutedEventArgs())),
             new KeyGesture(Key.S, ModifierKeys.Control)));
         RebuildRecentMenu();
+        Loaded += (_, _) =>
+        {
+            if (_vm.Files.Count == 0 && _session.LastFolder is { } folder
+                && Directory.Exists(folder))
+            {
+                LoadFolder(folder, selectPath: null);
+            }
+        };
+        Closing += (_, _) => SaveWindowPlacement();
         Closed += async (_, _) =>
         {
             _loadCts?.Cancel();
@@ -83,6 +96,71 @@ public partial class MainWindow : Window
     private RawFormat? ActiveFormat => ActiveImage?.Format;
 
     private int CurrentShift => 16 - (ActiveFormat?.BitDepth ?? 16);
+
+    // ---- セッション記憶 ----
+
+    private void ApplyWindowPlacement()
+    {
+        if (_session.WindowWidth is { } width && _session.WindowHeight is { } height
+            && _session.WindowLeft is { } left && _session.WindowTop is { } top
+            && width >= 400 && height >= 300)
+        {
+            // 画面外への復元を防ぐ
+            double maxLeft = SystemParameters.VirtualScreenLeft
+                + SystemParameters.VirtualScreenWidth - 200;
+            double maxTop = SystemParameters.VirtualScreenTop
+                + SystemParameters.VirtualScreenHeight - 100;
+            Left = Math.Clamp(left, SystemParameters.VirtualScreenLeft, maxLeft);
+            Top = Math.Clamp(top, SystemParameters.VirtualScreenTop, maxTop);
+            Width = Math.Min(width, SystemParameters.VirtualScreenWidth);
+            Height = Math.Min(height, SystemParameters.VirtualScreenHeight);
+        }
+
+        if (_session.WindowMaximized)
+        {
+            WindowState = WindowState.Maximized;
+        }
+    }
+
+    private void SaveWindowPlacement()
+    {
+        _session.WindowMaximized = WindowState == WindowState.Maximized;
+        if (WindowState == WindowState.Normal)
+        {
+            _session.WindowLeft = Left;
+            _session.WindowTop = Top;
+            _session.WindowWidth = Width;
+            _session.WindowHeight = Height;
+        }
+        else
+        {
+            _session.WindowLeft = RestoreBounds.Left;
+            _session.WindowTop = RestoreBounds.Top;
+            _session.WindowWidth = RestoreBounds.Width;
+            _session.WindowHeight = RestoreBounds.Height;
+        }
+
+        _sessionStore.Save(_session);
+    }
+
+    private void RememberFileFormat(string path, RawFormat format)
+    {
+        string key = SessionStore.NormalizeKey(path);
+        _session.FileFormats.Remove(key);
+        _session.FileFormats[key] = format;
+        _sessionStore.Save(_session);
+    }
+
+    private RawFormat? TryGetRememberedFormat(string path, long fileSize)
+    {
+        if (!_session.FileFormats.TryGetValue(SessionStore.NormalizeKey(path), out RawFormat? format))
+        {
+            return null;
+        }
+
+        long required = format.HeaderOffset + format.FrameSizeInBytes * format.FrameCount;
+        return required <= fileSize ? format : null;
+    }
 
     // ---- ファイル読込 ----
 
@@ -150,6 +228,9 @@ public partial class MainWindow : Window
             _vm.Files.Add(entry);
         }
 
+        _session.LastFolder = folder;
+        _sessionStore.Save(_session);
+
         if (selectPath is not null)
         {
             _vm.SelectedFile = _vm.Files.FirstOrDefault(
@@ -194,16 +275,28 @@ public partial class MainWindow : Window
         RawFormat? format = null;
         if (!IsTiff(path))
         {
-            var dialog = new RawImportDialog(path, _presetStore, initialFormat ?? _currentFormat)
+            // 同じファイルを開き直すときは記憶したフォーマットでダイアログをスキップ
+            // (「変更…」から開いた場合 initialFormat が渡されるためダイアログを出す)
+            RawFormat? remembered = initialFormat is null
+                ? TryGetRememberedFormat(path, new FileInfo(path).Length)
+                : null;
+            if (remembered is not null)
             {
-                Owner = this,
-            };
-            if (dialog.ShowDialog() != true || dialog.Result is null)
-            {
-                return;
+                format = remembered;
             }
+            else
+            {
+                var dialog = new RawImportDialog(path, _presetStore, initialFormat ?? _currentFormat)
+                {
+                    Owner = this,
+                };
+                if (dialog.ShowDialog() != true || dialog.Result is null)
+                {
+                    return;
+                }
 
-            format = dialog.Result;
+                format = dialog.Result;
+            }
         }
 
         _loadCts?.Cancel();
@@ -257,6 +350,11 @@ public partial class MainWindow : Window
         Title = $"RawViewer — {Path.GetFileName(path)}";
         _recentFiles.Add(path);
         RebuildRecentMenu();
+        if (!IsTiff(path))
+        {
+            RememberFileFormat(path, image.Format);
+        }
+
         UpdateFormatPanel(image.Format);
         long fileSize = new FileInfo(path).Length;
         _vm.ImageInfoText =
@@ -1458,5 +1556,39 @@ public partial class MainWindow : Window
     private void OnExitClick(object sender, RoutedEventArgs e)
     {
         Close();
+    }
+
+    // ---- ゼブラ・ドラッグ&ドロップ ----
+
+    private void OnZebraToggleChanged(object sender, RoutedEventArgs e)
+    {
+        Viewport.SetZebra(ZebraToggle.IsChecked == true);
+    }
+
+    private void OnFileDragOver(object sender, DragEventArgs e)
+    {
+        e.Effects = e.Data.GetDataPresent(DataFormats.FileDrop)
+            ? DragDropEffects.Copy
+            : DragDropEffects.None;
+        e.Handled = true;
+    }
+
+    private void OnFileDrop(object sender, DragEventArgs e)
+    {
+        if (e.Data.GetData(DataFormats.FileDrop) is not string[] { Length: > 0 } paths)
+        {
+            return;
+        }
+
+        string path = paths[0];
+        if (Directory.Exists(path))
+        {
+            LoadFolder(path, selectPath: null);
+        }
+        else if (File.Exists(path))
+        {
+            LoadFolder(Path.GetDirectoryName(path)!, path);
+            OpenPath(path);
+        }
     }
 }
