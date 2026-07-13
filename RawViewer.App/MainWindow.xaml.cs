@@ -5,8 +5,11 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using Microsoft.Win32;
+using System.Globalization;
+using System.Text;
 using RawViewer.App.Controls;
 using RawViewer.App.Rendering;
+using RawViewer.App.Services;
 using RawViewer.App.ViewModels;
 using RawViewer.App.Views;
 using RawViewer.Core;
@@ -22,6 +25,9 @@ public partial class MainWindow : Window
 
     private readonly MainViewModel _vm = new();
     private readonly FormatPresetStore _presetStore = new();
+    private readonly RecentFilesStore _recentFiles = new();
+    private ColorMatrix _colorMatrix = ColorMatrix.Identity;
+    private bool _updatingMatrixBoxes;
 
     private RawImage? _currentImage;
     private RawFormat? _currentFormat;
@@ -58,6 +64,7 @@ public partial class MainWindow : Window
         InputBindings.Add(new KeyBinding(
             new Mvvm.RelayCommand(_ => OnSaveClick(this, new RoutedEventArgs())),
             new KeyGesture(Key.S, ModifierKeys.Control)));
+        RebuildRecentMenu();
         Closed += async (_, _) =>
         {
             _loadCts?.Cancel();
@@ -248,6 +255,8 @@ public partial class MainWindow : Window
         ResetDisplayParameters();
 
         Title = $"RawViewer — {Path.GetFileName(path)}";
+        _recentFiles.Add(path);
+        RebuildRecentMenu();
         UpdateFormatPanel(image.Format);
         long fileSize = new FileInfo(path).Length;
         _vm.ImageInfoText =
@@ -567,7 +576,232 @@ public partial class MainWindow : Window
     {
         double gamma = _vm.Gamma > 0 ? _vm.Gamma : 1.0;
         Viewport.SetDevelopLuts(DevelopLuts.Create(new DevelopParameters(
-            _blackPoint, _vm.WbGainR, _vm.WbGainB, gamma)));
+            _blackPoint, _vm.WbGainR, _vm.WbGainB, gamma,
+            _colorMatrix.IsIdentity ? null : _colorMatrix)));
+    }
+
+    // ---- カラーマトリクス ----
+
+    private void OnMatrixChanged(object sender, RoutedEventArgs e)
+    {
+        if (_updatingMatrixBoxes || M33Box is null || MatrixStateText is null)
+        {
+            return;
+        }
+
+        var boxes = new[]
+        {
+            M11Box, M12Box, M13Box, M21Box, M22Box, M23Box, M31Box, M32Box, M33Box,
+        };
+        var values = new double[9];
+        for (int i = 0; i < 9; i++)
+        {
+            if (!double.TryParse(boxes[i].Text, NumberStyles.Float,
+                    CultureInfo.InvariantCulture, out values[i]))
+            {
+                MatrixStateText.Text = "入力エラー";
+                return;
+            }
+        }
+
+        _colorMatrix = new ColorMatrix(
+            values[0], values[1], values[2],
+            values[3], values[4], values[5],
+            values[6], values[7], values[8]);
+        MatrixStateText.Text = _colorMatrix.IsIdentity ? "単位行列 (無効)" : "適用中";
+        if (_vm.HasImage)
+        {
+            UpdateDevelopLuts();
+        }
+    }
+
+    private void OnMatrixResetClick(object sender, RoutedEventArgs e)
+    {
+        _updatingMatrixBoxes = true;
+        M11Box.Text = "1.00";
+        M12Box.Text = "0.00";
+        M13Box.Text = "0.00";
+        M21Box.Text = "0.00";
+        M22Box.Text = "1.00";
+        M23Box.Text = "0.00";
+        M31Box.Text = "0.00";
+        M32Box.Text = "0.00";
+        M33Box.Text = "1.00";
+        _updatingMatrixBoxes = false;
+        _colorMatrix = ColorMatrix.Identity;
+        MatrixStateText.Text = "単位行列 (無効)";
+        if (_vm.HasImage)
+        {
+            UpdateDevelopLuts();
+        }
+    }
+
+    // ---- メニュー・エクスポート ----
+
+    private void RebuildRecentMenu()
+    {
+        RecentMenu.Items.Clear();
+        List<string> recent = _recentFiles.Load().Where(File.Exists).ToList();
+        if (recent.Count == 0)
+        {
+            RecentMenu.Items.Add(new System.Windows.Controls.MenuItem
+            {
+                Header = "(なし)",
+                IsEnabled = false,
+            });
+            return;
+        }
+
+        foreach (string path in recent)
+        {
+            var item = new System.Windows.Controls.MenuItem
+            {
+                Header = Path.GetFileName(path),
+                ToolTip = path,
+            };
+            string captured = path;
+            item.Click += (_, _) =>
+            {
+                LoadFolder(Path.GetDirectoryName(captured)!, captured);
+                OpenPath(captured);
+            };
+            RecentMenu.Items.Add(item);
+        }
+    }
+
+    private void OnMenuDisplayModeClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is System.Windows.Controls.MenuItem { Tag: string tag }
+            && int.TryParse(tag, out int index))
+        {
+            DisplayModeCombo.SelectedIndex = index;
+        }
+    }
+
+    private string? BuildHistogramTable(char separator)
+    {
+        if (_histogram is null)
+        {
+            return null;
+        }
+
+        var sb = new StringBuilder();
+        sb.Append("raw_code").Append(separator).Append("count").AppendLine();
+        uint[] bins = _histogram.Bins;
+        for (int i = 0; i < bins.Length; i++)
+        {
+            sb.Append(i).Append(separator).Append(bins[i]).AppendLine();
+        }
+
+        return sb.ToString();
+    }
+
+    private void OnHistogramCopyClick(object sender, RoutedEventArgs e)
+    {
+        string? table = BuildHistogramTable('\t');
+        if (table is not null)
+        {
+            Clipboard.SetText(table);
+            _vm.ImageInfoText = "ヒストグラムをクリップボードへコピーしました";
+        }
+    }
+
+    private void OnHistogramSaveCsvClick(object sender, RoutedEventArgs e)
+    {
+        string? table = BuildHistogramTable(',');
+        if (table is null)
+        {
+            return;
+        }
+
+        var dialog = new SaveFileDialog
+        {
+            Filter = "CSV (*.csv)|*.csv",
+            FileName = Path.GetFileNameWithoutExtension(_currentPath ?? "image") + "_hist.csv",
+        };
+        if (dialog.ShowDialog(this) == true)
+        {
+            File.WriteAllText(dialog.FileName, table, Encoding.UTF8);
+            _vm.ImageInfoText = $"保存完了: {Path.GetFileName(dialog.FileName)}";
+        }
+    }
+
+    private void OnOpenPresetFolderClick(object sender, RoutedEventArgs e)
+    {
+        string directory = Path.GetDirectoryName(_presetStore.FilePath)!;
+        Directory.CreateDirectory(directory);
+        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = directory,
+            UseShellExecute = true,
+        });
+    }
+
+    private void OnUsageGuideClick(object sender, RoutedEventArgs e)
+    {
+        ShowInfoWindow("操作ガイド",
+            "マウス操作\n" +
+            "  ホイール: カーソル中心ズーム\n" +
+            "  ドラッグ: パン / ダブルクリック: 全体表示\n" +
+            "  ズーム3200%以上で画素上にraw値を表示\n\n" +
+            "解析\n" +
+            "  ROI: ツールバーのROIを押してドラッグで矩形選択\n" +
+            "  ラインプロファイル: モードを押して画素をクリック\n" +
+            "  ヒストグラム/プロファイルは右クリックでデータ保存\n\n" +
+            "ホワイトバランス\n" +
+            "  AWB(グレーワールド): 全体平均から自動計算\n" +
+            "  スポイト: クリック画素を無彩色として計算\n\n" +
+            "HDR\n" +
+            "  フォーマットでHDR方式を指定 → 表示モードで分割/合成");
+    }
+
+    private void OnAboutClick(object sender, RoutedEventArgs e)
+    {
+        string version = typeof(MainWindow).Assembly.GetName().Version?.ToString(3) ?? "1.0.0";
+        ShowInfoWindow("バージョン情報",
+            $"RawViewer {version}\n\n" +
+            "イメージセンサRaw画像評価アプリ\n" +
+            "10億画素(2GB)対応 / DOL・Staggered HDR / Bayer現像\n\n" +
+            $".NET {Environment.Version} / WPF");
+    }
+
+    private void ShowInfoWindow(string title, string message)
+    {
+        var text = new System.Windows.Controls.TextBlock
+        {
+            Text = message,
+            Margin = new Thickness(20, 16, 20, 8),
+            FontSize = 12,
+            LineHeight = 19,
+            TextWrapping = TextWrapping.Wrap,
+        };
+        var ok = new System.Windows.Controls.Button
+        {
+            Content = "OK",
+            IsDefault = true,
+            IsCancel = true,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Margin = new Thickness(20, 8, 20, 14),
+            MinWidth = 80,
+        };
+        var panel = new System.Windows.Controls.StackPanel();
+        panel.Children.Add(text);
+        panel.Children.Add(ok);
+        var window = new Window
+        {
+            Title = title,
+            Content = panel,
+            Owner = this,
+            Width = 420,
+            SizeToContent = SizeToContent.Height,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            ResizeMode = ResizeMode.NoResize,
+            ShowInTaskbar = false,
+            Background = (Brush)FindResource("PanelBrush"),
+            Foreground = (Brush)FindResource("TextBrush"),
+        };
+        ok.Click += (_, _) => window.Close();
+        window.ShowDialog();
     }
 
     // ---- 保存 ----

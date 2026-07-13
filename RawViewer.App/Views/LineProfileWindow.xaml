@@ -28,7 +28,16 @@
             </Grid>
             <Border Grid.Column="1" Background="#FF161618" BorderBrush="#FF48484E"
                     BorderThickness="1">
-                <Canvas x:Name="PlotCanvas" ClipToBounds="True" SizeChanged="OnCanvasSizeChanged" />
+                <Canvas x:Name="PlotCanvas" ClipToBounds="True" SizeChanged="OnCanvasSizeChanged"
+                        Background="Transparent">
+                    <Canvas.ContextMenu>
+                        <ContextMenu>
+                            <MenuItem Header="データをコピー (Excel貼り付け用)"
+                                      Click="OnCopyDataClick" />
+                            <MenuItem Header="CSVで保存…" Click="OnSaveCsvClick" />
+                        </ContextMenu>
+                    </Canvas.ContextMenu>
+                </Canvas>
             </Border>
         </Grid>
     </DockPanel>

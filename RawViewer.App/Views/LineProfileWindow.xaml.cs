@@ -1,6 +1,9 @@
+using System.IO;
+using System.Text;
 using System.Windows;
 using System.Windows.Media;
 using System.Windows.Shapes;
+using Microsoft.Win32;
 
 namespace RawViewer.App.Views;
 
@@ -43,6 +46,54 @@ public partial class LineProfileWindow : Window
     private void OnDirectionChanged(object sender, RoutedEventArgs e)
     {
         Redraw();
+    }
+
+    private string? BuildTable(char separator)
+    {
+        bool horizontal = HorizontalRadio?.IsChecked != false;
+        ushort[] data = horizontal ? _rowProfile : _columnProfile;
+        if (data.Length == 0)
+        {
+            return null;
+        }
+
+        var sb = new StringBuilder();
+        sb.Append(horizontal ? "x" : "y").Append(separator).Append("raw_code").AppendLine();
+        for (int i = 0; i < data.Length; i++)
+        {
+            sb.Append(i).Append(separator).Append(data[i]).AppendLine();
+        }
+
+        return sb.ToString();
+    }
+
+    private void OnCopyDataClick(object sender, RoutedEventArgs e)
+    {
+        string? table = BuildTable('\t');
+        if (table is not null)
+        {
+            Clipboard.SetText(table);
+        }
+    }
+
+    private void OnSaveCsvClick(object sender, RoutedEventArgs e)
+    {
+        string? table = BuildTable(',');
+        if (table is null)
+        {
+            return;
+        }
+
+        bool horizontal = HorizontalRadio?.IsChecked != false;
+        var dialog = new SaveFileDialog
+        {
+            Filter = "CSV (*.csv)|*.csv",
+            FileName = horizontal ? $"profile_y{_pointY}.csv" : $"profile_x{_pointX}.csv",
+        };
+        if (dialog.ShowDialog(this) == true)
+        {
+            File.WriteAllText(dialog.FileName, table, Encoding.UTF8);
+        }
     }
 
     private void OnCanvasSizeChanged(object sender, SizeChangedEventArgs e)

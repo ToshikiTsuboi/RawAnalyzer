@@ -160,4 +160,60 @@ public class ColorPipelineTests
         Assert.Throws<ArgumentOutOfRangeException>(
             () => DevelopLuts.Create(new DevelopParameters(Gamma: 0)));
     }
+
+    [Fact]
+    public void DevelopLuts_IdentityMatrix_MatchesChannelLuts()
+    {
+        var withMatrix = DevelopLuts.Create(new DevelopParameters(
+            Gamma: 2.2, Matrix: ColorMatrix.Identity));
+        Assert.False(withMatrix.HasMatrix);
+
+        withMatrix.Convert(10000, 20000, 30000, out byte r, out byte g, out byte b);
+        Assert.Equal(withMatrix.R[10000], r);
+        Assert.Equal(withMatrix.G[20000], g);
+        Assert.Equal(withMatrix.B[30000], b);
+    }
+
+    [Fact]
+    public void DevelopLuts_SwapMatrix_ExchangesChannels()
+    {
+        // R↔B入替行列
+        var swap = new ColorMatrix(0, 0, 1, 0, 1, 0, 1, 0, 0);
+        var luts = DevelopLuts.Create(new DevelopParameters(Gamma: 1.0, Matrix: swap));
+        Assert.True(luts.HasMatrix);
+
+        luts.Convert(40000, 20000, 10000, out byte r, out byte g, out byte b);
+
+        // ガンマ1・ゲイン1なので出力 ≈ 入力/65535*255(R/B入替)
+        Assert.InRange(r, (byte)(10000 * 255 / 65535 - 1), (byte)(10000 * 255 / 65535 + 1));
+        Assert.InRange(g, (byte)(20000 * 255 / 65535 - 1), (byte)(20000 * 255 / 65535 + 1));
+        Assert.InRange(b, (byte)(40000 * 255 / 65535 - 1), (byte)(40000 * 255 / 65535 + 1));
+    }
+
+    [Fact]
+    public void DevelopLuts_ScaleMatrix_HalvesOutput()
+    {
+        var half = new ColorMatrix(0.5, 0, 0, 0, 0.5, 0, 0, 0, 0.5);
+        var luts = DevelopLuts.Create(new DevelopParameters(Gamma: 1.0, Matrix: half));
+
+        luts.Convert(65535, 65535, 65535, out byte r, out byte g, out byte b);
+
+        Assert.InRange(r, (byte)127, (byte)128);
+        Assert.InRange(g, (byte)127, (byte)128);
+        Assert.InRange(b, (byte)127, (byte)128);
+    }
+
+    [Fact]
+    public void DevelopLuts_MatrixClampsNegativeAndOverflow()
+    {
+        // 大きな係数と負の係数でも0..255にクランプされる
+        var extreme = new ColorMatrix(3, 0, 0, 0, -1, 0, 0, 0, 1);
+        var luts = DevelopLuts.Create(new DevelopParameters(Gamma: 1.0, Matrix: extreme));
+
+        luts.Convert(65535, 65535, 65535, out byte r, out byte g, out byte b);
+
+        Assert.Equal(255, r);
+        Assert.Equal(0, g);
+        Assert.Equal(255, b);
+    }
 }

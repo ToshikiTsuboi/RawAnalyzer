@@ -660,6 +660,25 @@
         </Setter>
     </Style>
 
+    <!-- ===== ContextMenu ===== -->
+    <Style TargetType="ContextMenu">
+        <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+        <Setter Property="FontSize" Value="12" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ContextMenu">
+                    <Border Background="{StaticResource PanelBrush}"
+                            BorderBrush="{StaticResource BorderBrushDark}"
+                            BorderThickness="1" CornerRadius="6" Padding="4"
+                            MinWidth="160" SnapsToDevicePixels="True">
+                        <StackPanel IsItemsHost="True"
+                                    KeyboardNavigation.DirectionalNavigation="Cycle" />
+                    </Border>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
     <!-- ===== ProgressBar ===== -->
     <Style TargetType="ProgressBar">
         <Setter Property="Background" Value="{StaticResource Panel2Brush}" />

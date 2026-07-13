@@ -61,6 +61,7 @@
             <MenuItem Header="ファイル">
                 <MenuItem Header="開く…" InputGestureText="Ctrl+O" Click="OnOpenFileClick" />
                 <MenuItem Header="フォルダを開く…" Click="OnOpenFolderClick" />
+                <MenuItem x:Name="RecentMenu" Header="最近使ったファイル" />
                 <Separator />
                 <MenuItem Header="保存…" InputGestureText="Ctrl+S" Click="OnSaveClick"
                           IsEnabled="{Binding HasImage}" />
@@ -68,15 +69,60 @@
                 <MenuItem Header="終了" Click="OnExitClick" />
             </MenuItem>
             <MenuItem Header="表示">
-                <MenuItem Header="ズームイン" Click="OnZoomInClick" />
-                <MenuItem Header="ズームアウト" Click="OnZoomOutClick" />
-                <MenuItem Header="等倍 (1:1)" Click="OnActualSizeClick" />
-                <MenuItem Header="全体表示" Click="OnFitClick" />
+                <MenuItem Header="ズームイン" Click="OnZoomInClick" IsEnabled="{Binding HasImage}" />
+                <MenuItem Header="ズームアウト" Click="OnZoomOutClick" IsEnabled="{Binding HasImage}" />
+                <MenuItem Header="等倍 (1:1)" Click="OnActualSizeClick" IsEnabled="{Binding HasImage}" />
+                <MenuItem Header="全体表示" Click="OnFitClick" IsEnabled="{Binding HasImage}" />
+                <Separator />
+                <MenuItem Header="表示モード" IsEnabled="{Binding HasImage}">
+                    <MenuItem Header="Raw表示" Click="OnMenuDisplayModeClick" Tag="0" />
+                    <MenuItem Header="Bayerカラー" Click="OnMenuDisplayModeClick" Tag="1" />
+                    <MenuItem Header="カラー現像" Click="OnMenuDisplayModeClick" Tag="2" />
+                    <MenuItem Header="チャネル分割 (R/Gr/Gb/B)" Click="OnMenuDisplayModeClick" Tag="3" />
+                </MenuItem>
             </MenuItem>
-            <MenuItem Header="処理" IsEnabled="False" />
-            <MenuItem Header="HDR" IsEnabled="False" />
-            <MenuItem Header="ツール" IsEnabled="False" />
-            <MenuItem Header="ヘルプ" IsEnabled="False" />
+            <MenuItem Header="処理">
+                <MenuItem Header="自動コントラスト (0.35%クリップ)" Click="OnAutoContrastClick"
+                          IsEnabled="{Binding HasImage}" />
+                <MenuItem Header="表示調整をリセット" Click="OnResetDisplayClick"
+                          IsEnabled="{Binding HasImage}" />
+                <Separator />
+                <MenuItem Header="AWB (グレーワールド)" Click="OnGrayWorldClick"
+                          IsEnabled="{Binding HasImage}" />
+                <MenuItem Header="カラーマトリクスをリセット" Click="OnMatrixResetClick"
+                          IsEnabled="{Binding HasImage}" />
+            </MenuItem>
+            <MenuItem Header="HDR">
+                <MenuItem Header="HDR分割表示 (長/短)" Click="OnMenuDisplayModeClick" Tag="4"
+                          IsEnabled="{Binding HasImage}" />
+                <MenuItem Header="HDR合成表示" Click="OnMenuDisplayModeClick" Tag="5"
+                          IsEnabled="{Binding HasImage}" />
+                <Separator />
+                <MenuItem Header="HDR方式の設定 (フォーマット変更)…" Click="OnChangeFormatClick"
+                          IsEnabled="{Binding HasImage}" />
+            </MenuItem>
+            <MenuItem Header="ツール">
+                <MenuItem Header="ROI選択モード" IsCheckable="True"
+                          IsChecked="{Binding IsChecked, ElementName=RoiToggle, Mode=TwoWay}"
+                          IsEnabled="{Binding HasImage}" />
+                <MenuItem Header="ラインプロファイルモード" IsCheckable="True"
+                          IsChecked="{Binding IsChecked, ElementName=ProfileToggle, Mode=TwoWay}"
+                          IsEnabled="{Binding HasImage}" />
+                <MenuItem Header="WBスポイトモード" IsCheckable="True"
+                          IsChecked="{Binding IsChecked, ElementName=WbPickToggle, Mode=TwoWay}"
+                          IsEnabled="{Binding HasImage}" />
+                <Separator />
+                <MenuItem Header="ヒストグラム再計算" Click="OnHistogramRefreshClick"
+                          IsEnabled="{Binding HasImage}" />
+                <MenuItem Header="ヒストグラムをCSVで保存…" Click="OnHistogramSaveCsvClick"
+                          IsEnabled="{Binding HasImage}" />
+                <Separator />
+                <MenuItem Header="プリセットフォルダを開く" Click="OnOpenPresetFolderClick" />
+            </MenuItem>
+            <MenuItem Header="ヘルプ">
+                <MenuItem Header="操作ガイド" Click="OnUsageGuideClick" />
+                <MenuItem Header="バージョン情報" Click="OnAboutClick" />
+            </MenuItem>
         </Menu>
 
         <!-- ツールバー -->
@@ -254,7 +300,17 @@
                                                Text="ヒストグラム" />
                                 </DockPanel>
                                 <Image Source="{Binding HistogramSource}" Height="70" Stretch="Fill"
-                                       SnapsToDevicePixels="True" />
+                                       SnapsToDevicePixels="True" Cursor="Hand"
+                                       ToolTip="右クリックでデータ保存/コピー">
+                                    <Image.ContextMenu>
+                                        <ContextMenu>
+                                            <MenuItem Header="データをコピー (Excel貼り付け用)"
+                                                      Click="OnHistogramCopyClick" />
+                                            <MenuItem Header="CSVで保存…"
+                                                      Click="OnHistogramSaveCsvClick" />
+                                        </ContextMenu>
+                                    </Image.ContextMenu>
+                                </Image>
                                 <DockPanel Margin="0,6,0,0">
                                     <TextBlock Style="{StaticResource RowLabel}" Text="mean / σ" />
                                     <TextBlock DockPanel.Dock="Right" Style="{StaticResource RowValue}"
@@ -292,15 +348,54 @@
                                             SmallChange="0.02" LargeChange="0.2" />
                                 </DockPanel>
                                 <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
-                                    <Button Style="{StaticResource ToolButton}" Content="グレーワールド"
+                                    <Button Style="{StaticResource ToolButton}"
+                                            Content="AWB (グレーワールド)"
                                             Click="OnGrayWorldClick" FontSize="11"
-                                            IsEnabled="{Binding HasImage}" />
+                                            IsEnabled="{Binding HasImage}"
+                                            ToolTip="画像全体の平均からR/Bゲインを自動計算" />
                                     <ToggleButton x:Name="WbPickToggle" Content="スポイト"
                                                   Style="{StaticResource ToolToggle}"
                                                   FontSize="11"
                                                   IsEnabled="{Binding HasImage}"
+                                                  ToolTip="クリックした画素を無彩色とみなしてWBを合わせる"
                                                   Checked="OnWbPickToggleChanged"
                                                   Unchecked="OnWbPickToggleChanged" />
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- カラーマトリクス (発展機能) -->
+                        <Border BorderBrush="{StaticResource BorderBrushDark}"
+                                BorderThickness="0,0,0,1" Padding="12,10">
+                            <StackPanel IsEnabled="{Binding HasImage}">
+                                <TextBlock Style="{StaticResource SectionHeader}"
+                                           Text="カラーマトリクス (現像時)" />
+                                <UniformGrid Columns="3" Rows="3">
+                                    <TextBox x:Name="M11Box" Text="1.00" FontSize="11" Margin="1"
+                                             TextAlignment="Right" TextChanged="OnMatrixChanged" />
+                                    <TextBox x:Name="M12Box" Text="0.00" FontSize="11" Margin="1"
+                                             TextAlignment="Right" TextChanged="OnMatrixChanged" />
+                                    <TextBox x:Name="M13Box" Text="0.00" FontSize="11" Margin="1"
+                                             TextAlignment="Right" TextChanged="OnMatrixChanged" />
+                                    <TextBox x:Name="M21Box" Text="0.00" FontSize="11" Margin="1"
+                                             TextAlignment="Right" TextChanged="OnMatrixChanged" />
+                                    <TextBox x:Name="M22Box" Text="1.00" FontSize="11" Margin="1"
+                                             TextAlignment="Right" TextChanged="OnMatrixChanged" />
+                                    <TextBox x:Name="M23Box" Text="0.00" FontSize="11" Margin="1"
+                                             TextAlignment="Right" TextChanged="OnMatrixChanged" />
+                                    <TextBox x:Name="M31Box" Text="0.00" FontSize="11" Margin="1"
+                                             TextAlignment="Right" TextChanged="OnMatrixChanged" />
+                                    <TextBox x:Name="M32Box" Text="0.00" FontSize="11" Margin="1"
+                                             TextAlignment="Right" TextChanged="OnMatrixChanged" />
+                                    <TextBox x:Name="M33Box" Text="1.00" FontSize="11" Margin="1"
+                                             TextAlignment="Right" TextChanged="OnMatrixChanged" />
+                                </UniformGrid>
+                                <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                                    <Button Style="{StaticResource ToolButton}" Content="リセット"
+                                            Click="OnMatrixResetClick" FontSize="11" />
+                                    <TextBlock x:Name="MatrixStateText" Style="{StaticResource RowLabel}"
+                                               FontSize="10" VerticalAlignment="Center"
+                                               Margin="8,0,0,0" Text="単位行列 (無効)" />
                                 </StackPanel>
                             </StackPanel>
                         </Border>

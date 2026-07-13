@@ -95,9 +95,11 @@ public static class ImageExport
                 {
                     int si = srcOffset + x * 3;
                     long di = destOffset + x * 3;
-                    rgb24[di] = luts.R[rgb16[si]];
-                    rgb24[di + 1] = luts.G[rgb16[si + 1]];
-                    rgb24[di + 2] = luts.B[rgb16[si + 2]];
+                    luts.Convert(rgb16[si], rgb16[si + 1], rgb16[si + 2],
+                        out byte r8, out byte g8, out byte b8);
+                    rgb24[di] = r8;
+                    rgb24[di + 1] = g8;
+                    rgb24[di + 2] = b8;
                 }
             });
 

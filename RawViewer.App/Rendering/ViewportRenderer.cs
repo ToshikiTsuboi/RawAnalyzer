@@ -353,9 +353,11 @@ public static class ViewportRenderer
 
                     int rx = Math.Clamp((int)srcX - sx0, 0, rectW - 1);
                     int index = (ry * rectW + rx) * 3;
-                    destRow[o] = luts.B[rgb[index + 2]];
-                    destRow[o + 1] = luts.G[rgb[index + 1]];
-                    destRow[o + 2] = luts.R[rgb[index]];
+                    luts.Convert(rgb[index], rgb[index + 1], rgb[index + 2],
+                        out byte r8, out byte g8, out byte b8);
+                    destRow[o] = b8;
+                    destRow[o + 1] = g8;
+                    destRow[o + 2] = r8;
                     destRow[o + 3] = 255;
                 }
             });
@@ -436,10 +438,11 @@ public static class ViewportRenderer
                         buffers.Top[blockX], buffers.Top[blockX + 1],
                         buffers.Bottom[blockX], buffers.Bottom[blockX + 1],
                         out ushort r, out ushort g, out ushort b);
+                    luts.Convert(r, g, b, out byte r8, out byte g8, out byte b8);
                     int o = dx * 4;
-                    destRow[o] = luts.B[b];
-                    destRow[o + 1] = luts.G[g];
-                    destRow[o + 2] = luts.R[r];
+                    destRow[o] = b8;
+                    destRow[o + 1] = g8;
+                    destRow[o + 2] = r8;
                     destRow[o + 3] = 255;
                 }
 
