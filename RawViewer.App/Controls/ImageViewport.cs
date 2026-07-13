@@ -261,6 +261,17 @@ public sealed class ImageViewport : FrameworkElement
         return old;
     }
 
+    /// <summary>
+    /// フォーマット記述子のみを差し替えて再描画する(Bayerパターンのその場変更用)。
+    /// ズーム/位置は維持される。
+    /// </summary>
+    /// <param name="format">新しいフォーマット。</param>
+    public void UpdateFormat(RawFormat format)
+    {
+        _format = format;
+        RequestRender(fast: false);
+    }
+
     /// <summary>表示LUTを差し替えて再描画する。</summary>
     /// <param name="lut">LUT。</param>
     public void SetLut(DisplayLut lut)

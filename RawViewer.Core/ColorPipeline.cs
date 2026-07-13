@@ -38,12 +38,14 @@ public sealed record ColorMatrix(
 /// </summary>
 /// <param name="BlackLevel">黒レベル(16bitフルスケール値域)。減算後に正規化する。</param>
 /// <param name="GainR">Rチャネルのホワイトバランスゲイン。</param>
+/// <param name="GainG">Gチャネルのホワイトバランスゲイン(通常1.0基準)。</param>
 /// <param name="GainB">Bチャネルのホワイトバランスゲイン。</param>
 /// <param name="Gamma">表示ガンマ。出力 = x^(1/Gamma)。</param>
 /// <param name="Matrix">カラーマトリクス(null=単位行列)。</param>
 public sealed record DevelopParameters(
     ushort BlackLevel = 0,
     double GainR = 1.0,
+    double GainG = 1.0,
     double GainB = 1.0,
     double Gamma = 2.2,
     ColorMatrix? Matrix = null);
@@ -107,13 +109,13 @@ public sealed class DevelopLuts
             throw new ArgumentOutOfRangeException(nameof(parameters), "Gammaは正の値である必要があります。");
         }
 
-        if (parameters.GainR < 0 || parameters.GainB < 0)
+        if (parameters.GainR < 0 || parameters.GainG < 0 || parameters.GainB < 0)
         {
             throw new ArgumentOutOfRangeException(nameof(parameters), "WBゲインは非負である必要があります。");
         }
 
         byte[] r = BuildChannel(parameters, parameters.GainR);
-        byte[] g = BuildChannel(parameters, 1.0);
+        byte[] g = BuildChannel(parameters, parameters.GainG);
         byte[] b = BuildChannel(parameters, parameters.GainB);
 
         if (parameters.Matrix is null || parameters.Matrix.IsIdentity)
@@ -133,7 +135,7 @@ public sealed class DevelopLuts
         return new DevelopLuts(
             r, g, b, parameters,
             BuildLinearChannel(parameters, (float)parameters.GainR),
-            BuildLinearChannel(parameters, 1f),
+            BuildLinearChannel(parameters, (float)parameters.GainG),
             BuildLinearChannel(parameters, (float)parameters.GainB),
             gammaLut, matrix);
     }

@@ -146,6 +146,16 @@ public class ColorPipelineTests
     }
 
     [Fact]
+    public void DevelopLuts_GainG_ScalesGreenChannel()
+    {
+        var luts = DevelopLuts.Create(new DevelopParameters(GainG: 2.0, Gamma: 1.0));
+        Assert.Equal(255, luts.G[32768]);
+        Assert.InRange(luts.G[16384], (byte)127, (byte)128);
+        Assert.InRange(luts.R[32768], (byte)127, (byte)128);
+        Assert.InRange(luts.B[32768], (byte)127, (byte)128);
+    }
+
+    [Fact]
     public void DevelopLuts_BlackLevel_ClipsBelow()
     {
         var luts = DevelopLuts.Create(new DevelopParameters(BlackLevel: 1000, Gamma: 1.0));

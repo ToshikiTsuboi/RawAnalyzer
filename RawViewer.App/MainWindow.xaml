@@ -76,7 +76,7 @@
                 <MenuItem Header="全体表示" Click="OnFitClick" IsEnabled="{Binding HasImage}" />
                 <Separator />
                 <MenuItem Header="ゼブラ (飽和/黒潰れ警告)" IsCheckable="True"
-                          IsChecked="{Binding IsChecked, ElementName=ZebraToggle, Mode=TwoWay}"
+                          IsChecked="{Binding ZebraOn}"
                           IsEnabled="{Binding HasImage}" />
                 <Separator />
                 <MenuItem Header="表示モード" IsEnabled="{Binding HasImage}">
@@ -164,7 +164,7 @@
                 <ToggleButton x:Name="ZebraToggle" Content="ゼブラ"
                               Style="{StaticResource ToolToggle}" IsEnabled="{Binding HasImage}"
                               ToolTip="飽和(≥98%)を赤 / 黒潰れ(≤2%)を青のストライプで警告"
-                              Checked="OnZebraToggleChanged" Unchecked="OnZebraToggleChanged" />
+                              IsChecked="{Binding ZebraOn, Mode=TwoWay}" />
                 <Border Style="{StaticResource ToolSep}" />
                 <Button Style="{StaticResource ToolButton}" Content="ヒストグラム"
                         Click="OnHistogramRefreshClick" IsEnabled="{Binding HasImage}" />
@@ -217,21 +217,70 @@
                         <TreeView x:Name="FolderTree" Grid.Row="0"
                                   ScrollViewer.VerticalScrollBarVisibility="Auto"
                                   TreeViewItem.Expanded="OnFolderTreeExpanded"
-                                  SelectedItemChanged="OnFolderTreeSelected" />
+                                  SelectedItemChanged="OnFolderTreeSelected"
+                                  PreviewMouseRightButtonDown="OnTreePreviewRightClick">
+                            <TreeView.ContextMenu>
+                                <ContextMenu>
+                                    <MenuItem Header="エクスプローラーで開く"
+                                              Click="OnTreeOpenExplorerClick" />
+                                    <MenuItem Header="サブフォルダを再読込"
+                                              Click="OnTreeRefreshClick" />
+                                </ContextMenu>
+                            </TreeView.ContextMenu>
+                        </TreeView>
                         <GridSplitter Grid.Row="1" Height="3" HorizontalAlignment="Stretch"
                                       Margin="4,3" />
                         <ListBox x:Name="FileListBox" Grid.Row="2" ItemsSource="{Binding Files}"
                                  SelectedItem="{Binding SelectedFile}"
                                  DisplayMemberPath="Name"
                                  ScrollViewer.VerticalScrollBarVisibility="Auto"
-                                 MouseDoubleClick="OnFileListDoubleClick" />
+                                 MouseDoubleClick="OnFileListDoubleClick"
+                                 PreviewMouseRightButtonDown="OnFileListPreviewRightClick">
+                            <ListBox.ContextMenu>
+                                <ContextMenu>
+                                    <MenuItem Header="開く" Click="OnFileCtxOpenClick" />
+                                    <MenuItem Header="エクスプローラーで表示"
+                                              Click="OnFileCtxRevealClick" />
+                                    <MenuItem Header="パスをコピー" Click="OnFileCtxCopyPathClick" />
+                                    <Separator />
+                                    <MenuItem Header="フォルダを再読込" Click="OnFileCtxRefreshClick" />
+                                </ContextMenu>
+                            </ListBox.ContextMenu>
+                        </ListBox>
                     </Grid>
                 </DockPanel>
             </Border>
 
             <!-- 中央: 画像キャンバス -->
             <Grid Grid.Column="1" Background="#FF161618">
-                <controls:ImageViewport x:Name="Viewport" />
+                <controls:ImageViewport x:Name="Viewport">
+                    <controls:ImageViewport.ContextMenu>
+                        <ContextMenu>
+                            <MenuItem Header="全体表示" Click="OnFitClick"
+                                      IsEnabled="{Binding HasImage}" />
+                            <MenuItem Header="等倍 (1:1)" Click="OnActualSizeClick"
+                                      IsEnabled="{Binding HasImage}" />
+                            <MenuItem Header="この位置を拡大 (32x)" Click="OnZoomHereClick"
+                                      IsEnabled="{Binding HasImage}" />
+                            <Separator />
+                            <MenuItem Header="raw値をコピー" Click="OnCopyPixelValueClick"
+                                      IsEnabled="{Binding HasImage}" />
+                            <MenuItem Header="座標をコピー" Click="OnCopyPixelPosClick"
+                                      IsEnabled="{Binding HasImage}" />
+                            <MenuItem Header="表示をクリップボードへコピー" Click="OnCopyViewClick"
+                                      IsEnabled="{Binding HasImage}" />
+                            <Separator />
+                            <MenuItem Header="ゼブラ (飽和/黒潰れ警告)" IsCheckable="True"
+                                      IsChecked="{Binding ZebraOn}"
+                                      IsEnabled="{Binding HasImage}" />
+                            <MenuItem Header="ROIを解除" Click="OnClearRoiClick"
+                                      IsEnabled="{Binding HasRoi}" />
+                            <Separator />
+                            <MenuItem Header="保存…" Click="OnSaveClick"
+                                      IsEnabled="{Binding HasImage}" />
+                        </ContextMenu>
+                    </controls:ImageViewport.ContextMenu>
+                </controls:ImageViewport>
                 <Border Style="{StaticResource OverlayBox}" HorizontalAlignment="Left"
                         VerticalAlignment="Top" Margin="14,12"
                         Visibility="{Binding HasImage, Converter={StaticResource BoolToVis}}">
@@ -409,6 +458,14 @@
                                             SmallChange="0.02" LargeChange="0.2" />
                                 </DockPanel>
                                 <DockPanel Margin="0,2">
+                                    <TextBlock Style="{StaticResource RowLabel}" Text="Gゲイン" Width="64" />
+                                    <TextBlock DockPanel.Dock="Right" Style="{StaticResource RowValue}"
+                                               Text="{Binding WbGainG, StringFormat={}{0:F2}}" Width="36"
+                                               TextAlignment="Right" />
+                                    <Slider Minimum="0.5" Maximum="4" Value="{Binding WbGainG}"
+                                            SmallChange="0.02" LargeChange="0.2" />
+                                </DockPanel>
+                                <DockPanel Margin="0,2">
                                     <TextBlock Style="{StaticResource RowLabel}" Text="Bゲイン" Width="64" />
                                     <TextBlock DockPanel.Dock="Right" Style="{StaticResource RowValue}"
                                                Text="{Binding WbGainB, StringFormat={}{0:F2}}" Width="36"
@@ -487,9 +544,19 @@
                                     <Border />
                                 </DockPanel>
                                 <DockPanel Margin="0,2">
-                                    <TextBlock Style="{StaticResource RowLabel}" Text="Bayer" />
-                                    <TextBlock DockPanel.Dock="Right" Style="{StaticResource RowValue}"
-                                               Text="{Binding FmtBayerText}" />
+                                    <TextBlock Style="{StaticResource RowLabel}" Text="Bayer"
+                                               VerticalAlignment="Center" />
+                                    <ComboBox x:Name="FmtBayerCombo" DockPanel.Dock="Right"
+                                              MinWidth="96" FontSize="11"
+                                              IsEnabled="{Binding HasImage}"
+                                              SelectionChanged="OnFmtBayerChanged"
+                                              ToolTip="Bayerパターンはここでいつでも変更できます(再読込不要)">
+                                        <ComboBoxItem Content="RGGB" />
+                                        <ComboBoxItem Content="BGGR" />
+                                        <ComboBoxItem Content="GRBG" />
+                                        <ComboBoxItem Content="GBRG" />
+                                        <ComboBoxItem Content="なし" />
+                                    </ComboBox>
                                     <Border />
                                 </DockPanel>
                                 <DockPanel Margin="0,2">

@@ -31,6 +31,11 @@ public partial class MainWindow : Window
     private readonly SessionState _session;
     private ColorMatrix _colorMatrix = ColorMatrix.Identity;
     private bool _updatingMatrixBoxes;
+    private bool _updatingFormatPanel;
+    private string? _currentFolder;
+    private int _lastCursorX;
+    private int _lastCursorY;
+    private bool _lastCursorInside;
 
     private RawImage? _currentImage;
     private RawFormat? _currentFormat;
@@ -110,8 +115,11 @@ public partial class MainWindow : Window
     /// <summary>表示中の画像(HDR派生ビューがあればそちら)。</summary>
     private RawImage? ActiveImage => _derivedImage ?? _currentImage;
 
-    /// <summary>表示中の画像のフォーマット。</summary>
-    private RawFormat? ActiveFormat => ActiveImage?.Format;
+    /// <summary>
+    /// 表示中の画像のフォーマット。Bayerパターンのその場変更を反映するため、
+    /// 派生ビュー以外では_currentFormat(最新)を返す。
+    /// </summary>
+    private RawFormat? ActiveFormat => _derivedImage?.Format ?? _currentFormat;
 
     private int CurrentShift => 16 - (ActiveFormat?.BitDepth ?? 16);
 
@@ -225,6 +233,7 @@ public partial class MainWindow : Window
             return;
         }
 
+        _currentFolder = folder;
         _vm.FolderPath = $"📂 {folder}";
         _vm.Files.Clear();
         foreach (FileEntry entry in entries)
@@ -409,9 +418,16 @@ public partial class MainWindow : Window
         string packing = format.Packing == BitPacking.Lsb ? "下詰め" : "上詰め";
         _vm.FmtBitDepthText = $"{format.BitDepth}bit {packing}";
         _vm.FmtEndianText = format.Endianness == Endianness.Little ? "Little" : "Big";
-        _vm.FmtBayerText = format.Bayer == BayerPattern.None
-            ? "なし"
-            : format.Bayer.ToString().ToUpperInvariant();
+        _updatingFormatPanel = true;
+        FmtBayerCombo.SelectedIndex = format.Bayer switch
+        {
+            BayerPattern.Rggb => 0,
+            BayerPattern.Bggr => 1,
+            BayerPattern.Grbg => 2,
+            BayerPattern.Gbrg => 3,
+            _ => 4,
+        };
+        _updatingFormatPanel = false;
         _vm.FmtHdrText = format.Hdr switch
         {
             HdrMode.Dol => $"DOL {format.HdrStages}段 (露光比 {format.ExposureRatio:F0})",
@@ -639,6 +655,12 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (e.PropertyName == nameof(MainViewModel.ZebraOn))
+        {
+            Viewport.SetZebra(_vm.ZebraOn);
+            return;
+        }
+
         if (_updatingSliders)
         {
             return;
@@ -687,19 +709,25 @@ public partial class MainWindow : Window
             }
         }
 
-        if (e.PropertyName is nameof(MainViewModel.WbGainR) or nameof(MainViewModel.WbGainB)
+        if (e.PropertyName is nameof(MainViewModel.WbGainR) or nameof(MainViewModel.WbGainG)
+            or nameof(MainViewModel.WbGainB)
             && _vm.HasImage)
         {
             UpdateDevelopLuts();
         }
     }
 
-    private void UpdateDevelopLuts()
+    private DevelopParameters CurrentDevelopParameters()
     {
         double gamma = _vm.Gamma > 0 ? _vm.Gamma : 1.0;
-        Viewport.SetDevelopLuts(DevelopLuts.Create(new DevelopParameters(
-            _blackPoint, _vm.WbGainR, _vm.WbGainB, gamma,
-            _colorMatrix.IsIdentity ? null : _colorMatrix)));
+        return new DevelopParameters(
+            _blackPoint, _vm.WbGainR, _vm.WbGainG, _vm.WbGainB, gamma,
+            _colorMatrix.IsIdentity ? null : _colorMatrix);
+    }
+
+    private void UpdateDevelopLuts()
+    {
+        Viewport.SetDevelopLuts(DevelopLuts.Create(CurrentDevelopParameters()));
     }
 
     // ---- カラーマトリクス ----
@@ -977,10 +1005,8 @@ public partial class MainWindow : Window
         HdrImage? hdrFloat = _hdrFloatImage;
         DisplayLut lut = BuildLut();
         ViewportDisplayMode mode = Viewport.DisplayMode;
-        BayerPattern pattern = image.Format.Bayer;
-        double gamma = _vm.Gamma > 0 ? _vm.Gamma : 1.0;
-        var devLuts = DevelopLuts.Create(new DevelopParameters(
-            _blackPoint, _vm.WbGainR, _vm.WbGainB, gamma));
+        BayerPattern pattern = ActiveFormat!.Bayer;
+        var devLuts = DevelopLuts.Create(CurrentDevelopParameters());
 
         ProgressWindow result = ProgressWindow.Run(
             this,
@@ -1170,10 +1196,7 @@ public partial class MainWindow : Window
         BayerPattern pattern = format.Bayer;
         bool color = pattern != BayerPattern.None;
         DisplayLut lut = BuildLut();
-        double gamma = _vm.Gamma > 0 ? _vm.Gamma : 1.0;
-        var devLuts = DevelopLuts.Create(new DevelopParameters(
-            _blackPoint, _vm.WbGainR, _vm.WbGainB, gamma,
-            _colorMatrix.IsIdentity ? null : _colorMatrix));
+        var devLuts = DevelopLuts.Create(CurrentDevelopParameters());
         int width = format.Width;
         int height = format.Height;
         string aviPath = Path.Combine(
@@ -1378,7 +1401,9 @@ public partial class MainWindow : Window
 
         if (mode != ViewportDisplayMode.Raw && _currentFormat.Bayer == BayerPattern.None)
         {
-            MessageBox.Show(this, "この表示モードにはBayerパターンの指定が必要です。",
+            MessageBox.Show(this,
+                "この表示モードにはBayerパターンの指定が必要です。\n" +
+                "右パネルの「フォーマット」→「Bayer」でパターン(RGGB等)を選択してください。",
                 "RawViewer", MessageBoxButton.OK, MessageBoxImage.Information);
             DisplayModeCombo.SelectedIndex = 0;
             return;
@@ -1609,6 +1634,7 @@ public partial class MainWindow : Window
             return;
         }
 
+        _vm.WbGainG = 1.0;
         _vm.WbGainR = Math.Clamp(gains.GainR, 0.5, 4.0);
         _vm.WbGainB = Math.Clamp(gains.GainB, 0.5, 4.0);
     }
@@ -1637,6 +1663,7 @@ public partial class MainWindow : Window
 
         WhiteBalanceGains gains = WhiteBalance.ComputeSpotGains(
             _currentImage, 0, _currentFormat.Bayer, e.X, e.Y);
+        _vm.WbGainG = 1.0;
         _vm.WbGainR = Math.Clamp(gains.GainR, 0.5, 4.0);
         _vm.WbGainB = Math.Clamp(gains.GainB, 0.5, 4.0);
     }
@@ -1742,6 +1769,7 @@ public partial class MainWindow : Window
         RawFormat? format = ActiveFormat;
         if (image is null || format is null || !e.IsInsideImage)
         {
+            _lastCursorInside = false;
             _vm.CursorStatusText = "";
             _vm.CursorOverlayText = "";
             return;
@@ -1775,6 +1803,10 @@ public partial class MainWindow : Window
         {
             return;
         }
+
+        _lastCursorX = sourceX;
+        _lastCursorY = sourceY;
+        _lastCursorInside = true;
 
         int code = value >> CurrentShift;
         int maxCode = (1 << format.BitDepth) - 1;
@@ -2261,12 +2293,191 @@ public partial class MainWindow : Window
         Viewport.CenterOn(defect.X, defect.Y, Math.Max(Viewport.Zoom, 32));
     }
 
-    // ---- ゼブラ・ドラッグ&ドロップ ----
+    // ---- フォーマットその場変更 ----
 
-    private void OnZebraToggleChanged(object sender, RoutedEventArgs e)
+    private void OnFmtBayerChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
     {
-        Viewport.SetZebra(ZebraToggle.IsChecked == true);
+        if (_updatingFormatPanel || _currentFormat is null)
+        {
+            return;
+        }
+
+        BayerPattern pattern = FmtBayerCombo.SelectedIndex switch
+        {
+            0 => BayerPattern.Rggb,
+            1 => BayerPattern.Bggr,
+            2 => BayerPattern.Grbg,
+            3 => BayerPattern.Gbrg,
+            _ => BayerPattern.None,
+        };
+        if (pattern == _currentFormat.Bayer)
+        {
+            return;
+        }
+
+        _currentFormat = _currentFormat with { Bayer = pattern };
+        if (_derivedImage is null && _currentImage is not null)
+        {
+            Viewport.UpdateFormat(_currentFormat);
+        }
+
+        if (_currentPath is not null && !IsTiff(_currentPath))
+        {
+            RememberFileFormat(_currentPath, _currentFormat);
+        }
     }
+
+    // ---- 右クリックメニュー ----
+
+    private static T? FindAncestor<T>(DependencyObject? source)
+        where T : DependencyObject
+    {
+        while (source is not null and not T)
+        {
+            source = VisualTreeHelper.GetParent(source);
+        }
+
+        return source as T;
+    }
+
+    private void OnZoomHereClick(object sender, RoutedEventArgs e)
+    {
+        if (_lastCursorInside)
+        {
+            Viewport.CenterOn(_lastCursorX, _lastCursorY, Math.Max(Viewport.Zoom, 32));
+        }
+    }
+
+    private void OnCopyPixelValueClick(object sender, RoutedEventArgs e)
+    {
+        if (ActiveImage is null || !_lastCursorInside)
+        {
+            return;
+        }
+
+        try
+        {
+            ushort value = ActiveImage.GetPixel(_lastCursorX, _lastCursorY, Viewport.Frame);
+            Clipboard.SetText((value >> CurrentShift).ToString());
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+        }
+    }
+
+    private void OnCopyPixelPosClick(object sender, RoutedEventArgs e)
+    {
+        if (_lastCursorInside)
+        {
+            Clipboard.SetText($"{_lastCursorX}\t{_lastCursorY}");
+        }
+    }
+
+    private void OnCopyViewClick(object sender, RoutedEventArgs e)
+    {
+        if (!_vm.HasImage || Viewport.ActualWidth < 1)
+        {
+            return;
+        }
+
+        var bitmap = new RenderTargetBitmap(
+            (int)Viewport.ActualWidth, (int)Viewport.ActualHeight, 96, 96,
+            PixelFormats.Pbgra32);
+        bitmap.Render(Viewport);
+        Clipboard.SetImage(bitmap);
+        _vm.ImageInfoText = "表示をクリップボードへコピーしました";
+    }
+
+    private void OnClearRoiClick(object sender, RoutedEventArgs e)
+    {
+        Viewport.ClearRoi();
+    }
+
+    private void OnFileListPreviewRightClick(object sender, MouseButtonEventArgs e)
+    {
+        var item = FindAncestor<System.Windows.Controls.ListBoxItem>(
+            e.OriginalSource as DependencyObject);
+        if (item is not null)
+        {
+            item.IsSelected = true;
+        }
+    }
+
+    private void OnFileCtxOpenClick(object sender, RoutedEventArgs e)
+    {
+        if (_vm.SelectedFile is { IsDirectory: false } entry)
+        {
+            OpenPath(entry.FullPath);
+        }
+    }
+
+    private void OnFileCtxRevealClick(object sender, RoutedEventArgs e)
+    {
+        if (_vm.SelectedFile is { } entry && File.Exists(entry.FullPath))
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = "explorer.exe",
+                Arguments = $"/select,\"{entry.FullPath}\"",
+                UseShellExecute = true,
+            });
+        }
+    }
+
+    private void OnFileCtxCopyPathClick(object sender, RoutedEventArgs e)
+    {
+        if (_vm.SelectedFile is { } entry)
+        {
+            Clipboard.SetText(entry.FullPath);
+        }
+    }
+
+    private void OnFileCtxRefreshClick(object sender, RoutedEventArgs e)
+    {
+        if (_currentFolder is not null && Directory.Exists(_currentFolder))
+        {
+            LoadFolder(_currentFolder, _vm.SelectedFile?.FullPath);
+        }
+    }
+
+    private void OnTreePreviewRightClick(object sender, MouseButtonEventArgs e)
+    {
+        var item = FindAncestor<System.Windows.Controls.TreeViewItem>(
+            e.OriginalSource as DependencyObject);
+        if (item is not null)
+        {
+            item.IsSelected = true;
+        }
+    }
+
+    private void OnTreeOpenExplorerClick(object sender, RoutedEventArgs e)
+    {
+        if (FolderTree.SelectedItem is System.Windows.Controls.TreeViewItem { Tag: string path }
+            && Directory.Exists(path))
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = path,
+                UseShellExecute = true,
+            });
+        }
+    }
+
+    private void OnTreeRefreshClick(object sender, RoutedEventArgs e)
+    {
+        if (FolderTree.SelectedItem is System.Windows.Controls.TreeViewItem item)
+        {
+            bool wasExpanded = item.IsExpanded;
+            item.Items.Clear();
+            item.Items.Add(TreeDummyChild);
+            if (wasExpanded)
+            {
+                PopulateTreeItem(item);
+            }
+        }
+    }
+
+    // ---- ドラッグ&ドロップ ----
 
     private void OnFileDragOver(object sender, DragEventArgs e)
     {

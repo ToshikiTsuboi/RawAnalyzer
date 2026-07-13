@@ -35,7 +35,9 @@ public sealed class MainViewModel : ObservableObject
     private bool _hasRoi;
     private string _roiOverlayText = "";
     private double _wbGainR = 1.0;
+    private double _wbGainG = 1.0;
     private double _wbGainB = 1.0;
+    private bool _zebraOn;
     private bool _hdrTargetVisible;
     private bool _hasSequence;
     private double _sequenceIndex;
@@ -46,7 +48,6 @@ public sealed class MainViewModel : ObservableObject
     private string _histMinMaxText = "— / —";
     private string _fmtBitDepthText = "—";
     private string _fmtEndianText = "—";
-    private string _fmtBayerText = "—";
     private string _fmtHdrText = "—";
 
     /// <summary>左パネルに表示中のフォルダパス。</summary>
@@ -192,11 +193,25 @@ public sealed class MainViewModel : ObservableObject
         set => SetProperty(ref _wbGainR, value);
     }
 
+    /// <summary>ホワイトバランスGゲイン。</summary>
+    public double WbGainG
+    {
+        get => _wbGainG;
+        set => SetProperty(ref _wbGainG, value);
+    }
+
     /// <summary>ホワイトバランスBゲイン。</summary>
     public double WbGainB
     {
         get => _wbGainB;
         set => SetProperty(ref _wbGainB, value);
+    }
+
+    /// <summary>ゼブラ(飽和/黒潰れ警告)を表示するか。</summary>
+    public bool ZebraOn
+    {
+        get => _zebraOn;
+        set => SetProperty(ref _zebraOn, value);
     }
 
     /// <summary>HDR分割表示中の調整対象コンボを表示するか。</summary>
@@ -267,13 +282,6 @@ public sealed class MainViewModel : ObservableObject
     {
         get => _fmtEndianText;
         set => SetProperty(ref _fmtEndianText, value);
-    }
-
-    /// <summary>フォーマット欄: Bayerパターン。</summary>
-    public string FmtBayerText
-    {
-        get => _fmtBayerText;
-        set => SetProperty(ref _fmtBayerText, value);
     }
 
     /// <summary>フォーマット欄: HDR方式。</summary>
