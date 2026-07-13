@@ -56,6 +56,31 @@ public sealed class HistogramResult
     public required RegionStatistics Statistics { get; init; }
 }
 
+/// <summary>Bayerチャネル1つぶんのヒストグラムと統計。</summary>
+public sealed class ChannelHistogram
+{
+    /// <summary>チャネル。</summary>
+    public required BayerChannel Channel { get; init; }
+
+    /// <summary>ビン配列(raw code値域、長さ2^BitDepth)。</summary>
+    public required uint[] Bins { get; init; }
+
+    /// <summary>このチャネルの統計。</summary>
+    public required RegionStatistics Statistics { get; init; }
+}
+
+/// <summary>
+/// Bayerチャネル別解析の結果(全体+R/Gr/Gb/B)。
+/// </summary>
+public sealed class ChannelAnalysisResult
+{
+    /// <summary>全画素のヒストグラム。</summary>
+    public required HistogramResult Total { get; init; }
+
+    /// <summary>チャネル別ヒストグラム(R, Gr, Gb, Bの順)。パターンNoneでは空。</summary>
+    public required IReadOnlyList<ChannelHistogram> Channels { get; init; }
+}
+
 /// <summary>
 /// ヒストグラム・領域統計・ラインプロファイルの計算。値はすべてraw code値域で返す。
 /// </summary>
@@ -217,6 +242,171 @@ public static class ImageAnalysis
             Statistics = new RegionStatistics(
                 mean, Math.Sqrt(Math.Max(0, variance)), min, max, count),
         };
+    }
+
+    /// <summary>
+    /// Bayerチャネル別のヒストグラムと統計を計算する(全体分も同時に返す)。
+    /// 領域は2x2ブロック単位で走査し、サンプリング時も全チャネルを均等に含める。
+    /// </summary>
+    /// <param name="image">対象画像。</param>
+    /// <param name="frame">フレーム番号。</param>
+    /// <param name="pattern">Bayerパターン(Noneの場合チャネル別は空)。</param>
+    /// <param name="region">対象領域。nullなら全体。</param>
+    /// <param name="maxSamples">サンプリングに切り替える画素数閾値。</param>
+    /// <param name="cancellationToken">キャンセルトークン。</param>
+    /// <returns>全体+チャネル別の解析結果。</returns>
+    public static ChannelAnalysisResult ComputeChannelAnalysis(
+        RawImage image,
+        int frame,
+        BayerPattern pattern,
+        RegionOfInterest? region = null,
+        long maxSamples = DefaultMaxHistogramSamples,
+        CancellationToken cancellationToken = default)
+    {
+        RegionOfInterest roi = (region ?? new RegionOfInterest(0, 0, image.Width, image.Height))
+            .Clamp(image.Width, image.Height);
+        int bitDepth = image.Format.BitDepth;
+        int shift = 16 - bitDepth;
+        int binCount = 1 << bitDepth;
+
+        // 2x2ブロック整列(偶数座標開始・偶数サイズ)
+        int x0 = roi.X + (roi.X & 1);
+        int y0 = roi.Y + (roi.Y & 1);
+        int blocksX = Math.Max(0, (roi.X + roi.Width - x0) / 2);
+        int blocksY = Math.Max(0, (roi.Y + roi.Height - y0) / 2);
+
+        var channelBins = new uint[4][];
+        var sums = new long[4];
+        var sumSqs = new long[4];
+        var mins = new int[4];
+        var maxs = new int[4];
+        var counts = new long[4];
+        for (int i = 0; i < 4; i++)
+        {
+            channelBins[i] = new uint[binCount];
+            mins[i] = int.MaxValue;
+            maxs[i] = int.MinValue;
+        }
+
+        var totalBins = new uint[binCount];
+
+        long totalPixels = 4L * blocksX * blocksY;
+        int strideBlocks = totalPixels > maxSamples
+            ? (int)Math.Ceiling(Math.Sqrt((double)totalPixels / maxSamples))
+            : 1;
+        bool sampled = strideBlocks > 1;
+
+        // チャネルインデックス: 0=R, 1=Gr, 2=Gb, 3=B
+        Span<int> parityToChannel = stackalloc int[4];
+        for (int py = 0; py < 2; py++)
+        {
+            for (int px = 0; px < 2; px++)
+            {
+                parityToChannel[py * 2 + px] = BayerHelper.GetChannel(pattern, px, py) switch
+                {
+                    BayerChannel.R => 0,
+                    BayerChannel.Gr => 1,
+                    BayerChannel.Gb => 2,
+                    BayerChannel.B => 3,
+                    _ => 1,
+                };
+            }
+        }
+
+        if (blocksX > 0 && blocksY > 0)
+        {
+            int rowWidth = blocksX * 2;
+            var rowTop = new ushort[rowWidth];
+            var rowBottom = new ushort[rowWidth];
+            for (int by = 0; by < blocksY; by += strideBlocks)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                int y = y0 + by * 2;
+                image.CopyRegion(frame, x0, y, rowWidth, 1, rowTop);
+                image.CopyRegion(frame, x0, y + 1, rowWidth, 1, rowBottom);
+                for (int bx = 0; bx < blocksX; bx += strideBlocks)
+                {
+                    int xi = bx * 2;
+                    Accumulate(rowTop[xi], parityToChannel[(y & 1) * 2 + ((x0 + xi) & 1)]);
+                    Accumulate(rowTop[xi + 1], parityToChannel[(y & 1) * 2 + ((x0 + xi + 1) & 1)]);
+                    Accumulate(rowBottom[xi], parityToChannel[((y + 1) & 1) * 2 + ((x0 + xi) & 1)]);
+                    Accumulate(rowBottom[xi + 1], parityToChannel[((y + 1) & 1) * 2 + ((x0 + xi + 1) & 1)]);
+                }
+            }
+        }
+
+        void Accumulate(ushort value, int channel)
+        {
+            int code = value >> shift;
+            totalBins[code]++;
+            channelBins[channel][code]++;
+            sums[channel] += code;
+            sumSqs[channel] += (long)code * code;
+            if (code < mins[channel])
+            {
+                mins[channel] = code;
+            }
+
+            if (code > maxs[channel])
+            {
+                maxs[channel] = code;
+            }
+
+            counts[channel]++;
+        }
+
+        // 全体統計をチャネル合算から求める
+        long totalCount = counts.Sum();
+        long totalSum = sums.Sum();
+        long totalSumSq = sumSqs.Sum();
+        double totalMean = totalCount > 0 ? (double)totalSum / totalCount : 0;
+        double totalVar = totalCount > 0 ? (double)totalSumSq / totalCount - totalMean * totalMean : 0;
+        var total = new HistogramResult
+        {
+            Bins = totalBins,
+            BitDepth = bitDepth,
+            IsSampled = sampled,
+            SampleCount = totalCount,
+            Statistics = new RegionStatistics(
+                totalMean, Math.Sqrt(Math.Max(0, totalVar)),
+                totalCount > 0 ? mins.Where((_, i) => counts[i] > 0).Min() : 0,
+                totalCount > 0 ? maxs.Where((_, i) => counts[i] > 0).Max() : 0,
+                totalCount),
+        };
+
+        if (pattern == BayerPattern.None)
+        {
+            return new ChannelAnalysisResult
+            {
+                Total = total,
+                Channels = Array.Empty<ChannelHistogram>(),
+            };
+        }
+
+        var channelOrder = new[]
+        {
+            BayerChannel.R, BayerChannel.Gr, BayerChannel.Gb, BayerChannel.B,
+        };
+        var channels = new ChannelHistogram[4];
+        for (int i = 0; i < 4; i++)
+        {
+            double mean = counts[i] > 0 ? (double)sums[i] / counts[i] : 0;
+            double variance = counts[i] > 0
+                ? (double)sumSqs[i] / counts[i] - mean * mean
+                : 0;
+            channels[i] = new ChannelHistogram
+            {
+                Channel = channelOrder[i],
+                Bins = channelBins[i],
+                Statistics = new RegionStatistics(
+                    mean, Math.Sqrt(Math.Max(0, variance)),
+                    counts[i] > 0 ? mins[i] : 0,
+                    counts[i] > 0 ? maxs[i] : 0,
+                    counts[i]),
+            };
+        }
+
+        return new ChannelAnalysisResult { Total = total, Channels = channels };
     }
 
     /// <summary>

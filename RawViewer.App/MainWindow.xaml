@@ -97,6 +97,8 @@
                 <MenuItem Header="カラーマトリクスをリセット" Click="OnMatrixResetClick"
                           IsEnabled="{Binding HasImage}" />
                 <Separator />
+                <MenuItem Header="画像演算 (ダーク減算/フラット補正)…" Click="OnImageCalculatorClick"
+                          IsEnabled="{Binding HasImage}" />
                 <MenuItem Header="バッチ現像 / 動画書き出し…" Click="OnBatchExportClick"
                           IsEnabled="{Binding HasImage}" />
             </MenuItem>
@@ -411,6 +413,11 @@
                                               IsChecked="{Binding HistogramIsCumulative}"
                                               Margin="0,0,8,0" VerticalAlignment="Center"
                                               ToolTip="累積頻度表示 (傷の出力ピーク解析用)" />
+                                    <CheckBox DockPanel.Dock="Right" Content="ch" FontSize="11"
+                                              Foreground="{StaticResource TextDim}"
+                                              IsChecked="{Binding HistogramByChannel}"
+                                              Margin="0,0,8,0" VerticalAlignment="Center"
+                                              ToolTip="Bayerチャネル別 (R/Gr/Gb/B) 表示" />
                                     <TextBlock DockPanel.Dock="Right" Text="sampled" FontSize="10"
                                                Foreground="#FFD99B5B" Margin="0,0,8,0"
                                                VerticalAlignment="Center"
@@ -444,6 +451,42 @@
                                                Text="{Binding HistMinMaxText}" />
                                     <Border />
                                 </DockPanel>
+                                <!-- チャネル別統計 (mean / σ) -->
+                                <StackPanel Visibility="{Binding ChannelStatsVisible,
+                                        Converter={StaticResource BoolToVis}}" Margin="0,4,0,0">
+                                    <DockPanel Margin="0,1">
+                                        <TextBlock Style="{StaticResource RowLabel}" Text="R"
+                                                   Foreground="#FFE0524E" Width="28" />
+                                        <TextBlock DockPanel.Dock="Right"
+                                                   Style="{StaticResource RowValue}"
+                                                   Text="{Binding ChRText}" />
+                                        <Border />
+                                    </DockPanel>
+                                    <DockPanel Margin="0,1">
+                                        <TextBlock Style="{StaticResource RowLabel}" Text="Gr"
+                                                   Foreground="#FF7ECB72" Width="28" />
+                                        <TextBlock DockPanel.Dock="Right"
+                                                   Style="{StaticResource RowValue}"
+                                                   Text="{Binding ChGrText}" />
+                                        <Border />
+                                    </DockPanel>
+                                    <DockPanel Margin="0,1">
+                                        <TextBlock Style="{StaticResource RowLabel}" Text="Gb"
+                                                   Foreground="#FF4E9A4E" Width="28" />
+                                        <TextBlock DockPanel.Dock="Right"
+                                                   Style="{StaticResource RowValue}"
+                                                   Text="{Binding ChGbText}" />
+                                        <Border />
+                                    </DockPanel>
+                                    <DockPanel Margin="0,1">
+                                        <TextBlock Style="{StaticResource RowLabel}" Text="B"
+                                                   Foreground="#FF5B9DD9" Width="28" />
+                                        <TextBlock DockPanel.Dock="Right"
+                                                   Style="{StaticResource RowValue}"
+                                                   Text="{Binding ChBText}" />
+                                        <Border />
+                                    </DockPanel>
+                                </StackPanel>
                             </StackPanel>
                         </Border>
 

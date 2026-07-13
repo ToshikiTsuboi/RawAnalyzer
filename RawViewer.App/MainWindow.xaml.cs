@@ -43,6 +43,8 @@ public partial class MainWindow : Window
     private CancellationTokenSource? _loadCts;
     private CancellationTokenSource? _analysisCts;
     private HistogramResult? _histogram;
+    private IReadOnlyList<ChannelHistogram>? _channelHistograms;
+    private string? _correctionLabel;
     private LineProfileWindow? _profileWindow;
     private ushort _blackPoint;
     private ushort _whitePoint = 65535;
@@ -351,6 +353,8 @@ public partial class MainWindow : Window
         _hdrFloatImage = null;
         _hdrFrameParams = null;
         _mainPyramid = null;
+        _correctionLabel = null;
+        _channelHistograms = null;
         _vm.HdrTargetVisible = false;
         _currentImage?.Dispose();
         _currentImage = image;
@@ -451,14 +455,31 @@ public partial class MainWindow : Window
         _analysisCts = cts;
         RawImage image = ActiveImage;
         int frame = Viewport.Frame;
+        BayerPattern pattern = ActiveFormat?.Bayer ?? BayerPattern.None;
+        bool byChannel = _vm.HistogramByChannel && pattern != BayerPattern.None;
 
         HistogramResult result;
+        IReadOnlyList<ChannelHistogram>? channels = null;
         RegionStatistics? exactStats = null;
         try
         {
-            result = await Task.Run(
-                () => ImageAnalysis.ComputeHistogram(image, frame, roi, cancellationToken: cts.Token),
-                cts.Token);
+            if (byChannel)
+            {
+                ChannelAnalysisResult analysis = await Task.Run(
+                    () => ImageAnalysis.ComputeChannelAnalysis(
+                        image, frame, pattern, roi, cancellationToken: cts.Token),
+                    cts.Token);
+                result = analysis.Total;
+                channels = analysis.Channels;
+            }
+            else
+            {
+                result = await Task.Run(
+                    () => ImageAnalysis.ComputeHistogram(
+                        image, frame, roi, cancellationToken: cts.Token),
+                    cts.Token);
+            }
+
             if (roi is { } r)
             {
                 exactStats = await Task.Run(
@@ -480,6 +501,8 @@ public partial class MainWindow : Window
         }
 
         _histogram = result;
+        _channelHistograms = channels;
+        UpdateChannelStatsPanel();
         _vm.HistogramIsSampled = result.IsSampled;
         RegionStatistics stats = exactStats ?? result.Statistics;
         _vm.HistMeanSigmaText = $"{stats.Mean:F1} / {stats.Sigma:F1}";
@@ -494,6 +517,27 @@ public partial class MainWindow : Window
         }
     }
 
+    private void UpdateChannelStatsPanel()
+    {
+        if (_channelHistograms is { Count: 4 } channels)
+        {
+            _vm.ChRText = FormatChannelStats(channels[0].Statistics);
+            _vm.ChGrText = FormatChannelStats(channels[1].Statistics);
+            _vm.ChGbText = FormatChannelStats(channels[2].Statistics);
+            _vm.ChBText = FormatChannelStats(channels[3].Statistics);
+            _vm.ChannelStatsVisible = true;
+        }
+        else
+        {
+            _vm.ChannelStatsVisible = false;
+        }
+    }
+
+    private static string FormatChannelStats(RegionStatistics stats)
+    {
+        return $"{stats.Mean:F1} / {stats.Sigma:F1}";
+    }
+
     private void RedrawHistogram()
     {
         if (_histogram is null)
@@ -502,8 +546,72 @@ public partial class MainWindow : Window
             return;
         }
 
-        _vm.HistogramSource = RenderHistogram(
-            _histogram.Bins, _vm.HistogramIsLog, _vm.HistogramIsCumulative);
+        _vm.HistogramSource = _channelHistograms is { Count: 4 } channels
+            ? RenderChannelHistogram(channels, _vm.HistogramIsLog, _vm.HistogramIsCumulative)
+            : RenderHistogram(_histogram.Bins, _vm.HistogramIsLog, _vm.HistogramIsCumulative);
+    }
+
+    private static ImageSource RenderChannelHistogram(
+        IReadOnlyList<ChannelHistogram> channels, bool logScale, bool cumulative)
+    {
+        const int width = 210;
+        const int height = 70;
+        var curves = new double[channels.Count][];
+        double maxValue = 0;
+        for (int c = 0; c < channels.Count; c++)
+        {
+            uint[] bins = channels[c].Bins;
+            var columns = new double[width];
+            int binsPerColumn = bins.Length / width + 1;
+            for (int i = 0; i < bins.Length; i++)
+            {
+                columns[Math.Min(i / binsPerColumn, width - 1)] += bins[i];
+            }
+
+            if (cumulative)
+            {
+                double running = 0;
+                for (int x = 0; x < width; x++)
+                {
+                    running += columns[x];
+                    columns[x] = running;
+                }
+            }
+
+            curves[c] = columns;
+            maxValue = Math.Max(maxValue, columns.Max());
+        }
+
+        double maxScale = logScale ? Math.Log(1 + maxValue) : maxValue;
+        var pixels = new byte[width * height * 4];
+
+        // チャネル色 (BGR順): R, Gr, Gb, B
+        var colors = new (byte B, byte G, byte R)[]
+        {
+            (0x4E, 0x52, 0xE0), (0x72, 0xCB, 0x7E), (0x4E, 0x9A, 0x4E), (0xD9, 0x9D, 0x5B),
+        };
+        for (int c = 0; c < curves.Length; c++)
+        {
+            for (int x = 0; x < width; x++)
+            {
+                double value = logScale ? Math.Log(1 + curves[c][x]) : curves[c][x];
+                int barHeight = maxScale > 0 ? (int)(value / maxScale * (height - 2)) : 0;
+                int top = Math.Clamp(height - 1 - barHeight, 0, height - 2);
+                for (int y = top; y < Math.Min(height, top + 2); y++)
+                {
+                    int offset = (y * width + x) * 4;
+                    pixels[offset] = colors[c].B;
+                    pixels[offset + 1] = colors[c].G;
+                    pixels[offset + 2] = colors[c].R;
+                    pixels[offset + 3] = 0xFF;
+                }
+            }
+        }
+
+        var bitmap = new WriteableBitmap(width, height, 96, 96, PixelFormats.Bgra32, null);
+        bitmap.WritePixels(new Int32Rect(0, 0, width, height), pixels, width * 4, 0);
+        bitmap.Freeze();
+        return bitmap;
     }
 
     private static ImageSource RenderHistogram(uint[] bins, bool logScale, bool cumulative)
@@ -665,6 +773,12 @@ public partial class MainWindow : Window
             or nameof(MainViewModel.HistogramIsCumulative))
         {
             RedrawHistogram();
+            return;
+        }
+
+        if (e.PropertyName == nameof(MainViewModel.HistogramByChannel))
+        {
+            RefreshHistogram(Viewport.Roi is { PixelCount: > 0 } roi ? roi : null);
             return;
         }
 
@@ -849,15 +963,32 @@ public partial class MainWindow : Window
         }
 
         var sb = new StringBuilder();
-        sb.Append("raw_code").Append(separator).Append("count")
-            .Append(separator).Append("cumulative").AppendLine();
         uint[] bins = _histogram.Bins;
+        bool byChannel = _channelHistograms is { Count: 4 };
+        sb.Append("raw_code").Append(separator).Append("count")
+            .Append(separator).Append("cumulative");
+        if (byChannel)
+        {
+            sb.Append(separator).Append("count_R").Append(separator).Append("count_Gr")
+                .Append(separator).Append("count_Gb").Append(separator).Append("count_B");
+        }
+
+        sb.AppendLine();
         long cumulative = 0;
         for (int i = 0; i < bins.Length; i++)
         {
             cumulative += bins[i];
             sb.Append(i).Append(separator).Append(bins[i])
-                .Append(separator).Append(cumulative).AppendLine();
+                .Append(separator).Append(cumulative);
+            if (byChannel)
+            {
+                foreach (ChannelHistogram channel in _channelHistograms!)
+                {
+                    sb.Append(separator).Append(channel.Bins[i]);
+                }
+            }
+
+            sb.AppendLine();
         }
 
         return sb.ToString();
@@ -1149,6 +1280,117 @@ public partial class MainWindow : Window
 
             throw;
         }
+    }
+
+    // ---- 画像演算 (ダーク減算/フラット補正) ----
+
+    private void OnImageCalculatorClick(object sender, RoutedEventArgs e)
+    {
+        if (_currentImage is null || _currentFormat is null || _currentPath is null)
+        {
+            return;
+        }
+
+        if (_derivedImage is not null)
+        {
+            MessageBox.Show(this, "HDR表示中は画像演算できません。Raw表示に戻してから実行してください。",
+                "画像演算", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        if (_currentFormat.TotalPixels > RawLoader.DefaultInMemoryPixelThreshold)
+        {
+            MessageBox.Show(this, "1億画素を超える画像の演算はサポートされていません。",
+                "画像演算", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        long expectedSize = _currentFormat.HeaderOffset
+            + _currentFormat.FrameSizeInBytes * _currentFormat.FrameCount;
+        var dialog = new ImageCalculatorDialog(
+            Path.GetFileName(_currentPath) + (_correctionLabel is null ? "" : $" [{_correctionLabel}]"),
+            _currentFolder, expectedSize)
+        {
+            Owner = this,
+        };
+        if (dialog.ShowDialog() != true || dialog.Result is null)
+        {
+            return;
+        }
+
+        ExecuteImageCalculation(dialog.Result);
+    }
+
+    private async void ExecuteImageCalculation(ImageCalculatorChoice choice)
+    {
+        RawImage source = _currentImage!;
+        RawFormat format = _currentFormat!;
+        int frame = Viewport.Frame;
+
+        RawImage? corrected = null;
+        RawImage? reference = null;
+        ProgressWindow result = ProgressWindow.Run(
+            this,
+            $"画像演算中: {Path.GetFileName(choice.ReferencePath)}",
+            (progress, ct) => Task.Run(() =>
+            {
+                reference = IsTiff(choice.ReferencePath)
+                    ? TiffLoader.Load(choice.ReferencePath)
+                    : RawLoader.Load(choice.ReferencePath, format with { FrameCount = 1 });
+                corrected = ImageCalculator.Apply(
+                    source, reference, choice.Operation, frame, 0, progress, ct);
+            }, ct));
+        reference?.Dispose();
+
+        if (result.Error is not null)
+        {
+            corrected?.Dispose();
+            MessageBox.Show(this, $"画像演算に失敗しました: {result.Error.Message}", "画像演算",
+                MessageBoxButton.OK, MessageBoxImage.Error);
+            return;
+        }
+
+        if (result.WasCanceled || corrected is null)
+        {
+            corrected?.Dispose();
+            return;
+        }
+
+        // 補正結果を現在の画像として差し替える(以後の解析・現像・保存すべてに反映)
+        await Viewport.ClearImageAsync();
+        _currentImage?.Dispose();
+        _currentImage = corrected;
+        _currentFormat = corrected.Format;
+        _histogram = null;
+        _channelHistograms = null;
+        _vm.HasRoi = false;
+        Viewport.SetDefectMarkers(null);
+        _defectWindow?.Close();
+
+        string opLabel = choice.Operation switch
+        {
+            ImageOperation.Subtract => "−",
+            ImageOperation.AbsoluteDifference => "|−|",
+            _ => "÷",
+        };
+        _correctionLabel = $"{opLabel} {Path.GetFileName(choice.ReferencePath)}";
+        Title = $"RawViewer — {Path.GetFileName(_currentPath!)} [{_correctionLabel}]";
+        _vm.ImageInfoText =
+            $"{corrected.Width}×{corrected.Height} · {corrected.Format.BitDepth}bit · " +
+            $"補正: {_correctionLabel}(再読込で元に戻せます)";
+
+        Viewport.SetImage(corrected, corrected.Format);
+        Viewport.SetLut(BuildLut());
+        UpdateDevelopLuts();
+
+        // 補正結果はディスク上のファイルと一致しないためシーケンス再生は無効化
+        StopPlayback();
+        _sequenceMode = SequenceMode.None;
+        UpdateSequenceUi();
+
+        RefreshHistogram(roi: null);
+        _mainPyramid = null;
+        await BuildPyramidAsync(corrected, _loadCts?.Token ?? CancellationToken.None);
     }
 
     // ---- バッチ現像 / 動画書き出し ----

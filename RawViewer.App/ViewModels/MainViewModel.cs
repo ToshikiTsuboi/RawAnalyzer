@@ -31,6 +31,12 @@ public sealed class MainViewModel : ObservableObject
     private double _blackLevelMax = 65535;
     private bool _histogramIsLog = true;
     private bool _histogramIsCumulative;
+    private bool _histogramByChannel;
+    private bool _channelStatsVisible;
+    private string _chRText = "";
+    private string _chGrText = "";
+    private string _chGbText = "";
+    private string _chBText = "";
     private bool _histogramIsSampled;
     private bool _hasRoi;
     private string _roiOverlayText = "";
@@ -163,6 +169,48 @@ public sealed class MainViewModel : ObservableObject
     {
         get => _histogramIsCumulative;
         set => SetProperty(ref _histogramIsCumulative, value);
+    }
+
+    /// <summary>Bayerチャネル別(R/Gr/Gb/B)表示にするか。</summary>
+    public bool HistogramByChannel
+    {
+        get => _histogramByChannel;
+        set => SetProperty(ref _histogramByChannel, value);
+    }
+
+    /// <summary>チャネル別統計テーブルを表示するか。</summary>
+    public bool ChannelStatsVisible
+    {
+        get => _channelStatsVisible;
+        set => SetProperty(ref _channelStatsVisible, value);
+    }
+
+    /// <summary>Rチャネル統計(mean/σ)。</summary>
+    public string ChRText
+    {
+        get => _chRText;
+        set => SetProperty(ref _chRText, value);
+    }
+
+    /// <summary>Grチャネル統計。</summary>
+    public string ChGrText
+    {
+        get => _chGrText;
+        set => SetProperty(ref _chGrText, value);
+    }
+
+    /// <summary>Gbチャネル統計。</summary>
+    public string ChGbText
+    {
+        get => _chGbText;
+        set => SetProperty(ref _chGbText, value);
+    }
+
+    /// <summary>Bチャネル統計。</summary>
+    public string ChBText
+    {
+        get => _chBText;
+        set => SetProperty(ref _chBText, value);
     }
 
     /// <summary>ヒストグラムがサンプリング計算されたか(sampled表記)。</summary>
