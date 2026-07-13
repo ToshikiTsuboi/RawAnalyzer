@@ -24,6 +24,15 @@ public partial class LineProfileWindow : Window
         InitializeComponent();
     }
 
+    /// <summary>水平/垂直の切替時に発火する(true=水平)。</summary>
+    public event Action<bool>? DirectionChanged;
+
+    /// <summary>現在水平プロファイル表示か。</summary>
+    public bool IsHorizontal => HorizontalRadio?.IsChecked != false;
+
+    /// <summary>現在のプロファイル基準点。</summary>
+    public (int X, int Y) CurrentPoint => (_pointX, _pointY);
+
     /// <summary>
     /// プロファイルデータを設定して再描画する。
     /// </summary>
@@ -46,6 +55,7 @@ public partial class LineProfileWindow : Window
     private void OnDirectionChanged(object sender, RoutedEventArgs e)
     {
         Redraw();
+        DirectionChanged?.Invoke(IsHorizontal);
     }
 
     private string? BuildTable(char separator)
@@ -134,8 +144,11 @@ public partial class LineProfileWindow : Window
         }
 
         InfoText.Text = horizontal
-            ? $"y={_pointY}  N={data.Length}  min={min}  max={max}"
-            : $"x={_pointX}  N={data.Length}  min={min}  max={max}";
+            ? $"行 y={_pointY} (x={_pointX}基準)  N={data.Length}  min={min}  max={max}"
+            : $"列 x={_pointX} (y={_pointY}基準)  N={data.Length}  min={min}  max={max}";
+        Title = horizontal
+            ? $"ラインプロファイル — 行 y={_pointY}"
+            : $"ラインプロファイル — 列 x={_pointX}";
         MaxLabel.Text = _maxCode.ToString();
         MinLabel.Text = "0";
 

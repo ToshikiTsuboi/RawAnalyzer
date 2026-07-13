@@ -635,12 +635,25 @@ public partial class MainWindow : Window
         if (_profileWindow is null)
         {
             _profileWindow = new LineProfileWindow { Owner = this };
-            _profileWindow.Closed += (_, _) => _profileWindow = null;
+            _profileWindow.DirectionChanged += horizontal =>
+            {
+                if (_profileWindow is { } window)
+                {
+                    (int px, int py) = window.CurrentPoint;
+                    Viewport.SetProfileMarker(px, py, horizontal);
+                }
+            };
+            _profileWindow.Closed += (_, _) =>
+            {
+                _profileWindow = null;
+                Viewport.ClearProfileMarker();
+            };
             _profileWindow.Show();
         }
 
         int maxCode = (1 << ActiveFormat!.BitDepth) - 1;
         _profileWindow.SetProfiles(row, column, e.X, e.Y, maxCode);
+        Viewport.SetProfileMarker(e.X, e.Y, _profileWindow.IsHorizontal);
         _profileWindow.Activate();
     }
 

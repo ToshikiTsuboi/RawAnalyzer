@@ -80,6 +80,11 @@ public sealed class ImageViewport : FrameworkElement
     private bool _zebraEnabled;
     private IReadOnlyList<DefectPixel>? _defectMarkers;
 
+    private bool _profileMarkerVisible;
+    private int _profileX;
+    private int _profileY;
+    private bool _profileHorizontalActive;
+
     private double _zoom = 1.0;
     private double _originX;
     private double _originY;
@@ -188,6 +193,7 @@ public sealed class ImageViewport : FrameworkElement
         _pyramid = null;
         _overlay = null;
         _segmentLuts = null;
+        _profileMarkerVisible = false;
         ClearRoi();
         FitToView();
     }
@@ -319,6 +325,29 @@ public sealed class ImageViewport : FrameworkElement
     }
 
     /// <summary>
+    /// ラインプロファイルの参照位置マーカーを表示する。
+    /// アクティブ方向のラインを実線、もう一方を破線で描画する。
+    /// </summary>
+    /// <param name="x">プロファイル列(垂直ライン)のX座標。</param>
+    /// <param name="y">プロファイル行(水平ライン)のY座標。</param>
+    /// <param name="horizontalActive">水平プロファイルがアクティブか。</param>
+    public void SetProfileMarker(int x, int y, bool horizontalActive)
+    {
+        _profileMarkerVisible = true;
+        _profileX = x;
+        _profileY = y;
+        _profileHorizontalActive = horizontalActive;
+        InvalidateVisual();
+    }
+
+    /// <summary>ラインプロファイルの位置マーカーを消す。</summary>
+    public void ClearProfileMarker()
+    {
+        _profileMarkerVisible = false;
+        InvalidateVisual();
+    }
+
+    /// <summary>
     /// 指定画素がビュー中央に来るようにズーム・位置を設定する。
     /// </summary>
     /// <param name="x">画素X座標。</param>
@@ -398,6 +427,47 @@ public sealed class ImageViewport : FrameworkElement
         DrawRawValueOverlay(dc);
         DrawRoi(dc);
         DrawDefectMarkers(dc);
+        DrawProfileMarker(dc);
+    }
+
+    private static readonly Pen ProfileActivePen = CreateProfilePen(dashed: false);
+    private static readonly Pen ProfileInactivePen = CreateProfilePen(dashed: true);
+
+    private static Pen CreateProfilePen(bool dashed)
+    {
+        var brush = new SolidColorBrush(Color.FromArgb(
+            dashed ? (byte)0x60 : (byte)0xE6, 0xD9, 0x9B, 0x5B));
+        brush.Freeze();
+        var pen = new Pen(brush, dashed ? 1.0 : 1.4);
+        if (dashed)
+        {
+            pen.DashStyle = new DashStyle(new double[] { 4, 4 }, 0);
+        }
+
+        pen.Freeze();
+        return pen;
+    }
+
+    private void DrawProfileMarker(DrawingContext dc)
+    {
+        if (!_profileMarkerVisible || _image is null)
+        {
+            return;
+        }
+
+        double screenY = (_profileY + 0.5 - _originY) * _zoom;
+        double screenX = (_profileX + 0.5 - _originX) * _zoom;
+        Pen horizontalPen = _profileHorizontalActive ? ProfileActivePen : ProfileInactivePen;
+        Pen verticalPen = _profileHorizontalActive ? ProfileInactivePen : ProfileActivePen;
+        if (screenY >= 0 && screenY <= ActualHeight)
+        {
+            dc.DrawLine(horizontalPen, new Point(0, screenY), new Point(ActualWidth, screenY));
+        }
+
+        if (screenX >= 0 && screenX <= ActualWidth)
+        {
+            dc.DrawLine(verticalPen, new Point(screenX, 0), new Point(screenX, ActualHeight));
+        }
     }
 
     private static readonly Pen HotMarkerPen = CreateMarkerPen(Color.FromRgb(0xE6, 0x50, 0x3C));
