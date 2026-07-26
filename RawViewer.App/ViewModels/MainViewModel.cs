@@ -58,6 +58,8 @@ public sealed class MainViewModel : ObservableObject
     private string _histDynamicRangeText = "—";
     private bool _isFullscreen;
     private bool _isColorImage;
+    private bool _leftPanelVisible = true;
+    private bool _rightPanelVisible = true;
     private string _fmtBitDepthText = "—";
     private string _fmtEndianText = "—";
     private string _fmtHdrText = "—";
@@ -364,6 +366,20 @@ public sealed class MainViewModel : ObservableObject
     {
         get => _isColorImage;
         set => SetProperty(ref _isColorImage, value);
+    }
+
+    /// <summary>左パネル(ファイル)を表示するか。</summary>
+    public bool LeftPanelVisible
+    {
+        get => _leftPanelVisible;
+        set => SetProperty(ref _leftPanelVisible, value);
+    }
+
+    /// <summary>右パネル(調整)を表示するか。</summary>
+    public bool RightPanelVisible
+    {
+        get => _rightPanelVisible;
+        set => SetProperty(ref _rightPanelVisible, value);
     }
 
     /// <summary>フォーマット欄: ビット深度。</summary>

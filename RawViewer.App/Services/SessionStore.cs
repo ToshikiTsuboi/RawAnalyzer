@@ -27,6 +27,18 @@ internal sealed class SessionState
     /// <summary>最後に表示していたフォルダ。</summary>
     public string? LastFolder { get; set; }
 
+    /// <summary>左パネルの幅。</summary>
+    public double? LeftPanelWidth { get; set; }
+
+    /// <summary>右パネルの幅。</summary>
+    public double? RightPanelWidth { get; set; }
+
+    /// <summary>左パネルを表示していたか。</summary>
+    public bool LeftPanelVisible { get; set; } = true;
+
+    /// <summary>右パネルを表示していたか。</summary>
+    public bool RightPanelVisible { get; set; } = true;
+
     /// <summary>ファイルパス(小文字正規化)→ 最後に使ったRawFormat。</summary>
     public Dictionary<string, RawFormat> FileFormats { get; set; } = new();
 }

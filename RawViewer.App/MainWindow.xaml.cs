@@ -105,10 +105,19 @@ public partial class MainWindow : Window
         InputBindings.Add(new KeyBinding(
             new Mvvm.RelayCommand(_ => _vm.IsFullscreen = false),
             new KeyGesture(Key.Escape)));
+        InputBindings.Add(new KeyBinding(
+            new Mvvm.RelayCommand(_ => _vm.LeftPanelVisible = !_vm.LeftPanelVisible),
+            new KeyGesture(Key.L, ModifierKeys.Control)));
+        InputBindings.Add(new KeyBinding(
+            new Mvvm.RelayCommand(_ => _vm.RightPanelVisible = !_vm.RightPanelVisible),
+            new KeyGesture(Key.R, ModifierKeys.Control)));
         RebuildRecentMenu();
         InitFolderTree();
         Loaded += (_, _) =>
         {
+            _vm.LeftPanelVisible = _session.LeftPanelVisible;
+            _vm.RightPanelVisible = _session.RightPanelVisible;
+            UpdatePanelLayout();
             if (_vm.Files.Count == 0 && _session.LastFolder is { } folder
                 && Directory.Exists(folder))
             {
@@ -161,10 +170,25 @@ public partial class MainWindow : Window
         {
             WindowState = WindowState.Maximized;
         }
+
+        if (_session.LeftPanelWidth is { } leftWidth && leftWidth >= 120)
+        {
+            _leftPanelWidth = leftWidth;
+        }
+
+        if (_session.RightPanelWidth is { } rightWidth && rightWidth >= 160)
+        {
+            _rightPanelWidth = rightWidth;
+        }
     }
 
     private void SaveWindowPlacement()
     {
+        CapturePanelWidths();
+        _session.LeftPanelWidth = _leftPanelWidth;
+        _session.RightPanelWidth = _rightPanelWidth;
+        _session.LeftPanelVisible = _vm.LeftPanelVisible;
+        _session.RightPanelVisible = _vm.RightPanelVisible;
         _session.WindowMaximized = WindowState == WindowState.Maximized;
         if (WindowState == WindowState.Normal)
         {
@@ -841,7 +865,16 @@ public partial class MainWindow : Window
 
         if (e.PropertyName == nameof(MainViewModel.IsFullscreen))
         {
+            CapturePanelWidths();
             ApplyFullscreen(_vm.IsFullscreen);
+            return;
+        }
+
+        if (e.PropertyName is nameof(MainViewModel.LeftPanelVisible)
+            or nameof(MainViewModel.RightPanelVisible))
+        {
+            CapturePanelWidths();
+            UpdatePanelLayout();
             return;
         }
 
@@ -2586,10 +2619,7 @@ public partial class MainWindow : Window
             MainMenuBar.Visibility = Visibility.Collapsed;
             ToolBarPanel.Visibility = Visibility.Collapsed;
             StatusBarPanel.Visibility = Visibility.Collapsed;
-            LeftPanel.Visibility = Visibility.Collapsed;
-            RightPanel.Visibility = Visibility.Collapsed;
-            LeftColumn.Width = new GridLength(0);
-            RightColumn.Width = new GridLength(0);
+            UpdatePanelLayout();
 
             WindowStyle = WindowStyle.None;
             ResizeMode = ResizeMode.NoResize;
@@ -2602,10 +2632,7 @@ public partial class MainWindow : Window
             MainMenuBar.Visibility = Visibility.Visible;
             ToolBarPanel.Visibility = Visibility.Visible;
             StatusBarPanel.Visibility = Visibility.Visible;
-            LeftPanel.Visibility = Visibility.Visible;
-            RightPanel.Visibility = Visibility.Visible;
-            LeftColumn.Width = new GridLength(220);
-            RightColumn.Width = new GridLength(240);
+            UpdatePanelLayout();
 
             WindowStyle = _preFullscreenStyle;
             ResizeMode = _preFullscreenResize;
@@ -2613,6 +2640,68 @@ public partial class MainWindow : Window
         }
 
         Viewport.Focus();
+    }
+
+    // ---- 左右パネルの幅調整・表示切替 ----
+
+    private double _leftPanelWidth = 220;
+    private double _rightPanelWidth = 240;
+
+    /// <summary>
+    /// パネルの表示状態と幅をグリッドへ反映する。
+    /// 非表示時は列幅を0にして端のストリップを出す(フルスクリーン時は両方隠す)。
+    /// </summary>
+    private void UpdatePanelLayout()
+    {
+        bool fullscreen = _vm.IsFullscreen;
+        bool left = _vm.LeftPanelVisible && !fullscreen;
+        bool right = _vm.RightPanelVisible && !fullscreen;
+
+        LeftPanel.Visibility = left ? Visibility.Visible : Visibility.Collapsed;
+        LeftSplitter.Visibility = left ? Visibility.Visible : Visibility.Collapsed;
+        LeftColumn.Width = left ? new GridLength(_leftPanelWidth) : new GridLength(0);
+        LeftColumn.MinWidth = left ? 150 : 0;
+        LeftEdgeStrip.Visibility = !left && !fullscreen ? Visibility.Visible : Visibility.Collapsed;
+
+        RightPanel.Visibility = right ? Visibility.Visible : Visibility.Collapsed;
+        RightSplitter.Visibility = right ? Visibility.Visible : Visibility.Collapsed;
+        RightColumn.Width = right ? new GridLength(_rightPanelWidth) : new GridLength(0);
+        RightColumn.MinWidth = right ? 190 : 0;
+        RightEdgeStrip.Visibility = !right && !fullscreen ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    /// <summary>ドラッグで変更された現在の幅を控える(折りたたみ後の復元用)。</summary>
+    private void CapturePanelWidths()
+    {
+        if (LeftPanel.Visibility == Visibility.Visible && LeftColumn.ActualWidth > 0)
+        {
+            _leftPanelWidth = LeftColumn.ActualWidth;
+        }
+
+        if (RightPanel.Visibility == Visibility.Visible && RightColumn.ActualWidth > 0)
+        {
+            _rightPanelWidth = RightColumn.ActualWidth;
+        }
+    }
+
+    private void OnHideLeftPanelClick(object sender, RoutedEventArgs e)
+    {
+        _vm.LeftPanelVisible = false;
+    }
+
+    private void OnShowLeftPanelClick(object sender, RoutedEventArgs e)
+    {
+        _vm.LeftPanelVisible = true;
+    }
+
+    private void OnHideRightPanelClick(object sender, RoutedEventArgs e)
+    {
+        _vm.RightPanelVisible = false;
+    }
+
+    private void OnShowRightPanelClick(object sender, RoutedEventArgs e)
+    {
+        _vm.RightPanelVisible = true;
     }
 
     // ---- フォルダツリー ----
