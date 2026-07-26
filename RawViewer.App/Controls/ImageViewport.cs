@@ -78,6 +78,7 @@ public sealed class ImageViewport : FrameworkElement
     private DisplayLut[]? _segmentLuts;
     private int _segmentWidth;
     private bool _zebraEnabled;
+    private ColorImage? _colorImage;
     private IReadOnlyList<DefectPixel>? _defectMarkers;
 
     private bool _profileMarkerVisible;
@@ -117,8 +118,24 @@ public sealed class ImageViewport : FrameworkElement
         };
         ClipToBounds = true;
         Focusable = true;
-        SizeChanged += (_, _) => RequestRender(fast: false);
+        SizeChanged += OnViewportSizeChanged;
         RenderOptions.SetBitmapScalingMode(this, BitmapScalingMode.NearestNeighbor);
+    }
+
+    /// <summary>
+    /// コントロールのサイズ変更時、表示中心を保ったまま原点を調整する
+    /// (フルスクリーン切替やウィンドウリサイズで画像が寄らないようにする)。
+    /// </summary>
+    private void OnViewportSizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (_image is not null && e.PreviousSize.Width > 0 && e.PreviousSize.Height > 0)
+        {
+            _originX -= (e.NewSize.Width - e.PreviousSize.Width) / (2 * _zoom);
+            _originY -= (e.NewSize.Height - e.PreviousSize.Height) / (2 * _zoom);
+            ClampOrigin();
+        }
+
+        RequestRender(fast: false);
     }
 
     /// <summary>ズーム率・使用レベルが変化したときに発火する。</summary>
@@ -193,6 +210,8 @@ public sealed class ImageViewport : FrameworkElement
         _pyramid = null;
         _overlay = null;
         _segmentLuts = null;
+        _colorImage = null;
+        _displayMode = ViewportDisplayMode.Raw;
         _profileMarkerVisible = false;
         ClearRoi();
         FitToView();
@@ -306,6 +325,19 @@ public sealed class ImageViewport : FrameworkElement
             RequestRender(fast: true);
             RestartIdleTimer();
         }
+    }
+
+    /// <summary>
+    /// デコード済みカラー画像を設定する(nullで解除)。
+    /// 設定するとTrueColorモードで描画される。
+    /// </summary>
+    /// <param name="color">カラー画像。</param>
+    public void SetColorImage(ColorImage? color)
+    {
+        _colorImage = color;
+        _displayMode = color is not null ? ViewportDisplayMode.TrueColor : ViewportDisplayMode.Raw;
+        _overlay = null;
+        RequestRender(fast: false);
     }
 
     /// <summary>ゼブラ(飽和/黒潰れ警告)の表示を切り替えて再描画する。</summary>
@@ -715,6 +747,12 @@ public sealed class ImageViewport : FrameworkElement
             return null;
         }
 
+        if (_displayMode == ViewportDisplayMode.TrueColor && _colorImage is not null)
+        {
+            // カラー画像は色を保つため常に等倍データから描画する
+            return new RawImageRenderSource(_image, _frame);
+        }
+
         if (_displayMode == ViewportDisplayMode.ChannelSplit
             && _format?.Bayer != BayerPattern.None)
         {
@@ -783,6 +821,7 @@ public sealed class ImageViewport : FrameworkElement
             SegmentLuts = _segmentLuts,
             SegmentWidth = _segmentWidth,
             ZebraEnabled = _zebraEnabled,
+            Color = _colorImage,
         };
 
         _renderTask = Task.Run(() =>

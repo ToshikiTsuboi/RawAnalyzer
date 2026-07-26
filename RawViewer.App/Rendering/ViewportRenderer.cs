@@ -17,6 +17,9 @@ public enum ViewportDisplayMode
 
     /// <summary>R/Gr/Gb/Bの2x2タイル並置表示。</summary>
     ChannelSplit,
+
+    /// <summary>デコード済みカラー画像(JPEG/PNG/カラーTIFF)のRGB表示。</summary>
+    TrueColor,
 }
 
 /// <summary>描画要求(スナップショット)。</summary>
@@ -48,6 +51,9 @@ public sealed class RenderRequest
 
     /// <summary>ゼブラ(飽和/黒潰れ警告)を表示するか(グレー系モードのみ)。</summary>
     public bool ZebraEnabled { get; init; }
+
+    /// <summary>デコード済みカラー画像(TrueColorモードで使用)。</summary>
+    public ColorImage? Color { get; init; }
 }
 
 /// <summary>
@@ -95,6 +101,11 @@ public static class ViewportRenderer
             && request.Source.Factor == 1;
         switch (request.Mode)
         {
+            case ViewportDisplayMode.TrueColor when request.Color is not null:
+                RenderTrueColor(
+                    request, zoom, originX, originY, destWidth, destHeight,
+                    destination, cancellationToken);
+                break;
             case ViewportDisplayMode.BayerColor when colorPossible:
                 RenderBayerColor(
                     request, zoom, originX, originY, destWidth, destHeight,
@@ -241,6 +252,105 @@ public static class ViewportRenderer
                     destRow[o] = d;
                     destRow[o + 1] = d;
                     destRow[o + 2] = d;
+                    destRow[o + 3] = 255;
+                }
+
+                return rowBuffer;
+            },
+            _ => { });
+    }
+
+    private static void RenderTrueColor(
+        RenderRequest request, double zoom, double originX, double originY,
+        int destWidth, int destHeight, byte[] destination, CancellationToken ct)
+    {
+        ColorImage color = request.Color!;
+        DisplayLut lut = request.Lut;
+        bool zebra = request.ZebraEnabled;
+        double invZoom = 1.0 / zoom;
+
+        Parallel.For(
+            0,
+            destHeight,
+            () => new ushort[color.Width * 3],
+            (destY, state, rowBuffer) =>
+            {
+                if (ct.IsCancellationRequested)
+                {
+                    state.Stop();
+                    return rowBuffer;
+                }
+
+                Span<byte> destRow = destination.AsSpan(destY * destWidth * 4, destWidth * 4);
+                double srcY = originY + (destY + 0.5) * invZoom;
+                if (srcY < 0 || srcY >= color.Height)
+                {
+                    FillBackground(destRow);
+                    return rowBuffer;
+                }
+
+                // 可視範囲のソース列区間だけ読み出す
+                int dx0 = 0;
+                while (dx0 < destWidth && originX + (dx0 + 0.5) * invZoom < 0)
+                {
+                    dx0++;
+                }
+
+                int dx1 = destWidth - 1;
+                while (dx1 >= dx0 && originX + (dx1 + 0.5) * invZoom >= color.Width)
+                {
+                    dx1--;
+                }
+
+                if (dx1 < dx0)
+                {
+                    FillBackground(destRow);
+                    return rowBuffer;
+                }
+
+                int sourceY = Math.Clamp((int)srcY, 0, color.Height - 1);
+                int sx0 = Math.Clamp((int)(originX + (dx0 + 0.5) * invZoom), 0, color.Width - 1);
+                int sx1 = Math.Clamp((int)(originX + (dx1 + 0.5) * invZoom), 0, color.Width - 1);
+                int count = sx1 - sx0 + 1;
+                color.CopyRow(sourceY, sx0, count, rowBuffer.AsSpan(0, count * 3));
+
+                FillBackground(destRow[..(dx0 * 4)]);
+                FillBackground(destRow[((dx1 + 1) * 4)..]);
+                for (int dx = dx0; dx <= dx1; dx++)
+                {
+                    int sx = Math.Clamp(
+                        (int)(originX + (dx + 0.5) * invZoom) - sx0, 0, count - 1);
+                    ushort r = rowBuffer[sx * 3];
+                    ushort g = rowBuffer[sx * 3 + 1];
+                    ushort b = rowBuffer[sx * 3 + 2];
+                    int o = dx * 4;
+
+                    if (zebra && ((dx + destY) & 7) < 4)
+                    {
+                        int peak = Math.Max(r, Math.Max(g, b));
+                        int floorValue = Math.Min(r, Math.Min(g, b));
+                        if (peak >= ZebraSaturationThreshold)
+                        {
+                            destRow[o] = 0x3C;
+                            destRow[o + 1] = 0x50;
+                            destRow[o + 2] = 0xE6;
+                            destRow[o + 3] = 255;
+                            continue;
+                        }
+
+                        if (floorValue <= ZebraBlackThreshold)
+                        {
+                            destRow[o] = 0xE6;
+                            destRow[o + 1] = 0x78;
+                            destRow[o + 2] = 0x3C;
+                            destRow[o + 3] = 255;
+                            continue;
+                        }
+                    }
+
+                    destRow[o] = lut.Map(b);
+                    destRow[o + 1] = lut.Map(g);
+                    destRow[o + 2] = lut.Map(r);
                     destRow[o + 3] = 255;
                 }
 

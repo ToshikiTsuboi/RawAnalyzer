@@ -56,6 +56,45 @@ public sealed class HistogramResult
     public required RegionStatistics Statistics { get; init; }
 }
 
+/// <summary>プロファイル(ライン/射影)の統計値。</summary>
+/// <param name="Count">サンプル数。</param>
+/// <param name="Mean">平均。</param>
+/// <param name="Min">最小値。</param>
+/// <param name="Max">最大値。</param>
+/// <param name="Median">中央値。</param>
+/// <param name="Sigma">標準偏差。</param>
+public readonly record struct ProfileStatistics(
+    int Count, double Mean, double Min, double Max, double Median, double Sigma);
+
+/// <summary>
+/// ヒストグラムから導出される解析指標。値はすべてraw code値域。
+/// </summary>
+/// <param name="SampleCount">総サンプル数。</param>
+/// <param name="Mean">平均。</param>
+/// <param name="Sigma">標準偏差。</param>
+/// <param name="Min">最小値。</param>
+/// <param name="Max">最大値。</param>
+/// <param name="Median">中央値。</param>
+/// <param name="Mode">最頻値。</param>
+/// <param name="P1">1パーセンタイル。</param>
+/// <param name="P99">99パーセンタイル。</param>
+/// <param name="SaturatedPercent">飽和(最大code)画素の割合[%]。</param>
+/// <param name="ZeroPercent">黒つぶれ(code=0)画素の割合[%]。</param>
+/// <param name="DynamicRangeDb">最大/σ から求めた簡易ダイナミックレンジ[dB]。</param>
+public readonly record struct HistogramMetrics(
+    long SampleCount,
+    double Mean,
+    double Sigma,
+    int Min,
+    int Max,
+    int Median,
+    int Mode,
+    int P1,
+    int P99,
+    double SaturatedPercent,
+    double ZeroPercent,
+    double DynamicRangeDb);
+
 /// <summary>Bayerチャネル1つぶんのヒストグラムと統計。</summary>
 public sealed class ChannelHistogram
 {
@@ -407,6 +446,195 @@ public static class ImageAnalysis
         }
 
         return new ChannelAnalysisResult { Total = total, Channels = channels };
+    }
+
+    /// <summary>
+    /// プロファイル配列の統計値(平均/最小/最大/中央値/標準偏差)を計算する。
+    /// </summary>
+    /// <param name="values">プロファイル値。</param>
+    /// <returns>統計値。空配列なら全て0。</returns>
+    public static ProfileStatistics ComputeProfileStatistics(ReadOnlySpan<double> values)
+    {
+        if (values.Length == 0)
+        {
+            return new ProfileStatistics(0, 0, 0, 0, 0, 0);
+        }
+
+        double sum = 0;
+        double sumSq = 0;
+        double min = double.MaxValue;
+        double max = double.MinValue;
+        foreach (double v in values)
+        {
+            sum += v;
+            sumSq += v * v;
+            if (v < min)
+            {
+                min = v;
+            }
+
+            if (v > max)
+            {
+                max = v;
+            }
+        }
+
+        double mean = sum / values.Length;
+        double variance = sumSq / values.Length - mean * mean;
+
+        var sorted = values.ToArray();
+        Array.Sort(sorted);
+        double median = sorted.Length % 2 == 1
+            ? sorted[sorted.Length / 2]
+            : (sorted[sorted.Length / 2 - 1] + sorted[sorted.Length / 2]) / 2.0;
+
+        return new ProfileStatistics(
+            values.Length, mean, min, max, median, Math.Sqrt(Math.Max(0, variance)));
+    }
+
+    /// <summary>
+    /// ヒストグラムから解析指標(中央値・最頻値・パーセンタイル・飽和率など)を求める。
+    /// </summary>
+    /// <param name="histogram">ヒストグラム結果。</param>
+    /// <returns>解析指標。</returns>
+    public static HistogramMetrics ComputeHistogramMetrics(HistogramResult histogram)
+    {
+        uint[] bins = histogram.Bins;
+        long total = histogram.SampleCount;
+        if (total <= 0)
+        {
+            return new HistogramMetrics(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+        }
+
+        int median = 0;
+        int p1 = 0;
+        int p99 = bins.Length - 1;
+        int mode = 0;
+        uint modeCount = 0;
+        long accumulated = 0;
+        bool medianFound = false;
+        bool p1Found = false;
+        bool p99Found = false;
+        long medianTarget = total / 2;
+        long p1Target = (long)(total * 0.01);
+        long p99Target = (long)(total * 0.99);
+
+        for (int i = 0; i < bins.Length; i++)
+        {
+            uint count = bins[i];
+            if (count > modeCount)
+            {
+                modeCount = count;
+                mode = i;
+            }
+
+            accumulated += count;
+            if (!p1Found && accumulated > p1Target)
+            {
+                p1 = i;
+                p1Found = true;
+            }
+
+            if (!medianFound && accumulated > medianTarget)
+            {
+                median = i;
+                medianFound = true;
+            }
+
+            if (!p99Found && accumulated >= p99Target)
+            {
+                p99 = i;
+                p99Found = true;
+            }
+        }
+
+        int maxCode = bins.Length - 1;
+        double saturated = 100.0 * bins[maxCode] / total;
+        double zero = 100.0 * bins[0] / total;
+        RegionStatistics stats = histogram.Statistics;
+        double dynamicRange = stats.Sigma > 0
+            ? 20 * Math.Log10(maxCode / stats.Sigma)
+            : 0;
+
+        return new HistogramMetrics(
+            total, stats.Mean, stats.Sigma, stats.Min, stats.Max,
+            median, mode, p1, p99, saturated, zero, dynamicRange);
+    }
+
+    /// <summary>
+    /// 領域の水平射影(各X座標について領域内の行方向平均)を求める。
+    /// </summary>
+    /// <param name="image">対象画像。</param>
+    /// <param name="frame">フレーム番号。</param>
+    /// <param name="roi">対象領域。</param>
+    /// <param name="cancellationToken">キャンセルトークン。</param>
+    /// <returns>領域幅ぶんの平均raw code配列。</returns>
+    public static double[] ComputeHorizontalProjection(
+        RawImage image, int frame, RegionOfInterest roi,
+        CancellationToken cancellationToken = default)
+    {
+        roi = roi.Clamp(image.Width, image.Height);
+        if (roi.PixelCount == 0)
+        {
+            return Array.Empty<double>();
+        }
+
+        int shift = 16 - image.Format.BitDepth;
+        var sums = new double[roi.Width];
+        var buffer = new ushort[roi.Width];
+        for (int row = 0; row < roi.Height; row++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            image.CopyRegion(frame, roi.X, roi.Y + row, roi.Width, 1, buffer);
+            for (int x = 0; x < roi.Width; x++)
+            {
+                sums[x] += buffer[x] >> shift;
+            }
+        }
+
+        for (int x = 0; x < sums.Length; x++)
+        {
+            sums[x] /= roi.Height;
+        }
+
+        return sums;
+    }
+
+    /// <summary>
+    /// 領域の垂直射影(各Y座標について領域内の列方向平均)を求める。
+    /// </summary>
+    /// <param name="image">対象画像。</param>
+    /// <param name="frame">フレーム番号。</param>
+    /// <param name="roi">対象領域。</param>
+    /// <param name="cancellationToken">キャンセルトークン。</param>
+    /// <returns>領域高さぶんの平均raw code配列。</returns>
+    public static double[] ComputeVerticalProjection(
+        RawImage image, int frame, RegionOfInterest roi,
+        CancellationToken cancellationToken = default)
+    {
+        roi = roi.Clamp(image.Width, image.Height);
+        if (roi.PixelCount == 0)
+        {
+            return Array.Empty<double>();
+        }
+
+        int shift = 16 - image.Format.BitDepth;
+        var means = new double[roi.Height];
+        var buffer = new ushort[roi.Width];
+        for (int row = 0; row < roi.Height; row++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            image.CopyRegion(frame, roi.X, roi.Y + row, roi.Width, 1, buffer);
+            double sum = 0;
+            for (int x = 0; x < roi.Width; x++)
+            {
+                sum += buffer[x] >> shift;
+            }
+
+            means[row] = sum / roi.Width;
+        }
+
+        return means;
     }
 
     /// <summary>

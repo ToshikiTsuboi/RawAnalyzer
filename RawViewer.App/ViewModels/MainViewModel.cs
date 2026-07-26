@@ -52,6 +52,12 @@ public sealed class MainViewModel : ObservableObject
     private ImageSource? _histogramSource;
     private string _histMeanSigmaText = "— / —";
     private string _histMinMaxText = "— / —";
+    private string _histMedianModeText = "— / —";
+    private string _histPercentileText = "— / —";
+    private string _histClipText = "— / —";
+    private string _histDynamicRangeText = "—";
+    private bool _isFullscreen;
+    private bool _isColorImage;
     private string _fmtBitDepthText = "—";
     private string _fmtEndianText = "—";
     private string _fmtHdrText = "—";
@@ -316,6 +322,48 @@ public sealed class MainViewModel : ObservableObject
     {
         get => _histMinMaxText;
         set => SetProperty(ref _histMinMaxText, value);
+    }
+
+    /// <summary>ヒストグラム指標 中央値/最頻値。</summary>
+    public string HistMedianModeText
+    {
+        get => _histMedianModeText;
+        set => SetProperty(ref _histMedianModeText, value);
+    }
+
+    /// <summary>ヒストグラム指標 P1/P99。</summary>
+    public string HistPercentileText
+    {
+        get => _histPercentileText;
+        set => SetProperty(ref _histPercentileText, value);
+    }
+
+    /// <summary>ヒストグラム指標 飽和率/黒つぶれ率。</summary>
+    public string HistClipText
+    {
+        get => _histClipText;
+        set => SetProperty(ref _histClipText, value);
+    }
+
+    /// <summary>ヒストグラム指標 簡易ダイナミックレンジ。</summary>
+    public string HistDynamicRangeText
+    {
+        get => _histDynamicRangeText;
+        set => SetProperty(ref _histDynamicRangeText, value);
+    }
+
+    /// <summary>フルスクリーン表示中か。</summary>
+    public bool IsFullscreen
+    {
+        get => _isFullscreen;
+        set => SetProperty(ref _isFullscreen, value);
+    }
+
+    /// <summary>デコード済みカラー画像(JPEG/PNG/カラーTIFF)を表示中か。</summary>
+    public bool IsColorImage
+    {
+        get => _isColorImage;
+        set => SetProperty(ref _isColorImage, value);
     }
 
     /// <summary>フォーマット欄: ビット深度。</summary>

@@ -22,7 +22,10 @@ namespace RawViewer.App;
 /// </summary>
 public partial class MainWindow : Window
 {
-    private static readonly string[] SupportedExtensions = { ".raw", ".bin", ".tif", ".tiff" };
+    private static readonly string[] RawExtensions = { ".raw", ".bin" };
+
+    private static readonly string[] SupportedExtensions =
+        RawExtensions.Concat(ImageFileLoader.SupportedExtensions).ToArray();
 
     private readonly MainViewModel _vm = new();
     private readonly FormatPresetStore _presetStore = new();
@@ -45,6 +48,10 @@ public partial class MainWindow : Window
     private HistogramResult? _histogram;
     private IReadOnlyList<ChannelHistogram>? _channelHistograms;
     private string? _correctionLabel;
+    private ColorImage? _colorImage;
+    private WindowState _preFullscreenState = WindowState.Normal;
+    private WindowStyle _preFullscreenStyle = WindowStyle.SingleBorderWindow;
+    private ResizeMode _preFullscreenResize = ResizeMode.CanResize;
     private LineProfileWindow? _profileWindow;
     private ushort _blackPoint;
     private ushort _whitePoint = 65535;
@@ -92,6 +99,12 @@ public partial class MainWindow : Window
         InputBindings.Add(new KeyBinding(
             new Mvvm.RelayCommand(_ => OnSaveClick(this, new RoutedEventArgs())),
             new KeyGesture(Key.S, ModifierKeys.Control)));
+        InputBindings.Add(new KeyBinding(
+            new Mvvm.RelayCommand(_ => _vm.IsFullscreen = !_vm.IsFullscreen),
+            new KeyGesture(Key.F11)));
+        InputBindings.Add(new KeyBinding(
+            new Mvvm.RelayCommand(_ => _vm.IsFullscreen = false),
+            new KeyGesture(Key.Escape)));
         RebuildRecentMenu();
         InitFolderTree();
         Loaded += (_, _) =>
@@ -196,7 +209,11 @@ public partial class MainWindow : Window
     {
         var dialog = new OpenFileDialog
         {
-            Filter = "Raw/TIFF (*.raw;*.bin;*.tif;*.tiff)|*.raw;*.bin;*.tif;*.tiff|すべてのファイル (*.*)|*.*",
+            Filter = "対応画像 (*.raw;*.bin;*.tif;*.tiff;*.jpg;*.jpeg;*.png;*.bmp)"
+                + "|*.raw;*.bin;*.tif;*.tiff;*.jpg;*.jpeg;*.png;*.bmp"
+                + "|Raw (*.raw;*.bin)|*.raw;*.bin"
+                + "|画像 (*.tif;*.tiff;*.jpg;*.jpeg;*.png;*.bmp)|*.tif;*.tiff;*.jpg;*.jpeg;*.png;*.bmp"
+                + "|すべてのファイル (*.*)|*.*",
         };
         if (dialog.ShowDialog(this) == true)
         {
@@ -273,23 +290,23 @@ public partial class MainWindow : Window
 
     private void OnChangeFormatClick(object sender, RoutedEventArgs e)
     {
-        if (_currentPath is not null && !IsTiff(_currentPath))
+        if (_currentPath is not null && IsRawFile(_currentPath))
         {
             OpenPath(_currentPath, _currentFormat);
         }
     }
 
-    private static bool IsTiff(string path)
+    /// <summary>フォーマット指定が必要な生バイナリ(.raw/.bin)かどうか。</summary>
+    private static bool IsRawFile(string path)
     {
-        string ext = Path.GetExtension(path);
-        return string.Equals(ext, ".tif", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(ext, ".tiff", StringComparison.OrdinalIgnoreCase);
+        return RawExtensions.Contains(
+            Path.GetExtension(path), StringComparer.OrdinalIgnoreCase);
     }
 
     private async void OpenPath(string path, RawFormat? initialFormat = null)
     {
         RawFormat? format = null;
-        if (!IsTiff(path))
+        if (IsRawFile(path))
         {
             // 同じファイルを開き直すときは記憶したフォーマットでダイアログをスキップ
             // (「変更…」から開いた場合 initialFormat が渡されるためダイアログを出す)
@@ -322,11 +339,19 @@ public partial class MainWindow : Window
         _vm.ImageInfoText = "読込中…";
 
         RawImage image;
+        ColorImage? color = null;
         try
         {
-            image = await Task.Run(
-                () => IsTiff(path) ? TiffLoader.Load(path) : RawLoader.Load(path, format!),
-                cts.Token);
+            if (IsRawFile(path))
+            {
+                image = await Task.Run(() => RawLoader.Load(path, format!), cts.Token);
+            }
+            else
+            {
+                DecodedImage decoded = await Task.Run(() => ImageFileLoader.Load(path), cts.Token);
+                image = decoded.Luminance;
+                color = decoded.Color;
+            }
         }
         catch (OperationCanceledException)
         {
@@ -355,6 +380,8 @@ public partial class MainWindow : Window
         _mainPyramid = null;
         _correctionLabel = null;
         _channelHistograms = null;
+        _colorImage = color;
+        _vm.IsColorImage = color is not null;
         _vm.HdrTargetVisible = false;
         _currentImage?.Dispose();
         _currentImage = image;
@@ -370,7 +397,7 @@ public partial class MainWindow : Window
         _defectWindow?.Close();
         _recentFiles.Add(path);
         RebuildRecentMenu();
-        if (!IsTiff(path))
+        if (IsRawFile(path))
         {
             RememberFileFormat(path, image.Format);
         }
@@ -378,13 +405,17 @@ public partial class MainWindow : Window
         UpdateFormatPanel(image.Format);
         long fileSize = new FileInfo(path).Length;
         _vm.ImageInfoText =
-            $"{image.Width}×{image.Height} · {image.Format.BitDepth}bit · {fileSize / (1024.0 * 1024.0):F1} MB"
+            $"{image.Width}×{image.Height} · {image.Format.BitDepth}bit"
+            + (color is not null ? " · RGB" : "")
+            + $" · {fileSize / (1024.0 * 1024.0):F1} MB"
             + (image.FrameCount > 1 ? $" · {image.FrameCount}fr" : "");
         _vm.HasImage = true;
 
         DisplayModeCombo.SelectedIndex = 0;
+        DisplayModeCombo.IsEnabled = color is null;
         Viewport.SetDisplayMode(ViewportDisplayMode.Raw);
         Viewport.SetImage(image, image.Format);
+        Viewport.SetColorImage(color);
         Viewport.SetLut(BuildLut());
         UpdateDevelopLuts();
         DetectSequence();
@@ -507,6 +538,14 @@ public partial class MainWindow : Window
         RegionStatistics stats = exactStats ?? result.Statistics;
         _vm.HistMeanSigmaText = $"{stats.Mean:F1} / {stats.Sigma:F1}";
         _vm.HistMinMaxText = $"{stats.Min} / {stats.Max}";
+
+        HistogramMetrics metrics = ImageAnalysis.ComputeHistogramMetrics(result);
+        _vm.HistMedianModeText = $"{metrics.Median} / {metrics.Mode}";
+        _vm.HistPercentileText = $"{metrics.P1} / {metrics.P99}";
+        _vm.HistClipText = $"{metrics.SaturatedPercent:F2}% / {metrics.ZeroPercent:F2}%";
+        _vm.HistDynamicRangeText = metrics.DynamicRangeDb > 0
+            ? $"{metrics.DynamicRangeDb:F1} dB"
+            : "—";
         RedrawHistogram();
 
         if (roi is { } roiRect && exactStats is { } es)
@@ -688,14 +727,11 @@ public partial class MainWindow : Window
             WbPickToggle.IsChecked = false;
             Viewport.InteractionMode = ViewportInteractionMode.RoiSelect;
         }
-        else
+        else if (Viewport.InteractionMode == ViewportInteractionMode.RoiSelect)
         {
-            if (Viewport.InteractionMode == ViewportInteractionMode.RoiSelect)
-            {
-                Viewport.InteractionMode = ViewportInteractionMode.Pan;
-            }
-
-            Viewport.ClearRoi();
+            // モードを抜けてもROI選択自体は保持する(射影プロファイル等で使うため)。
+            // 解除は右クリックメニューの「ROIを解除」から行う
+            Viewport.InteractionMode = ViewportInteractionMode.Pan;
         }
     }
 
@@ -722,13 +758,27 @@ public partial class MainWindow : Window
 
         RawImage image = ActiveImage;
         int frame = Viewport.Frame;
-        ushort[] row;
-        ushort[] column;
+        RegionOfInterest? roi = Viewport.Roi is { PixelCount: > 0 } r ? r : null;
+        double[] row;
+        double[] column;
+        double[] horizontalProjection = Array.Empty<double>();
+        double[] verticalProjection = Array.Empty<double>();
         try
         {
-            (row, column) = await Task.Run(() => (
-                ImageAnalysis.ExtractRowProfile(image, frame, e.Y),
-                ImageAnalysis.ExtractColumnProfile(image, frame, e.X)));
+            (row, column, horizontalProjection, verticalProjection) = await Task.Run(() =>
+            {
+                double[] rowValues = Array.ConvertAll(
+                    ImageAnalysis.ExtractRowProfile(image, frame, e.Y), v => (double)v);
+                double[] columnValues = Array.ConvertAll(
+                    ImageAnalysis.ExtractColumnProfile(image, frame, e.X), v => (double)v);
+                double[] hp = roi is { } region
+                    ? ImageAnalysis.ComputeHorizontalProjection(image, frame, region)
+                    : Array.Empty<double>();
+                double[] vp = roi is { } region2
+                    ? ImageAnalysis.ComputeVerticalProjection(image, frame, region2)
+                    : Array.Empty<double>();
+                return (rowValues, columnValues, hp, vp);
+            });
         }
         catch (Exception)
         {
@@ -760,7 +810,8 @@ public partial class MainWindow : Window
         }
 
         int maxCode = (1 << ActiveFormat!.BitDepth) - 1;
-        _profileWindow.SetProfiles(row, column, e.X, e.Y, maxCode);
+        _profileWindow.SetProfiles(
+            row, column, horizontalProjection, verticalProjection, roi, e.X, e.Y, maxCode);
         Viewport.SetProfileMarker(e.X, e.Y, _profileWindow.IsHorizontal);
         _profileWindow.Activate();
     }
@@ -785,6 +836,12 @@ public partial class MainWindow : Window
         if (e.PropertyName == nameof(MainViewModel.ZebraOn))
         {
             Viewport.SetZebra(_vm.ZebraOn);
+            return;
+        }
+
+        if (e.PropertyName == nameof(MainViewModel.IsFullscreen))
+        {
+            ApplyFullscreen(_vm.IsFullscreen);
             return;
         }
 
@@ -1334,9 +1391,9 @@ public partial class MainWindow : Window
             $"画像演算中: {Path.GetFileName(choice.ReferencePath)}",
             (progress, ct) => Task.Run(() =>
             {
-                reference = IsTiff(choice.ReferencePath)
-                    ? TiffLoader.Load(choice.ReferencePath)
-                    : RawLoader.Load(choice.ReferencePath, format with { FrameCount = 1 });
+                reference = IsRawFile(choice.ReferencePath)
+                    ? RawLoader.Load(choice.ReferencePath, format with { FrameCount = 1 })
+                    : ImageFileLoader.Load(choice.ReferencePath).Luminance;
                 corrected = ImageCalculator.Apply(
                     source, reference, choice.Operation, frame, 0, progress, ct);
             }, ct));
@@ -1402,7 +1459,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (IsTiff(_currentPath))
+        if (!IsRawFile(_currentPath))
         {
             MessageBox.Show(this, "バッチ書き出しはrawファイルを開いた状態で実行してください。",
                 "バッチ書き出し", MessageBoxButton.OK, MessageBoxImage.Information);
@@ -2094,6 +2151,23 @@ public partial class MainWindow : Window
 
         int code = value >> CurrentShift;
         int maxCode = (1 << format.BitDepth) - 1;
+
+        // カラー画像はRGBとYCbCrを表示する
+        if (_colorImage is { } color && sourceX < color.Width && sourceY < color.Height)
+        {
+            color.GetPixel(sourceX, sourceY, out ushort r16, out ushort g16, out ushort b16);
+            int shift = 16 - color.BitDepth;
+            int r = r16 >> shift;
+            int g = g16 >> shift;
+            int b = b16 >> shift;
+            (int y, int cb, int cr) = ColorConvert.RgbToYCbCr(r, g, b, (1 << color.BitDepth) - 1);
+            _vm.CursorStatusText =
+                $"({sourceX}, {sourceY}) RGB=({r}, {g}, {b}) YCbCr=({y}, {cb}, {cr})";
+            _vm.CursorOverlayText =
+                $"({sourceX}, {sourceY})  RGB: {r} {g} {b}  YCbCr: {y} {cb} {cr}";
+            return;
+        }
+
         string channel = BayerHelper.GetLabel(
             BayerHelper.GetChannel(format.Bayer, sourceX, sourceY));
         _vm.CursorStatusText = $"({sourceX}, {sourceY}) raw={code}";
@@ -2150,7 +2224,7 @@ public partial class MainWindow : Window
                 _sequenceMode = SequenceMode.Frames;
                 _sequenceIndex = Viewport.Frame;
             }
-            else if (_currentPath is not null && !IsTiff(_currentPath))
+            else if (_currentPath is not null && IsRawFile(_currentPath))
             {
                 // 同一フォルダ・同一拡張子・同一サイズのファイル群をバーチャルスタックとみなす
                 long size = SafeFileSize(_currentPath);
@@ -2351,6 +2425,48 @@ public partial class MainWindow : Window
     private void OnSeqLastClick(object sender, RoutedEventArgs e)
     {
         _ = ShowSequenceIndexAsync(SequenceCount - 1, refreshAnalysis: true);
+    }
+
+    // ---- フルスクリーン ----
+
+    private void ApplyFullscreen(bool fullscreen)
+    {
+        if (fullscreen)
+        {
+            _preFullscreenState = WindowState;
+            _preFullscreenStyle = WindowStyle;
+            _preFullscreenResize = ResizeMode;
+
+            MainMenuBar.Visibility = Visibility.Collapsed;
+            ToolBarPanel.Visibility = Visibility.Collapsed;
+            StatusBarPanel.Visibility = Visibility.Collapsed;
+            LeftPanel.Visibility = Visibility.Collapsed;
+            RightPanel.Visibility = Visibility.Collapsed;
+            LeftColumn.Width = new GridLength(0);
+            RightColumn.Width = new GridLength(0);
+
+            WindowStyle = WindowStyle.None;
+            ResizeMode = ResizeMode.NoResize;
+            WindowState = WindowState.Normal; // 一度戻さないと最大化が効かない場合がある
+            WindowState = WindowState.Maximized;
+            _vm.LevelOverlayText = "フルスクリーン (F11 / Esc で解除)";
+        }
+        else
+        {
+            MainMenuBar.Visibility = Visibility.Visible;
+            ToolBarPanel.Visibility = Visibility.Visible;
+            StatusBarPanel.Visibility = Visibility.Visible;
+            LeftPanel.Visibility = Visibility.Visible;
+            RightPanel.Visibility = Visibility.Visible;
+            LeftColumn.Width = new GridLength(220);
+            RightColumn.Width = new GridLength(240);
+
+            WindowStyle = _preFullscreenStyle;
+            ResizeMode = _preFullscreenResize;
+            WindowState = _preFullscreenState;
+        }
+
+        Viewport.Focus();
     }
 
     // ---- フォルダツリー ----
@@ -2605,7 +2721,7 @@ public partial class MainWindow : Window
             Viewport.UpdateFormat(_currentFormat);
         }
 
-        if (_currentPath is not null && !IsTiff(_currentPath))
+        if (_currentPath is not null && IsRawFile(_currentPath))
         {
             RememberFileFormat(_currentPath, _currentFormat);
         }
@@ -2702,7 +2818,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (IsTiff(entry.FullPath))
+        if (!IsRawFile(entry.FullPath))
         {
             OpenPath(entry.FullPath);
             return;

@@ -1,26 +1,39 @@
 <Window x:Class="RawViewer.App.Views.LineProfileWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="ラインプロファイル" Width="720" Height="360"
+        Title="ラインプロファイル" Width="760" Height="420"
         Background="#FF2E2E32" Foreground="#FFD8D8D4"
         WindowStartupLocation="CenterOwner" ShowInTaskbar="False">
     <DockPanel Margin="10">
-        <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,8">
+        <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,6">
             <RadioButton x:Name="HorizontalRadio" Content="水平" IsChecked="True"
                          Margin="0,0,12,0" VerticalAlignment="Center"
                          Checked="OnDirectionChanged" />
             <RadioButton x:Name="VerticalRadio" Content="垂直"
-                         Margin="0,0,20,0" VerticalAlignment="Center"
+                         Margin="0,0,16,0" VerticalAlignment="Center"
                          Checked="OnDirectionChanged" />
+            <CheckBox x:Name="ProjectionCheck" Content="ROI平均射影" IsEnabled="False"
+                      VerticalAlignment="Center" Margin="0,0,16,0"
+                      ToolTip="ROI内を直交方向に平均した射影プロファイルを表示します"
+                      Checked="OnDirectionChanged" Unchecked="OnDirectionChanged" />
             <TextBlock x:Name="InfoText" FontFamily="Consolas" FontSize="12"
                        Foreground="#FF9A9A95" VerticalAlignment="Center" />
         </StackPanel>
+
+        <!-- 統計 -->
+        <Border DockPanel.Dock="Top" Background="#FF38383D" CornerRadius="4"
+                Padding="10,5" Margin="0,0,0,8">
+            <TextBlock x:Name="StatsText" FontFamily="Consolas" FontSize="12"
+                       Foreground="#FFD8D8D4" TextWrapping="Wrap"
+                       Text="—" />
+        </Border>
+
         <Grid>
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="*" />
             </Grid.ColumnDefinitions>
-            <Grid Grid.Column="0" Margin="0,0,6,0">
+            <Grid Grid.Column="0" Margin="0,0,6,0" MinWidth="42">
                 <TextBlock x:Name="MaxLabel" VerticalAlignment="Top" FontFamily="Consolas"
                            FontSize="10" Foreground="#FF6E6E69" />
                 <TextBlock x:Name="MinLabel" VerticalAlignment="Bottom" FontFamily="Consolas"
@@ -34,6 +47,7 @@
                         <ContextMenu>
                             <MenuItem Header="データをコピー (Excel貼り付け用)"
                                       Click="OnCopyDataClick" />
+                            <MenuItem Header="統計をコピー" Click="OnCopyStatsClick" />
                             <MenuItem Header="CSVで保存…" Click="OnSaveCsvClick" />
                         </ContextMenu>
                     </Canvas.ContextMenu>

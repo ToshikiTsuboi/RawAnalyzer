@@ -58,7 +58,8 @@
 
     <DockPanel>
         <!-- メニュー -->
-        <Menu DockPanel.Dock="Top" Background="{StaticResource PanelBrush}" Padding="4,2">
+        <Menu x:Name="MainMenuBar" DockPanel.Dock="Top"
+              Background="{StaticResource PanelBrush}" Padding="4,2">
             <MenuItem Header="ファイル">
                 <MenuItem Header="開く…" InputGestureText="Ctrl+O" Click="OnOpenFileClick" />
                 <MenuItem Header="フォルダを開く…" Click="OnOpenFolderClick" />
@@ -74,6 +75,9 @@
                 <MenuItem Header="ズームアウト" Click="OnZoomOutClick" IsEnabled="{Binding HasImage}" />
                 <MenuItem Header="等倍 (1:1)" Click="OnActualSizeClick" IsEnabled="{Binding HasImage}" />
                 <MenuItem Header="全体表示" Click="OnFitClick" IsEnabled="{Binding HasImage}" />
+                <Separator />
+                <MenuItem Header="フルスクリーン" InputGestureText="F11"
+                          IsCheckable="True" IsChecked="{Binding IsFullscreen}" />
                 <Separator />
                 <MenuItem Header="ゼブラ (飽和/黒潰れ警告)" IsCheckable="True"
                           IsChecked="{Binding ZebraOn}"
@@ -138,7 +142,7 @@
         </Menu>
 
         <!-- ツールバー -->
-        <Border DockPanel.Dock="Top" Background="{StaticResource PanelBrush}"
+        <Border x:Name="ToolBarPanel" DockPanel.Dock="Top" Background="{StaticResource PanelBrush}"
                 BorderBrush="{StaticResource BorderBrushDark}" BorderThickness="0,1">
             <StackPanel Orientation="Horizontal" Margin="10,5">
                 <Button Style="{StaticResource AccentButton}" Content="📄 開く" Click="OnOpenFileClick" />
@@ -183,7 +187,8 @@
         </Border>
 
         <!-- ステータスバー -->
-        <Border DockPanel.Dock="Bottom" Background="{StaticResource PanelBrush}"
+        <Border x:Name="StatusBarPanel" DockPanel.Dock="Bottom"
+                Background="{StaticResource PanelBrush}"
                 BorderBrush="{StaticResource BorderBrushDark}" BorderThickness="0,1,0,0">
             <DockPanel Margin="12,4">
                 <TextBlock DockPanel.Dock="Right" Text="{Binding ZoomStatusText}"
@@ -198,13 +203,13 @@
         <!-- 本体 3カラム -->
         <Grid>
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="220" />
+                <ColumnDefinition x:Name="LeftColumn" Width="220" />
                 <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="240" />
+                <ColumnDefinition x:Name="RightColumn" Width="240" />
             </Grid.ColumnDefinitions>
 
             <!-- 左: フォルダツリー + ファイルリスト -->
-            <Border Grid.Column="0" Background="{StaticResource PanelBrush}"
+            <Border x:Name="LeftPanel" Grid.Column="0" Background="{StaticResource PanelBrush}"
                     BorderBrush="{StaticResource BorderBrushDark}" BorderThickness="0,0,1,0">
                 <DockPanel Margin="6,8">
                     <TextBlock DockPanel.Dock="Top" Text="{Binding FolderPath}" FontSize="11"
@@ -278,6 +283,8 @@
                             <MenuItem Header="ゼブラ (飽和/黒潰れ警告)" IsCheckable="True"
                                       IsChecked="{Binding ZebraOn}"
                                       IsEnabled="{Binding HasImage}" />
+                            <MenuItem Header="フルスクリーン (F11)" IsCheckable="True"
+                                      IsChecked="{Binding IsFullscreen}" />
                             <MenuItem Header="ROIを解除" Click="OnClearRoiClick"
                                       IsEnabled="{Binding HasRoi}" />
                             <Separator />
@@ -341,7 +348,7 @@
             </Grid>
 
             <!-- 右: パネル群 -->
-            <Border Grid.Column="2" Background="{StaticResource PanelBrush}"
+            <Border x:Name="RightPanel" Grid.Column="2" Background="{StaticResource PanelBrush}"
                     BorderBrush="{StaticResource BorderBrushDark}" BorderThickness="1,0,0,0">
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <StackPanel>
@@ -449,6 +456,31 @@
                                     <TextBlock Style="{StaticResource RowLabel}" Text="min / max" />
                                     <TextBlock DockPanel.Dock="Right" Style="{StaticResource RowValue}"
                                                Text="{Binding HistMinMaxText}" />
+                                    <Border />
+                                </DockPanel>
+                                <DockPanel Margin="0,2,0,0">
+                                    <TextBlock Style="{StaticResource RowLabel}" Text="中央値 / 最頻値" />
+                                    <TextBlock DockPanel.Dock="Right" Style="{StaticResource RowValue}"
+                                               Text="{Binding HistMedianModeText}" />
+                                    <Border />
+                                </DockPanel>
+                                <DockPanel Margin="0,2,0,0">
+                                    <TextBlock Style="{StaticResource RowLabel}" Text="P1 / P99" />
+                                    <TextBlock DockPanel.Dock="Right" Style="{StaticResource RowValue}"
+                                               Text="{Binding HistPercentileText}" />
+                                    <Border />
+                                </DockPanel>
+                                <DockPanel Margin="0,2,0,0">
+                                    <TextBlock Style="{StaticResource RowLabel}" Text="飽和 / 黒つぶれ" />
+                                    <TextBlock DockPanel.Dock="Right" Style="{StaticResource RowValue}"
+                                               Text="{Binding HistClipText}" />
+                                    <Border />
+                                </DockPanel>
+                                <DockPanel Margin="0,2,0,0">
+                                    <TextBlock Style="{StaticResource RowLabel}" Text="DR (max/σ)"
+                                               ToolTip="20·log10(最大code / σ)" />
+                                    <TextBlock DockPanel.Dock="Right" Style="{StaticResource RowValue}"
+                                               Text="{Binding HistDynamicRangeText}" />
                                     <Border />
                                 </DockPanel>
                                 <!-- チャネル別統計 (mean / σ) -->

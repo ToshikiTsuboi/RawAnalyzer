@@ -1,19 +1,25 @@
+using System.Globalization;
 using System.IO;
 using System.Text;
 using System.Windows;
 using System.Windows.Media;
 using System.Windows.Shapes;
 using Microsoft.Win32;
+using RawViewer.Core;
 
 namespace RawViewer.App.Views;
 
 /// <summary>
-/// 指定画素を通る水平/垂直ラインのraw値折れ線を表示するウィンドウ。
+/// 指定画素を通る水平/垂直ラインのraw値折れ線と、その統計を表示するウィンドウ。
+/// ROI選択時はROI内を直交方向に平均した射影プロファイルも表示できる。
 /// </summary>
 public partial class LineProfileWindow : Window
 {
-    private ushort[] _rowProfile = Array.Empty<ushort>();
-    private ushort[] _columnProfile = Array.Empty<ushort>();
+    private double[] _rowProfile = Array.Empty<double>();
+    private double[] _columnProfile = Array.Empty<double>();
+    private double[] _horizontalProjection = Array.Empty<double>();
+    private double[] _verticalProjection = Array.Empty<double>();
+    private RegionOfInterest? _roi;
     private int _pointX;
     private int _pointY;
     private int _maxCode = 65535;
@@ -24,7 +30,7 @@ public partial class LineProfileWindow : Window
         InitializeComponent();
     }
 
-    /// <summary>水平/垂直の切替時に発火する(true=水平)。</summary>
+    /// <summary>水平/垂直・射影の切替時に発火する(true=水平)。</summary>
     public event Action<bool>? DirectionChanged;
 
     /// <summary>現在水平プロファイル表示か。</summary>
@@ -38,72 +44,56 @@ public partial class LineProfileWindow : Window
     /// </summary>
     /// <param name="rowProfile">クリック行の水平プロファイル(raw code)。</param>
     /// <param name="columnProfile">クリック列の垂直プロファイル(raw code)。</param>
+    /// <param name="horizontalProjection">ROI内の水平射影(ROIなしなら空)。</param>
+    /// <param name="verticalProjection">ROI内の垂直射影(ROIなしなら空)。</param>
+    /// <param name="roi">対象ROI(なければnull)。</param>
     /// <param name="pointX">クリック画素X。</param>
     /// <param name="pointY">クリック画素Y。</param>
     /// <param name="maxCode">ビット深度の最大raw code。</param>
     public void SetProfiles(
-        ushort[] rowProfile, ushort[] columnProfile, int pointX, int pointY, int maxCode)
+        double[] rowProfile,
+        double[] columnProfile,
+        double[] horizontalProjection,
+        double[] verticalProjection,
+        RegionOfInterest? roi,
+        int pointX,
+        int pointY,
+        int maxCode)
     {
         _rowProfile = rowProfile;
         _columnProfile = columnProfile;
+        _horizontalProjection = horizontalProjection;
+        _verticalProjection = verticalProjection;
+        _roi = roi;
         _pointX = pointX;
         _pointY = pointY;
         _maxCode = Math.Max(1, maxCode);
+
+        bool hasProjection = horizontalProjection.Length > 0 && verticalProjection.Length > 0;
+        ProjectionCheck.IsEnabled = hasProjection;
+        if (!hasProjection)
+        {
+            ProjectionCheck.IsChecked = false;
+        }
+
         Redraw();
     }
+
+    private bool UseProjection => ProjectionCheck?.IsChecked == true
+        && _horizontalProjection.Length > 0;
+
+    private double[] CurrentData => (IsHorizontal, UseProjection) switch
+    {
+        (true, true) => _horizontalProjection,
+        (true, false) => _rowProfile,
+        (false, true) => _verticalProjection,
+        _ => _columnProfile,
+    };
 
     private void OnDirectionChanged(object sender, RoutedEventArgs e)
     {
         Redraw();
         DirectionChanged?.Invoke(IsHorizontal);
-    }
-
-    private string? BuildTable(char separator)
-    {
-        bool horizontal = HorizontalRadio?.IsChecked != false;
-        ushort[] data = horizontal ? _rowProfile : _columnProfile;
-        if (data.Length == 0)
-        {
-            return null;
-        }
-
-        var sb = new StringBuilder();
-        sb.Append(horizontal ? "x" : "y").Append(separator).Append("raw_code").AppendLine();
-        for (int i = 0; i < data.Length; i++)
-        {
-            sb.Append(i).Append(separator).Append(data[i]).AppendLine();
-        }
-
-        return sb.ToString();
-    }
-
-    private void OnCopyDataClick(object sender, RoutedEventArgs e)
-    {
-        string? table = BuildTable('\t');
-        if (table is not null)
-        {
-            Clipboard.SetText(table);
-        }
-    }
-
-    private void OnSaveCsvClick(object sender, RoutedEventArgs e)
-    {
-        string? table = BuildTable(',');
-        if (table is null)
-        {
-            return;
-        }
-
-        bool horizontal = HorizontalRadio?.IsChecked != false;
-        var dialog = new SaveFileDialog
-        {
-            Filter = "CSV (*.csv)|*.csv",
-            FileName = horizontal ? $"profile_y{_pointY}.csv" : $"profile_x{_pointX}.csv",
-        };
-        if (dialog.ShowDialog(this) == true)
-        {
-            File.WriteAllText(dialog.FileName, table, Encoding.UTF8);
-        }
     }
 
     private void OnCanvasSizeChanged(object sender, SizeChangedEventArgs e)
@@ -119,42 +109,47 @@ public partial class LineProfileWindow : Window
         }
 
         PlotCanvas.Children.Clear();
-        bool horizontal = HorizontalRadio?.IsChecked != false;
-        ushort[] data = horizontal ? _rowProfile : _columnProfile;
+        bool horizontal = IsHorizontal;
+        bool projection = UseProjection;
+        double[] data = CurrentData;
         double width = PlotCanvas.ActualWidth;
         double height = PlotCanvas.ActualHeight;
+
+        ProfileStatistics stats = ImageAnalysis.ComputeProfileStatistics(data);
+        StatsText.Text = stats.Count == 0
+            ? "—"
+            : $"N={stats.Count}   平均 {stats.Mean:F2}   最小 {stats.Min:F0}   " +
+              $"最大 {stats.Max:F0}   中央値 {stats.Median:F1}   σ {stats.Sigma:F2}   " +
+              $"P-P {stats.Max - stats.Min:F0}";
+
+        string origin = projection && _roi is { } r
+            ? $"ROI({r.X},{r.Y} {r.Width}×{r.Height}) 平均射影"
+            : horizontal ? $"行 y={_pointY} (x={_pointX}基準)" : $"列 x={_pointX} (y={_pointY}基準)";
+        InfoText.Text = $"{(horizontal ? "水平" : "垂直")}  {origin}";
+        Title = projection
+            ? $"ラインプロファイル — {(horizontal ? "水平" : "垂直")}射影 (ROI平均)"
+            : horizontal
+                ? $"ラインプロファイル — 行 y={_pointY}"
+                : $"ラインプロファイル — 列 x={_pointX}";
+
         if (data.Length < 2 || width < 4 || height < 4)
         {
             return;
         }
 
-        int min = int.MaxValue;
-        int max = int.MinValue;
-        foreach (ushort v in data)
-        {
-            if (v < min)
-            {
-                min = v;
-            }
-
-            if (v > max)
-            {
-                max = v;
-            }
-        }
-
-        InfoText.Text = horizontal
-            ? $"行 y={_pointY} (x={_pointX}基準)  N={data.Length}  min={min}  max={max}"
-            : $"列 x={_pointX} (y={_pointY}基準)  N={data.Length}  min={min}  max={max}";
-        Title = horizontal
-            ? $"ラインプロファイル — 行 y={_pointY}"
-            : $"ラインプロファイル — 列 x={_pointX}";
-        MaxLabel.Text = _maxCode.ToString();
+        MaxLabel.Text = _maxCode.ToString(CultureInfo.InvariantCulture);
         MinLabel.Text = "0";
 
-        // キャンバス幅より点数が多い場合は列ごとにmin/maxを引いて情報を残す
-        var points = new PointCollection();
+        // 平均・±σのガイド線
         double scaleY = (height - 2) / _maxCode;
+        AddGuideLine(stats.Mean * scaleY, height, width, Color.FromArgb(0x70, 0x7E, 0xCB, 0x72));
+        AddGuideLine((stats.Mean + stats.Sigma) * scaleY, height, width,
+            Color.FromArgb(0x40, 0x9A, 0x9A, 0x95));
+        AddGuideLine((stats.Mean - stats.Sigma) * scaleY, height, width,
+            Color.FromArgb(0x40, 0x9A, 0x9A, 0x95));
+
+        // 折れ線(キャンバス幅より点数が多い場合は列ごとにmin/maxを束ねる)
+        var points = new PointCollection();
         if (data.Length <= (int)width)
         {
             double stepX = width / (data.Length - 1);
@@ -170,20 +165,12 @@ public partial class LineProfileWindow : Window
             {
                 long start = (long)c * data.Length / columns;
                 long end = Math.Max(start + 1, (long)(c + 1) * data.Length / columns);
-                int cmin = int.MaxValue;
-                int cmax = int.MinValue;
+                double cmin = double.MaxValue;
+                double cmax = double.MinValue;
                 for (long i = start; i < end; i++)
                 {
-                    ushort v = data[i];
-                    if (v < cmin)
-                    {
-                        cmin = v;
-                    }
-
-                    if (v > cmax)
-                    {
-                        cmax = v;
-                    }
+                    cmin = Math.Min(cmin, data[i]);
+                    cmax = Math.Max(cmax, data[i]);
                 }
 
                 points.Add(new Point(c, height - 1 - cmax * scaleY));
@@ -191,31 +178,112 @@ public partial class LineProfileWindow : Window
             }
         }
 
-        var line = new Polyline
+        PlotCanvas.Children.Add(new Polyline
         {
             Points = points,
             Stroke = new SolidColorBrush(Color.FromRgb(0x5B, 0x9D, 0xD9)),
             StrokeThickness = 1,
-        };
-        PlotCanvas.Children.Add(line);
+        });
 
-        // クリック位置マーカー
-        int index = horizontal ? _pointX : _pointY;
-        if (index >= 0 && index < data.Length)
+        // クリック位置マーカー(単一ライン表示時のみ)
+        if (!projection)
         {
-            double markerX = data.Length <= (int)width
-                ? index * (width / (data.Length - 1))
-                : (double)index / data.Length * width;
-            var marker = new Line
+            int index = horizontal ? _pointX : _pointY;
+            if (index >= 0 && index < data.Length)
             {
-                X1 = markerX,
-                X2 = markerX,
-                Y1 = 0,
-                Y2 = height,
-                Stroke = new SolidColorBrush(Color.FromArgb(0x80, 0xD9, 0x9B, 0x5B)),
-                StrokeThickness = 1,
-            };
-            PlotCanvas.Children.Add(marker);
+                double markerX = data.Length <= (int)width
+                    ? index * (width / (data.Length - 1))
+                    : (double)index / data.Length * width;
+                PlotCanvas.Children.Add(new Line
+                {
+                    X1 = markerX,
+                    X2 = markerX,
+                    Y1 = 0,
+                    Y2 = height,
+                    Stroke = new SolidColorBrush(Color.FromArgb(0x80, 0xD9, 0x9B, 0x5B)),
+                    StrokeThickness = 1,
+                });
+            }
+        }
+    }
+
+    private void AddGuideLine(double valueHeight, double canvasHeight, double width, Color color)
+    {
+        double y = canvasHeight - 1 - valueHeight;
+        if (y < 0 || y > canvasHeight)
+        {
+            return;
+        }
+
+        PlotCanvas.Children.Add(new Line
+        {
+            X1 = 0,
+            X2 = width,
+            Y1 = y,
+            Y2 = y,
+            Stroke = new SolidColorBrush(color),
+            StrokeThickness = 1,
+            StrokeDashArray = new DoubleCollection { 4, 4 },
+        });
+    }
+
+    private string? BuildTable(char separator)
+    {
+        double[] data = CurrentData;
+        if (data.Length == 0)
+        {
+            return null;
+        }
+
+        var sb = new StringBuilder();
+        sb.Append(IsHorizontal ? "x" : "y").Append(separator).Append("value").AppendLine();
+        for (int i = 0; i < data.Length; i++)
+        {
+            sb.Append(i).Append(separator)
+                .Append(data[i].ToString("G6", CultureInfo.InvariantCulture)).AppendLine();
+        }
+
+        return sb.ToString();
+    }
+
+    private void OnCopyDataClick(object sender, RoutedEventArgs e)
+    {
+        string? table = BuildTable('\t');
+        if (table is not null)
+        {
+            Clipboard.SetText(table);
+        }
+    }
+
+    private void OnCopyStatsClick(object sender, RoutedEventArgs e)
+    {
+        ProfileStatistics stats = ImageAnalysis.ComputeProfileStatistics(CurrentData);
+        var sb = new StringBuilder();
+        sb.AppendLine("metric\tvalue");
+        sb.Append("N\t").Append(stats.Count).AppendLine();
+        sb.Append("mean\t").Append(stats.Mean.ToString("G6", CultureInfo.InvariantCulture)).AppendLine();
+        sb.Append("min\t").Append(stats.Min.ToString("G6", CultureInfo.InvariantCulture)).AppendLine();
+        sb.Append("max\t").Append(stats.Max.ToString("G6", CultureInfo.InvariantCulture)).AppendLine();
+        sb.Append("median\t").Append(stats.Median.ToString("G6", CultureInfo.InvariantCulture)).AppendLine();
+        sb.Append("sigma\t").Append(stats.Sigma.ToString("G6", CultureInfo.InvariantCulture)).AppendLine();
+        Clipboard.SetText(sb.ToString());
+    }
+
+    private void OnSaveCsvClick(object sender, RoutedEventArgs e)
+    {
+        string? table = BuildTable(',');
+        if (table is null)
+        {
+            return;
+        }
+
+        string name = UseProjection
+            ? "projection.csv"
+            : IsHorizontal ? $"profile_y{_pointY}.csv" : $"profile_x{_pointX}.csv";
+        var dialog = new SaveFileDialog { Filter = "CSV (*.csv)|*.csv", FileName = name };
+        if (dialog.ShowDialog(this) == true)
+        {
+            File.WriteAllText(dialog.FileName, table, Encoding.UTF8);
         }
     }
 }
