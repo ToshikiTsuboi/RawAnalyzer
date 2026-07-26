@@ -377,6 +377,10 @@
             <Setter.Value>
                 <ControlTemplate TargetType="Slider">
                     <Grid Background="Transparent" MinHeight="{TemplateBinding MinHeight}">
+                        <TickBar x:Name="TopTicks" Height="3" VerticalAlignment="Top"
+                                 Margin="5,0,5,0" Fill="{StaticResource BorderBrushLight}"
+                                 Placement="Top" Visibility="Collapsed"
+                                 SnapsToDevicePixels="True" />
                         <Track x:Name="PART_Track">
                             <Track.DecreaseRepeatButton>
                                 <RepeatButton Style="{StaticResource SliderFillButton}"
@@ -392,6 +396,12 @@
                         </Track>
                     </Grid>
                     <ControlTemplate.Triggers>
+                        <Trigger Property="TickPlacement" Value="TopLeft">
+                            <Setter TargetName="TopTicks" Property="Visibility" Value="Visible" />
+                        </Trigger>
+                        <Trigger Property="TickPlacement" Value="Both">
+                            <Setter TargetName="TopTicks" Property="Visibility" Value="Visible" />
+                        </Trigger>
                         <Trigger Property="IsEnabled" Value="False">
                             <Setter Property="Opacity" Value="0.4" />
                         </Trigger>

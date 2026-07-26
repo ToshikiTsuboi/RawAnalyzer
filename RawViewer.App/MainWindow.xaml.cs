@@ -2840,6 +2840,87 @@ public partial class MainWindow : Window
         Viewport.CenterOn(defect.X, defect.Y, Math.Max(Viewport.Zoom, 32));
     }
 
+    // ---- ノイズ / ダイナミックレンジ測定 ----
+
+    private NoiseMeasureDialog? _noiseWindow;
+
+    private void OnNoiseMeasureClick(object sender, RoutedEventArgs e)
+    {
+        if (ActiveImage is null || ActiveFormat is null)
+        {
+            return;
+        }
+
+        if (_noiseWindow is null)
+        {
+            _noiseWindow = new NoiseMeasureDialog(
+                Path.GetFileName(_currentPath ?? "(画像)"),
+                _currentFolder,
+                (1 << ActiveFormat.BitDepth) - 1,
+                Viewport.Roi is { PixelCount: > 0 })
+            {
+                Owner = this,
+            };
+            _noiseWindow.MeasureRequested += OnNoiseMeasureRequested;
+            _noiseWindow.Closed += (_, _) => _noiseWindow = null;
+            _noiseWindow.Show();
+        }
+
+        _noiseWindow.Activate();
+    }
+
+    private void OnNoiseMeasureRequested(NoiseMeasureRequest request)
+    {
+        RawImage? image = ActiveImage;
+        RawFormat? format = ActiveFormat;
+        if (image is null || format is null)
+        {
+            _noiseWindow?.ResetRunButton();
+            return;
+        }
+
+        int frame = Viewport.Frame;
+        RegionOfInterest? roi = request.UseRoi && Viewport.Roi is { PixelCount: > 0 } r ? r : null;
+        NoiseMeasurement measurement = default;
+
+        ProgressWindow result = ProgressWindow.Run(
+            this,
+            "ノイズを測定中…",
+            (progress, ct) => Task.Run(() =>
+            {
+                if (request.ReferencePath is null)
+                {
+                    measurement = NoiseAnalysis.MeasureSingle(
+                        image, frame, roi, request.SaturationCode, ct);
+                    return;
+                }
+
+                using RawImage reference = IsRawFile(request.ReferencePath)
+                    ? RawLoader.Load(request.ReferencePath, format with { FrameCount = 1 })
+                    : ImageFileLoader.Load(request.ReferencePath).Luminance;
+                measurement = NoiseAnalysis.MeasurePair(
+                    image, reference, frame, 0, roi, request.SaturationCode, ct);
+            }, ct));
+
+        if (result.Error is not null)
+        {
+            MessageBox.Show(this, $"測定に失敗しました: {result.Error.Message}", "ノイズ測定",
+                MessageBoxButton.OK, MessageBoxImage.Error);
+            _noiseWindow?.ResetRunButton();
+            return;
+        }
+
+        if (result.WasCanceled)
+        {
+            _noiseWindow?.ResetRunButton();
+            return;
+        }
+
+        _noiseWindow?.ShowResult(
+            measurement, format.BitDepth,
+            request.ReferencePath is null ? null : Path.GetFileName(request.ReferencePath));
+    }
+
     private async void OnDefectCorrectionRequested(
         DefectDetectionResult detection, DefectCorrectionMethod method)
     {

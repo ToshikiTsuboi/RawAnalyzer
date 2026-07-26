@@ -128,6 +128,8 @@
                 <Separator />
                 <MenuItem Header="欠陥画素検出…" Click="OnDefectDetectClick"
                           IsEnabled="{Binding HasImage}" />
+                <MenuItem Header="ノイズ / ダイナミックレンジ測定…" Click="OnNoiseMeasureClick"
+                          IsEnabled="{Binding HasImage}" />
                 <MenuItem Header="ヒストグラム再計算" Click="OnHistogramRefreshClick"
                           IsEnabled="{Binding HasImage}" />
                 <MenuItem Header="ヒストグラムをCSVで保存…" Click="OnHistogramSaveCsvClick"
@@ -357,39 +359,21 @@
                                 BorderThickness="0,0,0,1" Padding="12,10">
                             <StackPanel>
                                 <TextBlock Style="{StaticResource SectionHeader}" Text="表示調整" />
-                                <DockPanel Margin="0,2">
-                                    <TextBlock Style="{StaticResource RowLabel}" Text="ゲイン" Width="64" />
-                                    <TextBlock DockPanel.Dock="Right" Style="{StaticResource RowValue}"
-                                               Text="{Binding Gain, StringFormat={}{0:F2}}" Width="36"
-                                               TextAlignment="Right" />
-                                    <Slider Minimum="0.25" Maximum="8" Value="{Binding Gain}"
-                                            SmallChange="0.05" LargeChange="0.5" />
-                                </DockPanel>
-                                <DockPanel Margin="0,2">
-                                    <TextBlock Style="{StaticResource RowLabel}" Text="ガンマ" Width="64" />
-                                    <TextBlock DockPanel.Dock="Right" Style="{StaticResource RowValue}"
-                                               Text="{Binding Gamma, StringFormat={}{0:F2}}" Width="36"
-                                               TextAlignment="Right" />
-                                    <Slider Minimum="0.2" Maximum="3" Value="{Binding Gamma}"
-                                            SmallChange="0.05" LargeChange="0.2" />
-                                </DockPanel>
-                                <DockPanel Margin="0,2">
-                                    <TextBlock Style="{StaticResource RowLabel}" Text="コントラスト" Width="64" />
-                                    <TextBlock DockPanel.Dock="Right" Style="{StaticResource RowValue}"
-                                               Text="{Binding Contrast, StringFormat={}{0:F2}}" Width="36"
-                                               TextAlignment="Right" />
-                                    <Slider Minimum="0" Maximum="3" Value="{Binding Contrast}"
-                                            SmallChange="0.05" LargeChange="0.2" />
-                                </DockPanel>
-                                <DockPanel Margin="0,2">
-                                    <TextBlock Style="{StaticResource RowLabel}" Text="黒レベル" Width="64" />
-                                    <TextBlock DockPanel.Dock="Right" Style="{StaticResource RowValue}"
-                                               Text="{Binding BlackLevel, StringFormat={}{0:F0}}" Width="36"
-                                               TextAlignment="Right" />
-                                    <Slider Minimum="0" Maximum="{Binding BlackLevelMax}"
-                                            Value="{Binding BlackLevel}"
-                                            SmallChange="1" LargeChange="64" />
-                                </DockPanel>
+                                <controls:NumericSliderRow Label="ゲイン" Value="{Binding Gain}"
+                                                           Minimum="0.25" Maximum="8" Step="0.05"
+                                                           Decimals="2" DefaultValue="1"
+                                                           TickFrequency="1" />
+                                <controls:NumericSliderRow Label="ガンマ" Value="{Binding Gamma}"
+                                                           Minimum="0.2" Maximum="3" Step="0.05"
+                                                           Decimals="2" DefaultValue="1"
+                                                           TickFrequency="0.5" />
+                                <controls:NumericSliderRow Label="コントラスト" Value="{Binding Contrast}"
+                                                           Minimum="0" Maximum="3" Step="0.05"
+                                                           Decimals="2" DefaultValue="1"
+                                                           TickFrequency="0.5" />
+                                <controls:NumericSliderRow Label="黒レベル" Value="{Binding BlackLevel}"
+                                                           Minimum="0" Maximum="{Binding BlackLevelMax}"
+                                                           Step="1" Decimals="0" DefaultValue="0" />
                                 <DockPanel Margin="0,6,0,0"
                                            Visibility="{Binding HdrTargetVisible,
                                                Converter={StaticResource BoolToVis}}">
@@ -477,8 +461,8 @@
                                     <Border />
                                 </DockPanel>
                                 <DockPanel Margin="0,2,0,0">
-                                    <TextBlock Style="{StaticResource RowLabel}" Text="DR (max/σ)"
-                                               ToolTip="20·log10(最大code / σ)" />
+                                    <TextBlock Style="{StaticResource RowLabel}" Text="max/σ (参考)"
+                                               ToolTip="20·log10(最大code / この領域のσ)。σには被写体コントラストやFPNが含まれるためDRではありません。正式なDRは ツール → ノイズ / DR測定 で測定してください" />
                                     <TextBlock DockPanel.Dock="Right" Style="{StaticResource RowValue}"
                                                Text="{Binding HistDynamicRangeText}" />
                                     <Border />
@@ -527,30 +511,18 @@
                                 BorderThickness="0,0,0,1" Padding="12,10">
                             <StackPanel>
                                 <TextBlock Style="{StaticResource SectionHeader}" Text="ホワイトバランス" />
-                                <DockPanel Margin="0,2">
-                                    <TextBlock Style="{StaticResource RowLabel}" Text="Rゲイン" Width="64" />
-                                    <TextBlock DockPanel.Dock="Right" Style="{StaticResource RowValue}"
-                                               Text="{Binding WbGainR, StringFormat={}{0:F2}}" Width="36"
-                                               TextAlignment="Right" />
-                                    <Slider Minimum="0.5" Maximum="4" Value="{Binding WbGainR}"
-                                            SmallChange="0.02" LargeChange="0.2" />
-                                </DockPanel>
-                                <DockPanel Margin="0,2">
-                                    <TextBlock Style="{StaticResource RowLabel}" Text="Gゲイン" Width="64" />
-                                    <TextBlock DockPanel.Dock="Right" Style="{StaticResource RowValue}"
-                                               Text="{Binding WbGainG, StringFormat={}{0:F2}}" Width="36"
-                                               TextAlignment="Right" />
-                                    <Slider Minimum="0.5" Maximum="4" Value="{Binding WbGainG}"
-                                            SmallChange="0.02" LargeChange="0.2" />
-                                </DockPanel>
-                                <DockPanel Margin="0,2">
-                                    <TextBlock Style="{StaticResource RowLabel}" Text="Bゲイン" Width="64" />
-                                    <TextBlock DockPanel.Dock="Right" Style="{StaticResource RowValue}"
-                                               Text="{Binding WbGainB, StringFormat={}{0:F2}}" Width="36"
-                                               TextAlignment="Right" />
-                                    <Slider Minimum="0.5" Maximum="4" Value="{Binding WbGainB}"
-                                            SmallChange="0.02" LargeChange="0.2" />
-                                </DockPanel>
+                                <controls:NumericSliderRow Label="Rゲイン" Value="{Binding WbGainR}"
+                                                           Minimum="0.5" Maximum="4" Step="0.01"
+                                                           Decimals="3" DefaultValue="1"
+                                                           TickFrequency="0.5" />
+                                <controls:NumericSliderRow Label="Gゲイン" Value="{Binding WbGainG}"
+                                                           Minimum="0.5" Maximum="4" Step="0.01"
+                                                           Decimals="3" DefaultValue="1"
+                                                           TickFrequency="0.5" />
+                                <controls:NumericSliderRow Label="Bゲイン" Value="{Binding WbGainB}"
+                                                           Minimum="0.5" Maximum="4" Step="0.01"
+                                                           Decimals="3" DefaultValue="1"
+                                                           TickFrequency="0.5" />
                                 <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
                                     <Button Style="{StaticResource ToolButton}"
                                             Content="AWB (グレーワールド)"

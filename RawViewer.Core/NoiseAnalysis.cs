@@ -1,0 +1,153 @@
+namespace RawViewer.Core;
+
+/// <summary>
+/// ノイズ分離とダイナミックレンジの測定結果(値はすべてraw code値域)。
+/// </summary>
+/// <param name="SampleCount">評価に使った画素数。</param>
+/// <param name="Mean">対象フレームの平均。</param>
+/// <param name="SigmaTotal">単一フレームの標準偏差(時間ノイズ+FPNを含む)。</param>
+/// <param name="SigmaTemporal">時間ノイズ(2枚差分のσ/√2)。1枚のみの場合はNaN。</param>
+/// <param name="SigmaFpn">固定パターンノイズ(√(σ_total²−σ_temporal²))。1枚のみならNaN。</param>
+/// <param name="SaturationCode">飽和信号レベル(DR計算の分子)。</param>
+public readonly record struct NoiseMeasurement(
+    long SampleCount,
+    double Mean,
+    double SigmaTotal,
+    double SigmaTemporal,
+    double SigmaFpn,
+    double SaturationCode)
+{
+    /// <summary>時間ノイズ基準のダイナミックレンジ[dB](EMVA1288準拠の定義)。</summary>
+    public double DynamicRangeTemporalDb => ToDb(SaturationCode, SigmaTemporal);
+
+    /// <summary>FPNを含む総ノイズ基準のダイナミックレンジ[dB]。</summary>
+    public double DynamicRangeTotalDb => ToDb(SaturationCode, SigmaTotal);
+
+    /// <summary>時間ノイズ基準のダイナミックレンジ[stop]。</summary>
+    public double DynamicRangeTemporalStops => ToStops(SaturationCode, SigmaTemporal);
+
+    /// <summary>FPNを含む総ノイズ基準のダイナミックレンジ[stop]。</summary>
+    public double DynamicRangeTotalStops => ToStops(SaturationCode, SigmaTotal);
+
+    private static double ToDb(double saturation, double sigma)
+    {
+        return sigma > 0 && saturation > 0 ? 20 * Math.Log10(saturation / sigma) : double.NaN;
+    }
+
+    private static double ToStops(double saturation, double sigma)
+    {
+        return sigma > 0 && saturation > 0 ? Math.Log2(saturation / sigma) : double.NaN;
+    }
+}
+
+/// <summary>
+/// ノイズ測定。時間ノイズは2枚のフレーム差分から σ_diff/√2 として求め、
+/// 固定パターンノイズ(FPN)と分離する。ダイナミックレンジは
+/// 飽和信号レベル ÷ 暗時ノイズ で定義する(EMVA1288の考え方)。
+/// </summary>
+public static class NoiseAnalysis
+{
+    /// <summary>
+    /// 単一フレームからノイズを測定する(時間ノイズとFPNは分離できない)。
+    /// </summary>
+    /// <param name="image">対象画像(通常はダークフレーム)。</param>
+    /// <param name="frame">フレーム番号。</param>
+    /// <param name="region">評価領域。nullなら全体。</param>
+    /// <param name="saturationCode">飽和信号レベル(raw code)。0以下ならビット深度の最大値。</param>
+    /// <param name="cancellationToken">キャンセルトークン。</param>
+    /// <returns>測定結果(SigmaTemporal/SigmaFpnはNaN)。</returns>
+    public static NoiseMeasurement MeasureSingle(
+        RawImage image,
+        int frame = 0,
+        RegionOfInterest? region = null,
+        double saturationCode = 0,
+        CancellationToken cancellationToken = default)
+    {
+        RegionOfInterest roi = (region ?? new RegionOfInterest(0, 0, image.Width, image.Height))
+            .Clamp(image.Width, image.Height);
+        RegionStatistics stats = ImageAnalysis.ComputeStatistics(
+            image, frame, roi, cancellationToken);
+        double saturation = ResolveSaturation(saturationCode, image.Format.BitDepth);
+        return new NoiseMeasurement(
+            stats.SampleCount, stats.Mean, stats.Sigma, double.NaN, double.NaN, saturation);
+    }
+
+    /// <summary>
+    /// 同一条件で撮影した2枚から時間ノイズとFPNを分離して測定する。
+    /// 差分により固定パターン成分が相殺されるため、
+    /// 時間ノイズ σ_temporal = σ(A−B) / √2 となる。
+    /// </summary>
+    /// <param name="imageA">1枚目(この画像の統計をσ_totalとする)。</param>
+    /// <param name="imageB">2枚目(同一サイズ・同一条件)。</param>
+    /// <param name="frameA">1枚目のフレーム番号。</param>
+    /// <param name="frameB">2枚目のフレーム番号。</param>
+    /// <param name="region">評価領域。nullなら全体。</param>
+    /// <param name="saturationCode">飽和信号レベル(raw code)。0以下ならビット深度の最大値。</param>
+    /// <param name="cancellationToken">キャンセルトークン。</param>
+    /// <returns>測定結果。</returns>
+    /// <exception cref="ArgumentException">サイズが一致しない場合。</exception>
+    public static NoiseMeasurement MeasurePair(
+        RawImage imageA,
+        RawImage imageB,
+        int frameA = 0,
+        int frameB = 0,
+        RegionOfInterest? region = null,
+        double saturationCode = 0,
+        CancellationToken cancellationToken = default)
+    {
+        if (imageA.Width != imageB.Width || imageA.Height != imageB.Height)
+        {
+            throw new ArgumentException(
+                $"サイズが一致しません: {imageA.Width}×{imageA.Height} と " +
+                $"{imageB.Width}×{imageB.Height}", nameof(imageB));
+        }
+
+        RegionOfInterest roi = (region ?? new RegionOfInterest(0, 0, imageA.Width, imageA.Height))
+            .Clamp(imageA.Width, imageA.Height);
+        RegionStatistics statsA = ImageAnalysis.ComputeStatistics(
+            imageA, frameA, roi, cancellationToken);
+
+        int shiftA = 16 - imageA.Format.BitDepth;
+        int shiftB = 16 - imageB.Format.BitDepth;
+        var rowA = new ushort[roi.Width];
+        var rowB = new ushort[roi.Width];
+        double sum = 0;
+        double sumSq = 0;
+        long count = 0;
+
+        for (int row = 0; row < roi.Height; row++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            imageA.CopyRegion(frameA, roi.X, roi.Y + row, roi.Width, 1, rowA);
+            imageB.CopyRegion(frameB, roi.X, roi.Y + row, roi.Width, 1, rowB);
+            for (int x = 0; x < roi.Width; x++)
+            {
+                int diff = (rowA[x] >> shiftA) - (rowB[x] >> shiftB);
+                sum += diff;
+                sumSq += (double)diff * diff;
+                count++;
+            }
+        }
+
+        double sigmaTemporal = 0;
+        if (count > 0)
+        {
+            double meanDiff = sum / count;
+            double varianceDiff = Math.Max(0, sumSq / count - meanDiff * meanDiff);
+            // 独立な2枚の差分は分散が2倍になるため √2 で割る
+            sigmaTemporal = Math.Sqrt(varianceDiff / 2.0);
+        }
+
+        double sigmaFpn = Math.Sqrt(Math.Max(
+            0, statsA.Sigma * statsA.Sigma - sigmaTemporal * sigmaTemporal));
+        double saturation = ResolveSaturation(saturationCode, imageA.Format.BitDepth);
+
+        return new NoiseMeasurement(
+            statsA.SampleCount, statsA.Mean, statsA.Sigma, sigmaTemporal, sigmaFpn, saturation);
+    }
+
+    private static double ResolveSaturation(double saturationCode, int bitDepth)
+    {
+        return saturationCode > 0 ? saturationCode : (1 << bitDepth) - 1;
+    }
+}

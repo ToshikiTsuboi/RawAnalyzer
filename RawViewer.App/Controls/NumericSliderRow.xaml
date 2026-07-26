@@ -1,0 +1,27 @@
+<UserControl x:Class="RawViewer.App.Controls.NumericSliderRow"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Name="Root">
+    <StackPanel Margin="0,3">
+        <DockPanel>
+            <TextBlock x:Name="LabelText" Width="62" FontSize="12"
+                       Foreground="#FF9A9A95" VerticalAlignment="Center"
+                       MouseLeftButtonDown="OnLabelClick" Cursor="Hand" />
+            <TextBox x:Name="ValueBox" DockPanel.Dock="Right" Width="56" FontSize="11"
+                     FontFamily="Consolas" TextAlignment="Right" Padding="4,2"
+                     Margin="6,0,0,0" VerticalAlignment="Center"
+                     KeyDown="OnValueBoxKeyDown" LostFocus="OnValueBoxLostFocus" />
+            <Slider x:Name="ValueSlider" VerticalAlignment="Center" MinHeight="22"
+                    IsSnapToTickEnabled="False" TickPlacement="TopLeft"
+                    ValueChanged="OnSliderValueChanged"
+                    PreviewMouseWheel="OnSliderWheel" />
+        </DockPanel>
+        <DockPanel Margin="62,0,62,0">
+            <TextBlock x:Name="MinText" DockPanel.Dock="Left" FontSize="9"
+                       FontFamily="Consolas" Foreground="#FF6E6E69" />
+            <TextBlock x:Name="MaxText" DockPanel.Dock="Right" FontSize="9"
+                       FontFamily="Consolas" Foreground="#FF6E6E69" />
+            <Border />
+        </DockPanel>
+    </StackPanel>
+</UserControl>
