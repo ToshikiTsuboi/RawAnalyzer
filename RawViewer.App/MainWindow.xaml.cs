@@ -1169,7 +1169,9 @@ public partial class MainWindow : Window
         }
 
         var dialog = new SaveDialog(
-            ActiveImage.Format.TotalPixels, allowFloatRaw: _hdrFloatImage is not null)
+            ActiveImage.Format.TotalPixels,
+            allowFloatRaw: _hdrFloatImage is not null,
+            hasBayer: ActiveFormat?.Bayer is not (null or BayerPattern.None))
         {
             Owner = this,
         };
@@ -1204,10 +1206,32 @@ public partial class MainWindow : Window
     {
         RawImage image = ActiveImage!;
         HdrImage? hdrFloat = _hdrFloatImage;
-        DisplayLut lut = BuildLut();
-        ViewportDisplayMode mode = Viewport.DisplayMode;
-        BayerPattern pattern = ActiveFormat!.Bayer;
-        var devLuts = DevelopLuts.Create(CurrentDevelopParameters());
+
+        // チェック状態に応じて、適用しない処理は恒等パラメータへ落とす
+        DisplayLut lut = choice.ApplyDisplayLut
+            ? BuildLut()
+            : DisplayLut.Create(new DisplayParameters());
+        DevelopParameters developParameters = CurrentDevelopParameters();
+        if (!choice.ApplyDisplayLut)
+        {
+            developParameters = developParameters with { BlackLevel = 0, Gamma = 1.0 };
+        }
+
+        if (!choice.ApplyWhiteBalance)
+        {
+            developParameters = developParameters with { GainR = 1.0, GainG = 1.0, GainB = 1.0 };
+        }
+
+        if (!choice.ApplyMatrix)
+        {
+            developParameters = developParameters with { Matrix = null };
+        }
+
+        ViewportDisplayMode mode = choice.ApplyDemosaic
+            ? ViewportDisplayMode.ColorDevelop
+            : ViewportDisplayMode.Raw;
+        BayerPattern pattern = choice.ApplyDemosaic ? ActiveFormat!.Bayer : BayerPattern.None;
+        var devLuts = DevelopLuts.Create(developParameters);
 
         ProgressWindow result = ProgressWindow.Run(
             this,
@@ -1249,7 +1273,111 @@ public partial class MainWindow : Window
         }
         else if (!result.WasCanceled)
         {
-            _vm.ImageInfoText = $"保存完了: {Path.GetFileName(path)}";
+            if (choice.WriteSidecar)
+            {
+                WriteProcessingSidecar(path, choice, developParameters);
+            }
+
+            _vm.ImageInfoText = $"保存完了: {Path.GetFileName(path)}"
+                + (choice.IsProcessed ? " (処理を焼き込み)" : " (無処理)");
+        }
+    }
+
+    /// <summary>保存画像に何が適用されたかを記録するテキストを書き出す。</summary>
+    private void WriteProcessingSidecar(
+        string imagePath, SaveChoice choice, DevelopParameters developParameters)
+    {
+        try
+        {
+            RawFormat? format = ActiveFormat;
+            var sb = new StringBuilder();
+            sb.AppendLine("RawViewer 保存情報");
+            sb.AppendLine("====================");
+            sb.Append("保存日時: ").AppendLine(
+                DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture));
+            sb.Append("出力ファイル: ").AppendLine(Path.GetFileName(imagePath));
+            sb.Append("元ファイル: ").AppendLine(_currentPath ?? "(不明)");
+            if (_correctionLabel is not null)
+            {
+                sb.Append("適用済み補正: ").AppendLine(_correctionLabel);
+            }
+
+            sb.AppendLine();
+            sb.AppendLine("[入力フォーマット]");
+            if (format is not null)
+            {
+                sb.Append("  サイズ: ").Append(format.Width).Append('×')
+                    .AppendLine(format.Height.ToString(CultureInfo.InvariantCulture));
+                sb.Append("  ビット深度: ").Append(format.BitDepth)
+                    .Append("bit ").AppendLine(
+                        format.Packing == BitPacking.Lsb ? "下詰め" : "上詰め");
+                sb.Append("  エンディアン: ").AppendLine(format.Endianness.ToString());
+                sb.Append("  Bayer: ").AppendLine(format.Bayer.ToString());
+                sb.Append("  HDR: ").Append(format.Hdr).Append(' ')
+                    .AppendLine(format.Hdr == HdrMode.None
+                        ? "" : $"{format.HdrStages}段 露光比{format.ExposureRatio:F1}");
+            }
+
+            sb.AppendLine();
+            sb.AppendLine("[出力]");
+            sb.Append("  形式: ").AppendLine(choice.Format.ToString());
+            if (choice.Format == SaveFormat.Raw)
+            {
+                sb.Append("  詰め方向: ").AppendLine(
+                    choice.Packing == BitPacking.Lsb ? "下詰め (LSB)" : "上詰め (MSB)");
+                sb.Append("  エンディアン: ").AppendLine(choice.Endianness.ToString());
+            }
+
+            sb.Append("  要約: ").AppendLine(choice.Summary);
+
+            sb.AppendLine();
+            sb.AppendLine("[適用処理]");
+            sb.Append("  表示LUT: ").AppendLine(choice.ApplyDisplayLut ? "適用" : "なし");
+            if (choice.ApplyDisplayLut)
+            {
+                sb.Append("    黒点/白点: ").Append(_blackPoint).Append(" / ")
+                    .AppendLine(_whitePoint.ToString(CultureInfo.InvariantCulture));
+                sb.Append("    ゲイン: ").AppendLine(
+                    _vm.Gain.ToString("F3", CultureInfo.InvariantCulture));
+                sb.Append("    ガンマ: ").AppendLine(
+                    _vm.Gamma.ToString("F3", CultureInfo.InvariantCulture));
+                sb.Append("    コントラスト: ").AppendLine(
+                    _vm.Contrast.ToString("F3", CultureInfo.InvariantCulture));
+            }
+
+            sb.Append("  ホワイトバランス: ").AppendLine(choice.ApplyWhiteBalance ? "適用" : "なし");
+            if (choice.ApplyWhiteBalance)
+            {
+                sb.Append("    R/G/B ゲイン: ")
+                    .Append(developParameters.GainR.ToString("F3", CultureInfo.InvariantCulture))
+                    .Append(" / ")
+                    .Append(developParameters.GainG.ToString("F3", CultureInfo.InvariantCulture))
+                    .Append(" / ")
+                    .AppendLine(developParameters.GainB.ToString("F3", CultureInfo.InvariantCulture));
+            }
+
+            sb.Append("  カラーマトリクス: ").AppendLine(
+                choice.ApplyMatrix && !_colorMatrix.IsIdentity ? "適用" : "なし");
+            if (choice.ApplyMatrix && !_colorMatrix.IsIdentity)
+            {
+                double[] m = _colorMatrix.ToArray();
+                for (int row = 0; row < 3; row++)
+                {
+                    sb.Append("    ")
+                        .Append(m[row * 3].ToString("F4", CultureInfo.InvariantCulture)).Append("  ")
+                        .Append(m[row * 3 + 1].ToString("F4", CultureInfo.InvariantCulture)).Append("  ")
+                        .AppendLine(m[row * 3 + 2].ToString("F4", CultureInfo.InvariantCulture));
+                }
+            }
+
+            sb.Append("  デモザイク: ").AppendLine(choice.ApplyDemosaic ? "適用 (バイリニア)" : "なし");
+
+            string sidecarPath = Path.ChangeExtension(imagePath, ".txt");
+            File.WriteAllText(sidecarPath, sb.ToString(), Encoding.UTF8);
+        }
+        catch (Exception)
+        {
+            // 付随情報の保存失敗は本体の保存結果に影響させない
         }
     }
 
@@ -1286,9 +1414,8 @@ public partial class MainWindow : Window
 
                 default:
                 {
-                    // 8bit系は現在の表示(現像モードなら現像結果)を焼き込む
-                    bool color = mode is ViewportDisplayMode.ColorDevelop
-                        or ViewportDisplayMode.BayerColor
+                    // 8bit系は選択された処理を焼き込む
+                    bool color = mode == ViewportDisplayMode.ColorDevelop
                         && pattern != BayerPattern.None;
                     if (color)
                     {
@@ -1413,41 +1540,60 @@ public partial class MainWindow : Window
             return;
         }
 
-        // 補正結果を現在の画像として差し替える(以後の解析・現像・保存すべてに反映)
-        await Viewport.ClearImageAsync();
-        _currentImage?.Dispose();
-        _currentImage = corrected;
-        _currentFormat = corrected.Format;
-        _histogram = null;
-        _channelHistograms = null;
-        _vm.HasRoi = false;
-        Viewport.SetDefectMarkers(null);
-        _defectWindow?.Close();
-
         string opLabel = choice.Operation switch
         {
             ImageOperation.Subtract => "−",
             ImageOperation.AbsoluteDifference => "|−|",
             _ => "÷",
         };
-        _correctionLabel = $"{opLabel} {Path.GetFileName(choice.ReferencePath)}";
+        await ApplyProcessedImageAsync(
+            corrected, $"{opLabel} {Path.GetFileName(choice.ReferencePath)}", closeDefectWindow: true);
+    }
+
+    /// <summary>
+    /// 加工済み画像を現在の画像として差し替える(以後の解析・現像・保存すべてに反映)。
+    /// </summary>
+    /// <param name="processed">差し替える画像。</param>
+    /// <param name="label">タイトル等に表示する処理ラベル。</param>
+    /// <param name="closeDefectWindow">欠陥画素ウィンドウを閉じるか。</param>
+    private async Task ApplyProcessedImageAsync(
+        RawImage processed, string label, bool closeDefectWindow)
+    {
+        await Viewport.ClearImageAsync();
+        _currentImage?.Dispose();
+        _currentImage = processed;
+        _currentFormat = processed.Format;
+        _histogram = null;
+        _channelHistograms = null;
+        _vm.HasRoi = false;
+        Viewport.SetDefectMarkers(null);
+        if (closeDefectWindow)
+        {
+            _defectWindow?.Close();
+        }
+
+        _correctionLabel = _correctionLabel is null ? label : $"{_correctionLabel}, {label}";
         Title = $"RawViewer — {Path.GetFileName(_currentPath!)} [{_correctionLabel}]";
         _vm.ImageInfoText =
-            $"{corrected.Width}×{corrected.Height} · {corrected.Format.BitDepth}bit · " +
+            $"{processed.Width}×{processed.Height} · {processed.Format.BitDepth}bit · " +
             $"補正: {_correctionLabel}(再読込で元に戻せます)";
 
-        Viewport.SetImage(corrected, corrected.Format);
+        Viewport.SetImage(processed, processed.Format);
+        Viewport.SetColorImage(null);
         Viewport.SetLut(BuildLut());
         UpdateDevelopLuts();
+        _colorImage = null;
+        _vm.IsColorImage = false;
+        DisplayModeCombo.IsEnabled = true;
 
-        // 補正結果はディスク上のファイルと一致しないためシーケンス再生は無効化
+        // 加工結果はディスク上のファイルと一致しないためシーケンス再生は無効化
         StopPlayback();
         _sequenceMode = SequenceMode.None;
         UpdateSequenceUi();
 
         RefreshHistogram(roi: null);
         _mainPyramid = null;
-        await BuildPyramidAsync(corrected, _loadCts?.Token ?? CancellationToken.None);
+        await BuildPyramidAsync(processed, _loadCts?.Token ?? CancellationToken.None);
     }
 
     // ---- バッチ現像 / 動画書き出し ----
@@ -2642,6 +2788,7 @@ public partial class MainWindow : Window
             _defectWindow = new DefectPixelWindow { Owner = this };
             _defectWindow.RunRequested += OnDefectRunRequested;
             _defectWindow.DefectActivated += OnDefectActivated;
+            _defectWindow.CorrectionRequested += OnDefectCorrectionRequested;
             _defectWindow.Closed += (_, _) =>
             {
                 _defectWindow = null;
@@ -2691,6 +2838,55 @@ public partial class MainWindow : Window
     private void OnDefectActivated(DefectPixel defect)
     {
         Viewport.CenterOn(defect.X, defect.Y, Math.Max(Viewport.Zoom, 32));
+    }
+
+    private async void OnDefectCorrectionRequested(
+        DefectDetectionResult detection, DefectCorrectionMethod method)
+    {
+        if (_currentImage is null || _currentFormat is null || _derivedImage is not null)
+        {
+            MessageBox.Show(this, "HDR表示中は欠陥補正できません。Raw表示に戻してから実行してください。",
+                "欠陥画素補正", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        RawImage source = _currentImage;
+        BayerPattern pattern = _currentFormat.Bayer;
+        int frame = Viewport.Frame;
+        int count = detection.Defects.Count;
+
+        RawImage? corrected = null;
+        ProgressWindow result = ProgressWindow.Run(
+            this,
+            $"欠陥画素を補正中 ({count} 画素)",
+            (progress, ct) => Task.Run(() =>
+            {
+                corrected = DefectCorrector.Correct(
+                    source, detection.Defects, pattern, method, frame, progress, ct);
+            }, ct));
+
+        if (result.Error is not null)
+        {
+            corrected?.Dispose();
+            MessageBox.Show(this, $"欠陥補正に失敗しました: {result.Error.Message}", "欠陥画素補正",
+                MessageBoxButton.OK, MessageBoxImage.Error);
+            _defectWindow?.ResetRunButton();
+            return;
+        }
+
+        if (result.WasCanceled || corrected is null)
+        {
+            corrected?.Dispose();
+            _defectWindow?.ResetRunButton();
+            return;
+        }
+
+        string methodLabel = method == DefectCorrectionMethod.Mean ? "平均" : "メディアン";
+        await ApplyProcessedImageAsync(
+            corrected, $"欠陥補正 {count}px ({methodLabel})", closeDefectWindow: false);
+        _defectWindow?.ResetRunButton();
+        _vm.ImageInfoText = $"欠陥画素 {count} 個を{methodLabel}補間で補正しました" +
+            "(保存すると補正後のデータが出力されます)";
     }
 
     // ---- フォーマットその場変更 ----

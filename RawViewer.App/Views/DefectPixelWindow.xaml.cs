@@ -28,6 +28,9 @@ public partial class DefectPixelWindow : Window
     /// <summary>結果行がダブルクリックされたときに発火する。</summary>
     public event Action<DefectPixel>? DefectActivated;
 
+    /// <summary>「この欠陥を補正」が押されたときに発火する(検出結果, 補正方法)。</summary>
+    public event Action<DefectDetectionResult, DefectCorrectionMethod>? CorrectionRequested;
+
     /// <summary>リスト表示用の行アイテム。</summary>
     public sealed record DefectRow(int Index, int X, int Y, int Code, string TypeLabel)
     {
@@ -61,6 +64,21 @@ public partial class DefectPixelWindow : Window
 
         DefectList.ItemsSource = rows;
         RunButton.IsEnabled = true;
+        CorrectButton.IsEnabled = result.Defects.Count > 0;
+    }
+
+    private void OnCorrectClick(object sender, RoutedEventArgs e)
+    {
+        if (_result is null || _result.Defects.Count == 0)
+        {
+            return;
+        }
+
+        DefectCorrectionMethod method = CorrectionMethodCombo.SelectedIndex == 1
+            ? DefectCorrectionMethod.Mean
+            : DefectCorrectionMethod.Median;
+        CorrectButton.IsEnabled = false;
+        CorrectionRequested?.Invoke(_result, method);
     }
 
     /// <summary>実行失敗時にボタンを戻す。</summary>

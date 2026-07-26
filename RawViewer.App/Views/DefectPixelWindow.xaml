@@ -27,12 +27,24 @@
                    TextWrapping="Wrap" Text="「検出実行」で全画素を走査します (ダーク→白点 / フラット→黒点)" />
 
         <!-- フッタ -->
-        <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal"
-                    HorizontalAlignment="Right" Margin="0,10,0,0">
-            <Button Content="コピー (Excel用)" Click="OnCopyClick" Margin="0,0,8,0" />
-            <Button Content="CSVで保存…" Click="OnSaveCsvClick" Margin="0,0,8,0" />
-            <Button Content="閉じる" IsCancel="True" Click="OnCloseClick" />
-        </StackPanel>
+        <DockPanel DockPanel.Dock="Bottom" Margin="0,10,0,0">
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Left">
+                <ComboBox x:Name="CorrectionMethodCombo" SelectedIndex="0" MinWidth="128"
+                          VerticalAlignment="Center" FontSize="11">
+                    <ComboBoxItem Content="メディアン補間" />
+                    <ComboBoxItem Content="平均補間" />
+                </ComboBox>
+                <Button x:Name="CorrectButton" Content="この欠陥を補正" Margin="8,0,0,0"
+                        IsEnabled="False" Click="OnCorrectClick"
+                        BorderBrush="#FF7ECB72" Foreground="#FF7ECB72"
+                        ToolTip="同色近傍から補間して欠陥画素を置き換えます(元ファイルは変更されません)" />
+            </StackPanel>
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button Content="コピー (Excel用)" Click="OnCopyClick" Margin="0,0,8,0" />
+                <Button Content="CSVで保存…" Click="OnSaveCsvClick" Margin="0,0,8,0" />
+                <Button Content="閉じる" IsCancel="True" Click="OnCloseClick" />
+            </StackPanel>
+        </DockPanel>
 
         <!-- 結果リスト -->
         <ListView x:Name="DefectList" MouseDoubleClick="OnListDoubleClick"
