@@ -110,10 +110,10 @@ public static class DefectPixelDetector
         Parallel.For(
             0,
             height,
+            new ParallelOptions { CancellationToken = cancellationToken },
             () => (Buffer: new ushort[width], Local: new List<DefectPixel>()),
             (y, state, local) =>
             {
-                cancellationToken.ThrowIfCancellationRequested();
                 if (Volatile.Read(ref truncated))
                 {
                     state.Stop();

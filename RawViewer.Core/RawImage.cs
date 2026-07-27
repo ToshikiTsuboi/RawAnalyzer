@@ -9,6 +9,13 @@ namespace RawViewer.Core;
 /// 画素数が閾値以下の場合はヒープ上の ushort[] に展開され、
 /// 超過する場合は MemoryMappedFile 経由でオンデマンド読み出しされる。
 /// </summary>
+/// <remarks>
+/// MemoryMappedFile 経路では読み出し中の参照数を数えており、
+/// <see cref="Dispose"/> はビューの解放を進行中の読み出しが終わるまで遅延する。
+/// これにより、読み出しスレッドが動いている最中に破棄しても
+/// 解放済みメモリを触って AccessViolation(.NET では捕捉不能)になることはなく、
+/// 破棄後に開始した読み出しは <see cref="ObjectDisposedException"/> になる。
+/// </remarks>
 public sealed unsafe class RawImage : IDisposable
 {
     private readonly ushort[]? _pixels;
@@ -16,7 +23,15 @@ public sealed unsafe class RawImage : IDisposable
     private readonly MemoryMappedViewAccessor? _accessor;
     private readonly bool _needSwap;
     private byte* _mapBase;
-    private bool _disposed;
+
+    // 破棄要求フラグ。Interlocked で読み書きしメモリバリアを張る(0=生存 / 1=破棄要求済み)
+    private int _disposeRequested;
+
+    // 進行中の読み出し数。0 になり、かつ破棄要求済みのときに実解放する
+    private int _activeReaders;
+
+    // 実解放の二重実行防止
+    private int _released;
 
     internal RawImage(RawFormat format, ushort[] pixels)
     {
@@ -101,19 +116,32 @@ public sealed unsafe class RawImage : IDisposable
             return _pixels[((long)frame * Height + y) * Width + x];
         }
 
-        long offset = FileByteOffset(frame, y, x);
-        if (Format.BytesPerPixel == 1)
+        if (!TryEnterRead())
         {
-            return PixelNormalizer.NormalizeValue(_mapBase[offset], Format.BitDepth, Format.Packing);
+            throw new ObjectDisposedException(nameof(RawImage));
         }
 
-        ushort container = Unsafe.ReadUnaligned<ushort>(_mapBase + offset);
-        if (_needSwap)
+        try
         {
-            container = BinaryPrimitives.ReverseEndianness(container);
-        }
+            long offset = FileByteOffset(frame, y, x);
+            if (Format.BytesPerPixel == 1)
+            {
+                return PixelNormalizer.NormalizeValue(
+                    _mapBase[offset], Format.BitDepth, Format.Packing);
+            }
 
-        return PixelNormalizer.NormalizeValue(container, Format.BitDepth, Format.Packing);
+            ushort container = Unsafe.ReadUnaligned<ushort>(_mapBase + offset);
+            if (_needSwap)
+            {
+                container = BinaryPrimitives.ReverseEndianness(container);
+            }
+
+            return PixelNormalizer.NormalizeValue(container, Format.BitDepth, Format.Packing);
+        }
+        finally
+        {
+            ExitRead();
+        }
     }
 
     /// <summary>
@@ -162,28 +190,79 @@ public sealed unsafe class RawImage : IDisposable
             return;
         }
 
-        int bytesPerPixel = Format.BytesPerPixel;
-        for (int row = 0; row < height; row++)
+        if (!TryEnterRead())
         {
-            var source = new ReadOnlySpan<byte>(
-                _mapBase + FileByteOffset(frame, y + row, x), width * bytesPerPixel);
-            PixelNormalizer.Normalize(
-                source, destination.Slice(row * width, width),
-                Format.BitDepth, Format.Packing, Format.Endianness);
+            throw new ObjectDisposedException(nameof(RawImage));
+        }
+
+        try
+        {
+            int bytesPerPixel = Format.BytesPerPixel;
+            for (int row = 0; row < height; row++)
+            {
+                var source = new ReadOnlySpan<byte>(
+                    _mapBase + FileByteOffset(frame, y + row, x), width * bytesPerPixel);
+                PixelNormalizer.Normalize(
+                    source, destination.Slice(row * width, width),
+                    Format.BitDepth, Format.Packing, Format.Endianness);
+            }
+        }
+        finally
+        {
+            ExitRead();
         }
     }
 
     /// <summary>
     /// 保持しているMemoryMappedFileリソースを解放する。
+    /// 進行中の読み出しがある場合、実際の解放は最後の読み出しが終わった時点まで遅延される。
     /// </summary>
     public void Dispose()
     {
-        if (_disposed)
+        // Interlocked で全メモリバリアを張ってから読み出し数を見る
+        // (読み出し側は Increment(=全バリア) の後に破棄フラグを見るため、
+        //  どちらか一方は必ず相手の更新を観測でき、解放漏れも早期解放も起きない)
+        if (Interlocked.Exchange(ref _disposeRequested, 1) != 0)
         {
             return;
         }
 
-        _disposed = true;
+        if (Volatile.Read(ref _activeReaders) == 0)
+        {
+            ReleaseResources();
+        }
+    }
+
+    /// <summary>読み出し参照を取得する。破棄要求済みなら false。</summary>
+    private bool TryEnterRead()
+    {
+        Interlocked.Increment(ref _activeReaders);
+        if (Volatile.Read(ref _disposeRequested) != 0)
+        {
+            ExitRead();
+            return false;
+        }
+
+        return true;
+    }
+
+    /// <summary>読み出し参照を返す。最後の1本かつ破棄要求済みなら実解放する。</summary>
+    private void ExitRead()
+    {
+        if (Interlocked.Decrement(ref _activeReaders) == 0
+            && Volatile.Read(ref _disposeRequested) != 0)
+        {
+            ReleaseResources();
+        }
+    }
+
+    private void ReleaseResources()
+    {
+        if (Interlocked.Exchange(ref _released, 1) != 0)
+        {
+            return;
+        }
+
         if (_accessor is not null)
         {
             _mapBase = null;
@@ -203,6 +282,6 @@ public sealed unsafe class RawImage : IDisposable
 
     private void ThrowIfDisposed()
     {
-        ObjectDisposedException.ThrowIf(_disposed, this);
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposeRequested) != 0, this);
     }
 }

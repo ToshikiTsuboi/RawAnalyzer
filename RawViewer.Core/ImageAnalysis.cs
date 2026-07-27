@@ -155,10 +155,10 @@ public static class ImageAnalysis
         Parallel.For(
             0,
             roi.Height,
+            new ParallelOptions { CancellationToken = cancellationToken },
             () => (Buffer: new ushort[roi.Width], Sum: 0L, SumSq: 0L, Min: int.MaxValue, Max: int.MinValue),
             (row, _, local) =>
             {
-                cancellationToken.ThrowIfCancellationRequested();
                 image.CopyRegion(frame, roi.X, roi.Y + row, roi.Width, 1, local.Buffer);
                 long sum = local.Sum;
                 long sumSq = local.SumSq;
@@ -237,6 +237,15 @@ public static class ImageAnalysis
 
         int stride = (int)Math.Ceiling(Math.Sqrt((double)roi.PixelCount / maxSamples));
         stride = Math.Max(1, stride);
+
+        // strideが偶数だと走査位置のx/y偶奇が固定され、Bayer画像では
+        // 4チャネルのうち1つ(例: Rのみ)しかサンプリングされず統計値が別物になる。
+        // 奇数にすると行・列とも偶奇が交互に進み、4チャネルが均等に含まれる。
+        if ((stride & 1) == 0)
+        {
+            stride++;
+        }
+
         bool sampled = stride > 1;
 
         var buffer = new ushort[roi.Width];

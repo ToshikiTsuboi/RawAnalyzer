@@ -77,10 +77,10 @@ public static class ImageCalculator
         Parallel.For(
             0,
             height,
+            new ParallelOptions { CancellationToken = cancellationToken },
             () => (RowA: new ushort[width], RowB: new ushort[width]),
             (y, state, buffers) =>
             {
-                cancellationToken.ThrowIfCancellationRequested();
                 source.CopyRegion(frame, 0, y, width, 1, buffers.RowA);
                 reference.CopyRegion(referenceFrame, 0, y, width, 1, buffers.RowB);
                 int offset = y * width;

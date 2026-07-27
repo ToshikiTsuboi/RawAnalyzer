@@ -242,10 +242,10 @@ public sealed class TilePyramid
         Parallel.For(
             0,
             height,
+            new ParallelOptions { CancellationToken = cancellationToken },
             () => (Row: new ushort[sourceWidth], Accumulator: new uint[width]),
             (destY, _, buffers) =>
             {
-                cancellationToken.ThrowIfCancellationRequested();
                 Array.Clear(buffers.Accumulator);
                 int rows = Math.Min(blockSize, sourceHeight - destY * blockSize);
                 for (int r = 0; r < rows; r++)

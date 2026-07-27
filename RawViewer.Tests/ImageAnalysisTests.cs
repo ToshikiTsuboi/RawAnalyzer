@@ -111,6 +111,72 @@ public class ImageAnalysisTests
     }
 
     [Fact]
+    public void ComputeHistogram_SampledBayerMosaic_CoversAllFourChannels()
+    {
+        // 回帰テスト: strideが偶数だと走査位置のx/y偶奇が固定され、
+        // RGGBモザイクではRだけを拾って mean=500 / σ=0 という別物の統計になっていた。
+        // 70x70 / maxSamples=400 のとき素のstrideは4(偶数) → 補正後5。
+        const int size = 70;
+        var codes = new ushort[size * size];
+        for (int y = 0; y < size; y++)
+        {
+            for (int x = 0; x < size; x++)
+            {
+                // RGGB: R=500, Gr=1000, Gb=1000, B=800 → 全体平均 825
+                codes[y * size + x] = (y & 1) == 0
+                    ? (ushort)((x & 1) == 0 ? 500 : 1000)
+                    : (ushort)((x & 1) == 0 ? 1000 : 800);
+            }
+        }
+
+        using RawImage image = LoadImage(codes, size, size, bitDepth: 12);
+
+        HistogramResult result = ImageAnalysis.ComputeHistogram(image, 0, maxSamples: 400);
+
+        Assert.True(result.IsSampled);
+
+        // stride=5 で 14行×14列 → 4チャネルが49サンプルずつ均等に含まれる
+        Assert.Equal(196, result.SampleCount);
+        Assert.Equal(49u, result.Bins[500]);
+        Assert.Equal(98u, result.Bins[1000]);
+        Assert.Equal(49u, result.Bins[800]);
+        Assert.Equal(825, result.Statistics.Mean, 10);
+        Assert.Equal(Math.Sqrt(41875), result.Statistics.Sigma, 10);
+        Assert.Equal(500, result.Statistics.Min);
+        Assert.Equal(1000, result.Statistics.Max);
+    }
+
+    [Fact]
+    public void ComputeHistogram_SampledUniform_MeanUnchanged()
+    {
+        // strideを奇数へ補正してもサンプル数はmaxSamples以下に収まること
+        var codes = new ushort[128 * 128];
+        Array.Fill(codes, (ushort)321);
+        using RawImage image = LoadImage(codes, 128, 128, bitDepth: 12);
+
+        HistogramResult result = ImageAnalysis.ComputeHistogram(image, 0, maxSamples: 500);
+
+        Assert.True(result.IsSampled);
+        Assert.True(result.SampleCount <= 500, $"サンプル数がmaxSamples以下であること: {result.SampleCount}");
+        Assert.Equal(321, result.Statistics.Mean, 10);
+    }
+
+    [Fact]
+    public void ComputeStatistics_CancelledToken_ThrowsOperationCanceled()
+    {
+        // ParallelOptions.CancellationToken を渡していないと
+        // AggregateException に包まれ catch(OperationCanceledException) をすり抜ける
+        ushort[] codes = new ushort[64 * 64];
+        using RawImage image = LoadImage(codes, 64, 64, bitDepth: 12);
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        Assert.ThrowsAny<OperationCanceledException>(
+            () => ImageAnalysis.ComputeStatistics(
+                image, 0, new RegionOfInterest(0, 0, 64, 64), cts.Token));
+    }
+
+    [Fact]
     public void ComputeHistogram_BinTotalEqualsSampleCount()
     {
         ushort[] codes = TestData.MakePattern(32 * 32, 12);
