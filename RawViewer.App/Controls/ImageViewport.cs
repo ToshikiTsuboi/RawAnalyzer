@@ -107,6 +107,11 @@ public sealed class ImageViewport : FrameworkElement
 
     private ViewportInteractionMode _interactionMode = ViewportInteractionMode.Pan;
 
+    // キーボードで動かす画素カーソル(Ctrl+矢印で出現、Escで消える)
+    private bool _keyCursorVisible;
+    private int _keyCursorX;
+    private int _keyCursorY;
+
     private bool _roiDragging;
     private int _roiStartX;
     private int _roiStartY;
@@ -250,6 +255,24 @@ public sealed class ImageViewport : FrameworkElement
         _profileMarkerVisible = false;
         ClearRoi();
         FitToView();
+    }
+
+    /// <summary>
+    /// ROIを数値指定で設定する(キーボード操作・プリセット用)。
+    /// </summary>
+    /// <param name="roi">設定するROI。画像範囲へクランプされる。</param>
+    public void SetRoi(RegionOfInterest roi)
+    {
+        if (_image is null)
+        {
+            return;
+        }
+
+        RegionOfInterest clamped = roi.Clamp(_image.Width, _image.Height);
+        _roi = clamped.PixelCount > 0 ? clamped : null;
+        _roiHadValue = _roi is not null;
+        InvalidateVisual();
+        RoiChanged?.Invoke(this, EventArgs.Empty);
     }
 
     /// <summary>ROI選択を解除する。</summary>
@@ -517,6 +540,38 @@ public sealed class ImageViewport : FrameworkElement
         DrawRoi(dc);
         DrawDefectMarkers(dc);
         DrawProfileMarker(dc);
+        DrawKeyboardCursor(dc);
+    }
+
+    private static readonly Pen KeyCursorPen = CreateKeyCursorPen(0xE6);
+    private static readonly Pen KeyCursorGuidePen = CreateKeyCursorPen(0x50);
+
+    private static Pen CreateKeyCursorPen(byte alpha)
+    {
+        var brush = new SolidColorBrush(Color.FromArgb(alpha, 0x7E, 0xCB, 0x72));
+        brush.Freeze();
+        var pen = new Pen(brush, 1.2);
+        pen.Freeze();
+        return pen;
+    }
+
+    private void DrawKeyboardCursor(DrawingContext dc)
+    {
+        if (!_keyCursorVisible || _image is null)
+        {
+            return;
+        }
+
+        double left = (_keyCursorX - _originX) * _zoom;
+        double top = (_keyCursorY - _originY) * _zoom;
+        double size = Math.Max(9, _zoom);
+
+        // 画面外まで伸びるガイド線で、拡大時でも位置を見失わないようにする
+        double cx = left + size / 2;
+        double cy = top + size / 2;
+        dc.DrawLine(KeyCursorGuidePen, new Point(0, cy), new Point(ActualWidth, cy));
+        dc.DrawLine(KeyCursorGuidePen, new Point(cx, 0), new Point(cx, ActualHeight));
+        dc.DrawRectangle(null, KeyCursorPen, new Rect(left, top, size, size));
     }
 
     private static readonly Pen ProfileActivePen = CreateProfilePen(dashed: false);
@@ -794,6 +849,130 @@ public sealed class ImageViewport : FrameworkElement
             Y = py,
             IsInsideImage = inside,
         });
+    }
+
+    /// <inheritdoc />
+    protected override void OnKeyDown(KeyEventArgs e)
+    {
+        base.OnKeyDown(e);
+        if (e.Handled || _image is null)
+        {
+            return;
+        }
+
+        if (e.Key == Key.Escape && _keyCursorVisible)
+        {
+            _keyCursorVisible = false;
+            InvalidateVisual();
+            e.Handled = true;
+            return;
+        }
+
+        (int dx, int dy) = e.Key switch
+        {
+            Key.Left => (-1, 0),
+            Key.Right => (1, 0),
+            Key.Up => (0, -1),
+            Key.Down => (0, 1),
+            _ => (0, 0),
+        };
+        if (dx == 0 && dy == 0)
+        {
+            return;
+        }
+
+        ModifierKeys modifiers = Keyboard.Modifiers;
+        e.Handled = true;
+        if (modifiers.HasFlag(ModifierKeys.Control))
+        {
+            // Ctrl系は画素カーソル。Shiftで10画素、AltでBayer同色(2画素)刻み
+            int step = modifiers.HasFlag(ModifierKeys.Shift) ? 10
+                : modifiers.HasFlag(ModifierKeys.Alt) ? 2
+                : 1;
+            MoveKeyboardCursor(dx * step, dy * step);
+            return;
+        }
+
+        // Shiftなしは1/8画面、Shiftありは1画面ぶんパンする
+        double fraction = modifiers.HasFlag(ModifierKeys.Shift) ? 1.0 : 0.125;
+        _originX += dx * ActualWidth * fraction / _zoom;
+        _originY += dy * ActualHeight * fraction / _zoom;
+        ClampOrigin();
+        RequestRender(fast: true);
+        RestartIdleTimer();
+    }
+
+    /// <summary>
+    /// 画素カーソルを移動し、必要なら見える位置までスクロールする。
+    /// </summary>
+    private void MoveKeyboardCursor(int dx, int dy)
+    {
+        if (_image is null)
+        {
+            return;
+        }
+
+        if (!_keyCursorVisible)
+        {
+            // 初回はビュー中央から開始する
+            _keyCursorX = Math.Clamp(
+                (int)(_originX + ActualWidth / (2 * _zoom)), 0, _image.Width - 1);
+            _keyCursorY = Math.Clamp(
+                (int)(_originY + ActualHeight / (2 * _zoom)), 0, _image.Height - 1);
+            _keyCursorVisible = true;
+        }
+        else
+        {
+            _keyCursorX = Math.Clamp(_keyCursorX + dx, 0, _image.Width - 1);
+            _keyCursorY = Math.Clamp(_keyCursorY + dy, 0, _image.Height - 1);
+        }
+
+        EnsureKeyboardCursorVisible();
+        InvalidateVisual();
+        CursorPixelChanged?.Invoke(this, new CursorPixelEventArgs
+        {
+            X = _keyCursorX,
+            Y = _keyCursorY,
+            IsInsideImage = true,
+        });
+    }
+
+    private void EnsureKeyboardCursorVisible()
+    {
+        double marginX = Math.Min(ActualWidth / (4 * _zoom), _image!.Width / 2.0);
+        double marginY = Math.Min(ActualHeight / (4 * _zoom), _image.Height / 2.0);
+        double viewW = ActualWidth / _zoom;
+        double viewH = ActualHeight / _zoom;
+        bool moved = false;
+
+        if (_keyCursorX < _originX + marginX)
+        {
+            _originX = _keyCursorX - marginX;
+            moved = true;
+        }
+        else if (_keyCursorX > _originX + viewW - marginX)
+        {
+            _originX = _keyCursorX - viewW + marginX;
+            moved = true;
+        }
+
+        if (_keyCursorY < _originY + marginY)
+        {
+            _originY = _keyCursorY - marginY;
+            moved = true;
+        }
+        else if (_keyCursorY > _originY + viewH - marginY)
+        {
+            _originY = _keyCursorY - viewH + marginY;
+            moved = true;
+        }
+
+        if (moved)
+        {
+            ClampOrigin();
+            RequestRender(fast: true);
+            RestartIdleTimer();
+        }
     }
 
     private void ZoomAt(Point anchor, double newZoom)

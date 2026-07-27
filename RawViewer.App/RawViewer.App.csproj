@@ -11,4 +11,11 @@
     <ProjectReference Include="..\RawViewer.Core\RawViewer.Core.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- キーボード定義など、UIを生成せずに検証できるロジックをテストするため -->
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+      <_Parameter1>RawViewer.Tests</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
+
 </Project>

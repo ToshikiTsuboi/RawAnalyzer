@@ -143,6 +143,11 @@
                 <MenuItem Header="プリセットフォルダを開く" Click="OnOpenPresetFolderClick" />
             </MenuItem>
             <MenuItem Header="ヘルプ(_H)">
+                <MenuItem Header="コマンドパレット…" InputGestureText="Ctrl+Shift+P"
+                          Click="OnCommandPaletteClick" />
+                <MenuItem Header="キーボードショートカット一覧" InputGestureText="F1"
+                          Click="OnShortcutHelpClick" />
+                <Separator />
                 <MenuItem Header="操作ガイド" Click="OnUsageGuideClick" />
                 <MenuItem Header="バージョン情報" Click="OnAboutClick" />
             </MenuItem>

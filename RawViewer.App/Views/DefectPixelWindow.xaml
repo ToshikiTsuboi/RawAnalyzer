@@ -17,7 +17,7 @@
                       VerticalAlignment="Center" Margin="0,0,10,0" />
             <CheckBox x:Name="DeadCheck" Content="黒点" IsChecked="True"
                       VerticalAlignment="Center" Margin="0,0,14,0" />
-            <Button x:Name="RunButton" Content="検出実行" Click="OnRunClick"
+            <Button x:Name="RunButton" Content="検出実行" Click="OnRunClick" IsDefault="True"
                     BorderBrush="#FF5B9DD9" Foreground="#FF5B9DD9" />
         </StackPanel>
 

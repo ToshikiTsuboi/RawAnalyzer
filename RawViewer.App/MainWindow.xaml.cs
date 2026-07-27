@@ -135,31 +135,33 @@ public partial class MainWindow : Window
         Viewport.RoiChanged += OnViewportRoiChanged;
         Viewport.ProfilePointClicked += OnProfilePointClicked;
         Viewport.WhiteBalancePicked += OnWhiteBalancePicked;
-        InputBindings.Add(new KeyBinding(
-            new Mvvm.RelayCommand(_ => OnOpenFileClick(this, new RoutedEventArgs())),
-            new KeyGesture(Key.O, ModifierKeys.Control)));
-        InputBindings.Add(new KeyBinding(
-            new Mvvm.RelayCommand(_ => OnSaveClick(this, new RoutedEventArgs())),
-            new KeyGesture(Key.S, ModifierKeys.Control)));
-        InputBindings.Add(new KeyBinding(
-            new Mvvm.RelayCommand(_ => _vm.IsFullscreen = !_vm.IsFullscreen),
-            new KeyGesture(Key.F11)));
-        InputBindings.Add(new KeyBinding(
-            new Mvvm.RelayCommand(_ => _vm.IsFullscreen = false),
-            new KeyGesture(Key.Escape)));
-        InputBindings.Add(new KeyBinding(
-            new Mvvm.RelayCommand(_ => _vm.LeftPanelVisible = !_vm.LeftPanelVisible),
-            new KeyGesture(Key.L, ModifierKeys.Control)));
-        InputBindings.Add(new KeyBinding(
-            new Mvvm.RelayCommand(_ => _vm.RightPanelVisible = !_vm.RightPanelVisible),
-            new KeyGesture(Key.R, ModifierKeys.Control)));
+        // ショートカットはコマンド表(MainWindow.Commands.cs)から一括で捌く。
+        // Escだけはビューポートの画素カーソル解除を優先するため個別に扱う
+        PreviewKeyDown += OnWindowPreviewKeyDown;
+        PreviewKeyDown += (_, e) =>
+        {
+            if (!e.Handled && e.Key == Key.Escape && _vm.IsFullscreen)
+            {
+                _vm.IsFullscreen = false;
+                e.Handled = true;
+            }
+        };
         RebuildRecentMenu();
         InitFolderTree();
         Loaded += (_, _) =>
         {
+            // 起動時に構築してショートカット重複を早期に検出する
+            _ = Commands;
             _vm.LeftPanelVisible = _session.LeftPanelVisible;
             _vm.RightPanelVisible = _session.RightPanelVisible;
             UpdatePanelLayout();
+
+            if (App.StartupPath is { } startup)
+            {
+                OpenStartupPath(startup);
+                return;
+            }
+
             if (_vm.Files.Count == 0 && _session.LastFolder is { } folder
                 && Directory.Exists(folder))
             {
@@ -178,6 +180,20 @@ public partial class MainWindow : Window
             _derivedImage?.Dispose();
             _currentImage?.Dispose();
         };
+    }
+
+    /// <summary>起動引数で渡されたパスを開く(フォルダなら一覧表示のみ)。</summary>
+    /// <param name="path">ファイルまたはフォルダのパス。</param>
+    private void OpenStartupPath(string path)
+    {
+        if (Directory.Exists(path))
+        {
+            LoadFolder(path, selectPath: null);
+            return;
+        }
+
+        LoadFolder(Path.GetDirectoryName(path)!, selectPath: path);
+        OpenPath(path);
     }
 
     /// <summary>表示中の画像(HDR派生ビューがあればそちら)。</summary>
@@ -1239,6 +1255,11 @@ public partial class MainWindow : Window
     private void OnUsageGuideClick(object sender, RoutedEventArgs e)
     {
         ShowInfoWindow("操作ガイド",
+            "キーボード操作\n" +
+            "  Ctrl+Shift+P: コマンドパレット(全機能を検索して実行)\n" +
+            "  F1: ショートカット一覧\n" +
+            "  矢印: パン / Ctrl+矢印: 画素カーソルを1画素移動\n" +
+            "  起動引数にパスを渡すとそのファイルを直接開く\n\n" +
             "マウス操作\n" +
             "  ホイール: カーソル中心ズーム\n" +
             "  ドラッグ: パン / ダブルクリック: 全体表示\n" +

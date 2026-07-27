@@ -33,6 +33,45 @@ public partial class App : Application
                     WindowTheme.Apply(window);
                 }
             }));
+
+        // 起動引数のパスを開く(端末やエクスプローラの「送る」から直接開けるように)
+        StartupPath = ResolveStartupPath(e.Args);
+    }
+
+    /// <summary>起動時に開くパス(なければnull)。MainWindowがLoadedで参照する。</summary>
+    internal static string? StartupPath { get; private set; }
+
+    /// <summary>
+    /// 起動引数から開くべきファイル/フォルダを決める。
+    /// </summary>
+    /// <param name="args">コマンドライン引数。</param>
+    /// <returns>存在するパス。該当なしならnull。</returns>
+    internal static string? ResolveStartupPath(IReadOnlyList<string> args)
+    {
+        foreach (string arg in args)
+        {
+            // オプション類は無視して、最初の実在するパスだけを採用する
+            if (arg.StartsWith('-') || arg.StartsWith('/'))
+            {
+                continue;
+            }
+
+            try
+            {
+                string full = System.IO.Path.GetFullPath(arg);
+                if (System.IO.File.Exists(full) || System.IO.Directory.Exists(full))
+                {
+                    return full;
+                }
+            }
+            catch (Exception ex) when (ex is ArgumentException or System.IO.PathTooLongException
+                or NotSupportedException)
+            {
+                AppLog.Warn($"起動引数のパスを解釈できません: {arg}");
+            }
+        }
+
+        return null;
     }
 
     /// <inheritdoc />

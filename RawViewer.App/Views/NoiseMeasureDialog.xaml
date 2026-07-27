@@ -35,7 +35,7 @@
             </StackPanel>
             <StackPanel Grid.Column="2" VerticalAlignment="Bottom">
                 <CheckBox x:Name="RoiCheck" Content="ROI内のみで測定" Margin="0,0,0,4" />
-                <Button x:Name="RunButton" Content="測定実行" Click="OnRunClick"
+                <Button x:Name="RunButton" Content="測定実行" Click="OnRunClick" IsDefault="True"
                         BorderBrush="#FF5B9DD9" Foreground="#FF5B9DD9" />
             </StackPanel>
         </Grid>
