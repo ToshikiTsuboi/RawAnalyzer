@@ -20,21 +20,61 @@ public sealed record NoiseMeasureRequest(
 public partial class NoiseMeasureDialog : Window
 {
     private string _lastResultText = "";
+    private long _expectedReferenceSize;
 
     /// <summary>ダイアログを生成する。</summary>
     /// <param name="sourceName">対象画像(A)の表示名。</param>
     /// <param name="initialFolder">参照ファイル選択の初期フォルダ。</param>
-    /// <param name="defaultSaturation">飽和信号レベルの初期値(通常はビット深度の最大code)。</param>
+    /// <param name="maxCode">ビット深度の最大code(飽和信号レベルの初期値)。</param>
     /// <param name="hasRoi">ROIが選択されているか。</param>
+    /// <param name="expectedReferenceSize">raw参照ファイルの期待バイト数(0なら検証しない)。</param>
     public NoiseMeasureDialog(
-        string sourceName, string? initialFolder, int defaultSaturation, bool hasRoi)
+        string sourceName, string? initialFolder, int maxCode, bool hasRoi,
+        long expectedReferenceSize)
     {
         InitializeComponent();
+        UpdateSource(sourceName, initialFolder, maxCode, hasRoi, expectedReferenceSize);
+    }
+
+    /// <summary>
+    /// 対象画像が変わったときに表示と既定値を更新する。
+    /// これを呼ばないと旧ファイル名・旧ビット深度の飽和コードのまま測定され、
+    /// DRが最大で数stop過大に出る。
+    /// </summary>
+    /// <param name="sourceName">対象画像(A)の表示名。</param>
+    /// <param name="initialFolder">参照ファイル選択の初期フォルダ。</param>
+    /// <param name="maxCode">ビット深度の最大code。</param>
+    /// <param name="hasRoi">ROIが選択されているか。</param>
+    /// <param name="expectedReferenceSize">raw参照ファイルの期待バイト数(0なら検証しない)。</param>
+    public void UpdateSource(
+        string sourceName, string? initialFolder, int maxCode, bool hasRoi,
+        long expectedReferenceSize)
+    {
         SourceText.Text = $"対象 A: {sourceName}";
         Tag = initialFolder;
-        SaturationBox.Text = defaultSaturation.ToString(CultureInfo.InvariantCulture);
+        _expectedReferenceSize = expectedReferenceSize;
+
+        // 前の画像の飽和コードがビット深度上限を超えて残らないようにする
+        bool parsed = double.TryParse(SaturationBox.Text, NumberStyles.Float,
+            CultureInfo.InvariantCulture, out double current);
+        if (!parsed || current <= 0 || current > maxCode)
+        {
+            SaturationBox.Text = maxCode.ToString(CultureInfo.InvariantCulture);
+        }
+
+        SetRoiAvailability(hasRoi);
+    }
+
+    /// <summary>ROIの有無に応じて「ROI内のみ」チェックの状態を更新する。</summary>
+    /// <param name="hasRoi">ROIが選択されているか。</param>
+    public void SetRoiAvailability(bool hasRoi)
+    {
         RoiCheck.IsEnabled = hasRoi;
-        RoiCheck.IsChecked = hasRoi;
+        if (!hasRoi)
+        {
+            // チェックが残ったままだと「ROI内のみ」表示で全画面測定になる
+            RoiCheck.IsChecked = false;
+        }
     }
 
     /// <summary>「測定実行」が押されたときに発火する。</summary>
@@ -132,11 +172,51 @@ public partial class NoiseMeasureDialog : Window
             return;
         }
 
+        // raw参照は対象Aのフォーマットで強制解釈されるため、
+        // サイズが違うと行ストライドがずれて無相関の差分になり、σ_FPN=0 / DR過小報告になる。
+        if (reference.Length > 0 && _expectedReferenceSize > 0 && IsRawPath(reference))
+        {
+            long actual = SafeLength(reference);
+            if (actual >= 0 && actual != _expectedReferenceSize)
+            {
+                string message =
+                    $"2枚目のファイルサイズが対象Aと一致しません。{Environment.NewLine}" +
+                    $"期待: {_expectedReferenceSize:N0} バイト / 実際: {actual:N0} バイト" +
+                    $"{Environment.NewLine}{Environment.NewLine}" +
+                    "対象Aのフォーマットで強制的に読み込むため、測定値が正しくない可能性があります。" +
+                    $"{Environment.NewLine}続行しますか?";
+                if (MessageBox.Show(this, message, "ノイズ測定",
+                        MessageBoxButton.OKCancel, MessageBoxImage.Warning) != MessageBoxResult.OK)
+                {
+                    return;
+                }
+            }
+        }
+
         RunButton.IsEnabled = false;
         MeasureRequested?.Invoke(new NoiseMeasureRequest(
             reference.Length > 0 ? reference : null,
             saturation,
             RoiCheck.IsChecked == true));
+    }
+
+    private static bool IsRawPath(string path)
+    {
+        string extension = Path.GetExtension(path);
+        return string.Equals(extension, ".raw", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(extension, ".bin", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static long SafeLength(string path)
+    {
+        try
+        {
+            return new FileInfo(path).Length;
+        }
+        catch (Exception)
+        {
+            return -1;
+        }
     }
 
     private void OnCopyClick(object sender, RoutedEventArgs e)

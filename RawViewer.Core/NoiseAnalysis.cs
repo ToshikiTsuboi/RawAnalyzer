@@ -85,7 +85,7 @@ public static class NoiseAnalysis
     /// <param name="saturationCode">飽和信号レベル(raw code)。0以下ならビット深度の最大値。</param>
     /// <param name="cancellationToken">キャンセルトークン。</param>
     /// <returns>測定結果。</returns>
-    /// <exception cref="ArgumentException">サイズが一致しない場合。</exception>
+    /// <exception cref="ArgumentException">サイズまたはビット深度が一致しない場合。</exception>
     public static NoiseMeasurement MeasurePair(
         RawImage imageA,
         RawImage imageB,
@@ -100,6 +100,17 @@ public static class NoiseAnalysis
             throw new ArgumentException(
                 $"サイズが一致しません: {imageA.Width}×{imageA.Height} と " +
                 $"{imageB.Width}×{imageB.Height}", nameof(imageB));
+        }
+
+        // ビット深度が違うと差分が code 値域で桁ごとずれ、σ_temporal・σ_FPN・DR が
+        // まとめて誤る(例: 12bit と 16bit で σ_temporal が約11倍、σ_FPN=0、DR が約21dB低下)。
+        // 12bit raw から保存した 16bit TIFF を2枚目に指定するだけで成立するため必ず弾く。
+        if (imageA.Format.BitDepth != imageB.Format.BitDepth)
+        {
+            throw new ArgumentException(
+                $"ビット深度が一致しません: {imageA.Format.BitDepth}bit と " +
+                $"{imageB.Format.BitDepth}bit。同じビット深度の2枚を指定してください。",
+                nameof(imageB));
         }
 
         RegionOfInterest roi = (region ?? new RegionOfInterest(0, 0, imageA.Width, imageA.Height))
@@ -148,6 +159,9 @@ public static class NoiseAnalysis
 
     private static double ResolveSaturation(double saturationCode, int bitDepth)
     {
-        return saturationCode > 0 ? saturationCode : (1 << bitDepth) - 1;
+        double max = (1 << bitDepth) - 1;
+
+        // 前のファイル(より深いビット深度)の飽和コードが残っていても DR を過大評価しない
+        return saturationCode > 0 ? Math.Min(saturationCode, max) : max;
     }
 }

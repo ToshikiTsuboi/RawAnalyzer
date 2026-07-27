@@ -199,4 +199,36 @@ public class NoiseAnalysisTests
         using RawImage b = LoadImage(new ushort[8], 4, 2);
         Assert.Throws<ArgumentException>(() => NoiseAnalysis.MeasurePair(a, b));
     }
+
+    [Fact]
+    public void MeasurePair_BitDepthMismatch_Throws()
+    {
+        // 12bit rawから保存した16bit TIFFを2枚目に指定するだけで成立する組み合わせ。
+        // 従来は無警告で通り、σ_temporalが約11倍・σ_FPN=0・DRが約21dB低下していた。
+        using RawImage a = LoadImage(new ushort[16], 4, 4, bitDepth: 12);
+        using RawImage b = LoadImage(new ushort[16], 4, 4, bitDepth: 16);
+
+        ArgumentException ex = Assert.Throws<ArgumentException>(
+            () => NoiseAnalysis.MeasurePair(a, b));
+        Assert.Contains("ビット深度", ex.Message);
+    }
+
+    [Fact]
+    public void MeasureSingle_SaturationCodeAboveBitDepth_IsClamped()
+    {
+        // ファイル切替でビット深度が下がったとき、前の飽和コードが残っても
+        // DRを過大評価しない(10bitに4095を指定 → 1023へクランプ)
+        const int size = 8;
+        var codes = new ushort[size * size];
+        for (int i = 0; i < codes.Length; i++)
+        {
+            codes[i] = (ushort)(500 + (i % 2) * 20); // σ=10
+        }
+
+        using RawImage image = LoadImage(codes, size, size, bitDepth: 10);
+        NoiseMeasurement result = NoiseAnalysis.MeasureSingle(image, saturationCode: 4095);
+
+        Assert.Equal(1023, result.SaturationCode, 6);
+        Assert.Equal(20 * Math.Log10(1023 / 10.0), result.DynamicRangeTotalDb, 6);
+    }
 }

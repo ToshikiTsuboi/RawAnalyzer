@@ -192,6 +192,50 @@ public class SaveTests
     }
 
     [Fact]
+    public void TiffWriter_SaveSecondFrame_WritesThatFrame()
+    {
+        // App の保存経路が表示中フレームを渡せるようにした際の土台。
+        // 従来はフレーム0固定で、フレーム間差分が小さい素材では誤りに気付けなかった。
+        const int width = 6;
+        const int height = 4;
+        const int frames = 3;
+        var codes = new ushort[width * height * frames];
+        for (int f = 0; f < frames; f++)
+        {
+            for (int i = 0; i < width * height; i++)
+            {
+                codes[f * width * height + i] = (ushort)(1000 * (f + 1) + i);
+            }
+        }
+
+        var format = new RawFormat
+        {
+            Width = width, Height = height, BitDepth = 16, FrameCount = frames,
+        };
+        string source = TestData.WriteTempFile(TestData.EncodeRawFile(codes, format));
+        string path = TempPath(".tif");
+        try
+        {
+            using RawImage image = RawLoader.Load(source, format);
+            TiffWriter.SaveGray16(image, 1, path);
+
+            using RawImage reloaded = TiffLoader.Load(path);
+            for (int y = 0; y < height; y++)
+            {
+                for (int x = 0; x < width; x++)
+                {
+                    Assert.Equal((ushort)(2000 + y * width + x), reloaded.GetPixel(x, y));
+                }
+            }
+        }
+        finally
+        {
+            File.Delete(path);
+            File.Delete(source);
+        }
+    }
+
+    [Fact]
     public void ImageExport_RenderGray8_AppliesLut()
     {
         ushort[] codes = TestData.MakePattern(8 * 4, 16);

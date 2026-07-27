@@ -433,6 +433,7 @@ public partial class MainWindow : Window
         Title = $"RawViewer — {Path.GetFileName(path)}";
         Viewport.SetDefectMarkers(null);
         _defectWindow?.Close();
+        UpdateNoiseWindowSource();
         _recentFiles.Add(path);
         RebuildRecentMenu();
         if (IsRawFile(path))
@@ -745,6 +746,7 @@ public partial class MainWindow : Window
 
     private void OnViewportRoiChanged(object? sender, EventArgs e)
     {
+        _noiseWindow?.SetRoiAvailability(Viewport.Roi is { PixelCount: > 0 });
         if (Viewport.Roi is { PixelCount: > 0 } roi)
         {
             RefreshHistogram(roi);
@@ -1217,8 +1219,10 @@ public partial class MainWindow : Window
 
         // ダイアログ表示中も再生タイマーは動くため、ここから保存完了まで差し替えを止める
         using BusyScope busy = EnterBusy();
+
+        // WIC 経路は表示中の1フレームのみ扱うため、判定も1フレームの画素数で行う
         var dialog = new SaveDialog(
-            ActiveImage.Format.TotalPixels,
+            (long)ActiveImage.Width * ActiveImage.Height,
             allowFloatRaw: _hdrFloatImage is not null,
             hasBayer: ActiveFormat?.Bayer is not (null or BayerPattern.None))
         {
@@ -1255,6 +1259,9 @@ public partial class MainWindow : Window
     {
         RawImage image = ActiveImage!;
         HdrImage? hdrFloat = _hdrFloatImage;
+
+        // 表示中のフレームを保存する(rawは全フレーム出力なので対象外)
+        int frame = Math.Clamp(Viewport.Frame, 0, image.FrameCount - 1);
 
         // チェック状態に応じて、適用しない処理は恒等パラメータへ落とす
         DisplayLut lut = choice.ApplyDisplayLut
@@ -1296,20 +1303,21 @@ public partial class MainWindow : Window
                         RawSaver.Save(image, path, choice.Packing, choice.Endianness, progress, ct);
                         break;
                     case SaveFormat.Tiff16:
-                        if (image.Format.TotalPixels > RawLoader.DefaultInMemoryPixelThreshold)
+                        if ((long)image.Width * image.Height
+                            > RawLoader.DefaultInMemoryPixelThreshold)
                         {
                             // 巨大画像は自前ライタで行単位ストリーミング
-                            TiffWriter.SaveGray16(image, 0, path, progress, ct);
+                            TiffWriter.SaveGray16(image, frame, path, progress, ct);
                         }
                         else
                         {
-                            SaveWithWic(image, path, choice.Format, mode, pattern,
+                            SaveWithWic(image, frame, path, choice.Format, mode, pattern,
                                 lut, devLuts, progress, ct);
                         }
 
                         break;
                     default:
-                        SaveWithWic(image, path, choice.Format, mode, pattern,
+                        SaveWithWic(image, frame, path, choice.Format, mode, pattern,
                             lut, devLuts, progress, ct);
                         break;
                 }
@@ -1327,7 +1335,14 @@ public partial class MainWindow : Window
                 WriteProcessingSidecar(path, choice, developParameters);
             }
 
+            // マルチフレームでは「どのフレームを出したか」を明示する
+            string frameNote = image.FrameCount > 1
+                ? choice.Format == SaveFormat.Raw
+                    ? $" (全{image.FrameCount}フレーム)"
+                    : $" (フレーム {frame + 1}/{image.FrameCount})"
+                : "";
             _vm.ImageInfoText = $"保存完了: {Path.GetFileName(path)}"
+                + frameNote
                 + (choice.IsProcessed ? " (処理を焼き込み)" : " (無処理)");
         }
     }
@@ -1431,7 +1446,7 @@ public partial class MainWindow : Window
     }
 
     private static void SaveWithWic(
-        RawImage image, string path, SaveFormat format, ViewportDisplayMode mode,
+        RawImage image, int frame, string path, SaveFormat format, ViewportDisplayMode mode,
         BayerPattern pattern, DisplayLut lut, DevelopLuts devLuts,
         IProgress<double> progress, CancellationToken ct)
     {
@@ -1449,7 +1464,7 @@ public partial class MainWindow : Window
                     for (int y = 0; y < height; y++)
                     {
                         ct.ThrowIfCancellationRequested();
-                        image.CopyRegion(0, 0, y, width, 1, pixels.AsSpan(y * width, width));
+                        image.CopyRegion(frame, 0, y, width, 1, pixels.AsSpan(y * width, width));
                         if ((y & 511) == 0)
                         {
                             progress.Report(0.5 * y / height);
@@ -1469,14 +1484,14 @@ public partial class MainWindow : Window
                     if (color)
                     {
                         byte[] rgb = ImageExport.DevelopRgb24(
-                            image, 0, pattern, devLuts,
+                            image, frame, pattern, devLuts,
                             new Progress<double>(p => progress.Report(p * 0.7)), ct);
                         source = BitmapSource.Create(
                             width, height, 96, 96, PixelFormats.Rgb24, null, rgb, width * 3);
                     }
                     else
                     {
-                        byte[] gray = ImageExport.RenderGray8(image, 0, lut, ct);
+                        byte[] gray = ImageExport.RenderGray8(image, frame, lut, ct);
                         progress.Report(0.7);
                         source = BitmapSource.Create(
                             width, height, 96, 96, PixelFormats.Gray8, null, gray, width);
@@ -1532,15 +1547,17 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (_currentFormat.TotalPixels > RawLoader.DefaultInMemoryPixelThreshold)
+        // 演算は1フレーム単位なので、判定もフレーム画素数で行う
+        if ((long)_currentFormat.Width * _currentFormat.Height
+            > RawLoader.DefaultInMemoryPixelThreshold)
         {
             MessageBox.Show(this, "1億画素を超える画像の演算はサポートされていません。",
                 "画像演算", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
 
-        long expectedSize = _currentFormat.HeaderOffset
-            + _currentFormat.FrameSizeInBytes * _currentFormat.FrameCount;
+        // 参照画像は1フレームだけ読むため、期待サイズも1フレーム分
+        long expectedSize = _currentFormat.HeaderOffset + _currentFormat.FrameSizeInBytes;
         var dialog = new ImageCalculatorDialog(
             Path.GetFileName(_currentPath) + (_correctionLabel is null ? "" : $" [{_correctionLabel}]"),
             _currentFolder, expectedSize)
@@ -1626,6 +1643,7 @@ public partial class MainWindow : Window
         }
 
         _correctionLabel = _correctionLabel is null ? label : $"{_correctionLabel}, {label}";
+        UpdateNoiseWindowSource();
         Title = $"RawViewer — {Path.GetFileName(_currentPath!)} [{_correctionLabel}]";
         _vm.ImageInfoText =
             $"{processed.Width}×{processed.Height} · {processed.Format.BitDepth}bit · " +
@@ -1699,8 +1717,9 @@ public partial class MainWindow : Window
         }
 
         BatchChoice choice = dialog.Result;
+        // バッチも1フレーム単位で現像するため、判定はフレーム画素数で行う
         if (choice.Format != BatchFormat.Tiff16
-            && format.TotalPixels > RawLoader.DefaultInMemoryPixelThreshold)
+            && (long)format.Width * format.Height > RawLoader.DefaultInMemoryPixelThreshold)
         {
             MessageBox.Show(this, "1億画素を超える画像の現像バッチはサポートされていません(TIFF16は可)。",
                 "バッチ書き出し", MessageBoxButton.OK, MessageBoxImage.Warning);
@@ -1742,31 +1761,42 @@ public partial class MainWindow : Window
                         string file = targets[i];
                         string baseName = Path.GetFileNameWithoutExtension(file);
                         using RawImage image = RawLoader.Load(file, format);
-                        switch (choice.Format)
+                        if (choice.Format == BatchFormat.AviMjpeg)
                         {
-                            case BatchFormat.Tiff16:
-                                TiffWriter.SaveGray16(
-                                    image, 0,
-                                    Path.Combine(choice.OutputFolder, baseName + ".tif"),
-                                    null, ct);
-                                break;
-                            case BatchFormat.AviMjpeg:
-                                // マルチフレームファイルは全フレームを動画化する
-                                for (int frame = 0; frame < image.FrameCount; frame++)
+                            // マルチフレームファイルは全フレームを動画化する
+                            for (int frame = 0; frame < image.FrameCount; frame++)
+                            {
+                                ct.ThrowIfCancellationRequested();
+                                avi!.AddFrame(EncodeJpegFrame(
+                                    image, frame, color, pattern, devLuts, lut, ct));
+                            }
+                        }
+                        else
+                        {
+                            // 静止画形式もマルチフレームなら全フレームを連番で出力する
+                            for (int frame = 0; frame < image.FrameCount; frame++)
+                            {
+                                ct.ThrowIfCancellationRequested();
+                                string stem = image.FrameCount > 1
+                                    ? $"{baseName}_f{frame:D3}"
+                                    : baseName;
+                                if (choice.Format == BatchFormat.Tiff16)
                                 {
-                                    ct.ThrowIfCancellationRequested();
-                                    avi!.AddFrame(EncodeJpegFrame(
-                                        image, frame, color, pattern, devLuts, lut, ct));
+                                    TiffWriter.SaveGray16(
+                                        image, frame,
+                                        Path.Combine(choice.OutputFolder, stem + ".tif"),
+                                        null, ct);
                                 }
-
-                                break;
-                            default:
-                                SaveBakedImage(
-                                    image, color, pattern, devLuts, lut,
-                                    Path.Combine(choice.OutputFolder,
-                                        baseName + (choice.Format == BatchFormat.Jpeg8 ? ".jpg" : ".png")),
-                                    choice.Format == BatchFormat.Jpeg8, ct);
-                                break;
+                                else
+                                {
+                                    bool jpeg = choice.Format == BatchFormat.Jpeg8;
+                                    SaveBakedImage(
+                                        image, frame, color, pattern, devLuts, lut,
+                                        Path.Combine(choice.OutputFolder,
+                                            stem + (jpeg ? ".jpg" : ".png")),
+                                        jpeg, ct);
+                                }
+                            }
                         }
 
                         progress.Report((double)(i + 1) / targets.Count);
@@ -1859,10 +1889,10 @@ public partial class MainWindow : Window
     }
 
     private static void SaveBakedImage(
-        RawImage image, bool color, BayerPattern pattern, DevelopLuts devLuts,
+        RawImage image, int frame, bool color, BayerPattern pattern, DevelopLuts devLuts,
         DisplayLut lut, string path, bool jpeg, CancellationToken ct)
     {
-        BitmapSource source = BakeFrame(image, 0, color, pattern, devLuts, lut,
+        BitmapSource source = BakeFrame(image, frame, color, pattern, devLuts, lut,
             forceRgb: false, ct);
         BitmapEncoder encoder = jpeg
             ? new JpegBitmapEncoder { QualityLevel = 95 }
@@ -2102,6 +2132,7 @@ public partial class MainWindow : Window
         Viewport.SetDisplayMode(ViewportDisplayMode.Raw);
         Viewport.SetImage(derived, derived.Format);
         Viewport.SetLut(BuildLut());
+        UpdateNoiseWindowSource();
         RefreshHistogram(roi: null);
         _ = BuildDerivedPyramidAsync(derived);
     }
@@ -2138,6 +2169,7 @@ public partial class MainWindow : Window
         Viewport.SetImage(_currentImage!, _currentFormat!);
         Viewport.SetPyramid(_mainPyramid);
         Viewport.SetLut(BuildLut());
+        UpdateNoiseWindowSource();
         DetectSequence();
         RefreshHistogram(roi: null);
     }
@@ -3003,10 +3035,11 @@ public partial class MainWindow : Window
         if (_noiseWindow is null)
         {
             _noiseWindow = new NoiseMeasureDialog(
-                Path.GetFileName(_currentPath ?? "(画像)"),
+                NoiseSourceName(),
                 _currentFolder,
                 (1 << ActiveFormat.BitDepth) - 1,
-                Viewport.Roi is { PixelCount: > 0 })
+                Viewport.Roi is { PixelCount: > 0 },
+                ExpectedReferenceSize())
             {
                 Owner = this,
             };
@@ -3014,8 +3047,43 @@ public partial class MainWindow : Window
             _noiseWindow.Closed += (_, _) => _noiseWindow = null;
             _noiseWindow.Show();
         }
+        else
+        {
+            UpdateNoiseWindowSource();
+        }
 
         _noiseWindow.Activate();
+    }
+
+    private string NoiseSourceName()
+    {
+        string name = Path.GetFileName(_currentPath ?? "(画像)");
+        return _correctionLabel is null ? name : $"{name} [{_correctionLabel}]";
+    }
+
+    /// <summary>raw参照ファイルに期待するバイト数(1フレーム分)。不明なら0。</summary>
+    private long ExpectedReferenceSize()
+    {
+        RawFormat? format = ActiveFormat;
+        return format is null ? 0 : format.HeaderOffset + format.FrameSizeInBytes;
+    }
+
+    /// <summary>
+    /// ノイズ測定ダイアログの対象表示・飽和コード既定値・ROI有無を現在の画像に合わせる。
+    /// </summary>
+    private void UpdateNoiseWindowSource()
+    {
+        if (_noiseWindow is null || ActiveFormat is null)
+        {
+            return;
+        }
+
+        _noiseWindow.UpdateSource(
+            NoiseSourceName(),
+            _currentFolder,
+            (1 << ActiveFormat.BitDepth) - 1,
+            Viewport.Roi is { PixelCount: > 0 },
+            ExpectedReferenceSize());
     }
 
     private void OnNoiseMeasureRequested(NoiseMeasureRequest request)

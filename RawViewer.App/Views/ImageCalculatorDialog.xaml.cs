@@ -84,18 +84,41 @@ public partial class ImageCalculatorDialog : Window
         }
 
         string path = ReferenceBox.Text.Trim();
-        if (File.Exists(path) && _expectedSize > 0)
+        if (File.Exists(path) && _expectedSize > 0 && IsRawPath(path))
         {
-            long size = new FileInfo(path).Length;
-            bool mismatch = size < _expectedSize;
+            long size = SafeLength(path);
+
+            // raw参照は対象画像のフォーマットで強制解釈されるため、
+            // 不足だけでなく超過も警告する(超過分は先頭だけ読まれ無警告で通ってしまう)
+            bool mismatch = size >= 0 && size != _expectedSize;
             NoteText.Text = mismatch
-                ? $"⚠ ファイルサイズが不足しています ({size:N0} / 期待 {_expectedSize:N0} バイト)"
+                ? $"⚠ ファイルサイズが一致しません ({size:N0} / 期待 {_expectedSize:N0} バイト)。" +
+                  "対象画像のフォーマットで解釈されるため結果が正しくない可能性があります"
                 : "";
             NoteText.Visibility = mismatch ? Visibility.Visible : Visibility.Collapsed;
         }
         else
         {
             NoteText.Visibility = Visibility.Collapsed;
+        }
+    }
+
+    private static bool IsRawPath(string path)
+    {
+        string extension = Path.GetExtension(path);
+        return string.Equals(extension, ".raw", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(extension, ".bin", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static long SafeLength(string path)
+    {
+        try
+        {
+            return new FileInfo(path).Length;
+        }
+        catch (Exception)
+        {
+            return -1;
         }
     }
 
