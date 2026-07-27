@@ -81,6 +81,43 @@ public class ChannelAnalysisTests
     }
 
     [Fact]
+    public void ComputeChannelAnalysis_OddAlignedRoi_CoversWholeRegion()
+    {
+        // 内側へ切り詰めると roi=(1,1,4,4) が16画素中4画素になり、
+        // 各チャネル1サンプル(σ=0)という無意味な統計になっていた。
+        // 外側スナップで全チャネルが複数サンプルを持つこと。
+        const int size = 8;
+        ushort[] mosaic = ColorPipelineTests.BuildConstantMosaic(
+            size, size, BayerPattern.Rggb, 100, 200, 300);
+        using RawImage image = LoadImage(mosaic, size, size);
+
+        ChannelAnalysisResult result = ImageAnalysis.ComputeChannelAnalysis(
+            image, 0, BayerPattern.Rggb, new RegionOfInterest(1, 1, 4, 4));
+
+        // x:0..5, y:0..5 の3x3ブロック = 36画素(各チャネル9サンプル)
+        Assert.Equal(36, result.Total.SampleCount);
+        foreach (ChannelHistogram channel in result.Channels)
+        {
+            Assert.Equal(9, channel.Statistics.SampleCount);
+        }
+    }
+
+    [Fact]
+    public void ComputeChannelAnalysis_RoiAtImageEdge_StaysInsideImage()
+    {
+        const int size = 8;
+        ushort[] mosaic = ColorPipelineTests.BuildConstantMosaic(
+            size, size, BayerPattern.Rggb, 100, 200, 300);
+        using RawImage image = LoadImage(mosaic, size, size);
+
+        // 右下端に接するROI。外側スナップしても画像外を読まないこと
+        ChannelAnalysisResult result = ImageAnalysis.ComputeChannelAnalysis(
+            image, 0, BayerPattern.Rggb, new RegionOfInterest(5, 5, 3, 3));
+
+        Assert.Equal(16, result.Total.SampleCount);
+    }
+
+    [Fact]
     public void ComputeChannelAnalysis_LargeImage_SamplesAllChannelsEqually()
     {
         const int size = 64;

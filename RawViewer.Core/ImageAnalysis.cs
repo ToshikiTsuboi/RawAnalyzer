@@ -363,11 +363,16 @@ public static class ImageAnalysis
         int shift = 16 - bitDepth;
         int binCount = 1 << bitDepth;
 
-        // 2x2ブロック整列(偶数座標開始・偶数サイズ)
-        int x0 = roi.X + (roi.X & 1);
-        int y0 = roi.Y + (roi.Y & 1);
-        int blocksX = Math.Max(0, (roi.X + roi.Width - x0) / 2);
-        int blocksY = Math.Max(0, (roi.Y + roi.Height - y0) / 2);
+        // 2x2ブロック整列。内側へ切り詰めるとROIが小さいとき大半の画素が捨てられ
+        // (例: roi=(1,1,4,4) で16画素中4画素、各チャネル1サンプル→σ=0)、
+        // 統計が意味をなさなくなる。外側へスナップして必ずROI全体を含める
+        // (各辺で最大1画素はみ出す)。
+        int x0 = roi.X & ~1;
+        int y0 = roi.Y & ~1;
+        int x1 = Math.Min(image.Width, (roi.X + roi.Width + 1) & ~1);
+        int y1 = Math.Min(image.Height, (roi.Y + roi.Height + 1) & ~1);
+        int blocksX = Math.Max(0, (x1 - x0) / 2);
+        int blocksY = Math.Max(0, (y1 - y0) / 2);
 
         var channelBins = new uint[4][];
         var sums = new long[4];

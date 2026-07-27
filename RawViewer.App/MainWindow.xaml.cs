@@ -45,6 +45,33 @@ public partial class MainWindow : Window
     private string? _currentPath;
     private CancellationTokenSource? _loadCts;
     private CancellationTokenSource? _analysisCts;
+
+    /// <summary>
+    /// 読み込み用CTSを差し替える(旧CTSはキャンセルする)。
+    /// </summary>
+    /// <remarks>
+    /// ここで Dispose しないのは、旧トークンが fire-and-forget のピラミッド生成などに
+    /// 渡っており、破棄後に <c>ParallelOptions.CancellationToken</c> が登録を試みると
+    /// ObjectDisposedException になるため。WaitHandle を使っていないCTSは
+    /// アンマネージ資源を持たず、参照が切れれば通常のGCで回収される。
+    /// 実際に破棄が必要な ProgressWindow 側は処理完了後に Dispose している。
+    /// </remarks>
+    private void ReplaceLoadCts(CancellationTokenSource? next)
+    {
+        CancellationTokenSource? previous = _loadCts;
+        _loadCts = next;
+        previous?.Cancel();
+    }
+
+    private void ReplaceAnalysisCts(CancellationTokenSource? next)
+    {
+        CancellationTokenSource? previous = _analysisCts;
+        _analysisCts = next;
+        previous?.Cancel();
+    }
+
+    /// <summary>進行中の解析をキャンセルし、参照も外す。</summary>
+    private void CancelAnalysis() => ReplaceAnalysisCts(null);
     private HistogramResult? _histogram;
     private IReadOnlyList<ChannelHistogram>? _channelHistograms;
     private string? _correctionLabel;
@@ -142,10 +169,12 @@ public partial class MainWindow : Window
         Closing += (_, _) => SaveWindowPlacement();
         Closed += async (_, _) =>
         {
-            _loadCts?.Cancel();
-            _analysisCts?.Cancel();
+            ReplaceLoadCts(null);
+            CancelAnalysis();
             _profileWindow?.Close();
             await Viewport.ClearImageAsync();
+            _mainBayerPyramid?.Dispose();
+            _derivedBayerPyramid?.Dispose();
             _derivedImage?.Dispose();
             _currentImage?.Dispose();
         };
@@ -399,10 +428,9 @@ public partial class MainWindow : Window
             }
         }
 
-        _loadCts?.Cancel();
-        _analysisCts?.Cancel();
+        CancelAnalysis();
         var cts = new CancellationTokenSource();
-        _loadCts = cts;
+        ReplaceLoadCts(cts);
         _vm.ImageInfoText = "読込中…";
 
         RawImage image;
@@ -608,9 +636,8 @@ public partial class MainWindow : Window
             return;
         }
 
-        _analysisCts?.Cancel();
         var cts = new CancellationTokenSource();
-        _analysisCts = cts;
+        ReplaceAnalysisCts(cts);
         RawImage image = ActiveImage;
         int frame = Viewport.Frame;
         BayerPattern pattern = ActiveFormat?.Bayer ?? BayerPattern.None;
@@ -731,24 +758,7 @@ public partial class MainWindow : Window
         double maxValue = 0;
         for (int c = 0; c < channels.Count; c++)
         {
-            uint[] bins = channels[c].Bins;
-            var columns = new double[width];
-            int binsPerColumn = bins.Length / width + 1;
-            for (int i = 0; i < bins.Length; i++)
-            {
-                columns[Math.Min(i / binsPerColumn, width - 1)] += bins[i];
-            }
-
-            if (cumulative)
-            {
-                double running = 0;
-                for (int x = 0; x < width; x++)
-                {
-                    running += columns[x];
-                    columns[x] = running;
-                }
-            }
-
+            double[] columns = HistogramTools.Aggregate(channels[c].Bins, width, cumulative);
             curves[c] = columns;
             maxValue = Math.Max(maxValue, columns.Max());
         }
@@ -789,25 +799,8 @@ public partial class MainWindow : Window
     {
         const int width = 210;
         const int height = 70;
-        var columns = new double[width];
-        int binsPerColumn = bins.Length / width + 1;
-        for (int i = 0; i < bins.Length; i++)
-        {
-            int column = Math.Min(i / binsPerColumn, width - 1);
-            columns[column] += bins[i];
-        }
-
-        if (cumulative)
-        {
-            // 縦軸=累積頻度(そのcode以下の画素数)
-            double running = 0;
-            for (int x = 0; x < width; x++)
-            {
-                running += columns[x];
-                columns[x] = running;
-            }
-        }
-
+        // cumulative時は縦軸=累積頻度(そのcode以下の画素数)
+        double[] columns = HistogramTools.Aggregate(bins, width, cumulative);
         double maxValue = columns.Max();
         double maxScale = logScale ? Math.Log(1 + maxValue) : maxValue;
         var pixels = new byte[width * height * 4];
@@ -1193,41 +1186,9 @@ public partial class MainWindow : Window
 
     private string? BuildHistogramTable(char separator)
     {
-        if (_histogram is null)
-        {
-            return null;
-        }
-
-        var sb = new StringBuilder();
-        uint[] bins = _histogram.Bins;
-        bool byChannel = _channelHistograms is { Count: 4 };
-        sb.Append("raw_code").Append(separator).Append("count")
-            .Append(separator).Append("cumulative");
-        if (byChannel)
-        {
-            sb.Append(separator).Append("count_R").Append(separator).Append("count_Gr")
-                .Append(separator).Append("count_Gb").Append(separator).Append("count_B");
-        }
-
-        sb.AppendLine();
-        long cumulative = 0;
-        for (int i = 0; i < bins.Length; i++)
-        {
-            cumulative += bins[i];
-            sb.Append(i).Append(separator).Append(bins[i])
-                .Append(separator).Append(cumulative);
-            if (byChannel)
-            {
-                foreach (ChannelHistogram channel in _channelHistograms!)
-                {
-                    sb.Append(separator).Append(channel.Bins[i]);
-                }
-            }
-
-            sb.AppendLine();
-        }
-
-        return sb.ToString();
+        return _histogram is null
+            ? null
+            : HistogramTools.BuildTable(_histogram.Bins, separator, _channelHistograms);
     }
 
     private void OnHistogramCopyClick(object sender, RoutedEventArgs e)
@@ -1778,7 +1739,7 @@ public partial class MainWindow : Window
         RawImage processed, string label, bool closeDefectWindow)
     {
         // 旧画像を読んでいる解析タスクを止めてから破棄する
-        _analysisCts?.Cancel();
+        CancelAnalysis();
         await Viewport.ClearImageAsync();
         _currentImage?.Dispose();
         _currentImage = processed;
@@ -2296,7 +2257,7 @@ public partial class MainWindow : Window
         _vm.HasSequence = false;
 
         // 旧派生画像を読んでいる描画・解析を止めてから破棄する
-        _analysisCts?.Cancel();
+        CancelAnalysis();
         await Viewport.ClearImageAsync();
         _derivedImage?.Dispose();
         _derivedImage = derived;
@@ -2332,7 +2293,7 @@ public partial class MainWindow : Window
     private async Task RestoreMainImageAsync()
     {
         // 派生画像を読んでいる描画・解析を止めてから破棄する
-        _analysisCts?.Cancel();
+        CancelAnalysis();
         await Viewport.ClearImageAsync();
         _derivedImage?.Dispose();
         _derivedImage = null;
@@ -2466,50 +2427,20 @@ public partial class MainWindow : Window
             return;
         }
 
-        uint[] bins = _histogram.Bins;
-        long total = bins.Sum(c => (long)c);
-        if (total == 0)
-        {
-            return;
-        }
-
-        long clip = (long)(total * 0.0035);
-        long acc = 0;
-        int blackCode = 0;
-        for (int i = 0; i < bins.Length; i++)
-        {
-            acc += bins[i];
-            if (acc > clip)
-            {
-                blackCode = i;
-                break;
-            }
-        }
-
-        acc = 0;
-        int whiteCode = bins.Length - 1;
-        for (int i = bins.Length - 1; i >= 0; i--)
-        {
-            acc += bins[i];
-            if (acc > clip)
-            {
-                whiteCode = i;
-                break;
-            }
-        }
-
-        if (whiteCode <= blackCode)
+        if (HistogramTools.ComputeAutoLevels(_histogram.Bins) is not { } levels)
         {
             return;
         }
 
         int shift = CurrentShift;
-        _blackPoint = (ushort)(blackCode << shift);
-        _whitePoint = (ushort)Math.Min(65535, ((long)whiteCode << shift) | ((1L << shift) - 1));
+        _blackPoint = (ushort)(levels.BlackCode << shift);
+        _whitePoint = (ushort)Math.Min(
+            65535, ((long)levels.WhiteCode << shift) | ((1L << shift) - 1));
         _updatingSliders = true;
-        _vm.BlackLevel = blackCode;
+        _vm.BlackLevel = levels.BlackCode;
         _updatingSliders = false;
         Viewport.SetLut(BuildLut());
+        UpdateDevelopLuts();
     }
 
     // ---- ビューポートイベント ----

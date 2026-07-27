@@ -20,6 +20,9 @@ public static class TiffLoader
     private const ushort TypeShort = 3;
     private const ushort TypeLong = 4;
 
+    /// <summary>読み込みを許可する最大画素数。ヘッダの不正値でOOMにしないための上限。</summary>
+    public const long MaxPixels = 2_000_000_000;
+
     /// <summary>
     /// TIFFファイルを読み込み、16bitフルスケールへ正規化したRawImageを返す。
     /// </summary>
@@ -88,6 +91,15 @@ public static class TiffLoader
         if (width == 0 || height == 0 || width > int.MaxValue || height > int.MaxValue)
         {
             throw new InvalidDataException("画像サイズが不正です。");
+        }
+
+        // 配列を確保する前に総画素数を検証する。ヘッダが巨大値を主張していると
+        // OutOfMemoryException になり、不正データの報告として役に立たない
+        long declaredPixels = (long)width * height;
+        if (declaredPixels > MaxPixels)
+        {
+            throw new InvalidDataException(
+                $"画像が大きすぎます({width}×{height})。上限は {MaxPixels / 1_000_000} M画素です。");
         }
 
         uint[] stripOffsets = GetArray(entries, data, TagStripOffsets, bigEndian)
@@ -212,20 +224,26 @@ public static class TiffLoader
             };
 
             long totalSize = (long)valueSize * entry.Count;
-            int valueOffset = totalSize <= 4
+
+            // checked((int)) だと int.MaxValue 超のオフセットが OverflowException になり、
+            // 不正TIFFの報告にならない。uint のまま範囲判定してから絞る
+            // (負値へ落とすと後段の Slice が別の例外になるため先に弾く)
+            long valueOffset = totalSize <= 4
                 ? entry.ValueFieldOffset
-                : checked((int)ReadU32(data, entry.ValueFieldOffset, bigEndian));
-            if (valueOffset + totalSize > data.Length)
+                : ReadU32(data, entry.ValueFieldOffset, bigEndian);
+            if (valueOffset < 0 || valueOffset + totalSize > data.Length)
             {
                 throw new InvalidDataException($"タグ{tag}の値がファイル範囲外を指しています。");
             }
 
+            // ここまでで valueOffset + totalSize <= data.Length を確認済みなのでintに収まる
+            int start = (int)valueOffset;
             var values = new uint[entry.Count];
             for (int i = 0; i < entry.Count; i++)
             {
                 values[i] = valueSize == 2
-                    ? ReadU16(data, valueOffset + i * 2, bigEndian)
-                    : ReadU32(data, valueOffset + i * 4, bigEndian);
+                    ? ReadU16(data, start + i * 2, bigEndian)
+                    : ReadU32(data, start + i * 4, bigEndian);
             }
 
             return values;
