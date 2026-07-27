@@ -34,6 +34,9 @@ public sealed class FormatPresetStore
     /// <summary>プリセットファイルのフルパス。</summary>
     public string FilePath { get; }
 
+    /// <summary>破損したプリセットファイルの退避先。</summary>
+    public string BackupPath => FilePath + ".bak";
+
     /// <summary>
     /// プリセットを読み込む。ファイルが存在しない場合は空の辞書を返す。
     /// </summary>
@@ -52,7 +55,42 @@ public sealed class FormatPresetStore
     }
 
     /// <summary>
+    /// プリセットを読み込む。破損している場合は .bak へ退避して空の辞書を返す。
+    /// </summary>
+    /// <param name="corrupted">破損を検知して退避したかどうか。</param>
+    /// <returns>プリセット名からRawFormatへの辞書。</returns>
+    public IReadOnlyDictionary<string, RawFormat> LoadOrQuarantine(out bool corrupted)
+    {
+        corrupted = false;
+        try
+        {
+            return Load();
+        }
+        catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
+        {
+            // 握りつぶすと、次に1件保存したときに辞書全体が上書きされ
+            // 全プリセットが復旧不能に消える。退避して呼び出し側へ知らせる。
+            try
+            {
+                if (File.Exists(FilePath))
+                {
+                    File.Move(FilePath, BackupPath, overwrite: true);
+                    corrupted = true;
+                }
+            }
+            catch (Exception moveError) when (
+                moveError is IOException or UnauthorizedAccessException)
+            {
+                // 退避できなくても読み込み自体は空で続行する
+            }
+
+            return new Dictionary<string, RawFormat>();
+        }
+    }
+
+    /// <summary>
     /// プリセットを保存する。保存先ディレクトリがなければ作成する。
+    /// 一時ファイルへ書いてから置換するため、中断しても既存ファイルは壊れない。
     /// </summary>
     /// <param name="presets">プリセット名からRawFormatへの辞書。</param>
     public void Save(IReadOnlyDictionary<string, RawFormat> presets)
@@ -60,6 +98,18 @@ public sealed class FormatPresetStore
         string directory = Path.GetDirectoryName(FilePath)!;
         Directory.CreateDirectory(directory);
         string json = JsonSerializer.Serialize(presets, SerializerOptions);
-        File.WriteAllText(FilePath, json);
+
+        // File.WriteAllText は truncate してから書くため、中断すると
+        // 0バイトや途中で切れたJSONが残る
+        string temporary = FilePath + ".tmp";
+        File.WriteAllText(temporary, json);
+        if (File.Exists(FilePath))
+        {
+            File.Replace(temporary, FilePath, destinationBackupFileName: null);
+        }
+        else
+        {
+            File.Move(temporary, FilePath);
+        }
     }
 }

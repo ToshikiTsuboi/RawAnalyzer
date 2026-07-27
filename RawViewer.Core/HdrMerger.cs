@@ -45,10 +45,27 @@ public sealed class HdrImage
     public BayerPattern Bayer { get; }
 
     /// <summary>
+    /// <see cref="ToRawImage16"/> の1codeが表す合成域の値(量子化ステップ)。
+    /// 1.0 なら無損失、2.0 なら1bit失われている。
+    /// </summary>
+    public double QuantizationStep => FullScale > 0 ? FullScale / 65535.0 : 0;
+
+    /// <summary>
+    /// <see cref="ToRawImage16"/> で失われるビット数(0なら無損失)。
+    /// 例: 14bit素材・2段・露光比16 では2bit、3段・露光比16 では4bit失われる。
+    /// </summary>
+    public double LostBits => QuantizationStep > 1 ? Math.Log2(QuantizationStep) : 0;
+
+    /// <summary>
     /// フルスケールを65535へスケーリングした16bit画像へ量子化する
     /// (表示・16bit TIFF保存用)。
     /// </summary>
-    /// <returns>量子化された画像(16bit、Bayer/HDRなしフォーマット)。</returns>
+    /// <remarks>
+    /// 合成域が16bitに収まらない構成では情報が落ちる。落ちる量は
+    /// <see cref="LostBits"/> で確認できる。無損失のデータが必要な場合は
+    /// <see cref="Pixels"/>(float)または float raw 保存を使うこと。
+    /// </remarks>
+    /// <returns>量子化された画像(16bit、Bayer付きフォーマット)。</returns>
     public RawImage ToRawImage16()
     {
         var pixels = new ushort[(long)Width * Height];

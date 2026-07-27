@@ -222,9 +222,7 @@ public partial class MainWindow : Window
 
     private void RememberFileFormat(string path, RawFormat format)
     {
-        string key = SessionStore.NormalizeKey(path);
-        _session.FileFormats.Remove(key);
-        _session.FileFormats[key] = format;
+        SessionStore.TouchFileFormat(_session, SessionStore.NormalizeKey(path), format);
         _sessionStore.Save(_session);
     }
 
@@ -2034,10 +2032,14 @@ public partial class MainWindow : Window
     private async Task EnterHdrSplitAsync()
     {
         RawImage image = _currentImage!;
+
+        // フォーマットパネルで変更したBayerパターンやHDR方式を反映する
+        // (image.Format は読み込み時のまま固定なので _currentFormat を渡す)
+        RawFormat splitFormat = _currentFormat!;
         IReadOnlyList<RawImage> frames;
         try
         {
-            frames = await Task.Run(() => HdrSplitter.Split(image));
+            frames = await Task.Run(() => HdrSplitter.Split(image, splitFormat));
         }
         catch (InvalidOperationException ex)
         {
@@ -2067,7 +2069,7 @@ public partial class MainWindow : Window
                         pixels.AsSpan(y * compositeWidth + stage * subWidth, subWidth));
                 }
             });
-            RawFormat format = image.Format with
+            RawFormat format = splitFormat with
             {
                 Width = compositeWidth,
                 Height = subHeight,
@@ -2128,7 +2130,7 @@ public partial class MainWindow : Window
         {
             (merged, quantized) = await Task.Run(() =>
             {
-                IReadOnlyList<RawImage> frames = HdrSplitter.Split(image);
+                IReadOnlyList<RawImage> frames = HdrSplitter.Split(image, format);
                 try
                 {
                     HdrImage result = HdrMerger.Merge(frames, new HdrMergeParameters(
@@ -2160,8 +2162,14 @@ public partial class MainWindow : Window
         await ApplyDerivedViewAsync(quantized);
         _hdrFloatImage = merged;
         _vm.HdrTargetVisible = false;
+
+        // 16bit量子化で情報が落ちる構成では、解析値がその精度で読まれることを明示する
+        string lossNote = merged.LostBits >= 0.5
+            ? $", 表示・解析は16bit量子化後 (1LSB={merged.QuantizationStep:F1}, " +
+              $"約{merged.LostBits:F0}bit損失 / 無損失はfloat raw保存)"
+            : "";
         _vm.LevelOverlayText =
-            $"HDR合成表示 (フルスケール {merged.FullScale:F0}, ゲイン=露出)";
+            $"HDR合成表示 (フルスケール {merged.FullScale:F0}, ゲイン=露出{lossNote})";
     }
 
     private async Task ApplyDerivedViewAsync(RawImage derived)

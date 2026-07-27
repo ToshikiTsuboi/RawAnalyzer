@@ -122,6 +122,65 @@ public class HdrSplitterTests
     }
 
     [Fact]
+    public void Split_WithOverriddenFormat_UsesGivenBayerPattern()
+    {
+        // フォーマットパネルで後からBayerを指定した場合、RawImage.Format は
+        // 読み込み時のまま固定なので blockHeight=1 になり色ペアが崩れていた
+        const int width = 4;
+        const int height = 8;
+        var values = new ushort[width * height];
+        for (int y = 0; y < height; y++)
+        {
+            for (int x = 0; x < width; x++)
+            {
+                values[y * width + x] = (ushort)(y * 100);
+            }
+        }
+
+        // 読み込み時は Bayer 未指定
+        var loadedFormat = new RawFormat
+        {
+            Width = width, Height = height, BitDepth = 16,
+            Hdr = HdrMode.Dol, HdrStages = 2,
+        };
+        using RawImage image = LoadImage(values, loadedFormat);
+
+        // パネルで RGGB を指定した状態を渡す
+        RawFormat panelFormat = loadedFormat with { Bayer = BayerPattern.Rggb };
+        IReadOnlyList<RawImage> frames = HdrSplitter.Split(image, panelFormat);
+
+        Assert.Equal(BayerPattern.Rggb, frames[0].Format.Bayer);
+
+        // 2行ブロックで交互 = 長秒は行0,1,4,5
+        Assert.Equal(0, frames[0].GetPixel(0, 0));
+        Assert.Equal(100, frames[0].GetPixel(0, 1));
+        Assert.Equal(400, frames[0].GetPixel(0, 2));
+        Assert.Equal(200, frames[1].GetPixel(0, 0));
+
+        foreach (RawImage frame in frames)
+        {
+            frame.Dispose();
+        }
+    }
+
+    [Fact]
+    public void Split_WithMismatchedLayout_Throws()
+    {
+        const int width = 4;
+        const int height = 4;
+        var format = new RawFormat
+        {
+            Width = width, Height = height, BitDepth = 16, Hdr = HdrMode.Dol, HdrStages = 2,
+        };
+        using RawImage image = LoadImage(new ushort[width * height], format);
+
+        Assert.Throws<ArgumentException>(
+            () => HdrSplitter.Split(image, format with { Width = width * 2 }));
+        Assert.Throws<ArgumentException>(
+            () => HdrSplitter.Split(image, format with { BitDepth = 12 }));
+    }
+
+    [Fact]
     public void Split_FrameSequential_ReturnsEachFrame()
     {
         const int width = 4;

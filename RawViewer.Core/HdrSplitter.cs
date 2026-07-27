@@ -16,9 +16,35 @@ public static class HdrSplitter
     /// <exception cref="InvalidOperationException">
     /// HDR方式が未指定、フレーム構成が不正、または画像が大きすぎる場合。
     /// </exception>
-    public static IReadOnlyList<RawImage> Split(RawImage image)
+    public static IReadOnlyList<RawImage> Split(RawImage image) => Split(image, image.Format);
+
+    /// <summary>
+    /// フォーマットを明示してHDRフレームへ分割する。
+    /// </summary>
+    /// <param name="image">分割する画像。</param>
+    /// <param name="format">
+    /// 使用するフォーマット記述子。画素レイアウト(幅・高さ・ビット深度)は
+    /// <paramref name="image"/> と一致していること。Bayerパターンやフレーム構成を
+    /// あとから変更した場合にこちらを渡す。
+    /// </param>
+    /// <returns>分割された各フレーム(長秒→短秒の順、各Hdr=None)。</returns>
+    /// <exception cref="ArgumentException">画素レイアウトが画像と一致しない場合。</exception>
+    /// <exception cref="InvalidOperationException">
+    /// HDR方式が未指定、フレーム構成が不正、または画像が大きすぎる場合。
+    /// </exception>
+    public static IReadOnlyList<RawImage> Split(RawImage image, RawFormat format)
     {
-        RawFormat format = image.Format;
+        // フォーマットパネルで変更した Bayer パターンや HDR 方式を反映するための経路。
+        // 画素の読み出し位置は image.Format 側で決まるので、レイアウトの一致は必須。
+        if (format.Width != image.Width || format.Height != image.Height
+            || format.BitDepth != image.Format.BitDepth
+            || format.FrameCount != image.FrameCount)
+        {
+            throw new ArgumentException(
+                "画素レイアウト(幅・高さ・ビット深度・フレーム数)が画像と一致しません。",
+                nameof(format));
+        }
+
         if (format.Hdr == HdrMode.None)
         {
             throw new InvalidOperationException("HDR方式が指定されていません。");
@@ -38,22 +64,23 @@ public static class HdrSplitter
 
         if (format.FrameCount == stages)
         {
-            return SplitFrameSequential(image, stages);
+            return SplitFrameSequential(image, format, stages);
         }
 
         if (format.FrameCount == 1)
         {
-            return SplitLineInterleaved(image, stages);
+            return SplitLineInterleaved(image, format, stages);
         }
 
         throw new InvalidOperationException(
             $"フレーム数({format.FrameCount})がHDR段数({stages})と一致しないため分割できません。");
     }
 
-    private static IReadOnlyList<RawImage> SplitFrameSequential(RawImage image, int stages)
+    private static IReadOnlyList<RawImage> SplitFrameSequential(
+        RawImage image, RawFormat format, int stages)
     {
         var frames = new RawImage[stages];
-        RawFormat subFormat = image.Format with
+        RawFormat subFormat = format with
         {
             FrameCount = 1,
             Hdr = HdrMode.None,
@@ -74,12 +101,13 @@ public static class HdrSplitter
         return frames;
     }
 
-    private static IReadOnlyList<RawImage> SplitLineInterleaved(RawImage image, int stages)
+    private static IReadOnlyList<RawImage> SplitLineInterleaved(
+        RawImage image, RawFormat format, int stages)
     {
         int width = image.Width;
 
         // Bayerセンサでは色ペア(2行)単位でライン交互になるためブロック高さを2にする
-        int blockHeight = image.Format.Bayer != BayerPattern.None ? 2 : 1;
+        int blockHeight = format.Bayer != BayerPattern.None ? 2 : 1;
         int period = stages * blockHeight;
         int subHeight = image.Height / period * blockHeight;
         if (subHeight == 0)
@@ -87,7 +115,7 @@ public static class HdrSplitter
             throw new InvalidOperationException("高さがHDR段数の周期より小さいため分割できません。");
         }
 
-        RawFormat subFormat = image.Format with
+        RawFormat subFormat = format with
         {
             Height = subHeight,
             FrameCount = 1,

@@ -3,6 +3,7 @@ using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
+using RawViewer.App.Services;
 using RawViewer.Core;
 
 namespace RawViewer.App.Views;
@@ -71,14 +72,21 @@ public partial class RawImportDialog : Window
 
     private IReadOnlyDictionary<string, RawFormat> LoadPresetsSafe()
     {
-        try
+        // 破損を握りつぶすと、次に1件保存したときに全プリセットが消える。
+        // .bak へ退避したことをユーザーへ知らせる。
+        IReadOnlyDictionary<string, RawFormat> presets =
+            _presetStore.LoadOrQuarantine(out bool corrupted);
+        if (corrupted)
         {
-            return _presetStore.Load();
+            AppLog.Warn($"プリセットファイルが破損していたため退避: {_presetStore.BackupPath}");
+            MessageBox.Show(
+                this,
+                "プリセットファイルが読み込めなかったため退避しました。" +
+                $"{Environment.NewLine}{_presetStore.BackupPath}",
+                "RawViewer", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
-        catch (Exception)
-        {
-            return new Dictionary<string, RawFormat>();
-        }
+
+        return presets;
     }
 
     private RawFormat GuessInitialFormat()

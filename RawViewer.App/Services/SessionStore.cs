@@ -83,20 +83,57 @@ internal sealed class SessionStore
     /// <param name="state">保存する状態。</param>
     public void Save(SessionState state)
     {
-        // ファイルフォーマット記憶は古いものから間引く(挿入順)
-        while (state.FileFormats.Count > MaxFileFormats)
-        {
-            state.FileFormats.Remove(state.FileFormats.Keys.First());
-        }
-
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(_filePath)!);
-            File.WriteAllText(_filePath, JsonSerializer.Serialize(state, Options));
+
+            // 一時ファイル経由で置換し、中断しても既存のセッションを壊さない
+            string temporary = _filePath + ".tmp";
+            File.WriteAllText(temporary, JsonSerializer.Serialize(state, Options));
+            if (File.Exists(_filePath))
+            {
+                File.Replace(temporary, _filePath, destinationBackupFileName: null);
+            }
+            else
+            {
+                File.Move(temporary, _filePath);
+            }
         }
         catch (Exception)
         {
         }
+    }
+
+    /// <summary>
+    /// ファイルごとのフォーマット記憶を更新し、上限を超えたぶんを最終使用が古い順に間引く。
+    /// </summary>
+    /// <param name="state">更新する状態。</param>
+    /// <param name="key">正規化済みのファイルキー。</param>
+    /// <param name="format">記憶するフォーマット。</param>
+    /// <remarks>
+    /// Dictionary の Remove + Add は解放済みスロットを再利用するため列挙位置が変わらない。
+    /// そのまま Keys.First() を消すと「最古」ではなく「最若番スロット」が消え、
+    /// 上限到達後は新規ファイルのフォーマットが二度と記憶されなくなる。
+    /// ここでは辞書を作り直して列挙順＝最終使用順を保証する。
+    /// </remarks>
+    public static void TouchFileFormat(SessionState state, string key, RawFormat format)
+    {
+        var reordered = new Dictionary<string, RawFormat>(state.FileFormats.Count + 1);
+        foreach (KeyValuePair<string, RawFormat> entry in state.FileFormats)
+        {
+            if (!string.Equals(entry.Key, key, StringComparison.Ordinal))
+            {
+                reordered.Add(entry.Key, entry.Value);
+            }
+        }
+
+        reordered.Add(key, format);
+        while (reordered.Count > MaxFileFormats)
+        {
+            reordered.Remove(reordered.Keys.First());
+        }
+
+        state.FileFormats = reordered;
     }
 
     /// <summary>ファイルフォーマット記憶用のキーを正規化する。</summary>
