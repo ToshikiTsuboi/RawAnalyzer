@@ -165,6 +165,66 @@ public class ColorPipelineTests
     }
 
     [Fact]
+    public void DevelopLuts_Gain_ScalesAllChannels()
+    {
+        // ColorDevelop表示でゲインスライダーが完全に無反応だった問題の回帰テスト
+        var luts = DevelopLuts.Create(new DevelopParameters(Gamma: 1.0, Gain: 2.0));
+
+        Assert.Equal(255, luts.R[32768]);
+        Assert.Equal(255, luts.G[32768]);
+        Assert.Equal(255, luts.B[32768]);
+        Assert.InRange(luts.G[16384], (byte)127, (byte)128);
+    }
+
+    [Fact]
+    public void DevelopLuts_Contrast_SteepensAroundMidpoint()
+    {
+        var flat = DevelopLuts.Create(new DevelopParameters(Gamma: 1.0));
+        var steep = DevelopLuts.Create(new DevelopParameters(Gamma: 1.0, Contrast: 2.0));
+
+        // 中心(0.5)は動かず、上下は開く
+        Assert.InRange(steep.G[32768], (byte)127, (byte)128);
+        Assert.True(steep.G[49152] > flat.G[49152], "上側が明るくなること");
+        Assert.True(steep.G[16384] < flat.G[16384], "下側が暗くなること");
+        Assert.Equal(0, steep.G[16384]);
+    }
+
+    [Fact]
+    public void DevelopLuts_WhitePoint_ClipsAbove()
+    {
+        var luts = DevelopLuts.Create(new DevelopParameters(Gamma: 1.0, WhitePoint: 32768));
+
+        Assert.Equal(0, luts.G[0]);
+        Assert.Equal(255, luts.G[32768]);
+        Assert.Equal(255, luts.G[65535]);
+        Assert.InRange(luts.G[16384], (byte)127, (byte)128);
+    }
+
+    [Fact]
+    public void DevelopLuts_MatrixPath_AppliesGainAndContrast()
+    {
+        var swap = new ColorMatrix(0, 1, 0, 1, 0, 0, 0, 0, 1);
+        var luts = DevelopLuts.Create(
+            new DevelopParameters(Gamma: 1.0, Matrix: swap, Gain: 2.0));
+
+        Assert.True(luts.HasMatrix);
+        luts.Convert(16384, 0, 0, out byte r8, out byte g8, out _);
+
+        // R入力(16384→ゲイン2倍で0.5)がGへ入れ替わる
+        Assert.Equal(0, r8);
+        Assert.InRange(g8, (byte)127, (byte)128);
+    }
+
+    [Fact]
+    public void DevelopLuts_InvalidGain_Throws()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => DevelopLuts.Create(new DevelopParameters(Gain: -1)));
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => DevelopLuts.Create(new DevelopParameters(Contrast: -1)));
+    }
+
+    [Fact]
     public void DevelopLuts_InvalidGamma_Throws()
     {
         Assert.Throws<ArgumentOutOfRangeException>(

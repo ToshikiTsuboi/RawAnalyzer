@@ -128,6 +128,56 @@ public class AviMjpegWriterTests
         string path = TempPath();
         Assert.Throws<ArgumentOutOfRangeException>(() => new AviMjpegWriter(path, 0, 10, 15));
         Assert.Throws<ArgumentOutOfRangeException>(() => new AviMjpegWriter(path, 10, 10, 0));
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => new AviMjpegWriter(path, 10, 10, 15, maxFileBytes: 0));
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => new AviMjpegWriter(
+                path, 10, 10, 15, maxFileBytes: AviMjpegWriter.DefaultMaxFileBytes + 1));
+    }
+
+    [Fact]
+    public void AddFrame_ExceedingSizeLimit_ThrowsAndKeepsEarlierFramesReadable()
+    {
+        // 上限を超えると idx1 の dwChunkOffset と RIFF サイズが32bitで巻き戻り、
+        // 「動画書き出し完了」と表示されるのに先頭数フレームしか再生できないAVIになる。
+        // 実サイズ2GiBを書かずに検証するため上限を小さくして再現する。
+        string path = TempPath();
+        var frame = new byte[512];
+        try
+        {
+            int written = 0;
+            using (var writer = new AviMjpegWriter(path, 8, 8, 10, maxFileBytes: 4096))
+            {
+                NotSupportedException? thrown = null;
+                for (int i = 0; i < 100; i++)
+                {
+                    try
+                    {
+                        writer.AddFrame(frame);
+                        written++;
+                    }
+                    catch (NotSupportedException ex)
+                    {
+                        thrown = ex;
+                        break;
+                    }
+                }
+
+                Assert.NotNull(thrown);
+                Assert.Contains("上限", thrown!.Message);
+                Assert.Equal(written, writer.FrameCount);
+            }
+
+            // 打ち切った時点までは正しいAVIとして閉じられていること
+            Assert.True(written > 0);
+            byte[] data = File.ReadAllBytes(path);
+            Assert.True(data.Length <= 4096, $"上限内に収まること: {data.Length}");
+            Assert.Equal((uint)(data.Length - 8), ReadU32(data, 4));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
     }
 }
 

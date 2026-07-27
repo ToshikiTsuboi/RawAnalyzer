@@ -105,6 +105,10 @@ public sealed class ImageViewport : FrameworkElement
     private int _roiStartY;
     private RegionOfInterest? _roi;
 
+    // 直近にROI変更を通知した時点でROIが有効だったか。
+    // 単クリックでROIを消したときに「解除」を通知すべきか判断するのに使う
+    private bool _roiHadValue;
+
     private OverlayData? _overlay;
 
     /// <summary>コントロールを生成する。</summary>
@@ -220,9 +224,12 @@ public sealed class ImageViewport : FrameworkElement
     /// <summary>ROI選択を解除する。</summary>
     public void ClearRoi()
     {
-        bool had = _roi is not null;
+        // _roi が null でも、直前の単クリックで統計だけ残っている場合があるため
+        // 「以前ROIがあった」ことも解除通知の条件にする
+        bool had = _roi is not null || _roiHadValue;
         _roi = null;
         _roiDragging = false;
+        _roiHadValue = false;
         if (had)
         {
             RoiChanged?.Invoke(this, EventArgs.Empty);
@@ -601,7 +608,12 @@ public sealed class ImageViewport : FrameworkElement
             _roiStartX = (int)Math.Floor(_originX + pos.X / _zoom);
             _roiStartY = (int)Math.Floor(_originY + pos.Y / _zoom);
             _roiDragging = true;
+
+            // 単クリック(カーソル未移動)ではOnMouseMoveが発生しないため、
+            // ここで旧ROIの消去を確定させないと矩形と統計が残り続ける
+            _roiHadValue = _roi is { PixelCount: > 0 };
             _roi = null;
+            InvalidateVisual();
             CaptureMouse();
             return;
         }
@@ -638,22 +650,51 @@ public sealed class ImageViewport : FrameworkElement
     protected override void OnMouseLeftButtonUp(MouseButtonEventArgs e)
     {
         base.OnMouseLeftButtonUp(e);
+        EndDrag(notifyRoi: true);
+    }
+
+    /// <inheritdoc />
+    protected override void OnLostMouseCapture(MouseEventArgs e)
+    {
+        base.OnLostMouseCapture(e);
+
+        // モーダル表示・Alt+Tab・UAC等でキャプチャを失っても
+        // ボタンを離した扱いにする(でないとボタンを離した後もパン/ROI伸縮が続く)
+        EndDrag(notifyRoi: true);
+    }
+
+    private void EndDrag(bool notifyRoi)
+    {
         if (_panning)
         {
             _panning = false;
-            ReleaseMouseCapture();
+            if (IsMouseCaptured)
+            {
+                ReleaseMouseCapture();
+            }
+
             RestartIdleTimer();
         }
 
-        if (_roiDragging)
+        if (!_roiDragging)
         {
-            _roiDragging = false;
-            ReleaseMouseCapture();
-            if (_roi is { PixelCount: > 0 })
-            {
-                RoiChanged?.Invoke(this, EventArgs.Empty);
-            }
+            return;
         }
+
+        _roiDragging = false;
+        if (IsMouseCaptured)
+        {
+            ReleaseMouseCapture();
+        }
+
+        // ROIが消えた場合も通知しないと、枠だけ消えて旧統計が残る
+        bool hasRoi = _roi is { PixelCount: > 0 };
+        if (notifyRoi && (hasRoi || _roiHadValue))
+        {
+            RoiChanged?.Invoke(this, EventArgs.Empty);
+        }
+
+        _roiHadValue = hasRoi;
     }
 
     /// <inheritdoc />
@@ -663,6 +704,12 @@ public sealed class ImageViewport : FrameworkElement
         if (_image is null)
         {
             return;
+        }
+
+        // キャプチャを失った状態でのドラッグ継続を防ぐ
+        if ((_panning || _roiDragging) && e.LeftButton != MouseButtonState.Pressed)
+        {
+            EndDrag(notifyRoi: true);
         }
 
         Point pos = e.GetPosition(this);

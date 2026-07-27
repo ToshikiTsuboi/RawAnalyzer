@@ -3,6 +3,7 @@ using System.IO;
 using System.Text;
 using System.Windows;
 using Microsoft.Win32;
+using RawViewer.App.Services;
 using RawViewer.Core;
 
 namespace RawViewer.App.Views;
@@ -221,10 +222,7 @@ public partial class NoiseMeasureDialog : Window
 
     private void OnCopyClick(object sender, RoutedEventArgs e)
     {
-        if (_lastResultText.Length > 0)
-        {
-            Clipboard.SetText(_lastResultText);
-        }
+        ClipboardHelper.TrySetText(_lastResultText);
     }
 
     private void OnCloseClick(object sender, RoutedEventArgs e)

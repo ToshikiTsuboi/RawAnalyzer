@@ -34,7 +34,7 @@ public sealed record ColorMatrix(
 
 /// <summary>
 /// カラー現像パラメータ。
-/// 適用順: 黒レベル減算 → WBゲイン → カラーマトリクス → ガンマ。
+/// 適用順: 黒/白点正規化 → WBゲイン → 全体ゲイン → カラーマトリクス → コントラスト → ガンマ。
 /// </summary>
 /// <param name="BlackLevel">黒レベル(16bitフルスケール値域)。減算後に正規化する。</param>
 /// <param name="GainR">Rチャネルのホワイトバランスゲイン。</param>
@@ -42,13 +42,19 @@ public sealed record ColorMatrix(
 /// <param name="GainB">Bチャネルのホワイトバランスゲイン。</param>
 /// <param name="Gamma">表示ガンマ。出力 = x^(1/Gamma)。</param>
 /// <param name="Matrix">カラーマトリクス(null=単位行列)。</param>
+/// <param name="WhitePoint">白点(16bitフルスケール値域)。この値以上が最大にマップされる。</param>
+/// <param name="Gain">全チャネル共通の線形ゲイン(1.0=等倍)。</param>
+/// <param name="Contrast">コントラスト(1.0=等倍)。中心0.5まわりの傾き。</param>
 public sealed record DevelopParameters(
     ushort BlackLevel = 0,
     double GainR = 1.0,
     double GainG = 1.0,
     double GainB = 1.0,
     double Gamma = 2.2,
-    ColorMatrix? Matrix = null);
+    ColorMatrix? Matrix = null,
+    ushort WhitePoint = 65535,
+    double Gain = 1.0,
+    double Contrast = 1.0);
 
 /// <summary>
 /// カラー現像用のチャネル別65536エントリLUT。
@@ -114,30 +120,50 @@ public sealed class DevelopLuts
             throw new ArgumentOutOfRangeException(nameof(parameters), "WBゲインは非負である必要があります。");
         }
 
-        byte[] r = BuildChannel(parameters, parameters.GainR);
-        byte[] g = BuildChannel(parameters, parameters.GainG);
-        byte[] b = BuildChannel(parameters, parameters.GainB);
-
-        if (parameters.Matrix is null || parameters.Matrix.IsIdentity)
+        if (parameters.Gain < 0)
         {
-            return new DevelopLuts(r, g, b, parameters, null, null, null, null, null);
+            throw new ArgumentOutOfRangeException(nameof(parameters), "Gainは非負である必要があります。");
         }
 
-        float[] matrix = Array.ConvertAll(parameters.Matrix.ToArray(), v => (float)v);
-        var gammaLut = new byte[GammaLutSize];
-        double invGamma = 1.0 / parameters.Gamma;
-        for (int i = 0; i < GammaLutSize; i++)
+        if (parameters.Contrast < 0)
         {
-            gammaLut[i] = (byte)Math.Round(
-                Math.Pow((double)i / (GammaLutSize - 1), invGamma) * 255.0);
+            throw new ArgumentOutOfRangeException(nameof(parameters), "Contrastは非負である必要があります。");
+        }
+
+        if (parameters.Matrix is not null && !parameters.Matrix.IsIdentity)
+        {
+            // マトリクス経路ではチャネル別byte LUTを参照しないので構築しない
+            // (65536×3回の Math.Pow を丸ごと省ける)
+            float[] matrix = Array.ConvertAll(parameters.Matrix.ToArray(), v => (float)v);
+            return new DevelopLuts(
+                Array.Empty<byte>(), Array.Empty<byte>(), Array.Empty<byte>(), parameters,
+                BuildLinearChannel(parameters, (float)parameters.GainR),
+                BuildLinearChannel(parameters, (float)parameters.GainG),
+                BuildLinearChannel(parameters, (float)parameters.GainB),
+                BuildGammaLut(parameters), matrix);
         }
 
         return new DevelopLuts(
-            r, g, b, parameters,
-            BuildLinearChannel(parameters, (float)parameters.GainR),
-            BuildLinearChannel(parameters, (float)parameters.GainG),
-            BuildLinearChannel(parameters, (float)parameters.GainB),
-            gammaLut, matrix);
+            BuildChannel(parameters, parameters.GainR),
+            BuildChannel(parameters, parameters.GainG),
+            BuildChannel(parameters, parameters.GainB),
+            parameters, null, null, null, null, null);
+    }
+
+    /// <summary>マトリクス後の 0〜1 値へコントラストとガンマを適用するLUT。</summary>
+    private static byte[] BuildGammaLut(DevelopParameters p)
+    {
+        var gammaLut = new byte[GammaLutSize];
+        double invGamma = 1.0 / p.Gamma;
+        for (int i = 0; i < GammaLutSize; i++)
+        {
+            double x = (double)i / (GammaLutSize - 1);
+            x = (x - 0.5) * p.Contrast + 0.5;
+            x = Math.Clamp(x, 0.0, 1.0);
+            gammaLut[i] = (byte)Math.Round(Math.Pow(x, invGamma) * 255.0);
+        }
+
+        return gammaLut;
     }
 
     /// <summary>
@@ -173,15 +199,19 @@ public sealed class DevelopLuts
         b8 = gamma[(int)(outB * (GammaLutSize - 1) + 0.5f)];
     }
 
-    private static byte[] BuildChannel(DevelopParameters p, double gain)
+    private static byte[] BuildChannel(DevelopParameters p, double wbGain)
     {
         var table = new byte[65536];
         double black = p.BlackLevel;
-        double invRange = black < 65535 ? 1.0 / (65535 - black) : 0.0;
+        double white = p.WhitePoint;
+        double invRange = white > black ? 1.0 / (white - black) : 0.0;
         double invGamma = 1.0 / p.Gamma;
+        double gain = wbGain * p.Gain;
         for (int v = 0; v < 65536; v++)
         {
-            double x = (v - black) * invRange * gain;
+            double x = invRange > 0 ? (v - black) * invRange : v > black ? 1.0 : 0.0;
+            x *= gain;
+            x = (x - 0.5) * p.Contrast + 0.5;
             x = Math.Clamp(x, 0.0, 1.0);
             table[v] = (byte)Math.Round(Math.Pow(x, invGamma) * 255.0);
         }
@@ -189,14 +219,18 @@ public sealed class DevelopLuts
         return table;
     }
 
-    private static float[] BuildLinearChannel(DevelopParameters p, float gain)
+    private static float[] BuildLinearChannel(DevelopParameters p, float wbGain)
     {
+        // コントラストとガンマはマトリクス適用後にかけるため、ここは線形段のみ
         var table = new float[65536];
         float black = p.BlackLevel;
-        float invRange = black < 65535 ? 1f / (65535 - black) : 0f;
+        float white = p.WhitePoint;
+        float invRange = white > black ? 1f / (white - black) : 0f;
+        float gain = wbGain * (float)p.Gain;
         for (int v = 0; v < 65536; v++)
         {
-            table[v] = Math.Clamp((v - black) * invRange * gain, 0f, 1f);
+            float x = invRange > 0 ? (v - black) * invRange : v > black ? 1f : 0f;
+            table[v] = Math.Clamp(x * gain, 0f, 1f);
         }
 
         return table;

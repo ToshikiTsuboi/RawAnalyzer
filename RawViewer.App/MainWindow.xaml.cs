@@ -57,6 +57,9 @@ public partial class MainWindow : Window
     private ushort _whitePoint = 65535;
     private bool _updatingSliders;
 
+    // 現像LUTがパラメータ変更で古くなっているか(カラー現像表示に入るまで再生成を遅延)
+    private bool _developLutsDirty = true;
+
     // シーケンス再生
     private enum SequenceMode
     {
@@ -934,11 +937,10 @@ public partial class MainWindow : Window
                 }
 
                 Viewport.SetLut(BuildLut());
-                if (e.PropertyName is nameof(MainViewModel.Gamma)
-                    or nameof(MainViewModel.BlackLevel))
-                {
-                    UpdateDevelopLuts();
-                }
+
+                // ゲイン・コントラストも現像LUTに影響する。ここを絞ると
+                // ColorDevelopモードでスライダーが完全に無反応になる
+                UpdateDevelopLuts();
             }
         }
 
@@ -955,11 +957,35 @@ public partial class MainWindow : Window
         double gamma = _vm.Gamma > 0 ? _vm.Gamma : 1.0;
         return new DevelopParameters(
             _blackPoint, _vm.WbGainR, _vm.WbGainG, _vm.WbGainB, gamma,
-            _colorMatrix.IsIdentity ? null : _colorMatrix);
+            _colorMatrix.IsIdentity ? null : _colorMatrix,
+            _whitePoint, _vm.Gain, _vm.Contrast);
     }
 
+    /// <summary>
+    /// 現像LUTを再生成する。カラー現像表示中でなければダーティ印だけ付け、
+    /// 実際の生成(65536×3回のMath.Powを含む)はモード切替まで遅らせる。
+    /// </summary>
     private void UpdateDevelopLuts()
     {
+        if (Viewport.DisplayMode != ViewportDisplayMode.ColorDevelop)
+        {
+            _developLutsDirty = true;
+            return;
+        }
+
+        _developLutsDirty = false;
+        Viewport.SetDevelopLuts(DevelopLuts.Create(CurrentDevelopParameters()));
+    }
+
+    /// <summary>カラー現像表示へ入る直前に、遅延していた現像LUT生成を確定させる。</summary>
+    private void EnsureDevelopLuts()
+    {
+        if (!_developLutsDirty)
+        {
+            return;
+        }
+
+        _developLutsDirty = false;
         Viewport.SetDevelopLuts(DevelopLuts.Create(CurrentDevelopParameters()));
     }
 
@@ -1105,8 +1131,9 @@ public partial class MainWindow : Window
         string? table = BuildHistogramTable('\t');
         if (table is not null)
         {
-            Clipboard.SetText(table);
-            _vm.ImageInfoText = "ヒストグラムをクリップボードへコピーしました";
+            _vm.ImageInfoText = ClipboardHelper.TrySetText(table)
+                ? "ヒストグラムをクリップボードへコピーしました"
+                : "クリップボードを使用できませんでした(他のアプリが使用中の可能性があります)";
         }
     }
 
@@ -1123,9 +1150,9 @@ public partial class MainWindow : Window
             Filter = "CSV (*.csv)|*.csv",
             FileName = Path.GetFileNameWithoutExtension(_currentPath ?? "image") + "_hist.csv",
         };
-        if (dialog.ShowDialog(this) == true)
+        if (dialog.ShowDialog(this) == true
+            && ClipboardHelper.WriteTextOrWarn(this, dialog.FileName, table, "ヒストグラム保存"))
         {
-            File.WriteAllText(dialog.FileName, table, Encoding.UTF8);
             _vm.ImageInfoText = $"保存完了: {Path.GetFileName(dialog.FileName)}";
         }
     }
@@ -1270,7 +1297,14 @@ public partial class MainWindow : Window
         DevelopParameters developParameters = CurrentDevelopParameters();
         if (!choice.ApplyDisplayLut)
         {
-            developParameters = developParameters with { BlackLevel = 0, Gamma = 1.0 };
+            developParameters = developParameters with
+            {
+                BlackLevel = 0,
+                Gamma = 1.0,
+                WhitePoint = 65535,
+                Gain = 1.0,
+                Contrast = 1.0,
+            };
         }
 
         if (!choice.ApplyWhiteBalance)
@@ -1810,7 +1844,9 @@ public partial class MainWindow : Window
                 }
             }, ct));
 
-        if (result.WasCanceled && choice.Format == BatchFormat.AviMjpeg)
+        // 中断だけでなくエラー時も、途中まで書かれた再生不能なAVIを残さない
+        if ((result.WasCanceled || result.Error is not null)
+            && choice.Format == BatchFormat.AviMjpeg)
         {
             try
             {
@@ -1819,8 +1855,9 @@ public partial class MainWindow : Window
                     File.Delete(aviPath);
                 }
             }
-            catch (IOException)
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
+                AppLog.Warn($"途中まで書かれたAVIの削除に失敗: {ex.Message}");
             }
         }
 
@@ -1947,12 +1984,18 @@ public partial class MainWindow : Window
                 return;
             }
 
-            Viewport.SetDisplayMode(index switch
+            ViewportDisplayMode hdrMode = index switch
             {
                 1 => ViewportDisplayMode.BayerColor,
                 2 => ViewportDisplayMode.ColorDevelop,
                 _ => ViewportDisplayMode.ChannelSplit,
-            });
+            };
+            if (hdrMode == ViewportDisplayMode.ColorDevelop)
+            {
+                EnsureDevelopLuts();
+            }
+
+            Viewport.SetDisplayMode(hdrMode);
             return;
         }
 
@@ -1978,6 +2021,11 @@ public partial class MainWindow : Window
                 "RawViewer", MessageBoxButton.OK, MessageBoxImage.Information);
             DisplayModeCombo.SelectedIndex = 0;
             return;
+        }
+
+        if (mode == ViewportDisplayMode.ColorDevelop)
+        {
+            EnsureDevelopLuts();
         }
 
         Viewport.SetDisplayMode(mode);
@@ -3251,37 +3299,52 @@ public partial class MainWindow : Window
             return;
         }
 
+        ushort value;
         try
         {
-            ushort value = ActiveImage.GetPixel(_lastCursorX, _lastCursorY, Viewport.Frame);
-            Clipboard.SetText((value >> CurrentShift).ToString());
+            value = ActiveImage.GetPixel(_lastCursorX, _lastCursorY, Viewport.Frame);
         }
-        catch (ArgumentOutOfRangeException)
+        catch (Exception ex) when (ex is ArgumentOutOfRangeException or ObjectDisposedException)
         {
+            return;
         }
+
+        ClipboardHelper.TrySetText((value >> CurrentShift).ToString(CultureInfo.InvariantCulture));
     }
 
     private void OnCopyPixelPosClick(object sender, RoutedEventArgs e)
     {
         if (_lastCursorInside)
         {
-            Clipboard.SetText($"{_lastCursorX}\t{_lastCursorY}");
+            ClipboardHelper.TrySetText($"{_lastCursorX}\t{_lastCursorY}");
         }
     }
 
     private void OnCopyViewClick(object sender, RoutedEventArgs e)
     {
-        if (!_vm.HasImage || Viewport.ActualWidth < 1)
+        // 高さのガードが無いと ActualHeight=0 で ArgumentOutOfRangeException になる
+        if (!_vm.HasImage || Viewport.ActualWidth < 1 || Viewport.ActualHeight < 1)
         {
             return;
         }
 
-        var bitmap = new RenderTargetBitmap(
-            (int)Viewport.ActualWidth, (int)Viewport.ActualHeight, 96, 96,
-            PixelFormats.Pbgra32);
-        bitmap.Render(Viewport);
-        Clipboard.SetImage(bitmap);
-        _vm.ImageInfoText = "表示をクリップボードへコピーしました";
+        RenderTargetBitmap bitmap;
+        try
+        {
+            bitmap = new RenderTargetBitmap(
+                (int)Viewport.ActualWidth, (int)Viewport.ActualHeight, 96, 96,
+                PixelFormats.Pbgra32);
+            bitmap.Render(Viewport);
+        }
+        catch (Exception ex) when (ex is ArgumentException or OutOfMemoryException)
+        {
+            AppLog.Warn($"表示のコピー用ビットマップ生成に失敗: {ex.Message}");
+            return;
+        }
+
+        _vm.ImageInfoText = ClipboardHelper.TrySetImage(bitmap)
+            ? "表示をクリップボードへコピーしました"
+            : "クリップボードを使用できませんでした(他のアプリが使用中の可能性があります)";
     }
 
     private void OnClearRoiClick(object sender, RoutedEventArgs e)
@@ -3343,7 +3406,7 @@ public partial class MainWindow : Window
     {
         if (_vm.SelectedFile is { } entry)
         {
-            Clipboard.SetText(entry.FullPath);
+            ClipboardHelper.TrySetText(entry.FullPath);
         }
     }
 

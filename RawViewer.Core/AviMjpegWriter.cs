@@ -10,6 +10,13 @@ namespace RawViewer.Core;
 /// </summary>
 public sealed class AviMjpegWriter : IDisposable
 {
+    /// <summary>
+    /// 出力サイズの既定上限(2GiB)。AVIのRIFF/idx1はサイズとオフセットを32bitで持ち、
+    /// 多くのリーダーがこれを符号付き32bitで扱うため安全側に倒している。
+    /// </summary>
+    public const long DefaultMaxFileBytes = 2L * 1024 * 1024 * 1024;
+
+    private readonly long _maxFileBytes;
     private readonly FileStream _stream;
     private readonly int _width;
     private readonly int _height;
@@ -33,8 +40,10 @@ public sealed class AviMjpegWriter : IDisposable
     /// <param name="width">フレーム幅(px)。</param>
     /// <param name="height">フレーム高さ(px)。</param>
     /// <param name="fps">フレームレート。</param>
-    /// <exception cref="ArgumentOutOfRangeException">サイズ・fpsが正でない場合。</exception>
-    public AviMjpegWriter(string path, int width, int height, int fps)
+    /// <param name="maxFileBytes">出力サイズの上限(既定2GiB)。超えるとAddFrameが例外を投げる。</param>
+    /// <exception cref="ArgumentOutOfRangeException">サイズ・fps・上限が正でない場合。</exception>
+    public AviMjpegWriter(
+        string path, int width, int height, int fps, long maxFileBytes = DefaultMaxFileBytes)
     {
         if (width <= 0 || height <= 0)
         {
@@ -46,6 +55,13 @@ public sealed class AviMjpegWriter : IDisposable
             throw new ArgumentOutOfRangeException(nameof(fps), "fpsは正の値である必要があります。");
         }
 
+        if (maxFileBytes <= 0 || maxFileBytes > DefaultMaxFileBytes)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(maxFileBytes), "上限は正かつ2GiB以下である必要があります。");
+        }
+
+        _maxFileBytes = maxFileBytes;
         _width = width;
         _height = height;
         _fps = fps;
@@ -61,11 +77,28 @@ public sealed class AviMjpegWriter : IDisposable
     /// </summary>
     /// <param name="jpegBytes">JPEGエンコード済みのフレームデータ。</param>
     /// <exception cref="InvalidOperationException">Finish後に呼ばれた場合。</exception>
+    /// <exception cref="NotSupportedException">
+    /// 追加するとAVIの32bitサイズ上限(2GiB)を超える場合。
+    /// </exception>
     public void AddFrame(ReadOnlySpan<byte> jpegBytes)
     {
         if (_finished)
         {
             throw new InvalidOperationException("Finish後にフレームは追加できません。");
+        }
+
+        // 上限を超えると idx1 のオフセットと RIFF サイズが 32bit で巻き戻り、
+        // 「書き出し完了」と表示されるのに先頭数フレームしか再生できない壊れたAVIになる
+        long chunkBytes = 8 + jpegBytes.Length + (jpegBytes.Length & 1);
+
+        // idx1(16バイト/フレーム)とそのヘッダ8バイトも最終ファイルサイズに含める
+        long fileAfter = _stream.Position + chunkBytes + ((_index.Count + 1) * 16L) + 8;
+        if (fileAfter > _maxFileBytes)
+        {
+            throw new NotSupportedException(
+                $"AVIのサイズ上限({_maxFileBytes:N0} バイト)を超えるため、" +
+                $"これ以上フレームを追加できません(現在 {_index.Count} フレーム)。" +
+                "分割して書き出してください。");
         }
 
         uint offset = (uint)(_stream.Position - _moviDataStart + 4);
@@ -125,8 +158,16 @@ public sealed class AviMjpegWriter : IDisposable
     /// </summary>
     public void Dispose()
     {
-        Finish();
-        _stream.Dispose();
+        // Finish が throw してもストリームを閉じる
+        // (閉じないと FileShare.None のロックが残り、再実行が IOException になる)
+        try
+        {
+            Finish();
+        }
+        finally
+        {
+            _stream.Dispose();
+        }
     }
 
     private void WriteHeaders()

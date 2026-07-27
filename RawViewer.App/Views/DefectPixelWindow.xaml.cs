@@ -4,6 +4,7 @@ using System.Text;
 using System.Windows;
 using System.Windows.Input;
 using Microsoft.Win32;
+using RawViewer.App.Services;
 using RawViewer.Core;
 
 namespace RawViewer.App.Views;
@@ -140,11 +141,7 @@ public partial class DefectPixelWindow : Window
 
     private void OnCopyClick(object sender, RoutedEventArgs e)
     {
-        string? table = BuildTable('\t');
-        if (table is not null)
-        {
-            Clipboard.SetText(table);
-        }
+        ClipboardHelper.TrySetText(BuildTable('\t'));
     }
 
     private void OnSaveCsvClick(object sender, RoutedEventArgs e)
@@ -162,7 +159,7 @@ public partial class DefectPixelWindow : Window
         };
         if (dialog.ShowDialog(this) == true)
         {
-            File.WriteAllText(dialog.FileName, table, Encoding.UTF8);
+            ClipboardHelper.WriteTextOrWarn(this, dialog.FileName, table, "欠陥画素リスト保存");
         }
     }
 

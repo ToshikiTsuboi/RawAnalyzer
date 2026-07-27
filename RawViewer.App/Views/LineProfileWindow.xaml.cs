@@ -5,6 +5,7 @@ using System.Windows;
 using System.Windows.Media;
 using System.Windows.Shapes;
 using Microsoft.Win32;
+using RawViewer.App.Services;
 using RawViewer.Core;
 
 namespace RawViewer.App.Views;
@@ -248,11 +249,7 @@ public partial class LineProfileWindow : Window
 
     private void OnCopyDataClick(object sender, RoutedEventArgs e)
     {
-        string? table = BuildTable('\t');
-        if (table is not null)
-        {
-            Clipboard.SetText(table);
-        }
+        ClipboardHelper.TrySetText(BuildTable('\t'));
     }
 
     private void OnCopyStatsClick(object sender, RoutedEventArgs e)
@@ -266,7 +263,7 @@ public partial class LineProfileWindow : Window
         sb.Append("max\t").Append(stats.Max.ToString("G6", CultureInfo.InvariantCulture)).AppendLine();
         sb.Append("median\t").Append(stats.Median.ToString("G6", CultureInfo.InvariantCulture)).AppendLine();
         sb.Append("sigma\t").Append(stats.Sigma.ToString("G6", CultureInfo.InvariantCulture)).AppendLine();
-        Clipboard.SetText(sb.ToString());
+        ClipboardHelper.TrySetText(sb.ToString());
     }
 
     private void OnSaveCsvClick(object sender, RoutedEventArgs e)
@@ -283,7 +280,7 @@ public partial class LineProfileWindow : Window
         var dialog = new SaveFileDialog { Filter = "CSV (*.csv)|*.csv", FileName = name };
         if (dialog.ShowDialog(this) == true)
         {
-            File.WriteAllText(dialog.FileName, table, Encoding.UTF8);
+            ClipboardHelper.WriteTextOrWarn(this, dialog.FileName, table, "プロファイル保存");
         }
     }
 }
