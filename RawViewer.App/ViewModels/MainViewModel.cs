@@ -24,6 +24,9 @@ public sealed class MainViewModel : ObservableObject
     private FileEntry? _selectedFile;
     private bool _hasImage;
     private string _imageInfoText = "画像未読込";
+    private bool _isProcessed;
+    private string _processingStateText = "";
+    private string _processingStateTooltip = "";
     private string _cursorStatusText = "";
     private string _zoomStatusText = "";
     private string _zoomPercentText = "—";
@@ -33,6 +36,7 @@ public sealed class MainViewModel : ObservableObject
     private double _gamma = 1.0;
     private double _contrast = 1.0;
     private double _blackLevel;
+    private double _whiteLevel = 65535;
     private double _blackLevelMax = 65535;
     private bool _histogramIsLog = true;
     private bool _histogramIsCumulative;
@@ -100,6 +104,30 @@ public sealed class MainViewModel : ObservableObject
         set => SetProperty(ref _imageInfoText, value);
     }
 
+    /// <summary>
+    /// 表示中の画像が加工済み(補正・HDR派生)かどうか。
+    /// ステータスバーの常設バッジに使い、保存完了などの一時メッセージで消えないようにする。
+    /// </summary>
+    public bool IsProcessed
+    {
+        get => _isProcessed;
+        set => SetProperty(ref _isProcessed, value);
+    }
+
+    /// <summary>加工済みバッジの表示文字列。</summary>
+    public string ProcessingStateText
+    {
+        get => _processingStateText;
+        set => SetProperty(ref _processingStateText, value);
+    }
+
+    /// <summary>加工済みバッジのツールチップ(適用内容の詳細)。</summary>
+    public string ProcessingStateTooltip
+    {
+        get => _processingStateTooltip;
+        set => SetProperty(ref _processingStateTooltip, value);
+    }
+
     /// <summary>ステータスバー中央のカーソル位置情報。</summary>
     public string CursorStatusText
     {
@@ -163,7 +191,17 @@ public sealed class MainViewModel : ObservableObject
         set => SetProperty(ref _blackLevel, value);
     }
 
-    /// <summary>黒レベルスライダーの最大値(ビット深度の最大raw code)。</summary>
+    /// <summary>
+    /// 白レベル(raw code)。これ以上の値が最大にマップされる。
+    /// 従来は自動コントラストのみが書き換える隠し状態だった。
+    /// </summary>
+    public double WhiteLevel
+    {
+        get => _whiteLevel;
+        set => SetProperty(ref _whiteLevel, value);
+    }
+
+    /// <summary>黒レベル/白レベルスライダーの最大値(ビット深度の最大raw code)。</summary>
     public double BlackLevelMax
     {
         get => _blackLevelMax;

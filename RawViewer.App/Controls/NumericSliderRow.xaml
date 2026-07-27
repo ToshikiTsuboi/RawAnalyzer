@@ -18,10 +18,11 @@
                     PreviewMouseWheel="OnSliderWheel" />
         </DockPanel>
         <DockPanel Margin="62,0,62,0">
-            <TextBlock x:Name="MinText" DockPanel.Dock="Left" FontSize="9"
-                       FontFamily="Consolas" Foreground="#FF6E6E69" />
-            <TextBlock x:Name="MaxText" DockPanel.Dock="Right" FontSize="9"
-                       FontFamily="Consolas" Foreground="#FF6E6E69" />
+            <!-- 9px + #6E6E69 (2.6:1) は判読困難だったため、サイズと明度を上げる -->
+            <TextBlock x:Name="MinText" DockPanel.Dock="Left" FontSize="10"
+                       FontFamily="Consolas" Foreground="{StaticResource TextFaint}" />
+            <TextBlock x:Name="MaxText" DockPanel.Dock="Right" FontSize="10"
+                       FontFamily="Consolas" Foreground="{StaticResource TextFaint}" />
             <Border />
         </DockPanel>
     </StackPanel>

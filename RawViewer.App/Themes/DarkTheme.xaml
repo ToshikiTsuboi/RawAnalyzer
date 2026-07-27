@@ -11,12 +11,31 @@
     <SolidColorBrush x:Key="BorderBrushLight" Color="#FF5A5A61" />
     <SolidColorBrush x:Key="TextBrush" Color="#FFD8D8D4" />
     <SolidColorBrush x:Key="TextDim" Color="#FF9A9A95" />
-    <SolidColorBrush x:Key="TextFaint" Color="#FF6E6E69" />
+    <!-- PanelBrush 上で 4.5:1 を満たす明るさ(旧 #6E6E69 は 2.64:1 で判読困難) -->
+    <SolidColorBrush x:Key="TextFaint" Color="#FF959590" />
     <SolidColorBrush x:Key="AccentBrush" Color="#FF5B9DD9" />
     <SolidColorBrush x:Key="AccentSoftBrush" Color="#335B9DD9" />
     <SolidColorBrush x:Key="CanvasBrush" Color="#FF161618" />
     <SolidColorBrush x:Key="ScrollThumbBrush" Color="#FF4A4A50" />
     <SolidColorBrush x:Key="ScrollThumbHoverBrush" Color="#FF5F5F66" />
+
+    <!-- ===== フォーカス表示 =====
+         既定の点線矩形はダーク背景で見えないため x:Null にしていたが、
+         代替がなくTabで移動しても現在位置が画面上どこにも出なかった。
+         アクセント色の破線枠を全コントロール共通の代替として使う。
+         (WPFはキーボード操作でフォーカスが移ったときだけ描画する) -->
+    <Style x:Key="AccentFocusVisual">
+        <Setter Property="Control.Template">
+            <Setter.Value>
+                <ControlTemplate>
+                    <Rectangle Margin="-2" StrokeThickness="1" RadiusX="4" RadiusY="4"
+                               Stroke="{StaticResource AccentBrush}"
+                               StrokeDashArray="2 2"
+                               SnapsToDevicePixels="True" />
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
 
     <!-- ===== Button ===== -->
     <Style TargetType="Button">
@@ -26,7 +45,7 @@
         <Setter Property="Padding" Value="12,5" />
         <Setter Property="FontSize" Value="12" />
         <Setter Property="SnapsToDevicePixels" Value="True" />
-        <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+        <Setter Property="FocusVisualStyle" Value="{StaticResource AccentFocusVisual}" />
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="Button">
@@ -66,7 +85,7 @@
         <Setter Property="Padding" Value="12,5" />
         <Setter Property="FontSize" Value="12" />
         <Setter Property="SnapsToDevicePixels" Value="True" />
-        <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+        <Setter Property="FocusVisualStyle" Value="{StaticResource AccentFocusVisual}" />
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="ToggleButton">
@@ -176,7 +195,7 @@
         <Setter Property="Padding" Value="8,4" />
         <Setter Property="FontSize" Value="12" />
         <Setter Property="SnapsToDevicePixels" Value="True" />
-        <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+        <Setter Property="FocusVisualStyle" Value="{StaticResource AccentFocusVisual}" />
         <Setter Property="ScrollViewer.CanContentScroll" Value="True" />
         <Setter Property="Template">
             <Setter.Value>
@@ -244,7 +263,7 @@
     <Style TargetType="CheckBox">
         <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
         <Setter Property="FontSize" Value="12" />
-        <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+        <Setter Property="FocusVisualStyle" Value="{StaticResource AccentFocusVisual}" />
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="CheckBox">
@@ -285,7 +304,7 @@
     <Style TargetType="RadioButton">
         <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
         <Setter Property="FontSize" Value="12" />
-        <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+        <Setter Property="FocusVisualStyle" Value="{StaticResource AccentFocusVisual}" />
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="RadioButton">
@@ -372,7 +391,7 @@
     <Style TargetType="Slider">
         <Setter Property="MinHeight" Value="18" />
         <Setter Property="VerticalAlignment" Value="Center" />
-        <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+        <Setter Property="FocusVisualStyle" Value="{StaticResource AccentFocusVisual}" />
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="Slider">
@@ -505,7 +524,7 @@
         <Setter Property="Foreground" Value="{StaticResource TextDim}" />
         <Setter Property="FontSize" Value="12" />
         <Setter Property="SnapsToDevicePixels" Value="True" />
-        <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+        <Setter Property="FocusVisualStyle" Value="{StaticResource AccentFocusVisual}" />
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="ListBoxItem">
@@ -574,7 +593,7 @@
         <Setter Property="Foreground" Value="{StaticResource TextDim}" />
         <Setter Property="FontSize" Value="12" />
         <Setter Property="IsExpanded" Value="False" />
-        <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+        <Setter Property="FocusVisualStyle" Value="{StaticResource AccentFocusVisual}" />
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="TreeViewItem">
@@ -633,7 +652,7 @@
         <Setter Property="FontSize" Value="12" />
         <Setter Property="FontFamily" Value="Consolas" />
         <Setter Property="HorizontalContentAlignment" Value="Stretch" />
-        <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+        <Setter Property="FocusVisualStyle" Value="{StaticResource AccentFocusVisual}" />
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="ListViewItem">
@@ -715,7 +734,7 @@
         <Setter Property="Foreground" Value="{StaticResource TextDim}" />
         <Setter Property="BorderBrush" Value="{StaticResource BorderBrushDark}" />
         <Setter Property="Width" Value="24" />
-        <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+        <Setter Property="FocusVisualStyle" Value="{StaticResource AccentFocusVisual}" />
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="Button">
@@ -744,7 +763,7 @@
         <Setter Property="BorderThickness" Value="0" />
         <Setter Property="Padding" Value="4,1" />
         <Setter Property="FontSize" Value="12" />
-        <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+        <Setter Property="FocusVisualStyle" Value="{StaticResource AccentFocusVisual}" />
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="Button">

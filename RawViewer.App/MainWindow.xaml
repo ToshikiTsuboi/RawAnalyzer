@@ -60,7 +60,7 @@
         <!-- メニュー -->
         <Menu x:Name="MainMenuBar" DockPanel.Dock="Top"
               Background="{StaticResource PanelBrush}" Padding="4,2">
-            <MenuItem Header="ファイル">
+            <MenuItem Header="ファイル(_F)">
                 <MenuItem Header="開く…" InputGestureText="Ctrl+O" Click="OnOpenFileClick" />
                 <MenuItem Header="フォルダを開く…" Click="OnOpenFolderClick" />
                 <MenuItem x:Name="RecentMenu" Header="最近使ったファイル" />
@@ -70,7 +70,7 @@
                 <Separator />
                 <MenuItem Header="終了" Click="OnExitClick" />
             </MenuItem>
-            <MenuItem Header="表示">
+            <MenuItem Header="表示(_V)">
                 <MenuItem Header="ズームイン" Click="OnZoomInClick" IsEnabled="{Binding HasImage}" />
                 <MenuItem Header="ズームアウト" Click="OnZoomOutClick" IsEnabled="{Binding HasImage}" />
                 <MenuItem Header="等倍 (1:1)" Click="OnActualSizeClick" IsEnabled="{Binding HasImage}" />
@@ -95,7 +95,7 @@
                     <MenuItem Header="チャネル分割 (R/Gr/Gb/B)" Click="OnMenuDisplayModeClick" Tag="3" />
                 </MenuItem>
             </MenuItem>
-            <MenuItem Header="処理">
+            <MenuItem Header="処理(_P)">
                 <MenuItem Header="自動コントラスト (0.35%クリップ)" Click="OnAutoContrastClick"
                           IsEnabled="{Binding HasImage}" />
                 <MenuItem Header="表示調整をリセット" Click="OnResetDisplayClick"
@@ -111,7 +111,7 @@
                 <MenuItem Header="バッチ現像 / 動画書き出し…" Click="OnBatchExportClick"
                           IsEnabled="{Binding HasImage}" />
             </MenuItem>
-            <MenuItem Header="HDR">
+            <MenuItem Header="HDR(_D)">
                 <MenuItem Header="HDR分割表示 (長/短)" Click="OnMenuDisplayModeClick" Tag="4"
                           IsEnabled="{Binding HasImage}" />
                 <MenuItem Header="HDR合成表示" Click="OnMenuDisplayModeClick" Tag="5"
@@ -120,7 +120,7 @@
                 <MenuItem Header="HDR方式の設定 (フォーマット変更)…" Click="OnChangeFormatClick"
                           IsEnabled="{Binding HasImage}" />
             </MenuItem>
-            <MenuItem Header="ツール">
+            <MenuItem Header="ツール(_T)">
                 <MenuItem Header="ROI選択モード" IsCheckable="True"
                           IsChecked="{Binding IsChecked, ElementName=RoiToggle, Mode=TwoWay}"
                           IsEnabled="{Binding HasImage}" />
@@ -142,7 +142,7 @@
                 <Separator />
                 <MenuItem Header="プリセットフォルダを開く" Click="OnOpenPresetFolderClick" />
             </MenuItem>
-            <MenuItem Header="ヘルプ">
+            <MenuItem Header="ヘルプ(_H)">
                 <MenuItem Header="操作ガイド" Click="OnUsageGuideClick" />
                 <MenuItem Header="バージョン情報" Click="OnAboutClick" />
             </MenuItem>
@@ -200,6 +200,18 @@
             <DockPanel Margin="12,4">
                 <TextBlock DockPanel.Dock="Right" Text="{Binding ZoomStatusText}"
                            FontFamily="Consolas" FontSize="11" Foreground="{StaticResource TextDim}" />
+
+                <!-- 加工済みかどうかは一時メッセージで上書きされてはいけないので独立させる -->
+                <Border DockPanel.Dock="Right" Margin="12,0,12,0" Padding="6,1"
+                        CornerRadius="3" VerticalAlignment="Center"
+                        Background="{StaticResource AccentSoftBrush}"
+                        BorderBrush="{StaticResource AccentBrush}" BorderThickness="1"
+                        ToolTip="{Binding ProcessingStateTooltip}"
+                        Visibility="{Binding IsProcessed,
+                                     Converter={StaticResource BoolToVis}}">
+                    <TextBlock Text="{Binding ProcessingStateText}" FontFamily="Consolas"
+                               FontSize="11" Foreground="{StaticResource AccentBrush}" />
+                </Border>
                 <TextBlock Text="{Binding ImageInfoText}" FontFamily="Consolas" FontSize="11"
                            Foreground="{StaticResource TextDim}" Margin="0,0,24,0" />
                 <TextBlock Text="{Binding CursorStatusText}" FontFamily="Consolas" FontSize="11"
@@ -237,6 +249,7 @@
                     <DockPanel DockPanel.Dock="Top" Margin="8,0,2,6">
                         <Button DockPanel.Dock="Right" Style="{StaticResource PinToggle}"
                                 Content="📌" Click="OnHideLeftPanelClick"
+                                AutomationProperties.Name="ファイルパネルを隠す"
                                 ToolTip="ファイルパネルを隠す (Ctrl+L)" />
                         <TextBlock Text="{Binding FolderPath}" FontSize="11"
                                    Foreground="{StaticResource TextFaint}"
@@ -344,16 +357,20 @@
                         Visibility="{Binding HasSequence, Converter={StaticResource BoolToVis}}">
                     <DockPanel>
                         <Button Style="{StaticResource ToolButton}" Content="⏮"
-                                Click="OnSeqFirstClick" Padding="8,3" />
+                                Click="OnSeqFirstClick" Padding="8,3"
+                                AutomationProperties.Name="先頭フレームへ" ToolTip="先頭フレームへ" />
                         <Button Style="{StaticResource ToolButton}" Content="◀"
-                                Click="OnSeqPrevClick" Padding="8,3" />
+                                Click="OnSeqPrevClick" Padding="8,3"
+                                AutomationProperties.Name="前のフレームへ" ToolTip="前のフレームへ" />
                         <ToggleButton x:Name="PlayToggle" Content="▶ 再生"
                                       Style="{StaticResource ToolToggle}" Padding="10,3"
                                       Checked="OnPlayToggleChanged" Unchecked="OnPlayToggleChanged" />
                         <Button Style="{StaticResource ToolButton}" Content="▶"
-                                Click="OnSeqNextClick" Padding="8,3" />
+                                Click="OnSeqNextClick" Padding="8,3"
+                                AutomationProperties.Name="次のフレームへ" ToolTip="次のフレームへ" />
                         <Button Style="{StaticResource ToolButton}" Content="⏭"
-                                Click="OnSeqLastClick" Padding="8,3" />
+                                Click="OnSeqLastClick" Padding="8,3"
+                                AutomationProperties.Name="最終フレームへ" ToolTip="最終フレームへ" />
                         <ComboBox x:Name="FpsCombo" DockPanel.Dock="Right" MinWidth="76"
                                   SelectedIndex="2" FontSize="11" VerticalAlignment="Center">
                             <ComboBoxItem Content="5 fps" />
@@ -396,6 +413,7 @@
                         <DockPanel>
                             <Button DockPanel.Dock="Right" Style="{StaticResource PinToggle}"
                                     Content="📌" Click="OnHideRightPanelClick"
+                                    AutomationProperties.Name="調整パネルを隠す"
                                     ToolTip="調整パネルを隠す (Ctrl+R)" />
                             <TextBlock Text="調整パネル" FontSize="11" FontWeight="SemiBold"
                                        Foreground="{StaticResource TextDim}"
@@ -424,6 +442,10 @@
                                 <controls:NumericSliderRow Label="黒レベル" Value="{Binding BlackLevel}"
                                                            Minimum="0" Maximum="{Binding BlackLevelMax}"
                                                            Step="1" Decimals="0" DefaultValue="0" />
+                                <controls:NumericSliderRow Label="白レベル" Value="{Binding WhiteLevel}"
+                                                           Minimum="0" Maximum="{Binding BlackLevelMax}"
+                                                           Step="1" Decimals="0"
+                                                           DefaultValue="{Binding BlackLevelMax}" />
                                 <DockPanel Margin="0,6,0,0"
                                            Visibility="{Binding HdrTargetVisible,
                                                Converter={StaticResource BoolToVis}}">

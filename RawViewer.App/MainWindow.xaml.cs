@@ -479,6 +479,7 @@ public partial class MainWindow : Window
         _derivedBayerPyramid?.Dispose();
         _derivedBayerPyramid = null;
         _correctionLabel = null;
+        UpdateProcessingBadge();
         _channelHistograms = null;
         _colorImage = color;
         _vm.IsColorImage = color is not null;
@@ -988,11 +989,13 @@ public partial class MainWindow : Window
         if (e.PropertyName is nameof(MainViewModel.Gain)
             or nameof(MainViewModel.Gamma)
             or nameof(MainViewModel.Contrast)
-            or nameof(MainViewModel.BlackLevel))
+            or nameof(MainViewModel.BlackLevel)
+            or nameof(MainViewModel.WhiteLevel))
         {
-            if (e.PropertyName == nameof(MainViewModel.BlackLevel))
+            if (e.PropertyName is nameof(MainViewModel.BlackLevel)
+                or nameof(MainViewModel.WhiteLevel))
             {
-                _blackPoint = (ushort)Math.Min(65535, (long)_vm.BlackLevel << CurrentShift);
+                ApplyLevelCodes(_vm.BlackLevel, _vm.WhiteLevel);
             }
 
             if (_vm.HasImage)
@@ -1755,6 +1758,7 @@ public partial class MainWindow : Window
 
         _correctionLabel = _correctionLabel is null ? label : $"{_correctionLabel}, {label}";
         UpdateNoiseWindowSource();
+        UpdateProcessingBadge();
         Title = $"RawViewer — {Path.GetFileName(_currentPath!)} [{_correctionLabel}]";
         _vm.ImageInfoText =
             $"{processed.Width}×{processed.Height} · {processed.Format.BitDepth}bit · " +
@@ -2268,6 +2272,7 @@ public partial class MainWindow : Window
         Viewport.SetImage(derived, derived.Format);
         Viewport.SetLut(BuildLut());
         UpdateNoiseWindowSource();
+        UpdateProcessingBadge();
         RefreshHistogram(roi: null);
         _ = BuildDerivedPyramidAsync(derived);
     }
@@ -2308,6 +2313,7 @@ public partial class MainWindow : Window
         Viewport.SetBayerPyramid(_mainBayerPyramid);
         Viewport.SetLut(BuildLut());
         UpdateNoiseWindowSource();
+        UpdateProcessingBadge();
         DetectSequence();
         RefreshHistogram(roi: null);
     }
@@ -2399,6 +2405,17 @@ public partial class MainWindow : Window
             _blackPoint, _whitePoint, _vm.Gain, _vm.Gamma, _vm.Contrast));
     }
 
+    /// <summary>raw code の黒/白レベルを16bitフルスケールの内部値へ反映する。</summary>
+    private void ApplyLevelCodes(double blackCode, double whiteCode)
+    {
+        int shift = CurrentShift;
+        _blackPoint = (ushort)Math.Clamp((long)blackCode << shift, 0, 65535);
+
+        // 白点はそのcodeの上端まで含める(下位ビットを立てる)
+        _whitePoint = (ushort)Math.Clamp(
+            ((long)whiteCode << shift) | ((1L << shift) - 1), 0, 65535);
+    }
+
     private void ResetDisplayParameters()
     {
         _updatingSliders = true;
@@ -2406,6 +2423,7 @@ public partial class MainWindow : Window
         _vm.Gamma = 1.0;
         _vm.Contrast = 1.0;
         _vm.BlackLevel = 0;
+        _vm.WhiteLevel = _vm.BlackLevelMax;
         _updatingSliders = false;
         _blackPoint = 0;
         _whitePoint = 65535;
@@ -2432,13 +2450,11 @@ public partial class MainWindow : Window
             return;
         }
 
-        int shift = CurrentShift;
-        _blackPoint = (ushort)(levels.BlackCode << shift);
-        _whitePoint = (ushort)Math.Min(
-            65535, ((long)levels.WhiteCode << shift) | ((1L << shift) - 1));
         _updatingSliders = true;
         _vm.BlackLevel = levels.BlackCode;
+        _vm.WhiteLevel = levels.WhiteCode;
         _updatingSliders = false;
+        ApplyLevelCodes(levels.BlackCode, levels.WhiteCode);
         Viewport.SetLut(BuildLut());
         UpdateDevelopLuts();
     }
@@ -3196,6 +3212,40 @@ public partial class MainWindow : Window
         }
 
         _noiseWindow.Activate();
+    }
+
+    /// <summary>
+    /// 「素データではない」ことを示す常設バッジを更新する。
+    /// </summary>
+    /// <remarks>
+    /// 補正・派生の状態を ImageInfoText に埋めていたため、保存完了メッセージ等で
+    /// 上書きされて消え、加工済みデータを素データと誤認したままヒストグラムを
+    /// 読む危険があった。
+    /// </remarks>
+    private void UpdateProcessingBadge()
+    {
+        if (_derivedImage is not null)
+        {
+            _vm.IsProcessed = true;
+            _vm.ProcessingStateText = _hdrFloatImage is not null ? "⚠ HDR合成" : "⚠ HDR分割";
+            _vm.ProcessingStateTooltip =
+                "表示中の画像はHDR処理後の派生ビューです。統計値も派生ビューに対するものです。";
+            return;
+        }
+
+        if (_correctionLabel is not null)
+        {
+            _vm.IsProcessed = true;
+            _vm.ProcessingStateText = $"⚠ 加工済: {_correctionLabel}";
+            _vm.ProcessingStateTooltip =
+                $"適用済み: {_correctionLabel}{Environment.NewLine}" +
+                "統計値も加工後のデータに対するものです。再読込で元に戻せます。";
+            return;
+        }
+
+        _vm.IsProcessed = false;
+        _vm.ProcessingStateText = "";
+        _vm.ProcessingStateTooltip = "";
     }
 
     private string NoiseSourceName()

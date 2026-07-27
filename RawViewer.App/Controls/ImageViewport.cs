@@ -105,6 +105,8 @@ public sealed class ImageViewport : FrameworkElement
     private double _panStartOriginX;
     private double _panStartOriginY;
 
+    private ViewportInteractionMode _interactionMode = ViewportInteractionMode.Pan;
+
     private bool _roiDragging;
     private int _roiStartX;
     private int _roiStartY;
@@ -165,8 +167,30 @@ public sealed class ImageViewport : FrameworkElement
     /// <summary>現在の表示モード。</summary>
     public ViewportDisplayMode DisplayMode => _displayMode;
 
-    /// <summary>マウス操作モード。</summary>
-    public ViewportInteractionMode InteractionMode { get; set; } = ViewportInteractionMode.Pan;
+    /// <summary>
+    /// マウス操作モード。設定するとカーソル形状も切り替わる
+    /// (右パネルを畳んでいてもモードが分かるようにするため)。
+    /// </summary>
+    public ViewportInteractionMode InteractionMode
+    {
+        get => _interactionMode;
+        set
+        {
+            if (_interactionMode == value)
+            {
+                return;
+            }
+
+            _interactionMode = value;
+            Cursor = value switch
+            {
+                ViewportInteractionMode.RoiSelect => Cursors.Cross,
+                ViewportInteractionMode.LineProfile => Cursors.Cross,
+                ViewportInteractionMode.WhiteBalancePick => Cursors.UpArrow,
+                _ => Cursors.Arrow,
+            };
+        }
+    }
 
     /// <summary>現在のROI(未選択ならnull)。</summary>
     public RegionOfInterest? Roi => _roi;
