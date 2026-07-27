@@ -59,6 +59,7 @@ public partial class MainWindow : Window
 
     // 現像LUTがパラメータ変更で古くなっているか(カラー現像表示に入るまで再生成を遅延)
     private bool _developLutsDirty = true;
+    private DispatcherTimer? _developLutTimer;
 
     // シーケンス再生
     private enum SequenceMode
@@ -270,16 +271,10 @@ public partial class MainWindow : Window
     private void LoadFolder(string folder, string? selectPath)
     {
         folder = Path.GetFullPath(folder);
-        var entries = new List<FileEntry>();
+        List<FileEntry> entries;
         try
         {
-            foreach (string path in Directory.EnumerateFiles(folder)
-                .Where(p => SupportedExtensions.Contains(
-                    Path.GetExtension(p), StringComparer.OrdinalIgnoreCase))
-                .OrderBy(p => p, NaturalOrderComparer.Instance))
-            {
-                entries.Add(new FileEntry(Path.GetFileName(path), path));
-            }
+            entries = EnumerateFolder(folder);
         }
         catch (Exception ex)
         {
@@ -305,6 +300,38 @@ public partial class MainWindow : Window
             _vm.SelectedFile = _vm.Files.FirstOrDefault(
                 f => string.Equals(f.FullPath, selectPath, StringComparison.OrdinalIgnoreCase));
         }
+    }
+
+    /// <summary>
+    /// フォルダ内の対応ファイルをサイズ付きで列挙する。
+    /// </summary>
+    /// <remarks>
+    /// DirectoryInfo.EnumerateFiles は列挙時にサイズを持ってくるので、
+    /// あとから1ファイルずつ FileInfo.Length を撃つ必要がない。
+    /// ネットワーク共有の5000ファイルで数秒〜十数秒UIが止まっていた原因。
+    /// </remarks>
+    private static List<FileEntry> EnumerateFolder(string folder)
+    {
+        var entries = new List<FileEntry>();
+        foreach (FileInfo info in new DirectoryInfo(folder).EnumerateFiles()
+            .Where(f => SupportedExtensions.Contains(
+                f.Extension, StringComparer.OrdinalIgnoreCase))
+            .OrderBy(f => f.FullName, NaturalOrderComparer.Instance))
+        {
+            long length;
+            try
+            {
+                length = info.Length;
+            }
+            catch (Exception)
+            {
+                length = -1;
+            }
+
+            entries.Add(new FileEntry(info.Name, info.FullName, IsDirectory: false, length));
+        }
+
+        return entries;
     }
 
     private void OnFileListDoubleClick(object sender, MouseButtonEventArgs e)
@@ -613,8 +640,12 @@ public partial class MainWindow : Window
 
             if (roi is { } r)
             {
+                // ヒストグラムと同じ基準で間引く。全面ROIの10億画素で
+                // 2GBを毎回読み直していたのを避ける(厳密値はSampleCountで判別できる)
                 exactStats = await Task.Run(
-                    () => ImageAnalysis.ComputeStatistics(image, frame, r, cts.Token), cts.Token);
+                    () => ImageAnalysis.ComputeStatistics(
+                        image, frame, r, ImageAnalysis.DefaultMaxHistogramSamples, cts.Token),
+                    cts.Token);
             }
         }
         catch (OperationCanceledException)
@@ -634,7 +665,8 @@ public partial class MainWindow : Window
         _histogram = result;
         _channelHistograms = channels;
         UpdateChannelStatsPanel();
-        _vm.HistogramIsSampled = result.IsSampled;
+        bool statsSampled = exactStats is { } s && s.SampleCount < (roi?.PixelCount ?? 0);
+        _vm.HistogramIsSampled = result.IsSampled || statsSampled;
         RegionStatistics stats = exactStats ?? result.Statistics;
         _vm.HistMeanSigmaText = $"{stats.Mean:F1} / {stats.Sigma:F1}";
         _vm.HistMinMaxText = $"{stats.Min} / {stats.Max}";
@@ -1020,24 +1052,38 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// 現像LUTを再生成する。カラー現像表示中でなければダーティ印だけ付け、
+    /// 現像LUTの再生成を予約する。カラー現像表示中でなければダーティ印だけ付け、
     /// 実際の生成(65536×3回のMath.Powを含む)はモード切替まで遅らせる。
+    /// 表示中でもスライダー連続操作で毎ティック作り直さないよう間引く。
     /// </summary>
     private void UpdateDevelopLuts()
     {
+        _developLutsDirty = true;
         if (Viewport.DisplayMode != ViewportDisplayMode.ColorDevelop)
         {
-            _developLutsDirty = true;
             return;
         }
 
-        _developLutsDirty = false;
-        Viewport.SetDevelopLuts(DevelopLuts.Create(CurrentDevelopParameters()));
+        _developLutTimer ??= CreateDevelopLutTimer();
+        _developLutTimer.Stop();
+        _developLutTimer.Start();
     }
 
-    /// <summary>カラー現像表示へ入る直前に、遅延していた現像LUT生成を確定させる。</summary>
+    private DispatcherTimer CreateDevelopLutTimer()
+    {
+        var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(60) };
+        timer.Tick += (_, _) =>
+        {
+            timer.Stop();
+            EnsureDevelopLuts();
+        };
+        return timer;
+    }
+
+    /// <summary>遅延していた現像LUT生成を確定させる(モード切替・保存直前)。</summary>
     private void EnsureDevelopLuts()
     {
+        _developLutTimer?.Stop();
         if (!_developLutsDirty)
         {
             return;
@@ -1797,14 +1843,8 @@ public partial class MainWindow : Window
             return;
         }
 
-        string extension = Path.GetExtension(_currentPath);
-        List<string> targets = _vm.Files
-            .Where(f => !f.IsDirectory && string.Equals(
-                Path.GetExtension(f.FullPath), extension, StringComparison.OrdinalIgnoreCase))
-            .Select(f => f.FullPath)
-            .Where(p => SafeFileSize(p) == size)
-            .OrderBy(p => p, NaturalOrderComparer.Instance)
-            .ToList();
+        IReadOnlyList<string> targets = SequenceScanner.FindStack(
+            _currentPath, size, CandidateFiles());
         if (targets.Count == 0)
         {
             return;
@@ -1833,7 +1873,8 @@ public partial class MainWindow : Window
         ExecuteBatch(targets, format, choice);
     }
 
-    private void ExecuteBatch(List<string> targets, RawFormat format, BatchChoice choice)
+    private void ExecuteBatch(
+        IReadOnlyList<string> targets, RawFormat format, BatchChoice choice)
     {
         BayerPattern pattern = format.Bayer;
         bool color = pattern != BayerPattern.None;
@@ -2609,26 +2650,40 @@ public partial class MainWindow : Window
             else if (_currentPath is not null && IsRawFile(_currentPath))
             {
                 // 同一フォルダ・同一拡張子・同一サイズのファイル群をバーチャルスタックとみなす
-                long size = SafeFileSize(_currentPath);
-                string extension = Path.GetExtension(_currentPath);
-                List<string> files = _vm.Files
-                    .Where(f => !f.IsDirectory && string.Equals(
-                        Path.GetExtension(f.FullPath), extension, StringComparison.OrdinalIgnoreCase))
-                    .Select(f => f.FullPath)
-                    .Where(p => SafeFileSize(p) == size)
-                    .OrderBy(p => p, NaturalOrderComparer.Instance)
-                    .ToList();
-                if (files.Count > 1 && size > 0)
+                IReadOnlyList<string> files = SequenceScanner.FindStack(
+                    _currentPath, CurrentFileLength(), CandidateFiles());
+                if (files.Count > 1)
                 {
                     _sequenceMode = SequenceMode.Files;
-                    _sequenceFiles = files;
-                    _sequenceIndex = Math.Max(0, files.FindIndex(
-                        p => string.Equals(p, _currentPath, StringComparison.OrdinalIgnoreCase)));
+                    _sequenceFiles = files.ToList();
+                    _sequenceIndex = SequenceScanner.IndexOf(files, _currentPath);
                 }
             }
         }
 
         UpdateSequenceUi();
+    }
+
+    /// <summary>ファイル一覧を仮想スタック判定の候補へ変換する(サイズは列挙時のキャッシュ)。</summary>
+    private IEnumerable<SequenceFile> CandidateFiles()
+    {
+        return _vm.Files
+            .Where(f => !f.IsDirectory)
+            .Select(f => new SequenceFile(f.FullPath, f.Length));
+    }
+
+    /// <summary>現在開いているファイルのサイズ。一覧のキャッシュを優先する。</summary>
+    private long CurrentFileLength()
+    {
+        if (_currentPath is null)
+        {
+            return -1;
+        }
+
+        FileEntry? entry = _vm.Files.FirstOrDefault(
+            f => !f.IsDirectory
+                && string.Equals(f.FullPath, _currentPath, StringComparison.OrdinalIgnoreCase));
+        return entry is { Length: > 0 } ? entry.Length : SafeFileSize(_currentPath);
     }
 
     private static long SafeFileSize(string path)

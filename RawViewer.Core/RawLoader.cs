@@ -80,6 +80,20 @@ public static class RawLoader
     }
 
     /// <summary>
+    /// キャンセル可能なRawファイル読み込み。
+    /// </summary>
+    /// <param name="path">Rawファイルのパス。</param>
+    /// <param name="format">ファイルの解釈方法。</param>
+    /// <param name="cancellationToken">キャンセルトークン。</param>
+    /// <returns>読み込まれた画像。呼び出し側でDisposeすること。</returns>
+    /// <exception cref="InvalidDataException">ファイルサイズがフォーマットに対して不足している場合。</exception>
+    /// <exception cref="OperationCanceledException">キャンセルされた場合。</exception>
+    public static RawImage Load(string path, RawFormat format, CancellationToken cancellationToken)
+    {
+        return Load(path, format, DefaultInMemoryPixelThreshold, cancellationToken);
+    }
+
+    /// <summary>
     /// 閾値を指定してRawファイルを読み込む。
     /// 全フレーム合計画素数が閾値以下ならヒープ(ushort[])へ展開し、
     /// 超過する場合はMemoryMappedFile経由のオンデマンド読み出しとなる。
@@ -87,9 +101,15 @@ public static class RawLoader
     /// <param name="path">Rawファイルのパス。</param>
     /// <param name="format">ファイルの解釈方法。</param>
     /// <param name="inMemoryPixelThreshold">ヒープ展開する画素数の上限。</param>
+    /// <param name="cancellationToken">キャンセルトークン(MMF経路では無視される)。</param>
     /// <returns>読み込まれた画像。呼び出し側でDisposeすること。</returns>
     /// <exception cref="InvalidDataException">ファイルサイズがフォーマットに対して不足している場合。</exception>
-    public static RawImage Load(string path, RawFormat format, long inMemoryPixelThreshold)
+    /// <exception cref="OperationCanceledException">キャンセルされた場合。</exception>
+    public static RawImage Load(
+        string path,
+        RawFormat format,
+        long inMemoryPixelThreshold,
+        CancellationToken cancellationToken = default)
     {
         format.Validate();
         long requiredBytes = format.HeaderOffset + format.FrameSizeInBytes * format.FrameCount;
@@ -102,7 +122,7 @@ public static class RawLoader
 
         if (format.TotalPixels <= inMemoryPixelThreshold)
         {
-            return LoadInMemory(path, format);
+            return LoadInMemory(path, format, cancellationToken);
         }
 
         var mmf = MemoryMappedFile.CreateFromFile(
@@ -148,29 +168,45 @@ public static class RawLoader
             .ToArray();
     }
 
-    private static RawImage LoadInMemory(string path, RawFormat format)
+    /// <summary>1回に読み込むバイト数の目安(チャンク境界は行に揃える)。</summary>
+    private const int LoadChunkBytes = 8 << 20;
+
+    private static RawImage LoadInMemory(
+        string path, RawFormat format, CancellationToken cancellationToken)
     {
         int width = format.Width;
-        int bytesPerPixel = format.BytesPerPixel;
-        int rowBytes = width * bytesPerPixel;
+        int rowBytes = width * format.BytesPerPixel;
         int totalRows = format.Height * format.FrameCount;
 
-        byte[] raw = new byte[(long)rowBytes * totalRows];
-        using (var stream = new FileStream(
-            path, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 1 << 20))
-        {
-            stream.Seek(format.HeaderOffset, SeekOrigin.Begin);
-            stream.ReadExactly(raw);
-        }
-
+        // ファイル全体の byte[] と ushort[] を同時に持つとピークが約2倍になる
+        // (16bit・1億画素で約400MB)。数MBのチャンクへストリーミングする
+        int rowsPerChunk = Math.Max(1, LoadChunkBytes / Math.Max(1, rowBytes));
+        var chunk = new byte[(long)rowBytes * Math.Min(rowsPerChunk, totalRows)];
         ushort[] pixels = new ushort[format.TotalPixels];
-        Parallel.For(0, totalRows, row =>
+
+        using var stream = new FileStream(
+            path, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 1 << 20);
+        stream.Seek(format.HeaderOffset, SeekOrigin.Begin);
+
+        for (int firstRow = 0; firstRow < totalRows; firstRow += rowsPerChunk)
         {
-            PixelNormalizer.Normalize(
-                raw.AsSpan(row * rowBytes, rowBytes),
-                pixels.AsSpan(row * width, width),
-                format.BitDepth, format.Packing, format.Endianness);
-        });
+            cancellationToken.ThrowIfCancellationRequested();
+            int rows = Math.Min(rowsPerChunk, totalRows - firstRow);
+            stream.ReadExactly(chunk, 0, rows * rowBytes);
+
+            int chunkFirstRow = firstRow;
+            Parallel.For(
+                0,
+                rows,
+                new ParallelOptions { CancellationToken = cancellationToken },
+                row =>
+                {
+                    PixelNormalizer.Normalize(
+                        chunk.AsSpan(row * rowBytes, rowBytes),
+                        pixels.AsSpan((chunkFirstRow + row) * width, width),
+                        format.BitDepth, format.Packing, format.Endianness);
+                });
+        }
 
         return new RawImage(format, pixels);
     }

@@ -17,6 +17,12 @@ public sealed record DecodedImage(RawImage Luminance, ColorImage? Color);
 /// </summary>
 internal static class ImageFileLoader
 {
+    /// <summary>
+    /// デコード可能な最大画素数。WICが全画素をメモリ上に展開するため、
+    /// これを超えるものは読み込まずに拒否する。
+    /// </summary>
+    public const long MaxPixels = 200_000_000;
+
     /// <summary>WICで読み込む拡張子。</summary>
     public static readonly string[] SupportedExtensions =
     {
@@ -38,6 +44,7 @@ internal static class ImageFileLoader
     /// <param name="path">ファイルパス。</param>
     /// <returns>読込結果。</returns>
     /// <exception cref="InvalidDataException">デコードできない場合。</exception>
+    /// <exception cref="NotSupportedException">画素数が上限を超える場合。</exception>
     public static DecodedImage Load(string path)
     {
         BitmapFrame frame;
@@ -58,6 +65,16 @@ internal static class ImageFileLoader
         int width = frame.PixelWidth;
         int height = frame.PixelHeight;
         PixelFormat format = frame.Format;
+
+        // BitmapCacheOption.OnLoad で WIC 側も全画素を展開するため、
+        // rawのようなMMF退避ができない。上限を超えるものは明示的に拒否する
+        long pixelCount = (long)width * height;
+        if (pixelCount > MaxPixels)
+        {
+            throw new NotSupportedException(
+                $"{width}×{height} ({pixelCount / 1_000_000.0:F0}M画素) は" +
+                $"デコード画像の上限 {MaxPixels / 1_000_000} M画素を超えています。");
+        }
 
         if (format == PixelFormats.Gray16)
         {
@@ -84,14 +101,25 @@ internal static class ImageFileLoader
         if (format == PixelFormats.Rgb48 || format == PixelFormats.Rgba64)
         {
             int channels = format == PixelFormats.Rgb48 ? 3 : 4;
-            var source = new ushort[(long)width * height * channels];
+            var source = new ushort[pixelCount * channels];
             frame.CopyPixels(source, width * channels * 2, 0);
-            var rgb = new ushort[(long)width * height * 3];
-            for (long i = 0; i < (long)width * height; i++)
+
+            ushort[] rgb;
+            if (channels == 3)
             {
-                rgb[i * 3] = source[i * channels];
-                rgb[i * 3 + 1] = source[i * channels + 1];
-                rgb[i * 3 + 2] = source[i * channels + 2];
+                // Rgb48 は長さもレイアウトも出力と同一。ColorImage は配列を
+                // 参照保持するので、もう1本確保してコピーする必要はない
+                rgb = source;
+            }
+            else
+            {
+                rgb = new ushort[pixelCount * 3];
+                for (long i = 0; i < pixelCount; i++)
+                {
+                    rgb[i * 3] = source[i * channels];
+                    rgb[i * 3 + 1] = source[i * channels + 1];
+                    rgb[i * 3 + 2] = source[i * channels + 2];
+                }
             }
 
             ColorImage color16 = ColorImage.FromInterleaved(width, height, 16, rgb);

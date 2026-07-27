@@ -139,36 +139,77 @@ public static class ImageAnalysis
     public static RegionStatistics ComputeStatistics(
         RawImage image, int frame, RegionOfInterest roi, CancellationToken cancellationToken = default)
     {
+        return ComputeStatistics(image, frame, roi, maxSamples: 0, cancellationToken);
+    }
+
+    /// <summary>
+    /// 領域の統計値(mean/σ/min/max)を計算する。
+    /// 領域画素数が <paramref name="maxSamples"/> を超える場合は行・列の等間隔
+    /// サンプリングで計算する(ヒストグラムと同じ基準)。
+    /// </summary>
+    /// <param name="image">対象画像。</param>
+    /// <param name="frame">フレーム番号。</param>
+    /// <param name="roi">対象領域(画像範囲内であること)。</param>
+    /// <param name="maxSamples">サンプリングへ切り替える画素数閾値。0以下なら常に全画素走査。</param>
+    /// <param name="cancellationToken">キャンセルトークン。</param>
+    /// <returns>raw code値域の統計値。SampleCountは実際に集計した画素数。</returns>
+    public static RegionStatistics ComputeStatistics(
+        RawImage image,
+        int frame,
+        RegionOfInterest roi,
+        long maxSamples,
+        CancellationToken cancellationToken = default)
+    {
         roi = roi.Clamp(image.Width, image.Height);
         if (roi.PixelCount == 0)
         {
             return new RegionStatistics(0, 0, 0, 0, 0);
         }
 
+        int stride = 1;
+        if (maxSamples > 0 && roi.PixelCount > maxSamples)
+        {
+            stride = Math.Max(1, (int)Math.Ceiling(Math.Sqrt((double)roi.PixelCount / maxSamples)));
+
+            // ヒストグラムと同じ理由でstrideは奇数にする。
+            // 偶数だと走査位置のx/y偶奇が固定され、BayerではRだけの統計になる
+            if ((stride & 1) == 0)
+            {
+                stride++;
+            }
+        }
+
         int shift = 16 - image.Format.BitDepth;
         object gate = new();
         long totalSum = 0;
         long totalSumSq = 0;
+        long totalCount = 0;
         int totalMin = int.MaxValue;
         int totalMax = int.MinValue;
+        int rowCount = (roi.Height + stride - 1) / stride;
+        int sampleStride = stride;
 
         Parallel.For(
             0,
-            roi.Height,
+            rowCount,
             new ParallelOptions { CancellationToken = cancellationToken },
-            () => (Buffer: new ushort[roi.Width], Sum: 0L, SumSq: 0L, Min: int.MaxValue, Max: int.MinValue),
-            (row, _, local) =>
+            () => (Buffer: new ushort[roi.Width], Sum: 0L, SumSq: 0L, Count: 0L,
+                Min: int.MaxValue, Max: int.MinValue),
+            (rowIndex, _, local) =>
             {
-                image.CopyRegion(frame, roi.X, roi.Y + row, roi.Width, 1, local.Buffer);
+                image.CopyRegion(
+                    frame, roi.X, roi.Y + rowIndex * sampleStride, roi.Width, 1, local.Buffer);
                 long sum = local.Sum;
                 long sumSq = local.SumSq;
+                long count = local.Count;
                 int min = local.Min;
                 int max = local.Max;
-                foreach (ushort v in local.Buffer)
+                for (int x = 0; x < roi.Width; x += sampleStride)
                 {
-                    int code = v >> shift;
+                    int code = local.Buffer[x] >> shift;
                     sum += code;
                     sumSq += (long)code * code;
+                    count++;
                     if (code < min)
                     {
                         min = code;
@@ -180,7 +221,7 @@ public static class ImageAnalysis
                     }
                 }
 
-                return (local.Buffer, sum, sumSq, min, max);
+                return (local.Buffer, sum, sumSq, count, min, max);
             },
             local =>
             {
@@ -188,17 +229,22 @@ public static class ImageAnalysis
                 {
                     totalSum += local.Sum;
                     totalSumSq += local.SumSq;
+                    totalCount += local.Count;
                     totalMin = Math.Min(totalMin, local.Min);
                     totalMax = Math.Max(totalMax, local.Max);
                 }
             });
 
         cancellationToken.ThrowIfCancellationRequested();
-        long count = roi.PixelCount;
-        double mean = (double)totalSum / count;
-        double variance = (double)totalSumSq / count - mean * mean;
+        if (totalCount == 0)
+        {
+            return new RegionStatistics(0, 0, 0, 0, 0);
+        }
+
+        double mean = (double)totalSum / totalCount;
+        double variance = (double)totalSumSq / totalCount - mean * mean;
         return new RegionStatistics(
-            mean, Math.Sqrt(Math.Max(0, variance)), totalMin, totalMax, count);
+            mean, Math.Sqrt(Math.Max(0, variance)), totalMin, totalMax, totalCount);
     }
 
     /// <summary>

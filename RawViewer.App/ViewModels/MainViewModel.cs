@@ -8,7 +8,12 @@ namespace RawViewer.App.ViewModels;
 /// <param name="Name">表示名。</param>
 /// <param name="FullPath">フルパス。</param>
 /// <param name="IsDirectory">ディレクトリかどうか(ダブルクリックで移動)。</param>
-public sealed record FileEntry(string Name, string FullPath, bool IsDirectory = false);
+/// <param name="Length">
+/// ファイルサイズ(バイト)。不明なら-1。列挙時に取得済みの値を保持しておき、
+/// 仮想スタック判定のたびに GetFileAttributesEx を撃ち直さないようにする。
+/// </param>
+public sealed record FileEntry(
+    string Name, string FullPath, bool IsDirectory = false, long Length = -1);
 
 /// <summary>
 /// メインウィンドウのViewModel。表示状態(テキスト・スライダー値・ヒストグラム)を保持する。
