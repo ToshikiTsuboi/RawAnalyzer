@@ -140,6 +140,49 @@ public static class ViewportRenderer
 
     private readonly record struct RowSpan(int Dx0, int Dx1, int LevelX0, int Count, int LevelY);
 
+    /// <summary>
+    /// 可視dest列区間 [Dx0, Dx1] を閉形式で求める。空ならfalse。
+    /// </summary>
+    /// <remarks>
+    /// dest列 dx のソース座標は originX + (dx + 0.5) / zoom で単調増加するため、
+    /// 線形探索は不要。従来はdest行ごとに最大2×destWidth回のループを回していた。
+    /// </remarks>
+    private static bool TryComputeVisibleColumns(
+        double zoom, double originX, int sourceWidth, int destWidth,
+        out int dx0, out int dx1)
+    {
+        // originX + (dx + 0.5)/zoom >= 0        → dx >= -originX*zoom - 0.5
+        // originX + (dx + 0.5)/zoom <  width    → dx <  (width - originX)*zoom - 0.5
+        double firstExact = -originX * zoom - 0.5;
+        double lastExclusive = (sourceWidth - originX) * zoom - 0.5;
+
+        dx0 = Math.Max(0, (int)Math.Ceiling(firstExact));
+        dx1 = Math.Min(destWidth - 1, (int)Math.Ceiling(lastExclusive) - 1);
+
+        // 浮動小数の丸めで1画素ずれることがあるため境界だけ実値で詰める
+        while (dx0 < destWidth && originX + (dx0 + 0.5) / zoom < 0)
+        {
+            dx0++;
+        }
+
+        while (dx0 > 0 && originX + (dx0 - 0.5) / zoom >= 0)
+        {
+            dx0--;
+        }
+
+        while (dx1 >= dx0 && originX + (dx1 + 0.5) / zoom >= sourceWidth)
+        {
+            dx1--;
+        }
+
+        while (dx1 + 1 < destWidth && originX + (dx1 + 1.5) / zoom < sourceWidth)
+        {
+            dx1++;
+        }
+
+        return dx1 >= dx0;
+    }
+
     /// <summary>行の可視範囲とレベル座標区間を求める。不可視ならnull。</summary>
     private static RowSpan? ComputeRowSpan(
         RenderSource source, double zoom, double originX, double originY,
@@ -154,19 +197,8 @@ public static class ViewportRenderer
         }
 
         int levelY = Math.Min((int)(srcY / factor), source.LevelHeight - 1);
-        int dx0 = 0;
-        while (dx0 < destWidth && originX + (dx0 + 0.5) * invZoom < 0)
-        {
-            dx0++;
-        }
-
-        int dx1 = destWidth - 1;
-        while (dx1 >= dx0 && originX + (dx1 + 0.5) * invZoom >= source.SourceWidth)
-        {
-            dx1--;
-        }
-
-        if (dx1 < dx0)
+        if (!TryComputeVisibleColumns(
+                zoom, originX, source.SourceWidth, destWidth, out int dx0, out int dx1))
         {
             return null;
         }
@@ -187,10 +219,11 @@ public static class ViewportRenderer
         int factor = source.Factor;
         double invZoom = 1.0 / zoom;
 
+        // 行バッファは幅数万でLOH行きになるため、描画ごとに確保せずプールから借りる
         Parallel.For(
             0,
             destHeight,
-            () => new ushort[source.LevelWidth],
+            () => ArrayPool<ushort>.Shared.Rent(source.LevelWidth),
             (destY, state, rowBuffer) =>
             {
                 if (ct.IsCancellationRequested)
@@ -257,7 +290,7 @@ public static class ViewportRenderer
 
                 return rowBuffer;
             },
-            _ => { });
+            buffer => ArrayPool<ushort>.Shared.Return(buffer));
     }
 
     private static void RenderTrueColor(
@@ -272,7 +305,7 @@ public static class ViewportRenderer
         Parallel.For(
             0,
             destHeight,
-            () => new ushort[color.Width * 3],
+            () => ArrayPool<ushort>.Shared.Rent(color.Width * 3),
             (destY, state, rowBuffer) =>
             {
                 if (ct.IsCancellationRequested)
@@ -290,19 +323,8 @@ public static class ViewportRenderer
                 }
 
                 // 可視範囲のソース列区間だけ読み出す
-                int dx0 = 0;
-                while (dx0 < destWidth && originX + (dx0 + 0.5) * invZoom < 0)
-                {
-                    dx0++;
-                }
-
-                int dx1 = destWidth - 1;
-                while (dx1 >= dx0 && originX + (dx1 + 0.5) * invZoom >= color.Width)
-                {
-                    dx1--;
-                }
-
-                if (dx1 < dx0)
+                if (!TryComputeVisibleColumns(
+                        zoom, originX, color.Width, destWidth, out int dx0, out int dx1))
                 {
                     FillBackground(destRow);
                     return rowBuffer;
@@ -356,7 +378,7 @@ public static class ViewportRenderer
 
                 return rowBuffer;
             },
-            _ => { });
+            buffer => ArrayPool<ushort>.Shared.Return(buffer));
     }
 
     private static void RenderBayerColor(
@@ -371,7 +393,7 @@ public static class ViewportRenderer
         Parallel.For(
             0,
             destHeight,
-            () => new ushort[source.LevelWidth],
+            () => ArrayPool<ushort>.Shared.Rent(source.LevelWidth),
             (destY, state, rowBuffer) =>
             {
                 if (ct.IsCancellationRequested)
@@ -408,7 +430,7 @@ public static class ViewportRenderer
 
                 return rowBuffer;
             },
-            _ => { });
+            buffer => ArrayPool<ushort>.Shared.Return(buffer));
     }
 
     private static void RenderDevelop(
@@ -463,7 +485,7 @@ public static class ViewportRenderer
             ct.ThrowIfCancellationRequested();
 
             ColorPipeline.DemosaicBilinear(
-                mosaic, rectW, rectH, sx0, sy0, request.Pattern, rgb);
+                mosaic, rectW, rectH, sx0, sy0, request.Pattern, rgb, ct);
             ct.ThrowIfCancellationRequested();
 
             Parallel.For(0, destHeight, destY =>
@@ -529,7 +551,8 @@ public static class ViewportRenderer
         Parallel.For(
             0,
             destHeight,
-            () => (Top: new ushort[source.LevelWidth], Bottom: new ushort[source.LevelWidth]),
+            () => (Top: ArrayPool<ushort>.Shared.Rent(source.LevelWidth),
+                   Bottom: ArrayPool<ushort>.Shared.Rent(source.LevelWidth)),
             (destY, state, buffers) =>
             {
                 if (ct.IsCancellationRequested)
@@ -549,19 +572,8 @@ public static class ViewportRenderer
                 int blockY = Math.Clamp((int)srcY & ~1, 0, maxBlockY);
 
                 // 可視dest列区間
-                int dx0 = 0;
-                while (dx0 < destWidth && originX + (dx0 + 0.5) * invZoom < 0)
-                {
-                    dx0++;
-                }
-
-                int dx1 = destWidth - 1;
-                while (dx1 >= dx0 && originX + (dx1 + 0.5) * invZoom >= source.SourceWidth)
-                {
-                    dx1--;
-                }
-
-                if (dx1 < dx0)
+                if (!TryComputeVisibleColumns(
+                        zoom, originX, source.SourceWidth, destWidth, out int dx0, out int dx1))
                 {
                     FillBackground(destRow);
                     return buffers;
@@ -594,6 +606,10 @@ public static class ViewportRenderer
 
                 return buffers;
             },
-            _ => { });
+            buffers =>
+            {
+                ArrayPool<ushort>.Shared.Return(buffers.Top);
+                ArrayPool<ushort>.Shared.Return(buffers.Bottom);
+            });
     }
 }

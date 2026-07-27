@@ -67,6 +67,12 @@ public static class ImageExport
         var rgb24 = new byte[(long)width * height * 3];
         const int bandRows = 256;
 
+        // バンドごとに確保すると1億画素で約800MBのLOH割り当てになる。
+        // 最大バンド高さぶんを一度だけ確保して使い回す
+        int maxBandHeight = Math.Min(height, bandRows + 2);
+        var mosaic = new ushort[(long)width * maxBandHeight];
+        var rgb16 = new ushort[(long)width * maxBandHeight * 3];
+
         for (int bandY = 0; bandY < height; bandY += bandRows)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -75,15 +81,14 @@ public static class ImageExport
             int bottom = Math.Min(height - 1, bandY + rows);
             int bandHeight = bottom - top + 1;
 
-            var mosaic = new ushort[width * bandHeight];
             for (int y = 0; y < bandHeight; y++)
             {
                 image.CopyRegion(frame, 0, top + y, width, 1,
                     mosaic.AsSpan(y * width, width));
             }
 
-            var rgb16 = new ushort[width * bandHeight * 3];
-            ColorPipeline.DemosaicBilinear(mosaic, width, bandHeight, 0, top, pattern, rgb16);
+            ColorPipeline.DemosaicBilinear(
+                mosaic, width, bandHeight, 0, top, pattern, rgb16, cancellationToken);
 
             int skip = bandY - top;
             Parallel.For(0, rows, r =>

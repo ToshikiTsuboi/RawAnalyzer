@@ -89,6 +89,8 @@ public partial class MainWindow : Window
     private RawImage? _derivedImage;
     private HdrImage? _hdrFloatImage;
     private TilePyramid? _mainPyramid;
+    private BayerPyramid? _mainBayerPyramid;
+    private BayerPyramid? _derivedBayerPyramid;
     private DisplayParameters[]? _hdrFrameParams;
     private int _hdrSegmentWidth;
 
@@ -417,6 +419,10 @@ public partial class MainWindow : Window
         _hdrFloatImage = null;
         _hdrFrameParams = null;
         _mainPyramid = null;
+        _mainBayerPyramid?.Dispose();
+        _mainBayerPyramid = null;
+        _derivedBayerPyramid?.Dispose();
+        _derivedBayerPyramid = null;
         _correctionLabel = null;
         _channelHistograms = null;
         _colorImage = color;
@@ -464,12 +470,12 @@ public partial class MainWindow : Window
         await BuildPyramidAsync(image, cts.Token);
     }
 
-    private async Task BuildPyramidAsync(RawImage image, CancellationToken ct)
+    private async Task BuildPyramidAsync(RawImage image, CancellationToken ct, int frame = 0)
     {
         TilePyramid pyramid;
         try
         {
-            pyramid = await TilePyramid.CreateAsync(image, 0, cancellationToken: ct);
+            pyramid = await TilePyramid.CreateAsync(image, frame, cancellationToken: ct);
         }
         catch (OperationCanceledException)
         {
@@ -484,8 +490,62 @@ public partial class MainWindow : Window
         _mainPyramid = pyramid;
         if (_derivedImage is null)
         {
-            Viewport.SetPyramid(pyramid);
+            Viewport.SetPyramid(pyramid, frame);
         }
+    }
+
+    /// <summary>
+    /// カラー系表示に入る直前に、Bayer位相を保った縮小ピラミッドを用意する。
+    /// </summary>
+    /// <remarks>
+    /// 全画像で先に作ると読み込みのたびに元画像をもう一度全走査することになるため、
+    /// 実際に縮小描画が必要なカラー表示へ入るときだけ生成する。
+    /// </remarks>
+    private async Task EnsureBayerPyramidAsync()
+    {
+        RawImage? image = ActiveImage;
+        RawFormat? format = ActiveFormat;
+        if (image is null || format is null || format.Bayer == BayerPattern.None)
+        {
+            return;
+        }
+
+        bool derived = _derivedImage is not null;
+        if ((derived ? _derivedBayerPyramid : _mainBayerPyramid) is not null)
+        {
+            return;
+        }
+
+        int frame = derived ? 0 : Viewport.Frame;
+        BayerPyramid bayer;
+        try
+        {
+            bayer = await BayerPyramid.CreateAsync(
+                image, format, frame, cancellationToken: _loadCts?.Token ?? default);
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+
+        if (!ReferenceEquals(image, ActiveImage) || frame != (derived ? 0 : Viewport.Frame))
+        {
+            bayer.Dispose();
+            return;
+        }
+
+        if (derived)
+        {
+            _derivedBayerPyramid?.Dispose();
+            _derivedBayerPyramid = bayer;
+        }
+        else
+        {
+            _mainBayerPyramid?.Dispose();
+            _mainBayerPyramid = bayer;
+        }
+
+        Viewport.SetBayerPyramid(bayer, frame);
     }
 
     private void UpdateFormatPanel(RawFormat format)
@@ -2006,6 +2066,7 @@ public partial class MainWindow : Window
             }
 
             Viewport.SetDisplayMode(hdrMode);
+            await EnsureBayerPyramidAsync();
             return;
         }
 
@@ -2039,6 +2100,10 @@ public partial class MainWindow : Window
         }
 
         Viewport.SetDisplayMode(mode);
+        if (mode != ViewportDisplayMode.Raw)
+        {
+            await EnsureBayerPyramidAsync();
+        }
     }
 
     private async Task EnterHdrSplitAsync()
@@ -2234,8 +2299,11 @@ public partial class MainWindow : Window
         _hdrFrameParams = null;
         _vm.HdrTargetVisible = false;
         _vm.HasRoi = false;
+        _derivedBayerPyramid?.Dispose();
+        _derivedBayerPyramid = null;
         Viewport.SetImage(_currentImage!, _currentFormat!);
         Viewport.SetPyramid(_mainPyramid);
+        Viewport.SetBayerPyramid(_mainBayerPyramid);
         Viewport.SetLut(BuildLut());
         UpdateNoiseWindowSource();
         DetectSequence();
@@ -2608,6 +2676,9 @@ public partial class MainWindow : Window
             Viewport.SetDefectMarkers(null);
             if (_sequenceMode == SequenceMode.Frames)
             {
+                // ピラミッドは生成元フレーム専用なので、フレームを移ったら捨てる
+                _mainBayerPyramid?.Dispose();
+                _mainBayerPyramid = null;
                 Viewport.SetFrame(index);
                 _sequenceIndex = index;
             }
@@ -2629,6 +2700,8 @@ public partial class MainWindow : Window
                 _currentImage = image;
                 _currentPath = path;
                 _mainPyramid = null;
+                _mainBayerPyramid?.Dispose();
+                _mainBayerPyramid = null;
                 _sequenceIndex = index;
                 old?.Dispose();
                 Title = $"RawViewer — {Path.GetFileName(path)}";
@@ -2656,9 +2729,18 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (_sequenceMode == SequenceMode.Files && _mainPyramid is null)
+        // ピラミッドは生成元フレームでしか使えない。フレーム送りでも作り直さないと
+        // フレーム1以降が常に等倍描画になり、縮小表示のパン追従が破綻する
+        if (_derivedImage is null && !Viewport.HasPyramidForCurrentFrame)
         {
-            _ = BuildPyramidAsync(_currentImage, _loadCts?.Token ?? CancellationToken.None);
+            _ = BuildPyramidAsync(
+                _currentImage, _loadCts?.Token ?? CancellationToken.None, Viewport.Frame);
+        }
+
+        if (Viewport.DisplayMode is ViewportDisplayMode.BayerColor
+            or ViewportDisplayMode.ColorDevelop or ViewportDisplayMode.ChannelSplit)
+        {
+            _ = EnsureBayerPyramidAsync();
         }
 
         RefreshHistogram(Viewport.Roi is { PixelCount: > 0 } roi ? roi : null);

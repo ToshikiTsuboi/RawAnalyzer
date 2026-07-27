@@ -297,10 +297,11 @@ public static class ColorPipeline
     /// <param name="originY">領域左上の元画像Y座標。</param>
     /// <param name="pattern">Bayerパターン。</param>
     /// <param name="rgb">出力RGB(width×height×3、R,G,Bの順)。</param>
+    /// <param name="cancellationToken">キャンセルトークン。</param>
     /// <exception cref="ArgumentException">バッファ長が不足する場合。</exception>
     public static void DemosaicBilinear(
         ushort[] mosaic, int width, int height, int originX, int originY,
-        BayerPattern pattern, ushort[] rgb)
+        BayerPattern pattern, ushort[] rgb, CancellationToken cancellationToken = default)
     {
         if (mosaic.Length < (long)width * height)
         {
@@ -324,8 +325,16 @@ public static class ColorPipeline
 
         BayerChannel[] map = channelMap.ToArray();
 
-        Parallel.For(0, height, y =>
+        // 同ファイル内の他の並列ループと同じく、キャンセル済みなら早期に降りる。
+        // パン中は可視領域ぶんのデモザイクが数十〜200ms 無駄に完走していた
+        Parallel.For(0, height, (y, state) =>
         {
+            if (cancellationToken.IsCancellationRequested)
+            {
+                state.Stop();
+                return;
+            }
+
             int rowOffset = y * width;
             for (int x = 0; x < width; x++)
             {

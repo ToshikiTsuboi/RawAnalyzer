@@ -148,17 +148,43 @@ public sealed class ChannelSplitRenderSource : RenderSource
     {
         // タイル行は元画像の1行(sy固定)からストライド2で取り出せる
         (_, int sourceY) = BayerSplit.MapTiledToSource(0, levelY, _evenWidth, _evenHeight);
-        ushort[] sourceRow = ArrayPool<ushort>.Shared.Rent(_evenWidth);
+        int quadWidth = _evenWidth / 2;
+
+        // 必要な元画素のX範囲だけ読む。従来は count に関係なく常に全幅を読んでいたため、
+        // 拡大表示ではdest行ごとに数万画素を捨てていた
+        int firstQuad = levelX / quadWidth;
+        int lastQuad = (levelX + count - 1) / quadWidth;
+        int startX;
+        int endX;
+        if (firstQuad == lastQuad)
+        {
+            // 同一象限内: sourceX = innerX*2 + quadX で単調増加
+            int firstInner = levelX - firstQuad * quadWidth;
+            int lastInner = levelX + count - 1 - lastQuad * quadWidth;
+            startX = firstInner * 2 + firstQuad;
+            endX = lastInner * 2 + lastQuad;
+        }
+        else
+        {
+            // 象限の境界をまたぐ場合は両側が必要になるため全幅
+            startX = 0;
+            endX = _evenWidth - 1;
+        }
+
+        startX = Math.Clamp(startX, 0, _evenWidth - 1);
+        endX = Math.Clamp(endX, startX, _evenWidth - 1);
+        int span = endX - startX + 1;
+
+        ushort[] sourceRow = ArrayPool<ushort>.Shared.Rent(span);
         try
         {
-            _image.CopyRegion(_frame, 0, sourceY, _evenWidth, 1, sourceRow);
-            int quadWidth = _evenWidth / 2;
+            _image.CopyRegion(_frame, startX, sourceY, span, 1, sourceRow);
             for (int i = 0; i < count; i++)
             {
                 int tiledX = levelX + i;
                 int quadX = tiledX / quadWidth;
                 int innerX = tiledX - quadX * quadWidth;
-                destination[i] = sourceRow[innerX * 2 + quadX];
+                destination[i] = sourceRow[innerX * 2 + quadX - startX];
             }
         }
         finally

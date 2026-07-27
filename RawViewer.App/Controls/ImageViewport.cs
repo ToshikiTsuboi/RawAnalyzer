@@ -72,6 +72,11 @@ public sealed class ImageViewport : FrameworkElement
     private RawFormat? _format;
     private int _frame;
     private TilePyramid? _pyramid;
+    private BayerPyramid? _bayerPyramid;
+
+    // ピラミッドがどのフレームから生成されたか(不一致なら使わない)
+    private int _pyramidFrame;
+    private int _bayerPyramidFrame;
     private DisplayLut _lut = DisplayLut.Create(new DisplayParameters());
     private DevelopLuts _developLuts = DevelopLuts.Create(new DevelopParameters());
     private ViewportDisplayMode _displayMode = ViewportDisplayMode.Raw;
@@ -186,6 +191,7 @@ public sealed class ImageViewport : FrameworkElement
         _image = null;
         _format = null;
         _pyramid = null;
+        _bayerPyramid = null;
         _overlay = null;
         _bitmap = null;
         try
@@ -212,6 +218,7 @@ public sealed class ImageViewport : FrameworkElement
         _format = format;
         _frame = frame;
         _pyramid = null;
+        _bayerPyramid = null;
         _overlay = null;
         _segmentLuts = null;
         _colorImage = null;
@@ -240,15 +247,33 @@ public sealed class ImageViewport : FrameworkElement
 
     /// <summary>生成完了したピラミッドを取り付け、高解像度で再描画する。</summary>
     /// <param name="pyramid">ピラミッド。</param>
-    public void SetPyramid(TilePyramid? pyramid)
+    /// <param name="frame">このピラミッドの生成元フレーム番号。</param>
+    public void SetPyramid(TilePyramid? pyramid, int frame = 0)
     {
         _pyramid = pyramid;
+        _pyramidFrame = frame;
         RequestRender(fast: false);
     }
 
     /// <summary>
+    /// Bayer位相を保った縮小ピラミッドを取り付ける(カラー系表示の縮小描画に使う)。
+    /// </summary>
+    /// <param name="pyramid">ピラミッド。</param>
+    /// <param name="frame">このピラミッドの生成元フレーム番号。</param>
+    public void SetBayerPyramid(BayerPyramid? pyramid, int frame = 0)
+    {
+        _bayerPyramid = pyramid;
+        _bayerPyramidFrame = frame;
+        RequestRender(fast: false);
+    }
+
+    /// <summary>現在の表示フレームに対応するピラミッドを持っているか。</summary>
+    public bool HasPyramidForCurrentFrame =>
+        _pyramid is not null && _pyramidFrame == _frame;
+
+    /// <summary>
     /// 表示フレームを切り替える(ズーム/位置は維持)。
-    /// ピラミッドはフレーム0のみ有効なため、他フレームは等倍データから描画する。
+    /// ピラミッドは生成元フレームでのみ有効なため、他フレームは等倍データから描画する。
     /// </summary>
     /// <param name="frame">フレーム番号。</param>
     public void SetFrame(int frame)
@@ -280,6 +305,7 @@ public sealed class ImageViewport : FrameworkElement
         _format = format;
         _frame = frame;
         _pyramid = null;
+        _bayerPyramid = null;
         _overlay = null;
         RequestRender(fast: false);
         try
@@ -796,7 +822,18 @@ public sealed class ImageViewport : FrameworkElement
         _idleTimer.Start();
     }
 
-    private RenderSource? SelectSource(bool fast)
+    /// <summary>
+    /// 選択された画素供給元と座標倍率。
+    /// </summary>
+    /// <param name="Source">画素供給元。</param>
+    /// <param name="CoordinateFactor">
+    /// ソースの座標系が元画像の何分の1か。1以外のときは呼び出し側で
+    /// zoom を掛け、origin を割ってから描画する(グレー系ピラミッドは
+    /// RenderSource.Factor で内部処理するため常に1)。
+    /// </param>
+    private readonly record struct SelectedSource(RenderSource Source, int CoordinateFactor);
+
+    private SelectedSource? SelectSource(bool fast)
     {
         if (_image is null)
         {
@@ -806,52 +843,74 @@ public sealed class ImageViewport : FrameworkElement
         if (_displayMode == ViewportDisplayMode.TrueColor && _colorImage is not null)
         {
             // カラー画像は色を保つため常に等倍データから描画する
-            return new RawImageRenderSource(_image, _frame);
+            return new SelectedSource(new RawImageRenderSource(_image, _frame), 1);
         }
 
-        if (_displayMode == ViewportDisplayMode.ChannelSplit
-            && _format?.Bayer != BayerPattern.None)
+        bool bayerMode = _displayMode is ViewportDisplayMode.ChannelSplit
+                or ViewportDisplayMode.BayerColor or ViewportDisplayMode.ColorDevelop
+            && _format?.Bayer != BayerPattern.None;
+        if (bayerMode)
         {
-            return new ChannelSplitRenderSource(_image, _frame);
-        }
+            // Bayer位相を保った縮小レベルは「小さなRaw画像」なので、
+            // カラー描画経路をそのまま等倍として使える(座標だけ倍率で補正する)
+            RawImage colorImage = _image;
+            int colorFrame = _frame;
+            int coordinateFactor = 1;
+            BayerPyramid? bayer = _bayerPyramidFrame == _frame ? _bayerPyramid : null;
+            if (bayer is not null && !_zebraEnabled)
+            {
+                int factor = SelectFactorForRender(bayer.SelectFactor(_zoom), fast, bayer.GetLevel);
+                if (factor > 1 && bayer.GetLevel(factor) is { } level)
+                {
+                    colorImage = level;
+                    colorFrame = 0;
+                    coordinateFactor = factor;
+                }
+            }
 
-        if (_displayMode is ViewportDisplayMode.BayerColor or ViewportDisplayMode.ColorDevelop
-            && _format?.Bayer != BayerPattern.None)
-        {
-            // カラー系はBayer位相が必要なため常に等倍データから描画する
-            return new RawImageRenderSource(_image, _frame);
+            RenderSource source = _displayMode == ViewportDisplayMode.ChannelSplit
+                ? new ChannelSplitRenderSource(colorImage, colorFrame)
+                : new RawImageRenderSource(colorImage, colorFrame);
+            return new SelectedSource(source, coordinateFactor);
         }
 
         // ゼブラ判定は実画素値に対して行う必要がある。
         // 縮小レベルは2x2〜16x16平均なので飽和画素が薄まり偽陰性になる
         if (_zebraEnabled)
         {
-            return new RawImageRenderSource(_image, _frame);
+            return new SelectedSource(new RawImageRenderSource(_image, _frame), 1);
         }
 
-        // ピラミッドはフレーム0のデータから生成されるため他フレームでは使わない
-        TilePyramid? pyramid = _frame == 0 ? _pyramid : null;
-        int factor = pyramid?.SelectFactor(_zoom) ?? 1;
+        // ピラミッドは生成元フレームのデータなので、他フレームでは使わない
+        TilePyramid? pyramid = _pyramidFrame == _frame ? _pyramid : null;
+        int grayFactor = pyramid is null
+            ? 1
+            : SelectFactorForRender(
+                pyramid.SelectFactor(_zoom), fast, f => pyramid.GetLevel(f));
 
-        // 等倍以上では読み出し画素数が元々少なく粗くする利点がないうえ、
-        // 2x2平均がブロックとして見えて隣接画素差とBayerモザイクが消える
-        if (fast && pyramid is not null && factor > 1)
+        if (grayFactor <= 1)
         {
-            // 操作中は1段粗いレベルで軽く描く
-            PyramidLevel? coarser = pyramid.GetLevel(factor * 2);
-            if (coarser is not null)
-            {
-                factor *= 2;
-            }
+            return new SelectedSource(new RawImageRenderSource(_image, _frame), 1);
         }
 
-        if (factor <= 1)
+        PyramidLevel grayLevel = pyramid!.GetLevel(grayFactor)!;
+        return new SelectedSource(
+            new PyramidLevelRenderSource(grayLevel, _image.Width, _image.Height), 1);
+    }
+
+    /// <summary>
+    /// 操作中(fast)は1段粗いレベルへ落とす。ただし等倍以上では
+    /// 読み出し画素数が元々少なく利点がないうえ、平均がブロックとして見えるため落とさない。
+    /// </summary>
+    private static int SelectFactorForRender<T>(int factor, bool fast, Func<int, T?> getLevel)
+        where T : class
+    {
+        if (!fast || factor <= 1)
         {
-            return new RawImageRenderSource(_image, _frame);
+            return factor;
         }
 
-        PyramidLevel level = pyramid!.GetLevel(factor)!;
-        return new PyramidLevelRenderSource(level, _image.Width, _image.Height);
+        return getLevel(factor * 2) is not null ? factor * 2 : factor;
     }
 
     private void RequestRender(bool fast)
@@ -864,8 +923,8 @@ public sealed class ImageViewport : FrameworkElement
             return;
         }
 
-        RenderSource? source = SelectSource(fast);
-        if (source is null)
+        SelectedSource? selected = SelectSource(fast);
+        if (selected is not { } chosen)
         {
             return;
         }
@@ -874,18 +933,26 @@ public sealed class ImageViewport : FrameworkElement
         _renderCts = cts;
         int destW = Math.Max(1, (int)Math.Round(ActualWidth));
         int destH = Math.Max(1, (int)Math.Round(ActualHeight));
-        double zoom = _zoom;
-        double originX = _originX;
-        double originY = _originY;
+
+        // 縮小レベルを等倍ソースとして使う場合、画面座標→ソース座標の
+        // 対応が保たれるよう zoom と origin を倍率で補正する
+        int coordinateFactor = chosen.CoordinateFactor;
+        double zoom = _zoom * coordinateFactor;
+        double originX = _originX / coordinateFactor;
+        double originY = _originY / coordinateFactor;
+
+        // 表示側へ返すのは元画像基準のズームと実効縮小率
+        double displayZoom = _zoom;
+        int effectiveFactor = chosen.Source.Factor * coordinateFactor;
         var request = new RenderRequest
         {
-            Source = source,
+            Source = chosen.Source,
             Lut = _lut,
             Mode = _displayMode,
             Pattern = _format?.Bayer ?? BayerPattern.None,
             DevelopLuts = _developLuts,
             SegmentLuts = _segmentLuts,
-            SegmentWidth = _segmentWidth,
+            SegmentWidth = Math.Max(1, _segmentWidth / coordinateFactor),
             ZebraEnabled = _zebraEnabled,
             Color = _colorImage,
         };
@@ -904,7 +971,7 @@ public sealed class ImageViewport : FrameworkElement
                         return;
                     }
 
-                    Present(buffer, destW, destH, source.Factor, zoom, fast);
+                    Present(buffer, destW, destH, effectiveFactor, displayZoom, fast);
                 });
             }
             catch (OperationCanceledException)
