@@ -82,10 +82,13 @@ public partial class DefectPixelWindow : Window
         CorrectionRequested?.Invoke(_result, method);
     }
 
-    /// <summary>実行失敗時にボタンを戻す。</summary>
+    /// <summary>実行失敗・キャンセル時にボタンを操作可能な状態へ戻す。</summary>
     public void ResetRunButton()
     {
         RunButton.IsEnabled = true;
+
+        // 補正のキャンセル・エラー時も、一覧が残っているなら再度押せるようにする
+        CorrectButton.IsEnabled = _result is { Defects.Count: > 0 };
     }
 
     private void OnRunClick(object sender, RoutedEventArgs e)

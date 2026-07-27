@@ -777,8 +777,17 @@ public sealed class ImageViewport : FrameworkElement
         double viewW = ActualWidth / _zoom;
         double viewH = ActualHeight / _zoom;
         double margin = 32 / _zoom;
-        _originX = Math.Clamp(_originX, -viewW + margin, _image.Width - margin);
-        _originY = Math.Clamp(_originY, -viewH + margin, _image.Height - margin);
+        _originX = ClampRange(_originX, -viewW + margin, _image.Width - margin);
+        _originY = ClampRange(_originY, -viewH + margin, _image.Height - margin);
+    }
+
+    /// <summary>
+    /// min &gt; max(ビューが極端に潰れて余白がとれない場合)でも
+    /// Math.Clamp の ArgumentException を出さずに中央へ寄せる。
+    /// </summary>
+    private static double ClampRange(double value, double min, double max)
+    {
+        return min > max ? (min + max) / 2 : Math.Clamp(value, min, max);
     }
 
     private void RestartIdleTimer()
@@ -813,10 +822,20 @@ public sealed class ImageViewport : FrameworkElement
             return new RawImageRenderSource(_image, _frame);
         }
 
+        // ゼブラ判定は実画素値に対して行う必要がある。
+        // 縮小レベルは2x2〜16x16平均なので飽和画素が薄まり偽陰性になる
+        if (_zebraEnabled)
+        {
+            return new RawImageRenderSource(_image, _frame);
+        }
+
         // ピラミッドはフレーム0のデータから生成されるため他フレームでは使わない
         TilePyramid? pyramid = _frame == 0 ? _pyramid : null;
         int factor = pyramid?.SelectFactor(_zoom) ?? 1;
-        if (fast && pyramid is not null)
+
+        // 等倍以上では読み出し画素数が元々少なく粗くする利点がないうえ、
+        // 2x2平均がブロックとして見えて隣接画素差とBayerモザイクが消える
+        if (fast && pyramid is not null && factor > 1)
         {
             // 操作中は1段粗いレベルで軽く描く
             PyramidLevel? coarser = pyramid.GetLevel(factor * 2);

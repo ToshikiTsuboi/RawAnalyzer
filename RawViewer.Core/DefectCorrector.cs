@@ -49,12 +49,22 @@ public static class DefectCorrector
                 "1億画素を超える画像の欠陥補正はサポートされていません。");
         }
 
-        // 全画素をコピー
+        // 全画素をコピー(巨大画像では数秒かかるためキャンセルと進捗を出す)
         var pixels = new ushort[(long)width * height];
-        Parallel.For(0, height, y =>
-        {
-            image.CopyRegion(frame, 0, y, width, 1, pixels.AsSpan(y * width, width));
-        });
+        long rowsCopied = 0;
+        Parallel.For(
+            0,
+            height,
+            new ParallelOptions { CancellationToken = cancellationToken },
+            y =>
+            {
+                image.CopyRegion(frame, 0, y, width, 1, pixels.AsSpan(y * width, width));
+                long done = Interlocked.Increment(ref rowsCopied);
+                if ((done & 511) == 0)
+                {
+                    progress?.Report(0.5 * done / height);
+                }
+            });
         cancellationToken.ThrowIfCancellationRequested();
         progress?.Report(0.5);
 

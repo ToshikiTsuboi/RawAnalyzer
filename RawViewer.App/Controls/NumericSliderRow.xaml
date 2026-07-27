@@ -10,7 +10,8 @@
             <TextBox x:Name="ValueBox" DockPanel.Dock="Right" Width="56" FontSize="11"
                      FontFamily="Consolas" TextAlignment="Right" Padding="4,2"
                      Margin="6,0,0,0" VerticalAlignment="Center"
-                     KeyDown="OnValueBoxKeyDown" LostFocus="OnValueBoxLostFocus" />
+                     KeyDown="OnValueBoxKeyDown" LostFocus="OnValueBoxLostFocus"
+                     TextChanged="OnValueBoxTextChanged" />
             <Slider x:Name="ValueSlider" VerticalAlignment="Center" MinHeight="22"
                     IsSnapToTickEnabled="False" TickPlacement="TopLeft"
                     ValueChanged="OnSliderValueChanged"

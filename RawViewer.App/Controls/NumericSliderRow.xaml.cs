@@ -14,6 +14,9 @@ public partial class NumericSliderRow : UserControl
 {
     private bool _updating;
 
+    // 入力欄がユーザー操作で書き換えられたか(フォーカスが外れただけでの丸めを防ぐ)
+    private bool _textEdited;
+
     /// <summary>ラベル文字列。</summary>
     public static readonly DependencyProperty LabelProperty =
         DependencyProperty.Register(
@@ -195,7 +198,10 @@ public partial class NumericSliderRow : UserControl
         }
         else if (e.Key == Key.Escape)
         {
+            _updating = true;
             ValueBox.Text = Value.ToString(Format, CultureInfo.InvariantCulture);
+            _updating = false;
+            _textEdited = false;
             e.Handled = true;
         }
         else if (e.Key is Key.Up or Key.Down)
@@ -206,9 +212,22 @@ public partial class NumericSliderRow : UserControl
         }
     }
 
+    private void OnValueBoxTextChanged(object sender, TextChangedEventArgs e)
+    {
+        if (!_updating)
+        {
+            _textEdited = true;
+        }
+    }
+
     private void OnValueBoxLostFocus(object sender, RoutedEventArgs e)
     {
-        CommitText();
+        // 編集していないのにCommitすると表示桁へ丸められ、
+        // 黒レベル(Decimals=0)では 137.6 → 138 と黒点が1code動く
+        if (_textEdited)
+        {
+            CommitText();
+        }
     }
 
     private void CommitText()
@@ -220,7 +239,10 @@ public partial class NumericSliderRow : UserControl
         }
 
         // 範囲外・不正入力は現在値へ戻す
+        _updating = true;
         ValueBox.Text = Value.ToString(Format, CultureInfo.InvariantCulture);
+        _updating = false;
+        _textEdited = false;
     }
 
     private void OnLabelClick(object sender, MouseButtonEventArgs e)

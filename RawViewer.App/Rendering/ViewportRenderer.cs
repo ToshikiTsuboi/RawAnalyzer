@@ -521,8 +521,10 @@ public static class ViewportRenderer
         DevelopLuts luts = request.DevelopLuts!;
         BayerPattern pattern = request.Pattern;
         double invZoom = 1.0 / zoom;
-        int maxBlockY = Math.Max(0, source.SourceHeight - 2);
-        int maxBlockX = Math.Max(0, source.SourceWidth - 2);
+        // 偶数へ落とさないと、奇数サイズ画像の最下行・最右列でBayer位相が崩れ
+        // R/B両方に緑が入って色が潰れる
+        int maxBlockY = Math.Max(0, (source.SourceHeight - 2) & ~1);
+        int maxBlockX = Math.Max(0, (source.SourceWidth - 2) & ~1);
 
         Parallel.For(
             0,

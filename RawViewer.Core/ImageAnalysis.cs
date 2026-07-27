@@ -526,7 +526,10 @@ public static class ImageAnalysis
         bool p99Found = false;
         long medianTarget = total / 2;
         long p1Target = (long)(total * 0.01);
-        long p99Target = (long)(total * 0.99);
+
+        // total==1 だと (long)(1*0.99)==0 となり、P1/Medianと違って
+        // 最初のビンで即成立して P99 < P1 という矛盾表示になる
+        long p99Target = Math.Max(1, (long)(total * 0.99));
 
         for (int i = 0; i < bins.Length; i++)
         {

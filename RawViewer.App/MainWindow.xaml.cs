@@ -1367,6 +1367,18 @@ public partial class MainWindow : Window
                 WriteProcessingSidecar(path, choice, developParameters);
             }
 
+            // RawSaver はヘッダを出力しないため、保存したrawを開き直したときに
+            // 元のHeaderOffsetのままだと開けない。出力実体に合うフォーマットを記憶する
+            if (choice.Format == SaveFormat.Raw)
+            {
+                RememberFileFormat(path, image.Format with
+                {
+                    HeaderOffset = 0,
+                    Packing = choice.Packing,
+                    Endianness = choice.Endianness,
+                });
+            }
+
             // マルチフレームでは「どのフレームを出したか」を明示する
             string frameNote = image.FrameCount > 1
                 ? choice.Format == SaveFormat.Raw
@@ -3036,7 +3048,7 @@ public partial class MainWindow : Window
         _defectWindow.Activate();
     }
 
-    private async void OnDefectRunRequested(double sigma, bool detectHot, bool detectDead)
+    private void OnDefectRunRequested(double sigma, bool detectHot, bool detectDead)
     {
         if (ActiveImage is null)
         {
@@ -3048,21 +3060,28 @@ public partial class MainWindow : Window
         RawImage image = ActiveImage;
         int frame = Viewport.Frame;
         int maxCode = (1 << image.Format.BitDepth) - 1;
-        DefectDetectionResult result;
-        try
+
+        // 巨大画像では数十秒かかるため、進捗表示とキャンセルを付ける
+        DefectDetectionResult? result = null;
+        ProgressWindow progress = ProgressWindow.Run(
+            this,
+            "欠陥画素を検出中…",
+            (report, ct) => Task.Run(
+                () => result = DefectPixelDetector.Detect(
+                    image, frame, sigma, detectHot, detectDead,
+                    progress: report, cancellationToken: ct),
+                ct));
+
+        if (progress.Error is not null)
         {
-            result = await Task.Run(() => DefectPixelDetector.Detect(
-                image, frame, sigma, detectHot, detectDead));
-        }
-        catch (Exception ex)
-        {
-            MessageBox.Show(this, $"検出に失敗しました: {ex.Message}", "欠陥画素検出",
+            MessageBox.Show(this, $"検出に失敗しました: {progress.Error.Message}", "欠陥画素検出",
                 MessageBoxButton.OK, MessageBoxImage.Error);
             _defectWindow?.ResetRunButton();
             return;
         }
 
-        if (_defectWindow is null || !ReferenceEquals(image, ActiveImage))
+        if (progress.WasCanceled || result is null
+            || _defectWindow is null || !ReferenceEquals(image, ActiveImage))
         {
             _defectWindow?.ResetRunButton();
             return;
@@ -3202,6 +3221,7 @@ public partial class MainWindow : Window
         {
             MessageBox.Show(this, "HDR表示中は欠陥補正できません。Raw表示に戻してから実行してください。",
                 "欠陥画素補正", MessageBoxButton.OK, MessageBoxImage.Information);
+            _defectWindow?.ResetRunButton();
             return;
         }
 

@@ -91,8 +91,16 @@ public static class WhiteBalance
             return new WhiteBalanceGains(1.0, 1.0);
         }
 
-        int blockX = Math.Clamp(x & ~1, 0, Math.Max(0, image.Width - 2));
-        int blockY = Math.Clamp(y & ~1, 0, Math.Max(0, image.Height - 2));
+        // 2x2ブロックが取れないサイズでは判定不能
+        if (image.Width < 2 || image.Height < 2)
+        {
+            return new WhiteBalanceGains(1.0, 1.0);
+        }
+
+        // クランプ上限も偶数へ落とさないと、奇数幅/高さの最終列・最終行で
+        // ブロックが1画素ずれてR/Bが緑画素から算出される
+        int blockX = Math.Clamp(x & ~1, 0, (image.Width - 2) & ~1);
+        int blockY = Math.Clamp(y & ~1, 0, (image.Height - 2) & ~1);
         ushort v00 = image.GetPixel(blockX, blockY, frame);
         ushort v10 = image.GetPixel(blockX + 1, blockY, frame);
         ushort v01 = image.GetPixel(blockX, blockY + 1, frame);

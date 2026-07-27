@@ -107,6 +107,39 @@ public static class DefectPixelDetector
         bool truncated = false;
         long rowsDone = 0;
 
+        // スレッドローカルのListを最後まで貯めると、ヒット率が高い画像で
+        // (ワーカ数 × 全ヒット数)ぶんが同時生存しOOMになる。
+        // 一定件数ごとにグローバルへ吸い上げてローカルを空にする。
+        const int FlushThreshold = 4096;
+
+        void Flush(List<DefectPixel> local)
+        {
+            if (local.Count == 0)
+            {
+                return;
+            }
+
+            lock (gate)
+            {
+                int space = maxResults - defects.Count;
+                if (space <= 0)
+                {
+                    truncated = true;
+                }
+                else if (local.Count > space)
+                {
+                    defects.AddRange(local.Take(space));
+                    truncated = true;
+                }
+                else
+                {
+                    defects.AddRange(local);
+                }
+            }
+
+            local.Clear();
+        }
+
         Parallel.For(
             0,
             height,
@@ -134,6 +167,11 @@ public static class DefectPixelDetector
                     }
                 }
 
+                if (local.Local.Count >= FlushThreshold)
+                {
+                    Flush(local.Local);
+                }
+
                 long done = Interlocked.Increment(ref rowsDone);
                 if ((done & 1023) == 0)
                 {
@@ -142,28 +180,7 @@ public static class DefectPixelDetector
 
                 return local;
             },
-            local =>
-            {
-                lock (gate)
-                {
-                    int space = maxResults - defects.Count;
-                    if (space <= 0)
-                    {
-                        truncated |= local.Local.Count > 0;
-                        return;
-                    }
-
-                    if (local.Local.Count > space)
-                    {
-                        defects.AddRange(local.Local.Take(space));
-                        truncated = true;
-                    }
-                    else
-                    {
-                        defects.AddRange(local.Local);
-                    }
-                }
-            });
+            local => Flush(local.Local));
 
         cancellationToken.ThrowIfCancellationRequested();
         defects.Sort((a, b) => a.Y != b.Y ? a.Y - b.Y : a.X - b.X);

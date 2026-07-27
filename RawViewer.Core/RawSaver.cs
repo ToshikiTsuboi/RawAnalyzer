@@ -13,6 +13,10 @@ public static class RawSaver
     /// 画素値はフォーマットのビット深度へ逆正規化され、指定の詰め方向・
     /// エンディアンで書き出される。全フレームを連結出力する。
     /// </summary>
+    /// <remarks>
+    /// ヘッダは出力しない。元画像の HeaderOffset が0でない場合、
+    /// 出力ファイルを開き直すときは HeaderOffset=0 のフォーマットを指定すること。
+    /// </remarks>
     /// <param name="image">保存する画像。</param>
     /// <param name="path">出力先パス。</param>
     /// <param name="packing">出力の詰め方向。</param>

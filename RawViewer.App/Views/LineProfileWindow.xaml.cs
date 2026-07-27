@@ -21,6 +21,11 @@ public partial class LineProfileWindow : Window
     private double[] _horizontalProjection = Array.Empty<double>();
     private double[] _verticalProjection = Array.Empty<double>();
     private RegionOfInterest? _roi;
+
+    // 統計のキャッシュ(算出元の配列参照が変わったときだけ再計算する)
+    private double[]? _statsSource;
+    private ProfileStatistics _stats;
+
     private int _pointX;
     private int _pointY;
     private int _maxCode = 65535;
@@ -91,6 +96,26 @@ public partial class LineProfileWindow : Window
         _ => _columnProfile,
     };
 
+    /// <summary>
+    /// 現在データの統計。中央値の算出でソート用配列を確保するため、
+    /// データが変わったときだけ計算してキャッシュする
+    /// (リサイズのたびに N=46341 で 371KB の LOH 割り当てが発生していた)。
+    /// </summary>
+    private ProfileStatistics CurrentStatistics
+    {
+        get
+        {
+            double[] data = CurrentData;
+            if (!ReferenceEquals(data, _statsSource))
+            {
+                _statsSource = data;
+                _stats = ImageAnalysis.ComputeProfileStatistics(data);
+            }
+
+            return _stats;
+        }
+    }
+
     private void OnDirectionChanged(object sender, RoutedEventArgs e)
     {
         Redraw();
@@ -116,7 +141,7 @@ public partial class LineProfileWindow : Window
         double width = PlotCanvas.ActualWidth;
         double height = PlotCanvas.ActualHeight;
 
-        ProfileStatistics stats = ImageAnalysis.ComputeProfileStatistics(data);
+        ProfileStatistics stats = CurrentStatistics;
         StatsText.Text = stats.Count == 0
             ? "—"
             : $"N={stats.Count}   平均 {stats.Mean:F2}   最小 {stats.Min:F0}   " +
@@ -254,7 +279,7 @@ public partial class LineProfileWindow : Window
 
     private void OnCopyStatsClick(object sender, RoutedEventArgs e)
     {
-        ProfileStatistics stats = ImageAnalysis.ComputeProfileStatistics(CurrentData);
+        ProfileStatistics stats = CurrentStatistics;
         var sb = new StringBuilder();
         sb.AppendLine("metric\tvalue");
         sb.Append("N\t").Append(stats.Count).AppendLine();

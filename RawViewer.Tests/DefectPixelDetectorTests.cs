@@ -112,6 +112,51 @@ public class DefectPixelDetectorTests
     }
 
     [Fact]
+    public void Detect_HighHitRate_RespectsMaxResultsWithoutHoarding()
+    {
+        // ヒット率が高い画像では、スレッドローカルListを最後まで貯めると
+        // (ワーカ数 × 全ヒット数)が同時生存してOOMになる。
+        // 途中でグローバルへ吸い上げつつ、上限どおりに打ち切ることを確認する。
+        const int size = 256;
+        var codes = new ushort[size * size];
+        for (int i = 0; i < codes.Length; i++)
+        {
+            // 半数が極端に高い = 全体のσに対して片側が必ず閾値を超える構成
+            codes[i] = (ushort)((i & 1) == 0 ? 100 : 4000);
+        }
+
+        using RawImage image = LoadImage(codes, size, size);
+
+        DefectDetectionResult result = DefectPixelDetector.Detect(
+            image, sigmaFactor: 0.5, maxResults: 1000);
+
+        Assert.True(result.Truncated, "上限で打ち切られること");
+        Assert.Equal(1000, result.Defects.Count);
+
+        // 打ち切っても行→列の順序は保たれる
+        for (int i = 1; i < result.Defects.Count; i++)
+        {
+            DefectPixel previous = result.Defects[i - 1];
+            DefectPixel current = result.Defects[i];
+            Assert.True(
+                current.Y > previous.Y || (current.Y == previous.Y && current.X > previous.X),
+                $"順序が崩れている: ({previous.X},{previous.Y}) → ({current.X},{current.Y})");
+        }
+    }
+
+    [Fact]
+    public void Detect_CancelledToken_ThrowsOperationCanceled()
+    {
+        ushort[] codes = MakeFlatWithDefects(64, 64, 1000, (5, 5, 4000));
+        using RawImage image = LoadImage(codes, 64, 64);
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        Assert.ThrowsAny<OperationCanceledException>(
+            () => DefectPixelDetector.Detect(image, cancellationToken: cts.Token));
+    }
+
+    [Fact]
     public void Detect_InvalidSigma_Throws()
     {
         ushort[] codes = MakeFlatWithDefects(4, 4, 100);
