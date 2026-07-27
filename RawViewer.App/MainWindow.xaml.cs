@@ -66,6 +66,15 @@ public partial class MainWindow : Window
     }
 
     private static readonly int[] PlaybackFpsValues = { 5, 10, 15, 24, 30 };
+
+    // 重い処理(保存/演算/バッチ/測定/検出)の実行中を数える。
+    // ShowDialog は Dispatcher の入れ子ポンプなのでモーダル表示中もタイマーや
+    // 入力イベントが動き続ける。処理対象の画像が背後で差し替え・破棄されるのを防ぐ。
+    private int _busyDepth;
+
+    // OpenPath の世代。await から戻った時点で世代が進んでいたら結果を捨てる
+    private int _openGeneration;
+
     private SequenceMode _sequenceMode;
     private List<string> _sequenceFiles = new();
     private int _sequenceIndex;
@@ -329,13 +338,17 @@ public partial class MainWindow : Window
 
     private async void OpenPath(string path, RawFormat? initialFormat = null)
     {
+        // 読み込み中に再生タイマーや保留中の連番送りが画像を差し替えないようにする
+        using BusyScope busy = EnterBusy();
+        int generation = ++_openGeneration;
+
         RawFormat? format = null;
         if (IsRawFile(path))
         {
             // 同じファイルを開き直すときは記憶したフォーマットでダイアログをスキップ
             // (「変更…」から開いた場合 initialFormat が渡されるためダイアログを出す)
             RawFormat? remembered = initialFormat is null
-                ? TryGetRememberedFormat(path, new FileInfo(path).Length)
+                ? TryGetRememberedFormat(path, SafeFileSize(path))
                 : null;
             if (remembered is not null)
             {
@@ -389,8 +402,9 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (cts.IsCancellationRequested)
+        if (cts.IsCancellationRequested || generation != _openGeneration)
         {
+            // 読み込み中に別ファイルを開かれていた場合は結果を捨てる
             image.Dispose();
             return;
         }
@@ -427,11 +441,11 @@ public partial class MainWindow : Window
         }
 
         UpdateFormatPanel(image.Format);
-        long fileSize = new FileInfo(path).Length;
+        long fileSize = SafeFileSize(path);
         _vm.ImageInfoText =
             $"{image.Width}×{image.Height} · {image.Format.BitDepth}bit"
             + (color is not null ? " · RGB" : "")
-            + $" · {fileSize / (1024.0 * 1024.0):F1} MB"
+            + (fileSize >= 0 ? $" · {fileSize / (1024.0 * 1024.0):F1} MB" : "")
             + (image.FrameCount > 1 ? $" · {image.FrameCount}fr" : "");
         _vm.HasImage = true;
 
@@ -1201,6 +1215,8 @@ public partial class MainWindow : Window
             return;
         }
 
+        // ダイアログ表示中も再生タイマーは動くため、ここから保存完了まで差し替えを止める
+        using BusyScope busy = EnterBusy();
         var dialog = new SaveDialog(
             ActiveImage.Format.TotalPixels,
             allowFloatRaw: _hdrFloatImage is not null,
@@ -1508,6 +1524,7 @@ public partial class MainWindow : Window
             return;
         }
 
+        using BusyScope busy = EnterBusy();
         if (_derivedImage is not null)
         {
             MessageBox.Show(this, "HDR表示中は画像演算できません。Raw表示に戻してから実行してください。",
@@ -1540,6 +1557,7 @@ public partial class MainWindow : Window
 
     private async void ExecuteImageCalculation(ImageCalculatorChoice choice)
     {
+        using BusyScope busy = EnterBusy();
         RawImage source = _currentImage!;
         RawFormat format = _currentFormat!;
         int frame = Viewport.Frame;
@@ -1592,6 +1610,8 @@ public partial class MainWindow : Window
     private async Task ApplyProcessedImageAsync(
         RawImage processed, string label, bool closeDefectWindow)
     {
+        // 旧画像を読んでいる解析タスクを止めてから破棄する
+        _analysisCts?.Cancel();
         await Viewport.ClearImageAsync();
         _currentImage?.Dispose();
         _currentImage = processed;
@@ -1645,8 +1665,16 @@ public partial class MainWindow : Window
             return;
         }
 
+        using BusyScope busy = EnterBusy();
         RawFormat format = _currentFormat;
         long size = SafeFileSize(_currentPath);
+        if (size <= 0)
+        {
+            MessageBox.Show(this, "対象ファイルのサイズを取得できませんでした。",
+                "バッチ書き出し", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
         string extension = Path.GetExtension(_currentPath);
         List<string> targets = _vm.Files
             .Where(f => !f.IsDirectory && string.Equals(
@@ -1901,7 +1929,7 @@ public partial class MainWindow : Window
         // 通常モード: HDR派生ビューから復帰
         if (_derivedImage is not null)
         {
-            RestoreMainImage();
+            await RestoreMainImageAsync();
         }
 
         ViewportDisplayMode mode = index switch
@@ -1981,7 +2009,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        ApplyDerivedView(composite);
+        await ApplyDerivedViewAsync(composite);
         _hdrSegmentWidth = subWidth;
         _hdrFrameParams = new DisplayParameters[stages];
         DisplayParameters current = CurrentDisplayParameters();
@@ -2051,17 +2079,21 @@ public partial class MainWindow : Window
             return;
         }
 
-        ApplyDerivedView(quantized);
+        await ApplyDerivedViewAsync(quantized);
         _hdrFloatImage = merged;
         _vm.HdrTargetVisible = false;
         _vm.LevelOverlayText =
             $"HDR合成表示 (フルスケール {merged.FullScale:F0}, ゲイン=露出)";
     }
 
-    private void ApplyDerivedView(RawImage derived)
+    private async Task ApplyDerivedViewAsync(RawImage derived)
     {
         StopPlayback();
         _vm.HasSequence = false;
+
+        // 旧派生画像を読んでいる描画・解析を止めてから破棄する
+        _analysisCts?.Cancel();
+        await Viewport.ClearImageAsync();
         _derivedImage?.Dispose();
         _derivedImage = derived;
         _hdrFloatImage = null;
@@ -2092,8 +2124,11 @@ public partial class MainWindow : Window
         }
     }
 
-    private void RestoreMainImage()
+    private async Task RestoreMainImageAsync()
     {
+        // 派生画像を読んでいる描画・解析を止めてから破棄する
+        _analysisCts?.Cancel();
+        await Viewport.ClearImageAsync();
         _derivedImage?.Dispose();
         _derivedImage = null;
         _hdrFloatImage = null;
@@ -2454,7 +2489,9 @@ public partial class MainWindow : Window
     private async Task ShowSequenceIndexAsync(int index, bool refreshAnalysis)
     {
         int count = SequenceCount;
-        if (count <= 1 || _sequenceBusy)
+
+        // 重い処理の実行中は画像を差し替えない(処理対象が背後で破棄されるため)
+        if (count <= 1 || _sequenceBusy || _busyDepth > 0)
         {
             return;
         }
@@ -2551,6 +2588,28 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>
+    /// 重い処理の実行中スコープに入る。再生を止め、連番送りを抑止する。
+    /// 戻り値を using で受けること。
+    /// </summary>
+    private BusyScope EnterBusy()
+    {
+        StopPlayback();
+        _busyDepth++;
+        return new BusyScope(this);
+    }
+
+    /// <summary>重い処理の実行中スコープ。Disposeで抜ける。</summary>
+    private readonly struct BusyScope : IDisposable
+    {
+        private readonly MainWindow _owner;
+
+        internal BusyScope(MainWindow owner) => _owner = owner;
+
+        /// <summary>スコープを抜ける。</summary>
+        public void Dispose() => _owner._busyDepth--;
+    }
+
     private void StopPlayback()
     {
         bool wasPlaying = _playTimer?.IsEnabled == true;
@@ -2569,7 +2628,7 @@ public partial class MainWindow : Window
 
     private void OnPlayTick(object? sender, EventArgs e)
     {
-        if (!_sequenceBusy)
+        if (!_sequenceBusy && _busyDepth == 0)
         {
             _ = ShowSequenceIndexAsync(_sequenceIndex + 1, refreshAnalysis: false);
         }
@@ -2897,6 +2956,7 @@ public partial class MainWindow : Window
             return;
         }
 
+        using BusyScope busy = EnterBusy();
         RawImage image = ActiveImage;
         int frame = Viewport.Frame;
         int maxCode = (1 << image.Format.BitDepth) - 1;
@@ -2968,6 +3028,7 @@ public partial class MainWindow : Window
             return;
         }
 
+        using BusyScope busy = EnterBusy();
         int frame = Viewport.Frame;
         RegionOfInterest? roi = request.UseRoi && Viewport.Roi is { PixelCount: > 0 } r ? r : null;
         NoiseMeasurement measurement = default;
@@ -3020,6 +3081,7 @@ public partial class MainWindow : Window
             return;
         }
 
+        using BusyScope busy = EnterBusy();
         RawImage source = _currentImage;
         BayerPattern pattern = _currentFormat.Bayer;
         int frame = Viewport.Frame;
