@@ -127,7 +127,10 @@
         <Setter Property="BorderBrush" Value="{StaticResource BorderBrushDark}" />
         <Setter Property="CaretBrush" Value="{StaticResource TextBrush}" />
         <Setter Property="SelectionBrush" Value="{StaticResource AccentBrush}" />
-        <Setter Property="Padding" Value="6,4" />
+
+        <!-- ComboBox と同じ高さ(24px)に揃える。ComboBox はテンプレートの Border が
+             Grid でコンテンツに重なるぶん枠1pxを食わないため、こちらは縦を1px少なくする -->
+        <Setter Property="Padding" Value="6,3" />
         <Setter Property="FontSize" Value="12" />
         <Setter Property="Template">
             <Setter.Value>
@@ -137,8 +140,9 @@
                             BorderBrush="{TemplateBinding BorderBrush}"
                             BorderThickness="1"
                             SnapsToDevicePixels="True">
+                        <!-- TextBoxBase が PART_ContentHost へ Padding を自動で適用するため、
+                             ここで Margin にも Padding を渡すと二重に効いて10px高くなる -->
                         <ScrollViewer x:Name="PART_ContentHost"
-                                      Margin="{TemplateBinding Padding}"
                                       VerticalAlignment="Center" />
                     </Border>
                     <ControlTemplate.Triggers>
