@@ -1,0 +1,69 @@
+name: Release
+
+# v で始まるタグを push すると、自己完結の実行ファイルを作って Release へ添付する
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Test
+        run: dotnet test RawAnalyzer.sln -c Release
+
+      - name: Determine version
+        id: version
+        shell: bash
+        run: |
+          # タグ v1.2.3 → 1.2.3。手動実行時は 0.0.0 を使う
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "value=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=0.0.0" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish (self-contained, win-x64)
+        # DebugType はここで指定する(csproj に書くとローカルのデバッグ実行にも効くため)
+        run: >
+          dotnet publish RawAnalyzer.App/RawAnalyzer.App.csproj
+          -c Release -r win-x64 --self-contained true
+          -p:PublishSingleFile=true
+          -p:DebugType=none
+          -p:Version=${{ steps.version.outputs.value }}
+          -o publish
+
+      - name: Package
+        shell: pwsh
+        run: |
+          # .NET ランタイムの導入なしで動くように、WPF のネイティブDLLごと固める
+          Remove-Item publish/*.pdb, publish/*.xml -ErrorAction SilentlyContinue
+          Copy-Item README.md, LICENSE.md publish/
+          Compress-Archive -Path publish/* `
+            -DestinationPath "RawAnalyzer-${{ steps.version.outputs.value }}-win-x64.zip"
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/v')
+        with:
+          files: RawAnalyzer-${{ steps.version.outputs.value }}-win-x64.zip
+          generate_release_notes: true
+          body: |
+            ## ダウンロード
+
+            `RawAnalyzer-${{ steps.version.outputs.value }}-win-x64.zip` を展開して
+            `RawAnalyzer.App.exe` を実行してください。
+
+            .NET ランタイムの導入は不要です(自己完結ビルド、Windows 10/11 64bit)。

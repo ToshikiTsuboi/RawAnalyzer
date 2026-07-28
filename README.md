@@ -11,6 +11,21 @@ Raw 画像を表示・分析するための Windows デスクトップアプリ�
 
 ---
 
+## ダウンロード
+
+**[→ 最新版をダウンロード](https://github.com/ToshikiTsuboi/RawAnalyzer/releases/latest)**
+
+`RawAnalyzer-<version>-win-x64.zip` を展開して `RawAnalyzer.App.exe` を実行してください。
+インストール作業も .NET ランタイムの導入も不要です(自己完結ビルド)。
+
+- 対応: Windows 10 / 11 (64bit)
+- 設定は `%AppData%\RawAnalyzer` に保存されます。アンインストールはフォルダごと削除するだけです
+
+> 署名していない実行ファイルのため、初回起動時に SmartScreen の警告が出ることがあります。
+> 「詳細情報」→「実行」で起動できます。
+
+---
+
 ## 主な機能
 
 ### 読み込み
