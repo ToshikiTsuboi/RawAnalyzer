@@ -1,12 +1,12 @@
-﻿<#
+<#
 .SYNOPSIS
-  RawViewerのHDR機能確認用の合成DOL 2段(ライン交互)rawを生成する。
+  RawAnalyzerのHDR機能確認用の合成DOL 2段(ライン交互)rawを生成する。
 
 .DESCRIPTION
   シーン輝度は横方向ウェッジ(0〜16×4095)+同心円リング。
   長秒 = clip(シーン, 4095) / 短秒 = シーン/16 を偶奇行に交互格納する。
   既定で 1920×2160 (シーン1080行×2) の12bit下詰め・リトルエンディアン。
-  RawViewerのインポートダイアログでは以下を指定すること:
+  RawAnalyzerのインポートダイアログでは以下を指定すること:
     幅 1920 / 高さ 2160 / 12bit / 下詰め(LSB) / Little / ヘッダ 0 /
     フレーム数 1 / HDR方式 "DOL 2段" / 露光比 16
 
@@ -14,7 +14,7 @@
   .\Generate-DolSample.ps1
 #>
 param(
-    [string]$OutputPath = "$env:LOCALAPPDATA\RawViewer\testdata\dol_2frame_1920x2160_12bit.raw",
+    [string]$OutputPath = "$env:LOCALAPPDATA\RawAnalyzer\testdata\dol_2frame_1920x2160_12bit.raw",
     [int]$Width = 1920,
     [int]$SceneHeight = 1080,
     [int]$Ratio = 16

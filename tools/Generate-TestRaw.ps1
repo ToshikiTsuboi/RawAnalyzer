@@ -1,11 +1,11 @@
-﻿<#
+<#
 .SYNOPSIS
-  RawViewer動作確認用の合成Rawファイルを生成する。
+  RawAnalyzer動作確認用の合成Rawファイルを生成する。
 
 .DESCRIPTION
   既定で 32768x32768 (約10億画素・2GB) の12bit下詰め・リトルエンディアンRawを生成する。
   パターン: 対角グラデーション + 同心円リング + 1024px間隔のグリッド線 + 擬似ノイズ。
-  RawViewerのインポートダイアログでは以下を指定すること:
+  RawAnalyzerのインポートダイアログでは以下を指定すること:
     幅 32768 / 高さ 32768 / 12bit / 下詰め(LSB) / Little / ヘッダ 0 / フレーム 1
 
 .EXAMPLE
@@ -13,7 +13,7 @@
   .\Generate-TestRaw.ps1 -Width 4000 -Height 3000 -OutputPath D:\eval\test_4000x3000_12bit.raw
 #>
 param(
-    [string]$OutputPath = "$env:LOCALAPPDATA\RawViewer\testdata\gigapixel_32768x32768_12bit.raw",
+    [string]$OutputPath = "$env:LOCALAPPDATA\RawAnalyzer\testdata\gigapixel_32768x32768_12bit.raw",
     [int]$Width = 32768,
     [int]$Height = 32768
 )

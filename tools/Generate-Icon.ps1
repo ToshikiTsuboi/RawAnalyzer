@@ -1,10 +1,10 @@
-﻿<#
+<#
 .SYNOPSIS
-  RawViewerのアプリケーションアイコン(.ico)を生成する。
+  RawAnalyzerのアプリケーションアイコン(.ico)を生成する。
   Bayer配列(RGGB)の2x2モザイクをモチーフにしたデザイン。
 #>
 param(
-    [string]$OutputPath = "$PSScriptRoot\..\RawViewer.App\Assets\RawViewer.ico"
+    [string]$OutputPath = "$PSScriptRoot\..\RawAnalyzer.App\Assets\RawAnalyzer.ico"
 )
 
 $ErrorActionPreference = "Stop"

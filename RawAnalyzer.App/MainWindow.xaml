@@ -1,0 +1,720 @@
+<Window x:Class="RawAnalyzer.App.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="clr-namespace:RawAnalyzer.App.Controls"
+        Title="RawAnalyzer" Width="1280" Height="820"
+        Background="#FF252528" Foreground="#FFD8D8D4"
+        AllowDrop="True" Drop="OnFileDrop" DragOver="OnFileDragOver">
+    <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVis" />
+
+        <Style TargetType="Button" x:Key="ToolButton"
+               BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="Padding" Value="10,4" />
+            <Setter Property="Margin" Value="2,0" />
+        </Style>
+        <Style TargetType="Button" x:Key="AccentButton" BasedOn="{StaticResource ToolButton}">
+            <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+            <Setter Property="Foreground" Value="{StaticResource AccentBrush}" />
+        </Style>
+        <Style TargetType="ToggleButton" x:Key="ToolToggle"
+               BasedOn="{StaticResource {x:Type ToggleButton}}">
+            <Setter Property="Padding" Value="10,4" />
+            <Setter Property="Margin" Value="2,0" />
+        </Style>
+        <Style TargetType="Border" x:Key="ToolSep">
+            <Setter Property="Width" Value="1" />
+            <Setter Property="Height" Value="20" />
+            <Setter Property="Background" Value="{StaticResource BorderBrushDark}" />
+            <Setter Property="Margin" Value="6,0" />
+        </Style>
+        <Style TargetType="TextBlock" x:Key="SectionHeader">
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Foreground" Value="{StaticResource TextFaint}" />
+            <Setter Property="Margin" Value="0,0,0,8" />
+        </Style>
+        <Style TargetType="TextBlock" x:Key="RowLabel">
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="Foreground" Value="{StaticResource TextDim}" />
+        </Style>
+        <Style TargetType="TextBlock" x:Key="RowValue">
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="FontFamily" Value="Consolas" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Foreground" Value="#FFD8D8D4" />
+        </Style>
+        <Style TargetType="Border" x:Key="OverlayBox">
+            <Setter Property="Background" Value="#99000000" />
+            <Setter Property="CornerRadius" Value="4" />
+            <Setter Property="Padding" Value="9,3" />
+        </Style>
+        <Style TargetType="TextBlock" x:Key="OverlayText">
+            <Setter Property="FontFamily" Value="Consolas" />
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="Foreground" Value="#FFC9C9C4" />
+        </Style>
+    </Window.Resources>
+
+    <DockPanel>
+        <!-- メニュー -->
+        <Menu x:Name="MainMenuBar" DockPanel.Dock="Top"
+              Background="{StaticResource PanelBrush}" Padding="4,2">
+            <MenuItem Header="ファイル(_F)">
+                <MenuItem Header="開く…" InputGestureText="Ctrl+O" Click="OnOpenFileClick" />
+                <MenuItem Header="フォルダを開く…" Click="OnOpenFolderClick" />
+                <MenuItem x:Name="RecentMenu" Header="最近使ったファイル" />
+                <Separator />
+                <MenuItem Header="保存…" InputGestureText="Ctrl+S" Click="OnSaveClick"
+                          IsEnabled="{Binding HasImage}" />
+                <Separator />
+                <MenuItem Header="終了" Click="OnExitClick" />
+            </MenuItem>
+            <MenuItem Header="表示(_V)">
+                <MenuItem Header="ズームイン" Click="OnZoomInClick" IsEnabled="{Binding HasImage}" />
+                <MenuItem Header="ズームアウト" Click="OnZoomOutClick" IsEnabled="{Binding HasImage}" />
+                <MenuItem Header="等倍 (1:1)" Click="OnActualSizeClick" IsEnabled="{Binding HasImage}" />
+                <MenuItem Header="全体表示" Click="OnFitClick" IsEnabled="{Binding HasImage}" />
+                <Separator />
+                <MenuItem Header="フルスクリーン" InputGestureText="F11"
+                          IsCheckable="True" IsChecked="{Binding IsFullscreen}" />
+                <Separator />
+                <MenuItem Header="ファイルパネル" InputGestureText="Ctrl+L"
+                          IsCheckable="True" IsChecked="{Binding LeftPanelVisible}" />
+                <MenuItem Header="調整パネル" InputGestureText="Ctrl+R"
+                          IsCheckable="True" IsChecked="{Binding RightPanelVisible}" />
+                <Separator />
+                <MenuItem Header="ゼブラ (飽和/黒潰れ警告)" IsCheckable="True"
+                          IsChecked="{Binding ZebraOn}"
+                          IsEnabled="{Binding HasImage}" />
+                <Separator />
+                <MenuItem Header="表示モード" IsEnabled="{Binding HasImage}">
+                    <MenuItem Header="Raw表示" Click="OnMenuDisplayModeClick" Tag="0" />
+                    <MenuItem Header="Bayerカラー" Click="OnMenuDisplayModeClick" Tag="1" />
+                    <MenuItem Header="カラー現像" Click="OnMenuDisplayModeClick" Tag="2" />
+                    <MenuItem Header="チャネル分割 (R/Gr/Gb/B)" Click="OnMenuDisplayModeClick" Tag="3" />
+                </MenuItem>
+            </MenuItem>
+            <MenuItem Header="処理(_P)">
+                <MenuItem Header="自動コントラスト (0.35%クリップ)" Click="OnAutoContrastClick"
+                          IsEnabled="{Binding HasImage}" />
+                <MenuItem Header="表示調整をリセット" Click="OnResetDisplayClick"
+                          IsEnabled="{Binding HasImage}" />
+                <Separator />
+                <MenuItem Header="AWB (グレーワールド)" Click="OnGrayWorldClick"
+                          IsEnabled="{Binding HasImage}" />
+                <MenuItem Header="カラーマトリクスをリセット" Click="OnMatrixResetClick"
+                          IsEnabled="{Binding HasImage}" />
+                <Separator />
+                <MenuItem Header="画像演算 (ダーク減算/フラット補正)…" Click="OnImageCalculatorClick"
+                          IsEnabled="{Binding HasImage}" />
+                <MenuItem Header="バッチ現像 / 動画書き出し…" Click="OnBatchExportClick"
+                          IsEnabled="{Binding HasImage}" />
+            </MenuItem>
+            <MenuItem Header="HDR(_D)">
+                <MenuItem Header="HDR分割表示 (長/短)" Click="OnMenuDisplayModeClick" Tag="4"
+                          IsEnabled="{Binding HasImage}" />
+                <MenuItem Header="HDR合成表示" Click="OnMenuDisplayModeClick" Tag="5"
+                          IsEnabled="{Binding HasImage}" />
+                <Separator />
+                <MenuItem Header="HDR方式の設定 (フォーマット変更)…" Click="OnChangeFormatClick"
+                          IsEnabled="{Binding HasImage}" />
+            </MenuItem>
+            <MenuItem Header="ツール(_T)">
+                <MenuItem Header="ROI選択モード" IsCheckable="True"
+                          IsChecked="{Binding IsChecked, ElementName=RoiToggle, Mode=TwoWay}"
+                          IsEnabled="{Binding HasImage}" />
+                <MenuItem Header="ラインプロファイルモード" IsCheckable="True"
+                          IsChecked="{Binding IsChecked, ElementName=ProfileToggle, Mode=TwoWay}"
+                          IsEnabled="{Binding HasImage}" />
+                <MenuItem Header="WBスポイトモード" IsCheckable="True"
+                          IsChecked="{Binding IsChecked, ElementName=WbPickToggle, Mode=TwoWay}"
+                          IsEnabled="{Binding HasImage}" />
+                <Separator />
+                <MenuItem Header="欠陥画素検出…" Click="OnDefectDetectClick"
+                          IsEnabled="{Binding HasImage}" />
+                <MenuItem Header="ノイズ / ダイナミックレンジ測定…" Click="OnNoiseMeasureClick"
+                          IsEnabled="{Binding HasImage}" />
+                <MenuItem Header="ヒストグラム再計算" Click="OnHistogramRefreshClick"
+                          IsEnabled="{Binding HasImage}" />
+                <MenuItem Header="ヒストグラムをCSVで保存…" Click="OnHistogramSaveCsvClick"
+                          IsEnabled="{Binding HasImage}" />
+                <Separator />
+                <MenuItem Header="プリセットフォルダを開く" Click="OnOpenPresetFolderClick" />
+            </MenuItem>
+            <MenuItem Header="ヘルプ(_H)">
+                <MenuItem Header="コマンドパレット…" InputGestureText="Ctrl+Shift+P"
+                          Click="OnCommandPaletteClick" />
+                <MenuItem Header="キーボードショートカット一覧" InputGestureText="F1"
+                          Click="OnShortcutHelpClick" />
+                <Separator />
+                <MenuItem Header="操作ガイド" Click="OnUsageGuideClick" />
+                <MenuItem Header="バージョン情報" Click="OnAboutClick" />
+            </MenuItem>
+        </Menu>
+
+        <!-- ツールバー -->
+        <Border x:Name="ToolBarPanel" DockPanel.Dock="Top" Background="{StaticResource PanelBrush}"
+                BorderBrush="{StaticResource BorderBrushDark}" BorderThickness="0,1">
+            <StackPanel Orientation="Horizontal" Margin="10,5">
+                <Button Style="{StaticResource AccentButton}" Content="📄 開く" Click="OnOpenFileClick" />
+                <Button Style="{StaticResource ToolButton}" Content="📁 フォルダ" Click="OnOpenFolderClick" />
+                <Border Style="{StaticResource ToolSep}" />
+                <TextBlock Text="表示:" Foreground="{StaticResource TextDim}"
+                           VerticalAlignment="Center" Margin="0,0,4,0" FontSize="12" />
+                <ComboBox x:Name="DisplayModeCombo" SelectedIndex="0" VerticalAlignment="Center"
+                          FontSize="12" MinWidth="110" IsEnabled="{Binding HasImage}"
+                          SelectionChanged="OnDisplayModeChanged">
+                    <ComboBoxItem Content="Raw表示" />
+                    <ComboBoxItem Content="Bayerカラー" />
+                    <ComboBoxItem Content="カラー現像" />
+                    <ComboBoxItem Content="チャネル分割 (R/Gr/Gb/B)" />
+                    <ComboBoxItem Content="HDR分割 (長/短)" />
+                    <ComboBoxItem Content="HDR合成" />
+                </ComboBox>
+                <Border Style="{StaticResource ToolSep}" />
+                <Button Style="{StaticResource ToolButton}" Content="−" Click="OnZoomOutClick" />
+                <TextBlock Text="{Binding ZoomPercentText}" FontFamily="Consolas" FontSize="12"
+                           VerticalAlignment="Center" MinWidth="46" TextAlignment="Center" />
+                <Button Style="{StaticResource ToolButton}" Content="＋" Click="OnZoomInClick" />
+                <Button Style="{StaticResource ToolButton}" Content="1:1" Click="OnActualSizeClick" />
+                <Button Style="{StaticResource ToolButton}" Content="全体" Click="OnFitClick" />
+                <ToggleButton x:Name="ZebraToggle" Content="ゼブラ"
+                              Style="{StaticResource ToolToggle}" IsEnabled="{Binding HasImage}"
+                              ToolTip="飽和(≥98%)を赤 / 黒潰れ(≤2%)を青のストライプで警告"
+                              IsChecked="{Binding ZebraOn, Mode=TwoWay}" />
+                <Border Style="{StaticResource ToolSep}" />
+                <Button Style="{StaticResource ToolButton}" Content="ヒストグラム"
+                        Click="OnHistogramRefreshClick" IsEnabled="{Binding HasImage}" />
+                <ToggleButton x:Name="ProfileToggle" Content="ラインプロファイル"
+                              Style="{StaticResource ToolToggle}" IsEnabled="{Binding HasImage}"
+                              Checked="OnProfileToggleChanged" Unchecked="OnProfileToggleChanged" />
+                <ToggleButton x:Name="RoiToggle" Content="ROI"
+                              Style="{StaticResource ToolToggle}" IsEnabled="{Binding HasImage}"
+                              Checked="OnRoiToggleChanged" Unchecked="OnRoiToggleChanged" />
+                <Border Style="{StaticResource ToolSep}" />
+                <Button Style="{StaticResource ToolButton}" Content="💾 保存"
+                        Click="OnSaveClick" IsEnabled="{Binding HasImage}" />
+            </StackPanel>
+        </Border>
+
+        <!-- ステータスバー -->
+        <Border x:Name="StatusBarPanel" DockPanel.Dock="Bottom"
+                Background="{StaticResource PanelBrush}"
+                BorderBrush="{StaticResource BorderBrushDark}" BorderThickness="0,1,0,0">
+            <DockPanel Margin="12,4">
+                <TextBlock DockPanel.Dock="Right" Text="{Binding ZoomStatusText}"
+                           FontFamily="Consolas" FontSize="11" Foreground="{StaticResource TextDim}" />
+
+                <!-- 加工済みかどうかは一時メッセージで上書きされてはいけないので独立させる -->
+                <Border DockPanel.Dock="Right" Margin="12,0,12,0" Padding="6,1"
+                        CornerRadius="3" VerticalAlignment="Center"
+                        Background="{StaticResource AccentSoftBrush}"
+                        BorderBrush="{StaticResource AccentBrush}" BorderThickness="1"
+                        ToolTip="{Binding ProcessingStateTooltip}"
+                        Visibility="{Binding IsProcessed,
+                                     Converter={StaticResource BoolToVis}}">
+                    <TextBlock Text="{Binding ProcessingStateText}" FontFamily="Consolas"
+                               FontSize="11" Foreground="{StaticResource AccentBrush}" />
+                </Border>
+                <TextBlock Text="{Binding ImageInfoText}" FontFamily="Consolas" FontSize="11"
+                           Foreground="{StaticResource TextDim}" Margin="0,0,24,0" />
+                <TextBlock Text="{Binding CursorStatusText}" FontFamily="Consolas" FontSize="11"
+                           Foreground="{StaticResource TextDim}" />
+            </DockPanel>
+        </Border>
+
+        <!-- 本体 3カラム -->
+        <Grid>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition x:Name="LeftEdgeColumn" Width="Auto" />
+                <ColumnDefinition x:Name="LeftColumn" Width="220" MinWidth="150" />
+                <ColumnDefinition x:Name="LeftSplitterColumn" Width="Auto" />
+                <ColumnDefinition Width="*" MinWidth="220" />
+                <ColumnDefinition x:Name="RightSplitterColumn" Width="Auto" />
+                <ColumnDefinition x:Name="RightColumn" Width="240" MinWidth="190" />
+                <ColumnDefinition x:Name="RightEdgeColumn" Width="Auto" />
+            </Grid.ColumnDefinitions>
+
+            <!-- 左パネル折りたたみ時のストリップ -->
+            <Button x:Name="LeftEdgeStrip" Grid.Column="0" Style="{StaticResource EdgeStripButton}"
+                    Visibility="Collapsed" Click="OnShowLeftPanelClick"
+                    ToolTip="ファイルパネルを表示 (Ctrl+L)">
+                <TextBlock Text="📂 ファイル" FontSize="11">
+                    <TextBlock.LayoutTransform>
+                        <RotateTransform Angle="90" />
+                    </TextBlock.LayoutTransform>
+                </TextBlock>
+            </Button>
+
+            <!-- 左: フォルダツリー + ファイルリスト -->
+            <Border x:Name="LeftPanel" Grid.Column="1" Background="{StaticResource PanelBrush}"
+                    BorderBrush="{StaticResource BorderBrushDark}" BorderThickness="0,0,1,0">
+                <DockPanel Margin="6,8">
+                    <DockPanel DockPanel.Dock="Top" Margin="8,0,2,6">
+                        <Button DockPanel.Dock="Right" Style="{StaticResource PinToggle}"
+                                Content="📌" Click="OnHideLeftPanelClick"
+                                AutomationProperties.Name="ファイルパネルを隠す"
+                                ToolTip="ファイルパネルを隠す (Ctrl+L)" />
+                        <TextBlock Text="{Binding FolderPath}" FontSize="11"
+                                   Foreground="{StaticResource TextFaint}"
+                                   VerticalAlignment="Center"
+                                   TextTrimming="CharacterEllipsis"
+                                   ToolTip="{Binding FolderPath}" />
+                    </DockPanel>
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="*" MinHeight="80" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="1.4*" MinHeight="80" />
+                        </Grid.RowDefinitions>
+                        <TreeView x:Name="FolderTree" Grid.Row="0"
+                                  ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                  TreeViewItem.Expanded="OnFolderTreeExpanded"
+                                  SelectedItemChanged="OnFolderTreeSelected"
+                                  PreviewMouseRightButtonDown="OnTreePreviewRightClick">
+                            <TreeView.ContextMenu>
+                                <ContextMenu>
+                                    <MenuItem Header="エクスプローラーで開く"
+                                              Click="OnTreeOpenExplorerClick" />
+                                    <MenuItem Header="サブフォルダを再読込"
+                                              Click="OnTreeRefreshClick" />
+                                </ContextMenu>
+                            </TreeView.ContextMenu>
+                        </TreeView>
+                        <GridSplitter Grid.Row="1" Height="3" HorizontalAlignment="Stretch"
+                                      Margin="4,3" />
+                        <ListBox x:Name="FileListBox" Grid.Row="2" ItemsSource="{Binding Files}"
+                                 SelectedItem="{Binding SelectedFile}"
+                                 DisplayMemberPath="Name"
+                                 ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                 MouseDoubleClick="OnFileListDoubleClick"
+                                 PreviewMouseRightButtonDown="OnFileListPreviewRightClick">
+                            <ListBox.ContextMenu>
+                                <ContextMenu>
+                                    <MenuItem Header="開く" Click="OnFileCtxOpenClick" />
+                                    <MenuItem Header="フォーマットを指定して開く…"
+                                              Click="OnFileCtxOpenWithFormatClick"
+                                              ToolTip="記憶したフォーマットを使わずインポートダイアログを開きます" />
+                                    <MenuItem Header="エクスプローラーで表示"
+                                              Click="OnFileCtxRevealClick" />
+                                    <MenuItem Header="パスをコピー" Click="OnFileCtxCopyPathClick" />
+                                    <Separator />
+                                    <MenuItem Header="フォルダを再読込" Click="OnFileCtxRefreshClick" />
+                                </ContextMenu>
+                            </ListBox.ContextMenu>
+                        </ListBox>
+                    </Grid>
+                </DockPanel>
+            </Border>
+
+            <GridSplitter x:Name="LeftSplitter" Grid.Column="2" Width="5"
+                          HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
+                          ResizeBehavior="PreviousAndNext" ResizeDirection="Columns"
+                          Cursor="SizeWE" ToolTip="ドラッグで幅を調整" />
+
+            <!-- 中央: 画像キャンバス -->
+            <Grid Grid.Column="3" Background="#FF161618">
+                <controls:ImageViewport x:Name="Viewport">
+                    <controls:ImageViewport.ContextMenu>
+                        <ContextMenu>
+                            <MenuItem Header="全体表示" Click="OnFitClick"
+                                      IsEnabled="{Binding HasImage}" />
+                            <MenuItem Header="等倍 (1:1)" Click="OnActualSizeClick"
+                                      IsEnabled="{Binding HasImage}" />
+                            <MenuItem Header="この位置を拡大 (32x)" Click="OnZoomHereClick"
+                                      IsEnabled="{Binding HasImage}" />
+                            <Separator />
+                            <MenuItem Header="raw値をコピー" Click="OnCopyPixelValueClick"
+                                      IsEnabled="{Binding HasImage}" />
+                            <MenuItem Header="座標をコピー" Click="OnCopyPixelPosClick"
+                                      IsEnabled="{Binding HasImage}" />
+                            <MenuItem Header="表示をクリップボードへコピー" Click="OnCopyViewClick"
+                                      IsEnabled="{Binding HasImage}" />
+                            <Separator />
+                            <MenuItem Header="ゼブラ (飽和/黒潰れ警告)" IsCheckable="True"
+                                      IsChecked="{Binding ZebraOn}"
+                                      IsEnabled="{Binding HasImage}" />
+                            <MenuItem Header="フルスクリーン (F11)" IsCheckable="True"
+                                      IsChecked="{Binding IsFullscreen}" />
+                            <MenuItem Header="ROIを解除" Click="OnClearRoiClick"
+                                      IsEnabled="{Binding HasRoi}" />
+                            <Separator />
+                            <MenuItem Header="保存…" Click="OnSaveClick"
+                                      IsEnabled="{Binding HasImage}" />
+                        </ContextMenu>
+                    </controls:ImageViewport.ContextMenu>
+                </controls:ImageViewport>
+                <Border Style="{StaticResource OverlayBox}" HorizontalAlignment="Left"
+                        VerticalAlignment="Top" Margin="14,12"
+                        Visibility="{Binding HasImage, Converter={StaticResource BoolToVis}}">
+                    <TextBlock Style="{StaticResource OverlayText}" Text="{Binding CursorOverlayText}" />
+                </Border>
+                <Border Style="{StaticResource OverlayBox}" HorizontalAlignment="Right"
+                        VerticalAlignment="Top" Margin="14,12"
+                        Visibility="{Binding HasRoi, Converter={StaticResource BoolToVis}}">
+                    <TextBlock Style="{StaticResource OverlayText}" Text="{Binding RoiOverlayText}" />
+                </Border>
+                <!-- シーケンス再生バー -->
+                <Border VerticalAlignment="Bottom" HorizontalAlignment="Stretch"
+                        Background="#E62E2E32" BorderBrush="{StaticResource BorderBrushDark}"
+                        BorderThickness="0,1,0,0" Padding="10,6"
+                        Visibility="{Binding HasSequence, Converter={StaticResource BoolToVis}}">
+                    <DockPanel>
+                        <Button Style="{StaticResource ToolButton}" Content="⏮"
+                                Click="OnSeqFirstClick" Padding="8,3"
+                                AutomationProperties.Name="先頭フレームへ" ToolTip="先頭フレームへ" />
+                        <Button Style="{StaticResource ToolButton}" Content="◀"
+                                Click="OnSeqPrevClick" Padding="8,3"
+                                AutomationProperties.Name="前のフレームへ" ToolTip="前のフレームへ" />
+                        <ToggleButton x:Name="PlayToggle" Content="▶ 再生"
+                                      Style="{StaticResource ToolToggle}" Padding="10,3"
+                                      Checked="OnPlayToggleChanged" Unchecked="OnPlayToggleChanged" />
+                        <Button Style="{StaticResource ToolButton}" Content="▶"
+                                Click="OnSeqNextClick" Padding="8,3"
+                                AutomationProperties.Name="次のフレームへ" ToolTip="次のフレームへ" />
+                        <Button Style="{StaticResource ToolButton}" Content="⏭"
+                                Click="OnSeqLastClick" Padding="8,3"
+                                AutomationProperties.Name="最終フレームへ" ToolTip="最終フレームへ" />
+                        <ComboBox x:Name="FpsCombo" DockPanel.Dock="Right" MinWidth="76"
+                                  SelectedIndex="2" FontSize="11" VerticalAlignment="Center">
+                            <ComboBoxItem Content="5 fps" />
+                            <ComboBoxItem Content="10 fps" />
+                            <ComboBoxItem Content="15 fps" />
+                            <ComboBoxItem Content="24 fps" />
+                            <ComboBoxItem Content="30 fps" />
+                        </ComboBox>
+                        <TextBlock DockPanel.Dock="Right" Text="{Binding SequenceLabel}"
+                                   FontFamily="Consolas" FontSize="12" Margin="10,0"
+                                   VerticalAlignment="Center"
+                                   Foreground="{StaticResource TextDim}" />
+                        <Slider x:Name="SeqSlider" Minimum="0" Maximum="{Binding SequenceMax}"
+                                Value="{Binding SequenceIndex}" Margin="10,0,0,0"
+                                SmallChange="1" LargeChange="5" IsSnapToTickEnabled="True"
+                                TickFrequency="1"
+                                ValueChanged="OnSeqSliderChanged" />
+                    </DockPanel>
+                </Border>
+                <Border Style="{StaticResource OverlayBox}" HorizontalAlignment="Right"
+                        VerticalAlignment="Bottom" Margin="14,44"
+                        Visibility="{Binding HasImage, Converter={StaticResource BoolToVis}}">
+                    <TextBlock Style="{StaticResource OverlayText}" Text="{Binding LevelOverlayText}"
+                               Foreground="#FF8A8A85" />
+                </Border>
+            </Grid>
+
+            <GridSplitter x:Name="RightSplitter" Grid.Column="4" Width="5"
+                          HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
+                          ResizeBehavior="PreviousAndNext" ResizeDirection="Columns"
+                          Cursor="SizeWE" ToolTip="ドラッグで幅を調整" />
+
+            <!-- 右: パネル群 -->
+            <Border x:Name="RightPanel" Grid.Column="5" Background="{StaticResource PanelBrush}"
+                    BorderBrush="{StaticResource BorderBrushDark}" BorderThickness="1,0,0,0">
+                <DockPanel>
+                    <Border DockPanel.Dock="Top" Background="{StaticResource Panel2Brush}"
+                            BorderBrush="{StaticResource BorderBrushDark}"
+                            BorderThickness="0,0,0,1" Padding="10,4">
+                        <DockPanel>
+                            <Button DockPanel.Dock="Right" Style="{StaticResource PinToggle}"
+                                    Content="📌" Click="OnHideRightPanelClick"
+                                    AutomationProperties.Name="調整パネルを隠す"
+                                    ToolTip="調整パネルを隠す (Ctrl+R)" />
+                            <TextBlock Text="調整パネル" FontSize="11" FontWeight="SemiBold"
+                                       Foreground="{StaticResource TextDim}"
+                                       VerticalAlignment="Center" />
+                        </DockPanel>
+                    </Border>
+                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                        <StackPanel>
+                        <!-- 表示調整 -->
+                        <Border BorderBrush="{StaticResource BorderBrushDark}"
+                                BorderThickness="0,0,0,1" Padding="12,10">
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource SectionHeader}" Text="表示調整" />
+                                <controls:NumericSliderRow Label="ゲイン" Value="{Binding Gain}"
+                                                           Minimum="0.25" Maximum="8" Step="0.05"
+                                                           Decimals="2" DefaultValue="1"
+                                                           TickFrequency="1" />
+                                <controls:NumericSliderRow Label="ガンマ" Value="{Binding Gamma}"
+                                                           Minimum="0.2" Maximum="3" Step="0.05"
+                                                           Decimals="2" DefaultValue="1"
+                                                           TickFrequency="0.5" />
+                                <controls:NumericSliderRow Label="コントラスト" Value="{Binding Contrast}"
+                                                           Minimum="0" Maximum="3" Step="0.05"
+                                                           Decimals="2" DefaultValue="1"
+                                                           TickFrequency="0.5" />
+                                <controls:NumericSliderRow Label="黒レベル" Value="{Binding BlackLevel}"
+                                                           Minimum="0" Maximum="{Binding BlackLevelMax}"
+                                                           Step="1" Decimals="0" DefaultValue="0" />
+                                <controls:NumericSliderRow Label="白レベル" Value="{Binding WhiteLevel}"
+                                                           Minimum="0" Maximum="{Binding BlackLevelMax}"
+                                                           Step="1" Decimals="0"
+                                                           DefaultValue="{Binding BlackLevelMax}" />
+                                <DockPanel Margin="0,6,0,0"
+                                           Visibility="{Binding HdrTargetVisible,
+                                               Converter={StaticResource BoolToVis}}">
+                                    <TextBlock Style="{StaticResource RowLabel}" Text="調整対象"
+                                               Width="64" VerticalAlignment="Center" />
+                                    <ComboBox x:Name="HdrTargetCombo" FontSize="11" />
+                                </DockPanel>
+                                <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                                    <Button Style="{StaticResource ToolButton}" Content="自動 (0.35%クリップ)"
+                                            Click="OnAutoContrastClick" FontSize="11" />
+                                    <Button Style="{StaticResource ToolButton}" Content="リセット"
+                                            Click="OnResetDisplayClick" FontSize="11" />
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- ヒストグラム -->
+                        <Border BorderBrush="{StaticResource BorderBrushDark}"
+                                BorderThickness="0,0,0,1" Padding="12,10">
+                            <StackPanel>
+                                <DockPanel Margin="0,0,0,8">
+                                    <CheckBox DockPanel.Dock="Right" Content="log" FontSize="11"
+                                              Foreground="{StaticResource TextDim}"
+                                              IsChecked="{Binding HistogramIsLog}"
+                                              VerticalAlignment="Center" />
+                                    <CheckBox DockPanel.Dock="Right" Content="累積" FontSize="11"
+                                              Foreground="{StaticResource TextDim}"
+                                              IsChecked="{Binding HistogramIsCumulative}"
+                                              Margin="0,0,8,0" VerticalAlignment="Center"
+                                              ToolTip="累積頻度表示 (傷の出力ピーク解析用)" />
+                                    <CheckBox DockPanel.Dock="Right" Content="ch" FontSize="11"
+                                              Foreground="{StaticResource TextDim}"
+                                              IsChecked="{Binding HistogramByChannel}"
+                                              Margin="0,0,8,0" VerticalAlignment="Center"
+                                              ToolTip="Bayerチャネル別 (R/Gr/Gb/B) 表示" />
+                                    <TextBlock DockPanel.Dock="Right" Text="sampled" FontSize="10"
+                                               Foreground="#FFD99B5B" Margin="0,0,8,0"
+                                               VerticalAlignment="Center"
+                                               Visibility="{Binding HistogramIsSampled,
+                                                   Converter={StaticResource BoolToVis}}" />
+                                    <TextBlock FontSize="11" FontWeight="SemiBold"
+                                               Foreground="{StaticResource TextFaint}"
+                                               Text="ヒストグラム" />
+                                </DockPanel>
+                                <Image Source="{Binding HistogramSource}" Height="70" Stretch="Fill"
+                                       SnapsToDevicePixels="True" Cursor="Hand"
+                                       ToolTip="右クリックでデータ保存/コピー">
+                                    <Image.ContextMenu>
+                                        <ContextMenu>
+                                            <MenuItem Header="データをコピー (Excel貼り付け用)"
+                                                      Click="OnHistogramCopyClick" />
+                                            <MenuItem Header="CSVで保存…"
+                                                      Click="OnHistogramSaveCsvClick" />
+                                        </ContextMenu>
+                                    </Image.ContextMenu>
+                                </Image>
+                                <DockPanel Margin="0,6,0,0">
+                                    <TextBlock Style="{StaticResource RowLabel}" Text="mean / σ" />
+                                    <TextBlock DockPanel.Dock="Right" Style="{StaticResource RowValue}"
+                                               Text="{Binding HistMeanSigmaText}" />
+                                    <Border />
+                                </DockPanel>
+                                <DockPanel Margin="0,2,0,0">
+                                    <TextBlock Style="{StaticResource RowLabel}" Text="min / max" />
+                                    <TextBlock DockPanel.Dock="Right" Style="{StaticResource RowValue}"
+                                               Text="{Binding HistMinMaxText}" />
+                                    <Border />
+                                </DockPanel>
+                                <DockPanel Margin="0,2,0,0">
+                                    <TextBlock Style="{StaticResource RowLabel}" Text="中央値 / 最頻値" />
+                                    <TextBlock DockPanel.Dock="Right" Style="{StaticResource RowValue}"
+                                               Text="{Binding HistMedianModeText}" />
+                                    <Border />
+                                </DockPanel>
+                                <DockPanel Margin="0,2,0,0">
+                                    <TextBlock Style="{StaticResource RowLabel}" Text="P1 / P99" />
+                                    <TextBlock DockPanel.Dock="Right" Style="{StaticResource RowValue}"
+                                               Text="{Binding HistPercentileText}" />
+                                    <Border />
+                                </DockPanel>
+                                <DockPanel Margin="0,2,0,0">
+                                    <TextBlock Style="{StaticResource RowLabel}" Text="飽和 / 黒つぶれ" />
+                                    <TextBlock DockPanel.Dock="Right" Style="{StaticResource RowValue}"
+                                               Text="{Binding HistClipText}" />
+                                    <Border />
+                                </DockPanel>
+                                <DockPanel Margin="0,2,0,0">
+                                    <TextBlock Style="{StaticResource RowLabel}" Text="max/σ (参考)"
+                                               ToolTip="20·log10(最大code / この領域のσ)。σには被写体コントラストやFPNが含まれるためDRではありません。正式なDRは ツール → ノイズ / DR測定 で測定してください" />
+                                    <TextBlock DockPanel.Dock="Right" Style="{StaticResource RowValue}"
+                                               Text="{Binding HistDynamicRangeText}" />
+                                    <Border />
+                                </DockPanel>
+                                <!-- チャネル別統計 (mean / σ) -->
+                                <StackPanel Visibility="{Binding ChannelStatsVisible,
+                                        Converter={StaticResource BoolToVis}}" Margin="0,4,0,0">
+                                    <DockPanel Margin="0,1">
+                                        <TextBlock Style="{StaticResource RowLabel}" Text="R"
+                                                   Foreground="#FFE0524E" Width="28" />
+                                        <TextBlock DockPanel.Dock="Right"
+                                                   Style="{StaticResource RowValue}"
+                                                   Text="{Binding ChRText}" />
+                                        <Border />
+                                    </DockPanel>
+                                    <DockPanel Margin="0,1">
+                                        <TextBlock Style="{StaticResource RowLabel}" Text="Gr"
+                                                   Foreground="#FF7ECB72" Width="28" />
+                                        <TextBlock DockPanel.Dock="Right"
+                                                   Style="{StaticResource RowValue}"
+                                                   Text="{Binding ChGrText}" />
+                                        <Border />
+                                    </DockPanel>
+                                    <DockPanel Margin="0,1">
+                                        <TextBlock Style="{StaticResource RowLabel}" Text="Gb"
+                                                   Foreground="#FF4E9A4E" Width="28" />
+                                        <TextBlock DockPanel.Dock="Right"
+                                                   Style="{StaticResource RowValue}"
+                                                   Text="{Binding ChGbText}" />
+                                        <Border />
+                                    </DockPanel>
+                                    <DockPanel Margin="0,1">
+                                        <TextBlock Style="{StaticResource RowLabel}" Text="B"
+                                                   Foreground="#FF5B9DD9" Width="28" />
+                                        <TextBlock DockPanel.Dock="Right"
+                                                   Style="{StaticResource RowValue}"
+                                                   Text="{Binding ChBText}" />
+                                        <Border />
+                                    </DockPanel>
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- ホワイトバランス -->
+                        <Border BorderBrush="{StaticResource BorderBrushDark}"
+                                BorderThickness="0,0,0,1" Padding="12,10">
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource SectionHeader}" Text="ホワイトバランス" />
+                                <controls:NumericSliderRow Label="Rゲイン" Value="{Binding WbGainR}"
+                                                           Minimum="0.5" Maximum="4" Step="0.01"
+                                                           Decimals="3" DefaultValue="1"
+                                                           TickFrequency="0.5" />
+                                <controls:NumericSliderRow Label="Gゲイン" Value="{Binding WbGainG}"
+                                                           Minimum="0.5" Maximum="4" Step="0.01"
+                                                           Decimals="3" DefaultValue="1"
+                                                           TickFrequency="0.5" />
+                                <controls:NumericSliderRow Label="Bゲイン" Value="{Binding WbGainB}"
+                                                           Minimum="0.5" Maximum="4" Step="0.01"
+                                                           Decimals="3" DefaultValue="1"
+                                                           TickFrequency="0.5" />
+                                <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                                    <Button Style="{StaticResource ToolButton}"
+                                            Content="AWB (グレーワールド)"
+                                            Click="OnGrayWorldClick" FontSize="11"
+                                            IsEnabled="{Binding HasImage}"
+                                            ToolTip="画像全体の平均からR/Bゲインを自動計算" />
+                                    <ToggleButton x:Name="WbPickToggle" Content="スポイト"
+                                                  Style="{StaticResource ToolToggle}"
+                                                  FontSize="11"
+                                                  IsEnabled="{Binding HasImage}"
+                                                  ToolTip="クリックした画素を無彩色とみなしてWBを合わせる"
+                                                  Checked="OnWbPickToggleChanged"
+                                                  Unchecked="OnWbPickToggleChanged" />
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- カラーマトリクス (発展機能) -->
+                        <Border BorderBrush="{StaticResource BorderBrushDark}"
+                                BorderThickness="0,0,0,1" Padding="12,10">
+                            <StackPanel IsEnabled="{Binding HasImage}">
+                                <TextBlock Style="{StaticResource SectionHeader}"
+                                           Text="カラーマトリクス (現像時)" />
+                                <UniformGrid Columns="3" Rows="3">
+                                    <TextBox x:Name="M11Box" Text="1.00" FontSize="11" Margin="1"
+                                             TextAlignment="Right" TextChanged="OnMatrixChanged" />
+                                    <TextBox x:Name="M12Box" Text="0.00" FontSize="11" Margin="1"
+                                             TextAlignment="Right" TextChanged="OnMatrixChanged" />
+                                    <TextBox x:Name="M13Box" Text="0.00" FontSize="11" Margin="1"
+                                             TextAlignment="Right" TextChanged="OnMatrixChanged" />
+                                    <TextBox x:Name="M21Box" Text="0.00" FontSize="11" Margin="1"
+                                             TextAlignment="Right" TextChanged="OnMatrixChanged" />
+                                    <TextBox x:Name="M22Box" Text="1.00" FontSize="11" Margin="1"
+                                             TextAlignment="Right" TextChanged="OnMatrixChanged" />
+                                    <TextBox x:Name="M23Box" Text="0.00" FontSize="11" Margin="1"
+                                             TextAlignment="Right" TextChanged="OnMatrixChanged" />
+                                    <TextBox x:Name="M31Box" Text="0.00" FontSize="11" Margin="1"
+                                             TextAlignment="Right" TextChanged="OnMatrixChanged" />
+                                    <TextBox x:Name="M32Box" Text="0.00" FontSize="11" Margin="1"
+                                             TextAlignment="Right" TextChanged="OnMatrixChanged" />
+                                    <TextBox x:Name="M33Box" Text="1.00" FontSize="11" Margin="1"
+                                             TextAlignment="Right" TextChanged="OnMatrixChanged" />
+                                </UniformGrid>
+                                <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                                    <Button Style="{StaticResource ToolButton}" Content="リセット"
+                                            Click="OnMatrixResetClick" FontSize="11" />
+                                    <TextBlock x:Name="MatrixStateText" Style="{StaticResource RowLabel}"
+                                               FontSize="10" VerticalAlignment="Center"
+                                               Margin="8,0,0,0" Text="単位行列 (無効)" />
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- フォーマット -->
+                        <Border BorderBrush="{StaticResource BorderBrushDark}"
+                                BorderThickness="0,0,0,1" Padding="12,10">
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource SectionHeader}" Text="フォーマット" />
+                                <DockPanel Margin="0,2">
+                                    <TextBlock Style="{StaticResource RowLabel}" Text="ビット深度" />
+                                    <TextBlock DockPanel.Dock="Right" Style="{StaticResource RowValue}"
+                                               Text="{Binding FmtBitDepthText}" />
+                                    <Border />
+                                </DockPanel>
+                                <DockPanel Margin="0,2">
+                                    <TextBlock Style="{StaticResource RowLabel}" Text="エンディアン" />
+                                    <TextBlock DockPanel.Dock="Right" Style="{StaticResource RowValue}"
+                                               Text="{Binding FmtEndianText}" />
+                                    <Border />
+                                </DockPanel>
+                                <DockPanel Margin="0,2">
+                                    <TextBlock Style="{StaticResource RowLabel}" Text="Bayer"
+                                               VerticalAlignment="Center" />
+                                    <ComboBox x:Name="FmtBayerCombo" DockPanel.Dock="Right"
+                                              MinWidth="96" FontSize="11"
+                                              IsEnabled="{Binding HasImage}"
+                                              SelectionChanged="OnFmtBayerChanged"
+                                              ToolTip="Bayerパターンはここでいつでも変更できます(再読込不要)">
+                                        <ComboBoxItem Content="RGGB" />
+                                        <ComboBoxItem Content="BGGR" />
+                                        <ComboBoxItem Content="GRBG" />
+                                        <ComboBoxItem Content="GBRG" />
+                                        <ComboBoxItem Content="なし" />
+                                    </ComboBox>
+                                    <Border />
+                                </DockPanel>
+                                <DockPanel Margin="0,2">
+                                    <TextBlock Style="{StaticResource RowLabel}" Text="HDR" />
+                                    <TextBlock DockPanel.Dock="Right" Style="{StaticResource RowValue}"
+                                               Text="{Binding FmtHdrText}" />
+                                    <Border />
+                                </DockPanel>
+                                <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                                    <Button Style="{StaticResource ToolButton}" Content="変更…"
+                                            Click="OnChangeFormatClick" FontSize="11"
+                                            IsEnabled="{Binding HasImage}" />
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+                        </StackPanel>
+                    </ScrollViewer>
+                </DockPanel>
+            </Border>
+
+            <!-- 右パネル折りたたみ時のストリップ -->
+            <Button x:Name="RightEdgeStrip" Grid.Column="6"
+                    Style="{StaticResource EdgeStripButton}"
+                    Visibility="Collapsed" Click="OnShowRightPanelClick"
+                    ToolTip="調整パネルを表示 (Ctrl+R)">
+                <TextBlock Text="⚙ 調整パネル" FontSize="11">
+                    <TextBlock.LayoutTransform>
+                        <RotateTransform Angle="90" />
+                    </TextBlock.LayoutTransform>
+                </TextBlock>
+            </Button>
+        </Grid>
+    </DockPanel>
+</Window>
