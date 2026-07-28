@@ -71,6 +71,42 @@ public static class BayerHelper
     }
 
     /// <summary>
+    /// 原点を (dx, dy) だけずらして切り出したときのBayerパターンを返す。
+    /// </summary>
+    /// <remarks>
+    /// DOLの行オフセット補正のように、奇数行から始まる部分画像を切り出すと
+    /// モザイクの位相が変わる。切り出し後の画像に付けるべきパターンを求める。
+    /// </remarks>
+    /// <param name="pattern">元のパターン。</param>
+    /// <param name="dx">切り出し原点のX。</param>
+    /// <param name="dy">切り出し原点のY。</param>
+    /// <returns>切り出し後のパターン。Noneはそのまま。</returns>
+    public static BayerPattern ShiftOrigin(BayerPattern pattern, int dx, int dy)
+    {
+        if (pattern == BayerPattern.None)
+        {
+            return BayerPattern.None;
+        }
+
+        // 新しい原点の2x2ブロックがどの並びになるかで判定する
+        BayerChannel topLeft = GetChannel(pattern, dx, dy);
+        if (topLeft == BayerChannel.R)
+        {
+            return BayerPattern.Rggb;
+        }
+
+        if (topLeft == BayerChannel.B)
+        {
+            return BayerPattern.Bggr;
+        }
+
+        // 左上が緑なら、右隣がRかBかで決まる
+        return GetChannel(pattern, dx + 1, dy) == BayerChannel.R
+            ? BayerPattern.Grbg
+            : BayerPattern.Gbrg;
+    }
+
+    /// <summary>
     /// チャネルの表示ラベル("R"/"Gr"/"Gb"/"B"/"-")を返す。
     /// </summary>
     /// <param name="channel">チャネル。</param>

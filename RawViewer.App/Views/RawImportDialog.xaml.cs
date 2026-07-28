@@ -128,6 +128,8 @@ public partial class RawImportDialog : Window
             _ => 0,
         };
         ExposureRatioBox.Text = format.ExposureRatio.ToString(CultureInfo.InvariantCulture);
+        HdrLineBlockBox.Text = format.HdrLineBlock.ToString(CultureInfo.InvariantCulture);
+        HdrRowOffsetBox.Text = format.HdrRowOffset.ToString(CultureInfo.InvariantCulture);
     }
 
     private RawFormat? TryBuildFormat(out string error)
@@ -164,6 +166,18 @@ public partial class RawImportDialog : Window
             return null;
         }
 
+        if (!int.TryParse(HdrLineBlockBox.Text, out int lineBlock) || lineBlock < 0)
+        {
+            error = "ライン単位が不正です(0以上)";
+            return null;
+        }
+
+        if (!int.TryParse(HdrRowOffsetBox.Text, out int rowOffset))
+        {
+            error = "行オフセットが不正です";
+            return null;
+        }
+
         return new RawFormat
         {
             Width = width,
@@ -189,6 +203,8 @@ public partial class RawImportDialog : Window
             },
             HdrStages = HdrCombo.SelectedIndex is 2 or 4 ? 3 : 2,
             ExposureRatio = exposureRatio,
+            HdrLineBlock = lineBlock,
+            HdrRowOffset = rowOffset,
         };
     }
 

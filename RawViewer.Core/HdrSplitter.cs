@@ -106,33 +106,49 @@ public static class HdrSplitter
     {
         int width = image.Width;
 
-        // Bayerセンサでは色ペア(2行)単位でライン交互になるためブロック高さを2にする
-        int blockHeight = format.Bayer != BayerPattern.None ? 2 : 1;
+        // 既定はBayerなら色ペア(2行)単位。物理ライン1本ごとに長秒/短秒を読み出す
+        // センサでは1を指定する(部分画像側では2行ごとに色位相が進むためモザイクは保たれる)
+        int blockHeight = format.EffectiveHdrLineBlock;
         int period = stages * blockHeight;
-        int subHeight = image.Height / period * blockHeight;
-        if (subHeight == 0)
-        {
-            throw new InvalidOperationException("高さがHDR段数の周期より小さいため分割できません。");
-        }
+        int fullSubHeight = image.Height / period * blockHeight;
 
-        RawFormat subFormat = format with
+        // 読み出しのパイプライン遅延ぶん段ごとに縦へずれているので、
+        // 重なる範囲だけを切り出して各段を行方向に整列させる
+        int offsetStep = format.HdrRowOffset;
+        int maxOffset = offsetStep * (stages - 1);
+        int lowest = Math.Min(0, maxOffset);
+        int highest = Math.Max(0, maxOffset);
+        int subHeight = fullSubHeight - (highest - lowest);
+
+        // 部分画像の先頭行が奇数だとモザイクの位相が変わるため、
+        // 段ごとに切り出し位置に合ったBayerパターンを付ける
+        if (subHeight <= 0)
         {
-            Height = subHeight,
-            FrameCount = 1,
-            Hdr = HdrMode.None,
-        };
+            throw new InvalidOperationException(
+                "行オフセットが大きすぎて重なる領域がありません。設定値を見直してください。");
+        }
 
         var frames = new RawImage[stages];
         for (int stage = 0; stage < stages; stage++)
         {
+            int startRow = offsetStep * stage - lowest;
             var pixels = new ushort[(long)width * subHeight];
             int stageIndex = stage;
             Parallel.For(0, subHeight, y =>
             {
-                int sourceY = y / blockHeight * period
-                    + stageIndex * blockHeight + y % blockHeight;
+                int subY = y + startRow;
+                int sourceY = subY / blockHeight * period
+                    + stageIndex * blockHeight + subY % blockHeight;
                 image.CopyRegion(0, 0, sourceY, width, 1, pixels.AsSpan(y * width, width));
             });
+
+            RawFormat subFormat = format with
+            {
+                Height = subHeight,
+                FrameCount = 1,
+                Hdr = HdrMode.None,
+                Bayer = BayerHelper.ShiftOrigin(format.Bayer, 0, startRow),
+            };
             frames[stage] = new RawImage(subFormat, pixels);
         }
 

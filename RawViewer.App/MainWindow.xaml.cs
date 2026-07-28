@@ -635,11 +635,15 @@ public partial class MainWindow : Window
             _ => 4,
         };
         _updatingFormatPanel = false;
+        string hdrDetail = format.Hdr == HdrMode.None
+            ? ""
+            : $" / {format.EffectiveHdrLineBlock}行単位"
+                + (format.HdrRowOffset != 0 ? $" / 行オフセット{format.HdrRowOffset:+#;-#;0}" : "");
         _vm.FmtHdrText = format.Hdr switch
         {
-            HdrMode.Dol => $"DOL {format.HdrStages}段 (露光比 {format.ExposureRatio:F0})",
+            HdrMode.Dol => $"DOL {format.HdrStages}段 (露光比 {format.ExposureRatio:F0}){hdrDetail}",
             HdrMode.Staggered =>
-                $"Staggered {format.HdrStages}段 (露光比 {format.ExposureRatio:F0})",
+                $"Staggered {format.HdrStages}段 (露光比 {format.ExposureRatio:F0}){hdrDetail}",
             _ => "なし",
         };
     }
@@ -2265,6 +2269,9 @@ public partial class MainWindow : Window
 
         await ApplyDerivedViewAsync(quantized);
         _hdrFloatImage = merged;
+
+        // 派生ビュー適用時点ではまだ合成結果を持っていないのでバッジを出し直す
+        UpdateProcessingBadge();
         _vm.HdrTargetVisible = false;
 
         // 16bit量子化で情報が落ちる構成では、解析値がその精度で読まれることを明示する

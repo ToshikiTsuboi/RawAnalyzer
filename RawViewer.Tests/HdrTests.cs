@@ -164,6 +164,143 @@ public class HdrSplitterTests
     }
 
     [Fact]
+    public void Split_LineBlock1WithBayer_TakesEveryOtherRow()
+    {
+        // 物理ライン1本ごとに長秒/短秒を読み出すセンサ(DOL)。
+        // 既定の2行単位で切ると別の露光が混ざるため、1行単位を明示できること。
+        const int width = 4;
+        const int height = 12;
+        var values = new ushort[width * height];
+        for (int y = 0; y < height; y++)
+        {
+            for (int x = 0; x < width; x++)
+            {
+                // 偶数行=長秒(1000番台) / 奇数行=短秒(2000番台)、下2桁に元行番号
+                values[y * width + x] = (ushort)((y % 2 == 0 ? 1000 : 2000) + y);
+            }
+        }
+
+        var format = new RawFormat
+        {
+            Width = width, Height = height, BitDepth = 16,
+            Hdr = HdrMode.Dol, HdrStages = 2, Bayer = BayerPattern.Rggb,
+            HdrLineBlock = 1,
+        };
+        using RawImage image = LoadImage(values, format);
+
+        IReadOnlyList<RawImage> frames = HdrSplitter.Split(image, format);
+        try
+        {
+            Assert.Equal(6, frames[0].Height);
+            Assert.Equal(6, frames[1].Height);
+            for (int y = 0; y < 6; y++)
+            {
+                Assert.Equal(1000 + y * 2, frames[0].GetPixel(0, y));
+                Assert.Equal(2000 + y * 2 + 1, frames[1].GetPixel(0, y));
+            }
+
+            // 1行単位でも部分画像側では2行ごとに色位相が進むのでRGGBのまま
+            Assert.Equal(BayerPattern.Rggb, frames[0].Format.Bayer);
+            Assert.Equal(BayerPattern.Rggb, frames[1].Format.Bayer);
+        }
+        finally
+        {
+            foreach (RawImage frame in frames)
+            {
+                frame.Dispose();
+            }
+        }
+    }
+
+    [Fact]
+    public void Split_RowOffset_AlignsStagesAndCropsOverlap()
+    {
+        // 短秒側が2行ぶん下にずれて格納されている想定。
+        // オフセットを指定すると、同じ内容が同じ行に来るように切り出される。
+        const int width = 2;
+        const int height = 24;
+        var values = new ushort[width * height];
+        for (int y = 0; y < height; y++)
+        {
+            int sub = y / 2;                       // 部分画像側の行
+            int content = y % 2 == 0 ? sub : sub - 2;  // 短秒は2行遅れ
+            for (int x = 0; x < width; x++)
+            {
+                values[y * width + x] = (ushort)(100 + Math.Max(0, content));
+            }
+        }
+
+        var format = new RawFormat
+        {
+            Width = width, Height = height, BitDepth = 16,
+            Hdr = HdrMode.Dol, HdrStages = 2,
+            HdrLineBlock = 1, HdrRowOffset = 2,
+        };
+        using RawImage image = LoadImage(values, format);
+
+        IReadOnlyList<RawImage> frames = HdrSplitter.Split(image, format);
+        try
+        {
+            // 12行のうち重なるのは10行
+            Assert.Equal(10, frames[0].Height);
+            Assert.Equal(10, frames[1].Height);
+            for (int y = 0; y < 10; y++)
+            {
+                Assert.Equal(frames[0].GetPixel(0, y), frames[1].GetPixel(0, y));
+            }
+        }
+        finally
+        {
+            foreach (RawImage frame in frames)
+            {
+                frame.Dispose();
+            }
+        }
+    }
+
+    [Fact]
+    public void Split_OddRowOffsetWithBayer_ShiftsPatternPhase()
+    {
+        const int width = 2;
+        const int height = 16;
+        var format = new RawFormat
+        {
+            Width = width, Height = height, BitDepth = 16,
+            Hdr = HdrMode.Dol, HdrStages = 2, Bayer = BayerPattern.Rggb,
+            HdrLineBlock = 1, HdrRowOffset = 1,
+        };
+        using RawImage image = LoadImage(new ushort[width * height], format);
+
+        IReadOnlyList<RawImage> frames = HdrSplitter.Split(image, format);
+        try
+        {
+            // 奇数行から切り出す側は色位相が1行ずれる
+            Assert.Equal(BayerPattern.Rggb, frames[0].Format.Bayer);
+            Assert.Equal(BayerPattern.Gbrg, frames[1].Format.Bayer);
+        }
+        finally
+        {
+            foreach (RawImage frame in frames)
+            {
+                frame.Dispose();
+            }
+        }
+    }
+
+    [Fact]
+    public void Split_RowOffsetLargerThanImage_Throws()
+    {
+        var format = new RawFormat
+        {
+            Width = 2, Height = 8, BitDepth = 16,
+            Hdr = HdrMode.Dol, HdrStages = 2, HdrLineBlock = 1, HdrRowOffset = 100,
+        };
+        using RawImage image = LoadImage(new ushort[16], format);
+
+        Assert.Throws<InvalidOperationException>(() => HdrSplitter.Split(image, format));
+    }
+
+    [Fact]
     public void Split_WithMismatchedLayout_Throws()
     {
         const int width = 4;

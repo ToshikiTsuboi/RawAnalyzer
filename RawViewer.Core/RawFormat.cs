@@ -47,6 +47,28 @@ public sealed record RawFormat
     /// <summary>HDRの露光比(長秒:短秒、1段あたり)。HDR合成時のスケーリングに使う。</summary>
     public double ExposureRatio { get; init; } = 16.0;
 
+    /// <summary>
+    /// ライン交互DOLで1露光あたりに連続する行数。0なら自動
+    /// (Bayerありは2行、モノクロは1行)。
+    /// </summary>
+    /// <remarks>
+    /// センサによっては物理ライン1本ごとに長秒・短秒を読み出すため、
+    /// Bayerでも1行単位になる。その場合は1を指定する
+    /// (部分画像側では2行ごとに色位相が進むためモザイクは保たれる)。
+    /// </remarks>
+    public int HdrLineBlock { get; init; }
+
+    /// <summary>
+    /// 段ごとに累積する行オフセット(1段あたり)。読み出しのパイプライン遅延で
+    /// 短秒側の画像が縦にずれている場合に、合成前の位置合わせへ使う。
+    /// </summary>
+    public int HdrRowOffset { get; init; }
+
+    /// <summary>ライン交互DOLで実際に使う1露光あたりの行数。</summary>
+    [JsonIgnore]
+    public int EffectiveHdrLineBlock =>
+        HdrLineBlock > 0 ? HdrLineBlock : Bayer != BayerPattern.None ? 2 : 1;
+
     /// <summary>1画素あたりのファイル上のバイト数(8bit=1、それ以外=2)。</summary>
     [JsonIgnore]
     public int BytesPerPixel => BitDepth <= 8 ? 1 : 2;
@@ -93,6 +115,12 @@ public sealed record RawFormat
         if (Hdr != HdrMode.None && HdrStages is < 2 or > 3)
         {
             throw new ArgumentException($"HDR段数は2または3である必要があります: {HdrStages}");
+        }
+
+        if (HdrLineBlock < 0)
+        {
+            throw new ArgumentException(
+                $"HDRのライン単位は非負である必要があります: {HdrLineBlock}");
         }
     }
 }
