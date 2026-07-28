@@ -62,18 +62,49 @@ public static class HdrSplitter
                 "1億画素を超える画像のHDR分割はサポートされていません。");
         }
 
+        HdrMode layout = ResolveLayout(format, stages);
+        if (layout == HdrMode.FrameSequential)
+        {
+            if (format.FrameCount != stages)
+            {
+                throw new InvalidOperationException(
+                    $"フレーム連結にはフレーム数({format.FrameCount})が" +
+                    $"HDR段数({stages})と一致している必要があります。");
+            }
+
+            return SplitFrameSequential(image, format, stages);
+        }
+
+        return SplitLineInterleaved(image, format, stages);
+    }
+
+    /// <summary>
+    /// 実際に使う格納レイアウトを決める。Autoはフレーム数から推定する。
+    /// </summary>
+    /// <param name="format">フォーマット記述子。</param>
+    /// <param name="stages">HDR段数。</param>
+    /// <returns>LineInterleaved または FrameSequential。</returns>
+    /// <exception cref="InvalidOperationException">Autoで推定できない場合。</exception>
+    public static HdrMode ResolveLayout(RawFormat format, int stages)
+    {
+        if (format.Hdr != HdrMode.Auto)
+        {
+            return format.Hdr;
+        }
+
         if (format.FrameCount == stages)
         {
-            return SplitFrameSequential(image, format, stages);
+            return HdrMode.FrameSequential;
         }
 
         if (format.FrameCount == 1)
         {
-            return SplitLineInterleaved(image, format, stages);
+            return HdrMode.LineInterleaved;
         }
 
         throw new InvalidOperationException(
-            $"フレーム数({format.FrameCount})がHDR段数({stages})と一致しないため分割できません。");
+            $"フレーム数({format.FrameCount})がHDR段数({stages})と一致しないため" +
+            "格納レイアウトを推定できません。「行交互」か「フレーム連結」を明示してください。");
     }
 
     private static IReadOnlyList<RawImage> SplitFrameSequential(

@@ -80,7 +80,7 @@ public class RawLoaderTests
             BitDepth = 12,
             FrameCount = frames,
             HeaderOffset = 16,
-            Hdr = HdrMode.Dol,
+            Hdr = HdrMode.Auto,
         };
         ushort[] raw = TestData.MakePattern(width * height * frames, 12);
         string path = TestData.WriteTempFile(TestData.EncodeRawFile(raw, format));
@@ -189,7 +189,7 @@ public class RawLoaderTests
             Height = 1,
             BitDepth = 12,
             FrameCount = 2,
-            Hdr = HdrMode.Dol,
+            Hdr = HdrMode.Auto,
         };
         long fileSize = 2L * 4056 * 3040 * 2;
         var candidates = RawLoader.GuessDimensions(fileSize, format);

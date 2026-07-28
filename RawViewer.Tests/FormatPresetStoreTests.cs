@@ -53,7 +53,7 @@ public class FormatPresetStoreTests : IDisposable
                 HeaderOffset = 512,
                 FrameCount = 2,
                 Bayer = BayerPattern.Gbrg,
-                Hdr = HdrMode.Dol,
+                Hdr = HdrMode.Auto,
             },
         };
 
@@ -116,6 +116,63 @@ public class FormatPresetStoreTests : IDisposable
         Assert.False(File.Exists(store.FilePath));
         Assert.True(File.Exists(store.BackupPath));
         Assert.Contains("this is not json", File.ReadAllText(store.BackupPath));
+    }
+
+    [Theory]
+    [InlineData("Dol")]
+    [InlineData("Staggered")]
+    public void Load_LegacyHdrModeName_MapsToAuto(string legacy)
+    {
+        // 旧版のプリセットは Dol / Staggered を保存していた。
+        // どちらもフレーム数から推定する挙動だったので Auto に写す。
+        var store = new FormatPresetStore(_directory);
+        Directory.CreateDirectory(_directory);
+        File.WriteAllText(store.FilePath,
+            $$"""
+            {
+              "旧プリセット": {
+                "Width": 1920, "Height": 1080, "BitDepth": 12,
+                "FrameCount": 2, "Hdr": "{{legacy}}", "HdrStages": 2
+              }
+            }
+            """);
+
+        IReadOnlyDictionary<string, RawFormat> loaded = store.Load();
+
+        Assert.Single(loaded);
+        RawFormat format = loaded["旧プリセット"];
+        Assert.Equal(HdrMode.Auto, format.Hdr);
+
+        // 旧挙動(フレーム数から推定)が保たれること
+        Assert.Equal(HdrMode.FrameSequential, HdrSplitter.ResolveLayout(format, format.HdrStages));
+    }
+
+    [Fact]
+    public void Load_UnknownHdrModeName_FallsBackToNone()
+    {
+        var store = new FormatPresetStore(_directory);
+        Directory.CreateDirectory(_directory);
+        File.WriteAllText(store.FilePath,
+            """
+            { "p": { "Width": 8, "Height": 8, "Hdr": "SomethingElse" } }
+            """);
+
+        Assert.Equal(HdrMode.None, store.Load()["p"].Hdr);
+    }
+
+    [Fact]
+    public void Save_WritesNewHdrModeName()
+    {
+        var store = new FormatPresetStore(_directory);
+        store.Save(new Dictionary<string, RawFormat>
+        {
+            ["p"] = new RawFormat
+            {
+                Width = 8, Height = 8, Hdr = HdrMode.LineInterleaved,
+            },
+        });
+
+        Assert.Contains("\"LineInterleaved\"", File.ReadAllText(store.FilePath));
     }
 
     [Fact]

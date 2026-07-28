@@ -34,7 +34,7 @@ public class HdrSplitterTests
 
         var format = new RawFormat
         {
-            Width = width, Height = height, BitDepth = 16, Hdr = HdrMode.Dol, HdrStages = 2,
+            Width = width, Height = height, BitDepth = 16, Hdr = HdrMode.Auto, HdrStages = 2,
         };
         using RawImage image = LoadImage(values, format);
 
@@ -68,7 +68,7 @@ public class HdrSplitterTests
         var format = new RawFormat
         {
             Width = width, Height = height, BitDepth = 16,
-            Hdr = HdrMode.Staggered, HdrStages = 3,
+            Hdr = HdrMode.Auto, HdrStages = 3,
         };
         using RawImage image = LoadImage(values, format);
 
@@ -102,7 +102,7 @@ public class HdrSplitterTests
         var format = new RawFormat
         {
             Width = width, Height = height, BitDepth = 16,
-            Hdr = HdrMode.Dol, HdrStages = 2, Bayer = BayerPattern.Rggb,
+            Hdr = HdrMode.Auto, HdrStages = 2, Bayer = BayerPattern.Rggb,
         };
         using RawImage image = LoadImage(values, format);
 
@@ -141,7 +141,7 @@ public class HdrSplitterTests
         var loadedFormat = new RawFormat
         {
             Width = width, Height = height, BitDepth = 16,
-            Hdr = HdrMode.Dol, HdrStages = 2,
+            Hdr = HdrMode.Auto, HdrStages = 2,
         };
         using RawImage image = LoadImage(values, loadedFormat);
 
@@ -183,7 +183,7 @@ public class HdrSplitterTests
         var format = new RawFormat
         {
             Width = width, Height = height, BitDepth = 16,
-            Hdr = HdrMode.Dol, HdrStages = 2, Bayer = BayerPattern.Rggb,
+            Hdr = HdrMode.Auto, HdrStages = 2, Bayer = BayerPattern.Rggb,
             HdrLineBlock = 1,
         };
         using RawImage image = LoadImage(values, format);
@@ -233,7 +233,7 @@ public class HdrSplitterTests
         var format = new RawFormat
         {
             Width = width, Height = height, BitDepth = 16,
-            Hdr = HdrMode.Dol, HdrStages = 2,
+            Hdr = HdrMode.Auto, HdrStages = 2,
             HdrLineBlock = 1, HdrRowOffset = 2,
         };
         using RawImage image = LoadImage(values, format);
@@ -266,7 +266,7 @@ public class HdrSplitterTests
         var format = new RawFormat
         {
             Width = width, Height = height, BitDepth = 16,
-            Hdr = HdrMode.Dol, HdrStages = 2, Bayer = BayerPattern.Rggb,
+            Hdr = HdrMode.Auto, HdrStages = 2, Bayer = BayerPattern.Rggb,
             HdrLineBlock = 1, HdrRowOffset = 1,
         };
         using RawImage image = LoadImage(new ushort[width * height], format);
@@ -293,9 +293,90 @@ public class HdrSplitterTests
         var format = new RawFormat
         {
             Width = 2, Height = 8, BitDepth = 16,
-            Hdr = HdrMode.Dol, HdrStages = 2, HdrLineBlock = 1, HdrRowOffset = 100,
+            Hdr = HdrMode.Auto, HdrStages = 2, HdrLineBlock = 1, HdrRowOffset = 100,
         };
         using RawImage image = LoadImage(new ushort[16], format);
+
+        Assert.Throws<InvalidOperationException>(() => HdrSplitter.Split(image, format));
+    }
+
+    [Fact]
+    public void ResolveLayout_AutoInfersFromFrameCount()
+    {
+        var lineInterleaved = new RawFormat
+        {
+            Width = 2, Height = 4, Hdr = HdrMode.Auto, FrameCount = 1, HdrStages = 2,
+        };
+        var frameSequential = lineInterleaved with { FrameCount = 2 };
+
+        Assert.Equal(HdrMode.LineInterleaved, HdrSplitter.ResolveLayout(lineInterleaved, 2));
+        Assert.Equal(HdrMode.FrameSequential, HdrSplitter.ResolveLayout(frameSequential, 2));
+
+        // 段数ともフレーム数1とも一致しない場合は推定できない
+        Assert.Throws<InvalidOperationException>(
+            () => HdrSplitter.ResolveLayout(lineInterleaved with { FrameCount = 4 }, 2));
+    }
+
+    [Fact]
+    public void ResolveLayout_ExplicitLayoutIgnoresFrameCount()
+    {
+        // フレーム数4でも「行交互」と明示すればそのまま扱う
+        var format = new RawFormat
+        {
+            Width = 2, Height = 4, Hdr = HdrMode.LineInterleaved, FrameCount = 4, HdrStages = 2,
+        };
+
+        Assert.Equal(HdrMode.LineInterleaved, HdrSplitter.ResolveLayout(format, 2));
+    }
+
+    [Fact]
+    public void Split_ExplicitLineInterleaved_WorksWithMultipleFrames()
+    {
+        // 従来はフレーム数から推定していたため、
+        // 「複数フレーム かつ 各フレーム内が行交互」を表現できなかった
+        const int width = 2;
+        const int height = 4;
+        const int frames = 2;
+        var values = new ushort[width * height * frames];
+        for (int i = 0; i < values.Length; i++)
+        {
+            values[i] = (ushort)(i / width * 10);
+        }
+
+        var format = new RawFormat
+        {
+            Width = width, Height = height, BitDepth = 16, FrameCount = frames,
+            Hdr = HdrMode.LineInterleaved, HdrStages = 2,
+        };
+        using RawImage image = LoadImage(values, format);
+
+        IReadOnlyList<RawImage> split = HdrSplitter.Split(image, format);
+        try
+        {
+            // 先頭フレーム内の行交互として分割される
+            Assert.Equal(2, split.Count);
+            Assert.Equal(2, split[0].Height);
+            Assert.Equal(0, split[0].GetPixel(0, 0));
+            Assert.Equal(10, split[1].GetPixel(0, 0));
+        }
+        finally
+        {
+            foreach (RawImage frame in split)
+            {
+                frame.Dispose();
+            }
+        }
+    }
+
+    [Fact]
+    public void Split_FrameSequentialWithWrongFrameCount_Throws()
+    {
+        var format = new RawFormat
+        {
+            Width = 2, Height = 4, BitDepth = 16, FrameCount = 1,
+            Hdr = HdrMode.FrameSequential, HdrStages = 2,
+        };
+        using RawImage image = LoadImage(new ushort[8], format);
 
         Assert.Throws<InvalidOperationException>(() => HdrSplitter.Split(image, format));
     }
@@ -307,7 +388,7 @@ public class HdrSplitterTests
         const int height = 4;
         var format = new RawFormat
         {
-            Width = width, Height = height, BitDepth = 16, Hdr = HdrMode.Dol, HdrStages = 2,
+            Width = width, Height = height, BitDepth = 16, Hdr = HdrMode.Auto, HdrStages = 2,
         };
         using RawImage image = LoadImage(new ushort[width * height], format);
 
@@ -326,7 +407,7 @@ public class HdrSplitterTests
         var format = new RawFormat
         {
             Width = width, Height = height, BitDepth = 16,
-            FrameCount = 2, Hdr = HdrMode.Dol, HdrStages = 2,
+            FrameCount = 2, Hdr = HdrMode.Auto, HdrStages = 2,
         };
         using RawImage image = LoadImage(values, format);
 
@@ -362,7 +443,7 @@ public class HdrSplitterTests
         var format = new RawFormat
         {
             Width = 2, Height = 3, BitDepth = 16,
-            FrameCount = 2, Hdr = HdrMode.Dol, HdrStages = 3,
+            FrameCount = 2, Hdr = HdrMode.Auto, HdrStages = 3,
         };
         using RawImage image = LoadImage(values, format);
         Assert.Throws<InvalidOperationException>(() => HdrSplitter.Split(image));

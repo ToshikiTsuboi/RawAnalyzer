@@ -635,17 +635,41 @@ public partial class MainWindow : Window
             _ => 4,
         };
         _updatingFormatPanel = false;
-        string hdrDetail = format.Hdr == HdrMode.None
+        _vm.FmtHdrText = DescribeHdr(format);
+    }
+
+    /// <summary>フォーマットパネル用のHDR設定の要約。</summary>
+    private static string DescribeHdr(RawFormat format)
+    {
+        if (format.Hdr == HdrMode.None)
+        {
+            return "なし";
+        }
+
+        string layout;
+        try
+        {
+            layout = HdrSplitter.ResolveLayout(format, format.HdrStages) switch
+            {
+                HdrMode.LineInterleaved => "行交互",
+                HdrMode.FrameSequential => "フレーム連結",
+                _ => "?",
+            };
+            if (format.Hdr == HdrMode.Auto)
+            {
+                layout += "(自動)";
+            }
+        }
+        catch (InvalidOperationException)
+        {
+            layout = "レイアウト不明";
+        }
+
+        string detail = format.Hdr == HdrMode.FrameSequential
             ? ""
             : $" / {format.EffectiveHdrLineBlock}行単位"
                 + (format.HdrRowOffset != 0 ? $" / 行オフセット{format.HdrRowOffset:+#;-#;0}" : "");
-        _vm.FmtHdrText = format.Hdr switch
-        {
-            HdrMode.Dol => $"DOL {format.HdrStages}段 (露光比 {format.ExposureRatio:F0}){hdrDetail}",
-            HdrMode.Staggered =>
-                $"Staggered {format.HdrStages}段 (露光比 {format.ExposureRatio:F0}){hdrDetail}",
-            _ => "なし",
-        };
+        return $"{layout} {format.HdrStages}段 (露光比 {format.ExposureRatio:F0}){detail}";
     }
 
     // ---- ヒストグラム・ROI解析 ----

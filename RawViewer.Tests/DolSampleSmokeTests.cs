@@ -32,7 +32,7 @@ public class DolSampleSmokeTests
             Width = 1920,
             Height = 2160,
             BitDepth = 12,
-            Hdr = HdrMode.Dol,
+            Hdr = HdrMode.Auto,
             HdrStages = 2,
             ExposureRatio = 16,
         };

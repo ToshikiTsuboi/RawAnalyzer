@@ -53,11 +53,13 @@ public partial class RawImportDialog : Window
             BayerCombo.Items.Add(b);
         }
 
+        // ベンダー名(DOL/Staggered)ではなく、ファイル上の並びで指定する
         HdrCombo.Items.Add("なし");
-        HdrCombo.Items.Add("DOL 2段");
-        HdrCombo.Items.Add("DOL 3段");
-        HdrCombo.Items.Add("Staggered 2段");
-        HdrCombo.Items.Add("Staggered 3段");
+        HdrCombo.Items.Add("自動 (フレーム数から推定)");
+        HdrCombo.Items.Add("行交互 (L,S,L,S…)");
+        HdrCombo.Items.Add("フレーム連結 (長→短)");
+        HdrStagesCombo.Items.Add("2段");
+        HdrStagesCombo.Items.Add("3段");
 
         RefreshPresetCombo();
 
@@ -119,14 +121,14 @@ public partial class RawImportDialog : Window
         };
         HeaderOffsetBox.Text = format.HeaderOffset.ToString(CultureInfo.InvariantCulture);
         FrameCountBox.Text = format.FrameCount.ToString(CultureInfo.InvariantCulture);
-        HdrCombo.SelectedIndex = (format.Hdr, format.HdrStages) switch
+        HdrCombo.SelectedIndex = format.Hdr switch
         {
-            (HdrMode.Dol, 3) => 2,
-            (HdrMode.Dol, _) => 1,
-            (HdrMode.Staggered, 3) => 4,
-            (HdrMode.Staggered, _) => 3,
+            HdrMode.Auto => 1,
+            HdrMode.LineInterleaved => 2,
+            HdrMode.FrameSequential => 3,
             _ => 0,
         };
+        HdrStagesCombo.SelectedIndex = format.HdrStages == 3 ? 1 : 0;
         ExposureRatioBox.Text = format.ExposureRatio.ToString(CultureInfo.InvariantCulture);
         HdrLineBlockBox.Text = format.HdrLineBlock.ToString(CultureInfo.InvariantCulture);
         HdrRowOffsetBox.Text = format.HdrRowOffset.ToString(CultureInfo.InvariantCulture);
@@ -197,11 +199,12 @@ public partial class RawImportDialog : Window
             FrameCount = frameCount,
             Hdr = HdrCombo.SelectedIndex switch
             {
-                1 or 2 => HdrMode.Dol,
-                3 or 4 => HdrMode.Staggered,
+                1 => HdrMode.Auto,
+                2 => HdrMode.LineInterleaved,
+                3 => HdrMode.FrameSequential,
                 _ => HdrMode.None,
             },
-            HdrStages = HdrCombo.SelectedIndex is 2 or 4 ? 3 : 2,
+            HdrStages = HdrStagesCombo.SelectedIndex == 1 ? 3 : 2,
             ExposureRatio = exposureRatio,
             HdrLineBlock = lineBlock,
             HdrRowOffset = rowOffset,

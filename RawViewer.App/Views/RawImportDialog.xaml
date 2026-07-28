@@ -28,7 +28,7 @@
                 <ColumnDefinition Width="*" />
             </Grid.ColumnDefinitions>
             <Grid.RowDefinitions>
-                <RowDefinition /><RowDefinition /><RowDefinition />
+                <RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition />
                 <RowDefinition /><RowDefinition /><RowDefinition />
             </Grid.RowDefinitions>
 
@@ -69,20 +69,26 @@
             </StackPanel>
 
             <StackPanel Grid.Row="4" Grid.Column="0" Margin="0,0,0,8">
-                <TextBlock Text="HDR方式" />
+                <TextBlock Text="HDR格納レイアウト"
+                           ToolTip="ファイル上での長秒/短秒の並び。&#x0a;DOL / Staggered といったベンダー名は露光の時間関係を指すもので、&#x0a;画素の並びからは判別できないため、ここでは並びだけを指定する。" />
                 <ComboBox x:Name="HdrCombo" SelectionChanged="OnFieldChanged" />
             </StackPanel>
             <StackPanel Grid.Row="4" Grid.Column="2" Margin="0,0,0,8">
+                <TextBlock Text="HDR段数" />
+                <ComboBox x:Name="HdrStagesCombo" SelectionChanged="OnFieldChanged" />
+            </StackPanel>
+
+            <StackPanel Grid.Row="5" Grid.Column="0" Margin="0,0,0,8">
                 <TextBlock Text="露光比 (長:短)" />
                 <TextBox x:Name="ExposureRatioBox" TextChanged="OnFieldChanged" />
             </StackPanel>
-
-            <StackPanel x:Name="HdrLineBlockPanel" Grid.Row="5" Grid.Column="0" Margin="0,0,0,8">
+            <StackPanel Grid.Row="5" Grid.Column="2" Margin="0,0,0,8">
                 <TextBlock Text="ライン単位 (行/露光, 0=自動)"
-                           ToolTip="ライン交互DOLで1露光あたりに連続する行数。&#x0a;物理ライン1本ごとに長秒/短秒を読むセンサは 1、&#x0a;色ペア単位のセンサは 2。0でBayer有無から自動判定。" />
+                           ToolTip="ライン交互で1露光あたりに連続する行数。&#x0a;物理ライン1本ごとに長秒/短秒を読むセンサは 1、&#x0a;色ペア単位のセンサは 2。0でBayer有無から自動判定。" />
                 <TextBox x:Name="HdrLineBlockBox" TextChanged="OnFieldChanged" />
             </StackPanel>
-            <StackPanel x:Name="HdrRowOffsetPanel" Grid.Row="5" Grid.Column="2" Margin="0,0,0,8">
+
+            <StackPanel Grid.Row="6" Grid.Column="0" Margin="0,0,0,8">
                 <TextBlock Text="行オフセット (段あたり)"
                            ToolTip="短秒側が縦にずれて格納されている場合の補正量。&#x0a;分割・合成の前に段ごとに行を揃えて切り出す。" />
                 <TextBox x:Name="HdrRowOffsetBox" TextChanged="OnFieldChanged" />
