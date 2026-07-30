@@ -79,36 +79,60 @@ public static class DemoSceneGen
     }
 
     // シーンのRGB(0..1)を返す
+    //   上段左: カラーチャート(6x4・正方パッチ) / 上段右: シーメンススター
+    //   中段  : グレーウェッジ16段 / 下段: 水平ランプ
     static void Scene(int x, int y, int w, int h, out double r, out double g, out double b)
     {
-        // 帯の境界は偶数行に合わせる(奇数行だとBayer位相がまたがって1行だけ色が付く)
-        int yChart = ((int)(h * 0.46)) & ~1;
-        int yWedge = ((int)(h * 0.60)) & ~1;
+        // 領域の境界はすべて偶数に合わせる
+        // (奇数だとBayerの位相をまたいで境界の1行/1列だけ色が付く)
+        int yTop = ((int)(h * 0.59)) & ~1;    // 上段の下端
+        int yWedge = ((int)(h * 0.74)) & ~1;  // グレーウェッジの下端
+        int xHalf = ((int)(w * 0.5)) & ~1;    // 上段を左右に割る位置
 
-        if (y < yChart)
+        if (y < yTop)
         {
-            // カラーチャート: 6x4。周囲と枠は暗いグレー
-            double bg = 0.09;
-            r = g = b = bg;
-            int cols = 6, rows = 4;
-            double marginX = w * 0.06, marginY = h * 0.03;
-            double cellW = (w - 2 * marginX) / cols;
-            double cellH = (yChart - 2 * marginY) / rows;
-            int cx = (int)Math.Floor((x - marginX) / cellW);
-            int cy = (int)Math.Floor((y - marginY) / cellH);
-            if (cx >= 0 && cx < cols && cy >= 0 && cy < rows)
+            r = g = b = 0.09;  // 上段の地色
+
+            if (x < xHalf)
             {
-                // パッチ間に隙間を空ける
-                double ix = (x - marginX) - cx * cellW;
-                double iy = (y - marginY) - cy * cellH;
-                if (ix > cellW * 0.06 && ix < cellW * 0.94 &&
-                    iy > cellH * 0.08 && iy < cellH * 0.92)
+                // カラーチャート。セルは正方形にし、余りは左右上下に均等配分する
+                int cell = ((int)Math.Min(xHalf * 0.92 / 6, yTop * 0.92 / 4)) & ~1;
+                int gx0 = ((xHalf - cell * 6) / 2) & ~1;
+                int gy0 = ((yTop - cell * 4) / 2) & ~1;
+                int inset = Math.Max(2, ((int)(cell * 0.06)) & ~1);  // パッチ間の隙間
+
+                int lx = x - gx0, ly = y - gy0;
+                if (lx >= 0 && ly >= 0)
                 {
-                    int p = cy * cols + cx;
-                    r = Patches[p, 0] / 255.0;
-                    g = Patches[p, 1] / 255.0;
-                    b = Patches[p, 2] / 255.0;
+                    int cx = lx / cell, cy = ly / cell;
+                    if (cx < 6 && cy < 4)
+                    {
+                        int ix = lx - cx * cell, iy = ly - cy * cell;
+                        if (ix >= inset && ix < cell - inset &&
+                            iy >= inset && iy < cell - inset)
+                        {
+                            int p = cy * 6 + cx;
+                            r = Patches[p, 0] / 255.0;
+                            g = Patches[p, 1] / 255.0;
+                            b = Patches[p, 2] / 255.0;
+                        }
+                    }
                 }
+                return;
+            }
+
+            // シーメンススター(36本)
+            double cx0 = xHalf + (w - xHalf) * 0.5, cy0 = yTop * 0.5;
+            double dx = x - cx0, dy = y - cy0;
+            double rad = Math.Sqrt(dx * dx + dy * dy);
+            double lim = Math.Min(w - xHalf, yTop) * 0.40;
+            if (rad <= lim)
+            {
+                double th = Math.Atan2(dy, dx);
+                double v = Math.Sin(th * 18.0) > 0 ? 0.92 : 0.05;
+                // 中心は縞が画素より細かくなるので潰す
+                if (rad < lim * 0.06) v = 0.5;
+                r = g = b = v;
             }
             return;
         }
@@ -122,31 +146,8 @@ public static class DemoSceneGen
             return;
         }
 
-        if (x < w * 0.5)
-        {
-            // シーメンススター(36本)
-            double cx0 = w * 0.25, cy0 = h * 0.80;
-            double dx = x - cx0, dy = y - cy0;
-            double rad = Math.Sqrt(dx * dx + dy * dy);
-            double lim = Math.Min(w * 0.22, h * 0.19);
-            if (rad > lim)
-            {
-                r = g = b = 0.12;
-            }
-            else
-            {
-                double th = Math.Atan2(dy, dx);
-                double s = Math.Sin(th * 18.0);
-                double v = s > 0 ? 0.92 : 0.05;
-                // 中心の細かすぎる部分は潰す
-                if (rad < lim * 0.06) v = 0.5;
-                r = g = b = v;
-            }
-            return;
-        }
-
         // 水平ランプ + 細かいリング(プロファイル観察用)
-        double t = (x - w * 0.5) / (w * 0.5);
+        double t = (double)x / (w - 1);
         double ring = 0.06 * Math.Sin((x + y) * 0.08);
         double val = Math.Max(0.0, Math.Min(1.0, t + ring));
         r = val; g = val; b = val;
