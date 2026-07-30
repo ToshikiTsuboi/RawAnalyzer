@@ -403,19 +403,19 @@ public partial class MainWindow
             {
                 Id = "gain-up",
                 Category = "調整",
-                Title = "ゲインを上げる (×1.25)",
+                Title = "ゲインを上げる (+6dB = 1段)",
                 Key = Key.OemCloseBrackets,
                 CanExecute = () => _vm.HasImage,
-                Execute = () => _vm.Gain = Math.Min(8.0, Math.Round(_vm.Gain * 1.25, 3)),
+                Execute = () => _vm.GainDb = Math.Min(MainViewModel.MaxGainDb, _vm.GainDb + 6),
             },
             new()
             {
                 Id = "gain-down",
                 Category = "調整",
-                Title = "ゲインを下げる (÷1.25)",
+                Title = "ゲインを下げる (-6dB = 1段)",
                 Key = Key.OemOpenBrackets,
                 CanExecute = () => _vm.HasImage,
-                Execute = () => _vm.Gain = Math.Max(0.25, Math.Round(_vm.Gain / 1.25, 3)),
+                Execute = () => _vm.GainDb = Math.Max(MainViewModel.MinGainDb, _vm.GainDb - 6),
             },
 
             // ---- 操作モード ----

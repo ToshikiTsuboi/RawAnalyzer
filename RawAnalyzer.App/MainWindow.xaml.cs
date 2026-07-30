@@ -1564,8 +1564,11 @@ public partial class MainWindow : Window
             {
                 sb.Append("    黒点/白点: ").Append(_blackPoint).Append(" / ")
                     .AppendLine(_whitePoint.ToString(CultureInfo.InvariantCulture));
-                sb.Append("    ゲイン: ").AppendLine(
-                    _vm.Gain.ToString("F3", CultureInfo.InvariantCulture));
+                sb.Append("    ゲイン: ")
+                    .Append(_vm.GainDb.ToString("F1", CultureInfo.InvariantCulture))
+                    .Append(" dB (×")
+                    .Append(_vm.Gain.ToString("F3", CultureInfo.InvariantCulture))
+                    .AppendLine(")");
                 sb.Append("    ガンマ: ").AppendLine(
                     _vm.Gamma.ToString("F3", CultureInfo.InvariantCulture));
                 sb.Append("    コントラスト: ").AppendLine(

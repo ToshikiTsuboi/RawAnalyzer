@@ -432,10 +432,11 @@
                                 BorderThickness="0,0,0,1" Padding="12,10">
                             <StackPanel>
                                 <TextBlock Style="{StaticResource SectionHeader}" Text="表示調整" />
-                                <controls:NumericSliderRow Label="ゲイン" Value="{Binding Gain}"
-                                                           Minimum="0.25" Maximum="8" Step="0.05"
-                                                           Decimals="2" DefaultValue="1"
-                                                           TickFrequency="1" />
+                                <controls:NumericSliderRow Label="ゲイン" Value="{Binding GainDb}"
+                                                           Minimum="-20" Maximum="48" Step="0.5"
+                                                           Decimals="1" DefaultValue="0"
+                                                           TickFrequency="6" Unit="dB"
+                                                           Note="{Binding GainNote}" />
                                 <controls:NumericSliderRow Label="ガンマ" Value="{Binding Gamma}"
                                                            Minimum="0.2" Maximum="3" Step="0.05"
                                                            Decimals="2" DefaultValue="1"
@@ -446,11 +447,13 @@
                                                            TickFrequency="0.5" />
                                 <controls:NumericSliderRow Label="黒レベル" Value="{Binding BlackLevel}"
                                                            Minimum="0" Maximum="{Binding BlackLevelMax}"
-                                                           Step="1" Decimals="0" DefaultValue="0" />
+                                                           Step="1" Decimals="0" DefaultValue="0"
+                                                           Unit="LSB" />
                                 <controls:NumericSliderRow Label="白レベル" Value="{Binding WhiteLevel}"
                                                            Minimum="0" Maximum="{Binding BlackLevelMax}"
                                                            Step="1" Decimals="0"
-                                                           DefaultValue="{Binding BlackLevelMax}" />
+                                                           DefaultValue="{Binding BlackLevelMax}"
+                                                           Unit="LSB" />
                                 <DockPanel Margin="0,6,0,0"
                                            Visibility="{Binding HdrTargetVisible,
                                                Converter={StaticResource BoolToVis}}">
@@ -491,9 +494,12 @@
                                                VerticalAlignment="Center"
                                                Visibility="{Binding HistogramIsSampled,
                                                    Converter={StaticResource BoolToVis}}" />
+                                    <!-- パネルが狭いと sampled バッジと重なるため省略表示にする -->
                                     <TextBlock FontSize="11" FontWeight="SemiBold"
                                                Foreground="{StaticResource TextFaint}"
-                                               Text="ヒストグラム" />
+                                               Text="ヒストグラム" Margin="0,0,6,0"
+                                               TextTrimming="CharacterEllipsis"
+                                               ToolTip="ヒストグラム" />
                                 </DockPanel>
                                 <Image Source="{Binding HistogramSource}" Height="70" Stretch="Fill"
                                        SnapsToDevicePixels="True" Cursor="Hand"
@@ -590,15 +596,15 @@
                                 <TextBlock Style="{StaticResource SectionHeader}" Text="ホワイトバランス" />
                                 <controls:NumericSliderRow Label="Rゲイン" Value="{Binding WbGainR}"
                                                            Minimum="0.5" Maximum="4" Step="0.01"
-                                                           Decimals="3" DefaultValue="1"
+                                                           Decimals="3" DefaultValue="1" Unit="×"
                                                            TickFrequency="0.5" />
                                 <controls:NumericSliderRow Label="Gゲイン" Value="{Binding WbGainG}"
                                                            Minimum="0.5" Maximum="4" Step="0.01"
-                                                           Decimals="3" DefaultValue="1"
+                                                           Decimals="3" DefaultValue="1" Unit="×"
                                                            TickFrequency="0.5" />
                                 <controls:NumericSliderRow Label="Bゲイン" Value="{Binding WbGainB}"
                                                            Minimum="0.5" Maximum="4" Step="0.01"
-                                                           Decimals="3" DefaultValue="1"
+                                                           Decimals="3" DefaultValue="1" Unit="×"
                                                            TickFrequency="0.5" />
                                 <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
                                     <Button Style="{StaticResource ToolButton}"

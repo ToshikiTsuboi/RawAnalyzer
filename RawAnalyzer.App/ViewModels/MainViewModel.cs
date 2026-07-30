@@ -167,8 +167,37 @@ public sealed class MainViewModel : ObservableObject
     public double Gain
     {
         get => _gain;
-        set => SetProperty(ref _gain, value);
+        set
+        {
+            if (SetProperty(ref _gain, value))
+            {
+                OnPropertyChanged(nameof(GainDb));
+                OnPropertyChanged(nameof(GainNote));
+            }
+        }
     }
+
+    /// <summary>
+    /// 表示ゲインをdBで表したもの(20·log10(倍率))。UIはこちらを操作する。
+    /// </summary>
+    /// <remarks>
+    /// 内部の <see cref="Gain"/> は線形倍率だが、線形スライダーでは
+    /// 低倍率側の分解能が潰れるうえ、センサ評価では dB のほうが扱いやすい。
+    /// </remarks>
+    public double GainDb
+    {
+        get => _gain > 0 ? 20 * Math.Log10(_gain) : MinGainDb;
+        set => Gain = Math.Pow(10, Math.Clamp(value, MinGainDb, MaxGainDb) / 20.0);
+    }
+
+    /// <summary>ゲインの線形倍率表示(dB表記の補助)。</summary>
+    public string GainNote => $"= ×{_gain:0.###}";
+
+    /// <summary>ゲインスライダーの下限[dB]。</summary>
+    public static double MinGainDb => -20;
+
+    /// <summary>ゲインスライダーの上限[dB]。</summary>
+    public static double MaxGainDb => 48;
 
     /// <summary>表示ガンマ(LUTパラメータ)。</summary>
     public double Gamma

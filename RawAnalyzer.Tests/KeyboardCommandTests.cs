@@ -152,6 +152,50 @@ public class KeyboardCommandTests
         }
     }
 
+    [Theory]
+    [InlineData(1.0, 0.0)]
+    [InlineData(2.0, 6.0206)]
+    [InlineData(0.5, -6.0206)]
+    [InlineData(10.0, 20.0)]
+    [InlineData(100.0, 40.0)]
+    public void GainDb_MatchesLinearGain(double linear, double db)
+    {
+        var vm = new App.ViewModels.MainViewModel { Gain = linear };
+        Assert.Equal(db, vm.GainDb, 3);
+
+        // dB を設定すると線形倍率へ戻る
+        var other = new App.ViewModels.MainViewModel();
+        other.GainDb = db;
+        Assert.Equal(linear, other.Gain, 6);
+    }
+
+    [Fact]
+    public void GainDb_IsClampedToSliderRange()
+    {
+        var vm = new App.ViewModels.MainViewModel();
+
+        vm.GainDb = 999;
+        Assert.Equal(App.ViewModels.MainViewModel.MaxGainDb, vm.GainDb, 6);
+
+        vm.GainDb = -999;
+        Assert.Equal(App.ViewModels.MainViewModel.MinGainDb, vm.GainDb, 6);
+    }
+
+    [Fact]
+    public void GainDb_NotifiesWhenLinearGainChanges()
+    {
+        var vm = new App.ViewModels.MainViewModel();
+        var changed = new List<string>();
+        vm.PropertyChanged += (_, e) => changed.Add(e.PropertyName ?? "");
+
+        vm.Gain = 4.0;
+
+        Assert.Contains(nameof(App.ViewModels.MainViewModel.Gain), changed);
+        Assert.Contains(nameof(App.ViewModels.MainViewModel.GainDb), changed);
+        Assert.Contains(nameof(App.ViewModels.MainViewModel.GainNote), changed);
+        Assert.Equal("= ×4", vm.GainNote);
+    }
+
     [Fact]
     public void Migrate_NoLegacyFolder_DoesNothing()
     {

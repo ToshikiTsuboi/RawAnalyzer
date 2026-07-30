@@ -7,6 +7,9 @@
             <TextBlock x:Name="LabelText" Width="62" FontSize="12"
                        Foreground="#FF9A9A95" VerticalAlignment="Center"
                        MouseLeftButtonDown="OnLabelClick" Cursor="Hand" />
+            <TextBlock x:Name="UnitText" DockPanel.Dock="Right" FontSize="11"
+                       MinWidth="18" Margin="4,0,0,0" VerticalAlignment="Center"
+                       Foreground="{StaticResource TextDim}" />
             <TextBox x:Name="ValueBox" DockPanel.Dock="Right" Width="56" FontSize="11"
                      FontFamily="Consolas" TextAlignment="Right" Padding="4,2"
                      Margin="6,0,0,0" VerticalAlignment="Center"
@@ -17,7 +20,8 @@
                     ValueChanged="OnSliderValueChanged"
                     PreviewMouseWheel="OnSliderWheel" />
         </DockPanel>
-        <DockPanel Margin="62,0,62,0">
+        <!-- 右余白は 入力欄56 + 余白6 + 単位18 + 余白4 = 84。目盛をスライダー端に合わせる -->
+        <DockPanel Margin="62,0,84,0">
             <!-- 9px + #6E6E69 (2.6:1) は判読困難だったため、サイズと明度を上げる -->
             <TextBlock x:Name="MinText" DockPanel.Dock="Left" FontSize="10"
                        FontFamily="Consolas" Foreground="{StaticResource TextFaint}" />

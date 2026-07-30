@@ -66,6 +66,18 @@ public partial class NumericSliderRow : UserControl
             nameof(TickFrequency), typeof(double), typeof(NumericSliderRow),
             new PropertyMetadata(0.0, OnRangeChanged));
 
+    /// <summary>単位("dB" / "LSB" など)。入力欄の右に表示する。</summary>
+    public static readonly DependencyProperty UnitProperty =
+        DependencyProperty.Register(
+            nameof(Unit), typeof(string), typeof(NumericSliderRow),
+            new PropertyMetadata("", OnRangeChanged));
+
+    /// <summary>補助表示(換算値など)。目盛行の中央に出す。</summary>
+    public static readonly DependencyProperty NoteProperty =
+        DependencyProperty.Register(
+            nameof(Note), typeof(string), typeof(NumericSliderRow),
+            new PropertyMetadata("", OnRangeChanged));
+
     /// <summary>コントロールを生成する。</summary>
     public NumericSliderRow()
     {
@@ -78,6 +90,20 @@ public partial class NumericSliderRow : UserControl
     {
         get => (string)GetValue(LabelProperty);
         set => SetValue(LabelProperty, value);
+    }
+
+    /// <summary>単位("dB" / "LSB" など)。</summary>
+    public string Unit
+    {
+        get => (string)GetValue(UnitProperty);
+        set => SetValue(UnitProperty, value);
+    }
+
+    /// <summary>補助表示(換算値など)。</summary>
+    public string Note
+    {
+        get => (string)GetValue(NoteProperty);
+        set => SetValue(NoteProperty, value);
     }
 
     /// <summary>現在値。</summary>
@@ -161,10 +187,17 @@ public partial class NumericSliderRow : UserControl
         ValueSlider.TickFrequency = TickFrequency > 0 ? TickFrequency : (Maximum - Minimum) / 10;
         ValueSlider.Value = Math.Clamp(Value, Minimum, Maximum);
         ValueBox.Text = Value.ToString(Format, CultureInfo.InvariantCulture);
-        MinText.Text = Minimum.ToString(Format, CultureInfo.InvariantCulture);
-        MaxText.Text = Maximum.ToString(Format, CultureInfo.InvariantCulture);
+        UnitText.Text = Unit;
+
+        // 目盛は幅が限られるので末尾の0を落として詰める(-20.0 → -20)
+        MinText.Text = Minimum.ToString("0.###", CultureInfo.InvariantCulture);
+        MaxText.Text = Maximum.ToString("0.###", CultureInfo.InvariantCulture);
+
+        // 換算値は目盛行に入れるとパネルが狭いとき数値と重なるため、ツールチップへ出す
+        string note = Note.Length > 0 ? Note + "\n" : "";
         LabelText.ToolTip =
-            $"範囲 {MinText.Text} 〜 {MaxText.Text} / 既定 " +
+            note +
+            $"範囲 {MinText.Text} 〜 {MaxText.Text} {Unit} / 既定 " +
             DefaultValue.ToString(Format, CultureInfo.InvariantCulture) +
             "\nラベルをダブルクリックで既定値に戻す / スライダー上でホイール・入力欄で↑↓キー: " +
             Step.ToString(Format, CultureInfo.InvariantCulture) + " 刻み";

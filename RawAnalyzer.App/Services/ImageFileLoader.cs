@@ -38,6 +38,13 @@ internal static class ImageFileLoader
             Path.GetExtension(path), StringComparer.OrdinalIgnoreCase);
     }
 
+    private static bool IsTiff(string path)
+    {
+        string extension = Path.GetExtension(path);
+        return string.Equals(extension, ".tif", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(extension, ".tiff", StringComparison.OrdinalIgnoreCase);
+    }
+
     /// <summary>
     /// 画像ファイルを読み込む。カラー画像は輝度画像とカラー画像の両方を返す。
     /// </summary>
@@ -47,6 +54,22 @@ internal static class ImageFileLoader
     /// <exception cref="NotSupportedException">画素数が上限を超える場合。</exception>
     public static DecodedImage Load(string path)
     {
+        // 非圧縮グレースケールTIFFは画素データが連続しているので、WICでデコードせず
+        // rawと同じ経路(必要ならMemoryMappedFile)で開く。画素数の上限に縛られない
+        if (TiffLoader.TryProbePixelLayout(path, out TiffPixelLayout? layout, out string reason))
+        {
+            RawFormat tiffFormat = TiffLoader.ToRawFormat(layout!);
+            AppLog.Info(
+                $"TIFFを直接読み出し: {tiffFormat.Width}×{tiffFormat.Height} " +
+                $"{tiffFormat.BitDepth}bit (オフセット {tiffFormat.HeaderOffset})");
+            return new DecodedImage(RawLoader.Load(path, tiffFormat), null);
+        }
+
+        if (IsTiff(path) && reason.Length > 0)
+        {
+            AppLog.Info($"TIFFの直接読み出しは不可のためWICで開きます: {reason}");
+        }
+
         BitmapFrame frame;
         try
         {
