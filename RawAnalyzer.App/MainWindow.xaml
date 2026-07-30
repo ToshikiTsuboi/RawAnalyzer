@@ -432,8 +432,10 @@
                                 BorderThickness="0,0,0,1" Padding="12,10">
                             <StackPanel>
                                 <TextBlock Style="{StaticResource SectionHeader}" Text="表示調整" />
+                                <!-- 範囲はVM側の定義を参照する(二重定義でずれないように) -->
                                 <controls:NumericSliderRow Label="ゲイン" Value="{Binding GainDb}"
-                                                           Minimum="-20" Maximum="48" Step="0.5"
+                                                           Minimum="{Binding MinGainDb}"
+                                                           Maximum="{Binding MaxGainDb}" Step="0.5"
                                                            Decimals="1" DefaultValue="0"
                                                            TickFrequency="6" Unit="dB"
                                                            Note="{Binding GainNote}" />

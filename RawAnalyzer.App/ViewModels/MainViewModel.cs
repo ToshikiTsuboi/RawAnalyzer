@@ -193,11 +193,11 @@ public sealed class MainViewModel : ObservableObject
     /// <summary>ゲインの線形倍率表示(dB表記の補助)。</summary>
     public string GainNote => $"= ×{_gain:0.###}";
 
-    /// <summary>ゲインスライダーの下限[dB]。</summary>
-    public static double MinGainDb => -20;
+    /// <summary>ゲインスライダーの下限[dB](×0.1)。</summary>
+    public double MinGainDb => -20;
 
-    /// <summary>ゲインスライダーの上限[dB]。</summary>
-    public static double MaxGainDb => 48;
+    /// <summary>ゲインスライダーの上限[dB](×1000)。</summary>
+    public double MaxGainDb => 60;
 
     /// <summary>表示ガンマ(LUTパラメータ)。</summary>
     public double Gamma

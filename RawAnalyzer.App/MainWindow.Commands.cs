@@ -406,7 +406,7 @@ public partial class MainWindow
                 Title = "ゲインを上げる (+6dB = 1段)",
                 Key = Key.OemCloseBrackets,
                 CanExecute = () => _vm.HasImage,
-                Execute = () => _vm.GainDb = Math.Min(MainViewModel.MaxGainDb, _vm.GainDb + 6),
+                Execute = () => _vm.GainDb = Math.Min(_vm.MaxGainDb, _vm.GainDb + 6),
             },
             new()
             {
@@ -415,7 +415,7 @@ public partial class MainWindow
                 Title = "ゲインを下げる (-6dB = 1段)",
                 Key = Key.OemOpenBrackets,
                 CanExecute = () => _vm.HasImage,
-                Execute = () => _vm.GainDb = Math.Max(MainViewModel.MinGainDb, _vm.GainDb - 6),
+                Execute = () => _vm.GainDb = Math.Max(_vm.MinGainDb, _vm.GainDb - 6),
             },
 
             // ---- 操作モード ----

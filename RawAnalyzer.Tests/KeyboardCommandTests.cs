@@ -175,10 +175,10 @@ public class KeyboardCommandTests
         var vm = new App.ViewModels.MainViewModel();
 
         vm.GainDb = 999;
-        Assert.Equal(App.ViewModels.MainViewModel.MaxGainDb, vm.GainDb, 6);
+        Assert.Equal(vm.MaxGainDb, vm.GainDb, 6);
 
         vm.GainDb = -999;
-        Assert.Equal(App.ViewModels.MainViewModel.MinGainDb, vm.GainDb, 6);
+        Assert.Equal(vm.MinGainDb, vm.GainDb, 6);
     }
 
     [Fact]
