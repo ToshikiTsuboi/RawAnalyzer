@@ -85,12 +85,17 @@ public static class RawLoader
     /// <param name="path">Rawファイルのパス。</param>
     /// <param name="format">ファイルの解釈方法。</param>
     /// <param name="cancellationToken">キャンセルトークン。</param>
+    /// <param name="progress">読み込みの進捗(0〜1)。低速なストレージ向けの表示用。</param>
     /// <returns>読み込まれた画像。呼び出し側でDisposeすること。</returns>
     /// <exception cref="InvalidDataException">ファイルサイズがフォーマットに対して不足している場合。</exception>
     /// <exception cref="OperationCanceledException">キャンセルされた場合。</exception>
-    public static RawImage Load(string path, RawFormat format, CancellationToken cancellationToken)
+    public static RawImage Load(
+        string path,
+        RawFormat format,
+        CancellationToken cancellationToken,
+        IProgress<double>? progress = null)
     {
-        return Load(path, format, DefaultInMemoryPixelThreshold, cancellationToken);
+        return Load(path, format, DefaultInMemoryPixelThreshold, cancellationToken, progress);
     }
 
     /// <summary>
@@ -102,6 +107,7 @@ public static class RawLoader
     /// <param name="format">ファイルの解釈方法。</param>
     /// <param name="inMemoryPixelThreshold">ヒープ展開する画素数の上限。</param>
     /// <param name="cancellationToken">キャンセルトークン(MMF経路では無視される)。</param>
+    /// <param name="progress">読み込みの進捗(0〜1)。MMF経路は即座に1.0が報告される。</param>
     /// <returns>読み込まれた画像。呼び出し側でDisposeすること。</returns>
     /// <exception cref="InvalidDataException">ファイルサイズがフォーマットに対して不足している場合。</exception>
     /// <exception cref="OperationCanceledException">キャンセルされた場合。</exception>
@@ -109,7 +115,8 @@ public static class RawLoader
         string path,
         RawFormat format,
         long inMemoryPixelThreshold,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        IProgress<double>? progress = null)
     {
         format.Validate();
         long requiredBytes = format.HeaderOffset + format.FrameSizeInBytes * format.FrameCount;
@@ -122,7 +129,7 @@ public static class RawLoader
 
         if (format.TotalPixels <= inMemoryPixelThreshold)
         {
-            return LoadInMemory(path, format, cancellationToken);
+            return LoadInMemory(path, format, cancellationToken, progress);
         }
 
         var mmf = MemoryMappedFile.CreateFromFile(
@@ -131,6 +138,9 @@ public static class RawLoader
         {
             MemoryMappedViewAccessor accessor =
                 mmf.CreateViewAccessor(0, 0, MemoryMappedFileAccess.Read);
+
+            // MMFはマップするだけで実データの転送は表示時に発生するため、ここで完了扱い
+            progress?.Report(1.0);
             return new RawImage(format, mmf, accessor);
         }
         catch
@@ -172,7 +182,8 @@ public static class RawLoader
     private const int LoadChunkBytes = 8 << 20;
 
     private static RawImage LoadInMemory(
-        string path, RawFormat format, CancellationToken cancellationToken)
+        string path, RawFormat format, CancellationToken cancellationToken,
+        IProgress<double>? progress)
     {
         int width = format.Width;
         int rowBytes = width * format.BytesPerPixel;
@@ -206,6 +217,9 @@ public static class RawLoader
                         pixels.AsSpan((chunkFirstRow + row) * width, width),
                         format.BitDepth, format.Packing, format.Endianness);
                 });
+
+            // チャンク(既定8MB)単位の報告なので、UIスレッドを圧迫する頻度にはならない
+            progress?.Report((double)(firstRow + rows) / totalRows);
         }
 
         return new RawImage(format, pixels);

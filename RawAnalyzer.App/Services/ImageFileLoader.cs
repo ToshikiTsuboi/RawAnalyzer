@@ -49,10 +49,15 @@ internal static class ImageFileLoader
     /// 画像ファイルを読み込む。カラー画像は輝度画像とカラー画像の両方を返す。
     /// </summary>
     /// <param name="path">ファイルパス。</param>
+    /// <param name="cancellationToken">キャンセルトークン。</param>
+    /// <param name="progress">読み込みの進捗(0〜1)。低速なストレージ向けの表示用。</param>
     /// <returns>読込結果。</returns>
     /// <exception cref="InvalidDataException">デコードできない場合。</exception>
     /// <exception cref="NotSupportedException">画素数が上限を超える場合。</exception>
-    public static DecodedImage Load(string path)
+    public static DecodedImage Load(
+        string path,
+        CancellationToken cancellationToken = default,
+        IProgress<double>? progress = null)
     {
         // 非圧縮グレースケールTIFFは画素データが連続しているので、WICでデコードせず
         // rawと同じ経路(必要ならMemoryMappedFile)で開く。画素数の上限に縛られない
@@ -62,7 +67,8 @@ internal static class ImageFileLoader
             AppLog.Info(
                 $"TIFFを直接読み出し: {tiffFormat.Width}×{tiffFormat.Height} " +
                 $"{tiffFormat.BitDepth}bit (オフセット {tiffFormat.HeaderOffset})");
-            return new DecodedImage(RawLoader.Load(path, tiffFormat), null);
+            return new DecodedImage(
+                RawLoader.Load(path, tiffFormat, cancellationToken, progress), null);
         }
 
         if (IsTiff(path) && reason.Length > 0)
@@ -73,8 +79,11 @@ internal static class ImageFileLoader
         BitmapFrame frame;
         try
         {
+            // WICにURIを渡すと転送の進捗が取れないため、自前でメモリへ読んでから
+            // デコードする。NASなどの低速ストレージでは転送が時間の大半を占める
+            using Stream source = ReadToMemory(path, cancellationToken, progress);
             var decoder = BitmapDecoder.Create(
-                new Uri(path, UriKind.Absolute),
+                source,
                 BitmapCreateOptions.PreservePixelFormat,
                 BitmapCacheOption.OnLoad);
             frame = decoder.Frames[0];
@@ -84,6 +93,9 @@ internal static class ImageFileLoader
         {
             throw new InvalidDataException($"画像をデコードできません: {ex.Message}", ex);
         }
+
+        // 残りはメモリ上の変換のみで、ファイル転送に比べれば短い
+        progress?.Report(1.0);
 
         int width = frame.PixelWidth;
         int height = frame.PixelHeight;
@@ -165,5 +177,48 @@ internal static class ImageFileLoader
 
         ColorImage color = ColorImage.FromInterleaved(width, height, 8, rgb8);
         return new DecodedImage(color.ToLuminance(), color);
+    }
+
+    /// <summary>
+    /// ファイル全体をメモリへ読み込み、転送量に応じた進捗(0〜0.9)を報告する。
+    /// 2GB以上はMemoryStreamに載らないため、進捗なしのFileStreamをそのまま返す。
+    /// </summary>
+    private static Stream ReadToMemory(
+        string path, CancellationToken cancellationToken, IProgress<double>? progress)
+    {
+        const double ReadShare = 0.9;  // 残り0.1はデコードの分
+        var file = new FileStream(
+            path, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 1 << 20);
+        if (file.Length >= int.MaxValue)
+        {
+            return file;
+        }
+
+        using (file)
+        {
+            var memory = new MemoryStream((int)file.Length);
+            byte[] buffer = new byte[1 << 20];
+            long total = file.Length;
+            long done = 0;
+            double lastReported = -1;
+            int read;
+            while ((read = file.Read(buffer, 0, buffer.Length)) > 0)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                memory.Write(buffer, 0, read);
+                done += read;
+
+                // 高速なストレージでUIスレッドへの通知が集中しないよう1%刻みに間引く
+                double p = ReadShare * done / Math.Max(1, total);
+                if (p - lastReported >= 0.01 || done == total)
+                {
+                    lastReported = p;
+                    progress?.Report(p);
+                }
+            }
+
+            memory.Position = 0;
+            return memory;
+        }
     }
 }

@@ -448,6 +448,12 @@ public partial class MainWindow : Window
         var cts = new CancellationTokenSource();
         ReplaceLoadCts(cts);
         _vm.ImageInfoText = "読込中…";
+        _vm.LoadProgress = 0;
+        _vm.IsLoading = true;
+
+        // Progress<T>は生成スレッド(UI)へマーシャリングして通知する
+        var loadProgress = new Progress<double>(
+            p => _vm.LoadProgress = Math.Clamp(p * 100, 0, 100));
 
         RawImage image;
         ColorImage? color = null;
@@ -455,11 +461,13 @@ public partial class MainWindow : Window
         {
             if (IsRawFile(path))
             {
-                image = await Task.Run(() => RawLoader.Load(path, format!), cts.Token);
+                image = await Task.Run(
+                    () => RawLoader.Load(path, format!, cts.Token, loadProgress), cts.Token);
             }
             else
             {
-                DecodedImage decoded = await Task.Run(() => ImageFileLoader.Load(path), cts.Token);
+                DecodedImage decoded = await Task.Run(
+                    () => ImageFileLoader.Load(path, cts.Token, loadProgress), cts.Token);
                 image = decoded.Luminance;
                 color = decoded.Color;
             }
@@ -474,6 +482,10 @@ public partial class MainWindow : Window
             MessageBox.Show(this, $"読み込みに失敗しました: {ex.Message}", "RawAnalyzer",
                 MessageBoxButton.OK, MessageBoxImage.Error);
             return;
+        }
+        finally
+        {
+            _vm.IsLoading = false;
         }
 
         if (cts.IsCancellationRequested || generation != _openGeneration)

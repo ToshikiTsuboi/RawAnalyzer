@@ -141,6 +141,60 @@ public class RawLoaderTests
         }
     }
 
+    /// <summary>報告値を同期的に記録するIProgress(Progress&lt;T&gt;は同期コンテキスト依存のため)。</summary>
+    private sealed class RecordingProgress : IProgress<double>
+    {
+        public List<double> Values { get; } = new();
+
+        public void Report(double value) => Values.Add(value);
+    }
+
+    [Fact]
+    public void Load_InMemory_ReportsMonotonicProgressEndingAtOne()
+    {
+        // チャンク(8MB)を複数回またぐサイズにして、途中経過が報告されることを確認する
+        var format = new RawFormat { Width = 4096, Height = 2560, BitDepth = 16 };
+        string path = TestData.WriteTempFile(new byte[format.FrameSizeInBytes]);
+        try
+        {
+            var progress = new RecordingProgress();
+            using RawImage image = RawLoader.Load(
+                path, format, RawLoader.DefaultInMemoryPixelThreshold,
+                CancellationToken.None, progress);
+
+            Assert.True(progress.Values.Count >= 2, "複数回の進捗報告があること");
+            Assert.Equal(1.0, progress.Values[^1], 9);
+            for (int i = 1; i < progress.Values.Count; i++)
+            {
+                Assert.True(progress.Values[i] > progress.Values[i - 1], "進捗は単調増加であること");
+            }
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void Load_MemoryMapped_ReportsCompletion()
+    {
+        var format = new RawFormat { Width = 64, Height = 64, BitDepth = 16 };
+        string path = TestData.WriteTempFile(new byte[format.FrameSizeInBytes]);
+        try
+        {
+            var progress = new RecordingProgress();
+            using RawImage image = RawLoader.Load(
+                path, format, inMemoryPixelThreshold: 0, CancellationToken.None, progress);
+
+            Assert.True(image.IsMemoryMapped);
+            Assert.Equal(1.0, Assert.Single(progress.Values), 9);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
     [Fact]
     public void Load_FileTooSmall_Throws()
     {

@@ -24,6 +24,8 @@ public sealed class MainViewModel : ObservableObject
     private FileEntry? _selectedFile;
     private bool _hasImage;
     private string _imageInfoText = "画像未読込";
+    private bool _isLoading;
+    private double _loadProgress;
     private bool _isProcessed;
     private string _processingStateText = "";
     private string _processingStateTooltip = "";
@@ -103,6 +105,29 @@ public sealed class MainViewModel : ObservableObject
         get => _imageInfoText;
         set => SetProperty(ref _imageInfoText, value);
     }
+
+    /// <summary>ファイル読み込み中か(ステータスバーの進捗バー表示に使う)。</summary>
+    public bool IsLoading
+    {
+        get => _isLoading;
+        set => SetProperty(ref _isLoading, value);
+    }
+
+    /// <summary>読み込みの進捗率(0〜100)。</summary>
+    public double LoadProgress
+    {
+        get => _loadProgress;
+        set
+        {
+            if (SetProperty(ref _loadProgress, value))
+            {
+                OnPropertyChanged(nameof(LoadProgressText));
+            }
+        }
+    }
+
+    /// <summary>進捗率の%表示文字列。</summary>
+    public string LoadProgressText => $"{_loadProgress:F0}%";
 
     /// <summary>
     /// 表示中の画像が加工済み(補正・HDR派生)かどうか。

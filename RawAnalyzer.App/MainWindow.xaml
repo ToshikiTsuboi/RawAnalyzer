@@ -219,6 +219,18 @@
                 </Border>
                 <TextBlock Text="{Binding ImageInfoText}" FontFamily="Consolas" FontSize="11"
                            Foreground="{StaticResource TextDim}" Margin="0,0,24,0" />
+
+                <!-- NAS等の低速ストレージからの読み込みで進捗が分かるようにする -->
+                <StackPanel Orientation="Horizontal" Margin="0,0,24,0"
+                            Visibility="{Binding IsLoading,
+                                         Converter={StaticResource BoolToVis}}">
+                    <ProgressBar Width="140" Height="9" Minimum="0" Maximum="100"
+                                 VerticalAlignment="Center"
+                                 Value="{Binding LoadProgress, Mode=OneWay}" />
+                    <TextBlock Text="{Binding LoadProgressText}" FontFamily="Consolas"
+                               FontSize="11" Foreground="{StaticResource TextDim}"
+                               Margin="6,0,0,0" VerticalAlignment="Center" MinWidth="30" />
+                </StackPanel>
                 <TextBlock Text="{Binding CursorStatusText}" FontFamily="Consolas" FontSize="11"
                            Foreground="{StaticResource TextDim}" />
             </DockPanel>
