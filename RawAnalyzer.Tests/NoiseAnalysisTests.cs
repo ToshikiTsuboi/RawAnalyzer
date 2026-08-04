@@ -193,6 +193,65 @@ public class NoiseAnalysisTests
     }
 
     [Fact]
+    public void MeasurePair_BayerPattern_ExcludesChannelOffsetsFromFpn()
+    {
+        // チャネル間の感度差(R=1000/G=2000/B=1500)だけがあり、真のFPN=0・時間ノイズ0の2枚。
+        // 混合統計ならσ_FPN≈410と誤るが、チャネル別ならσ_FPN≈0になるはず
+        const int size = 32;
+        var codes = new ushort[size * size];
+        for (int y = 0; y < size; y++)
+        {
+            for (int x = 0; x < size; x++)
+            {
+                codes[y * size + x] = (y & 1) == 0
+                    ? ((x & 1) == 0 ? (ushort)1000 : (ushort)2000)
+                    : ((x & 1) == 0 ? (ushort)2000 : (ushort)1500);
+            }
+        }
+
+        using RawImage a = LoadImage(codes, size, size);
+        using RawImage b = LoadImage(codes, size, size);
+
+        NoiseMeasurement mixed = NoiseAnalysis.MeasurePair(a, b);
+        NoiseMeasurement perChannel = NoiseAnalysis.MeasurePair(
+            a, b, pattern: BayerPattern.Rggb);
+
+        Assert.True(mixed.SigmaFpn > 300);       // 混合では感度差がFPNに化ける
+        Assert.Equal(0, perChannel.SigmaFpn, 6); // チャネル別なら真値0
+        Assert.Equal(0, perChannel.SigmaTemporal, 10);
+        Assert.Equal(mixed.Mean, perChannel.Mean, 6);
+        Assert.Equal(mixed.SampleCount, perChannel.SampleCount);
+    }
+
+    [Fact]
+    public void MeasureSingle_BayerPattern_PoolsWithinChannelVariance()
+    {
+        // 各チャネル内のσは10相当(±10の交互ディザ)、チャネル平均は1000/2000/1500
+        const int size = 32;
+        var codes = new ushort[size * size];
+        for (int y = 0; y < size; y++)
+        {
+            for (int x = 0; x < size; x++)
+            {
+                ushort baseCode = (y & 1) == 0
+                    ? ((x & 1) == 0 ? (ushort)1000 : (ushort)2000)
+                    : ((x & 1) == 0 ? (ushort)2000 : (ushort)1500);
+
+                // 同一チャネル内で+10/-10を交互に振る(チャネル内σ=10)
+                int dither = ((x / 2 + y / 2) % 2 == 0) ? 10 : -10;
+                codes[y * size + x] = (ushort)(baseCode + dither);
+            }
+        }
+
+        using RawImage image = LoadImage(codes, size, size);
+
+        NoiseMeasurement result = NoiseAnalysis.MeasureSingle(
+            image, pattern: BayerPattern.Rggb);
+
+        Assert.Equal(10.0, result.SigmaTotal, 6);
+    }
+
+    [Fact]
     public void MeasurePair_SizeMismatch_Throws()
     {
         using RawImage a = LoadImage(new ushort[16], 4, 4);

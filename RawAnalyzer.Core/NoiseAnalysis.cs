@@ -44,6 +44,10 @@ public readonly record struct NoiseMeasurement(
 /// ノイズ測定。時間ノイズは2枚のフレーム差分から σ_diff/√2 として求め、
 /// 固定パターンノイズ(FPN)と分離する。ダイナミックレンジは
 /// 飽和信号レベル ÷ 暗時ノイズ で定義する(EMVA1288の考え方)。
+/// Bayerパターン指定時、空間統計(σ_total)はチャネルごとに計算して
+/// 画素数重み付きでRMS合成する。混合統計ではチャネル間の感度差
+/// (センサ欠陥ではない構造)がσ_totalに乗り、σ_FPNが桁違いに過大になるため
+/// (EMVA1288もカラーはチャネル別評価を要求している)。
 /// </summary>
 public static class NoiseAnalysis
 {
@@ -53,6 +57,7 @@ public static class NoiseAnalysis
     /// <param name="image">対象画像(通常はダークフレーム)。</param>
     /// <param name="frame">フレーム番号。</param>
     /// <param name="region">評価領域。nullなら全体。</param>
+    /// <param name="pattern">Bayerパターン。None以外でσをチャネル別に計算する。</param>
     /// <param name="saturationCode">飽和信号レベル(raw code)。0以下ならビット深度の最大値。</param>
     /// <param name="cancellationToken">キャンセルトークン。</param>
     /// <returns>測定結果(SigmaTemporal/SigmaFpnはNaN)。</returns>
@@ -60,16 +65,17 @@ public static class NoiseAnalysis
         RawImage image,
         int frame = 0,
         RegionOfInterest? region = null,
+        BayerPattern pattern = BayerPattern.None,
         double saturationCode = 0,
         CancellationToken cancellationToken = default)
     {
         RegionOfInterest roi = (region ?? new RegionOfInterest(0, 0, image.Width, image.Height))
             .Clamp(image.Width, image.Height);
-        RegionStatistics stats = ImageAnalysis.ComputeStatistics(
-            image, frame, roi, cancellationToken);
+        (long count, double mean, double sigma) = ComputeSpatialStats(
+            image, frame, roi, pattern, cancellationToken);
         double saturation = ResolveSaturation(saturationCode, image.Format.BitDepth);
         return new NoiseMeasurement(
-            stats.SampleCount, stats.Mean, stats.Sigma, double.NaN, double.NaN, saturation);
+            count, mean, sigma, double.NaN, double.NaN, saturation);
     }
 
     /// <summary>
@@ -82,6 +88,7 @@ public static class NoiseAnalysis
     /// <param name="frameA">1枚目のフレーム番号。</param>
     /// <param name="frameB">2枚目のフレーム番号。</param>
     /// <param name="region">評価領域。nullなら全体。</param>
+    /// <param name="pattern">Bayerパターン。None以外でσ_totalをチャネル別に計算する。</param>
     /// <param name="saturationCode">飽和信号レベル(raw code)。0以下ならビット深度の最大値。</param>
     /// <param name="cancellationToken">キャンセルトークン。</param>
     /// <returns>測定結果。</returns>
@@ -92,6 +99,7 @@ public static class NoiseAnalysis
         int frameA = 0,
         int frameB = 0,
         RegionOfInterest? region = null,
+        BayerPattern pattern = BayerPattern.None,
         double saturationCode = 0,
         CancellationToken cancellationToken = default)
     {
@@ -115,8 +123,8 @@ public static class NoiseAnalysis
 
         RegionOfInterest roi = (region ?? new RegionOfInterest(0, 0, imageA.Width, imageA.Height))
             .Clamp(imageA.Width, imageA.Height);
-        RegionStatistics statsA = ImageAnalysis.ComputeStatistics(
-            imageA, frameA, roi, cancellationToken);
+        (long countA, double meanA, double sigmaTotal) = ComputeSpatialStats(
+            imageA, frameA, roi, pattern, cancellationToken);
 
         int shiftA = 16 - imageA.Format.BitDepth;
         int shiftB = 16 - imageB.Format.BitDepth;
@@ -150,11 +158,50 @@ public static class NoiseAnalysis
         }
 
         double sigmaFpn = Math.Sqrt(Math.Max(
-            0, statsA.Sigma * statsA.Sigma - sigmaTemporal * sigmaTemporal));
+            0, sigmaTotal * sigmaTotal - sigmaTemporal * sigmaTemporal));
         double saturation = ResolveSaturation(saturationCode, imageA.Format.BitDepth);
 
         return new NoiseMeasurement(
-            statsA.SampleCount, statsA.Mean, statsA.Sigma, sigmaTemporal, sigmaFpn, saturation);
+            countA, meanA, sigmaTotal, sigmaTemporal, sigmaFpn, saturation);
+    }
+
+    /// <summary>
+    /// 空間統計(σ_totalの元)を計算する。Bayer指定時はチャネル内分散を
+    /// 画素数重みでプールした √(Σ nᵢσᵢ² / Σ nᵢ) を返し、
+    /// チャネル間の平均値差が分散に混入しないようにする。
+    /// </summary>
+    private static (long Count, double Mean, double Sigma) ComputeSpatialStats(
+        RawImage image,
+        int frame,
+        RegionOfInterest roi,
+        BayerPattern pattern,
+        CancellationToken cancellationToken)
+    {
+        if (pattern == BayerPattern.None)
+        {
+            RegionStatistics stats = ImageAnalysis.ComputeStatistics(
+                image, frame, roi, cancellationToken);
+            return (stats.SampleCount, stats.Mean, stats.Sigma);
+        }
+
+        // 測定用途なのでサンプリングせず全画素から取る
+        ChannelAnalysisResult analysis = ImageAnalysis.ComputeChannelAnalysis(
+            image, frame, pattern, roi, maxSamples: long.MaxValue, cancellationToken);
+        long total = 0;
+        double pooledVariance = 0;
+        foreach (ChannelHistogram channel in analysis.Channels)
+        {
+            long n = channel.Statistics.SampleCount;
+            total += n;
+            pooledVariance += n * channel.Statistics.Sigma * channel.Statistics.Sigma;
+        }
+
+        if (total > 0)
+        {
+            pooledVariance /= total;
+        }
+
+        return (total, analysis.Total.Statistics.Mean, Math.Sqrt(pooledVariance));
     }
 
     private static double ResolveSaturation(double saturationCode, int bitDepth)

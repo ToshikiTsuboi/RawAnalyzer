@@ -37,6 +37,71 @@ public class DefectPixelDetectorTests
         return codes;
     }
 
+    /// <summary>RGGBのチャネル別平均を持つフラットフィールドを作る。</summary>
+    private static ushort[] MakeBayerFlat(
+        int width, int height, ushort r, ushort g, ushort b,
+        params (int X, int Y, ushort Code)[] defects)
+    {
+        var codes = new ushort[width * height];
+        for (int y = 0; y < height; y++)
+        {
+            for (int x = 0; x < width; x++)
+            {
+                ushort baseCode = (y & 1) == 0
+                    ? ((x & 1) == 0 ? r : g)
+                    : ((x & 1) == 0 ? g : b);
+                codes[y * width + x] = (ushort)(baseCode + ((x + y) % 2 == 0 ? 0 : 1));
+            }
+        }
+
+        foreach ((int x, int y, ushort code) in defects)
+        {
+            codes[y * width + x] = code;
+        }
+
+        return codes;
+    }
+
+    [Fact]
+    public void Detect_BayerFlatField_FindsDefectsPerChannel()
+    {
+        // R=1000/G=2000/B=1500の感度差があるフラットフィールド。
+        // 混合統計だと σ≈410 で閾値が値域外に出て、完全な黒点(0)すら検出できない
+        ushort[] codes = MakeBayerFlat(
+            64, 64, 1000, 2000, 1500,
+            (10, 10, 4095),   // R位置の白点
+            (21, 20, 0),      // Gr位置の黒点
+            (33, 33, 0));     // B位置の黒点
+        using RawImage image = LoadImage(codes, 64, 64);
+
+        DefectDetectionResult result = DefectPixelDetector.Detect(
+            image, pattern: BayerPattern.Rggb);
+
+        Assert.Equal(1, result.HotCount);
+        Assert.Equal(2, result.DeadCount);
+        Assert.Contains(result.Defects, d => d is { X: 10, Y: 10, Type: DefectType.Hot });
+        Assert.Contains(result.Defects, d => d is { X: 21, Y: 20, Type: DefectType.Dead });
+        Assert.Contains(result.Defects, d => d is { X: 33, Y: 33, Type: DefectType.Dead });
+
+        // チャネル別閾値が返り、スカラー閾値はNaN(参照させない)
+        Assert.Equal(4, result.ChannelThresholds.Count);
+        Assert.True(double.IsNaN(result.HotThreshold));
+        DefectChannelThreshold rT = result.ChannelThresholds.First(t => t.Channel == BayerChannel.R);
+        Assert.InRange(rT.Mean, 995, 1010);
+    }
+
+    [Fact]
+    public void Detect_BayerFlatField_MixedStatisticsWouldMissDefects()
+    {
+        // 回帰の対称確認: パターンを渡さない(旧来の混合統計)と同じ欠陥を見逃す
+        ushort[] codes = MakeBayerFlat(64, 64, 1000, 2000, 1500, (21, 20, 0));
+        using RawImage image = LoadImage(codes, 64, 64);
+
+        DefectDetectionResult mixed = DefectPixelDetector.Detect(image);
+
+        Assert.Equal(0, mixed.DeadCount);
+    }
+
     [Fact]
     public void Detect_HotAndDeadPixels_FindsBoth()
     {

@@ -45,11 +45,34 @@ public partial class DefectPixelWindow : Window
     public void ShowResult(DefectDetectionResult result, int maxCode)
     {
         _result = result;
-        SummaryText.Text =
-            $"mean={result.Statistics.Mean:F1}  σ={result.Statistics.Sigma:F2}  " +
-            $"閾値: 白点>{result.HotThreshold:F1} / 黒点<{result.DeadThreshold:F1} (max={maxCode})\n" +
-            $"検出: 白点 {result.HotCount} / 黒点 {result.DeadCount}" +
-            (result.Truncated ? "  ⚠ 上限で打ち切り" : "");
+        var sb = new StringBuilder();
+        if (result.ChannelThresholds.Count > 0)
+        {
+            // Bayerはチャネル間の感度差が大きいため、チャネル別の閾値で判定している
+            sb.Append("閾値 (チャネル別, max=").Append(maxCode).AppendLine("):");
+            foreach (DefectChannelThreshold t in result.ChannelThresholds)
+            {
+                sb.Append("  ").Append(t.Channel).Append(": mean=")
+                    .Append(t.Mean.ToString("F1", CultureInfo.InvariantCulture))
+                    .Append(" σ=").Append(t.Sigma.ToString("F2", CultureInfo.InvariantCulture))
+                    .Append("  白点>")
+                    .Append(t.HotThreshold.ToString("F1", CultureInfo.InvariantCulture))
+                    .Append(" / 黒点<")
+                    .Append(t.DeadThreshold.ToString("F1", CultureInfo.InvariantCulture))
+                    .AppendLine();
+            }
+        }
+        else
+        {
+            sb.Append($"mean={result.Statistics.Mean:F1}  σ={result.Statistics.Sigma:F2}  ")
+                .AppendLine(
+                    $"閾値: 白点>{result.HotThreshold:F1} / " +
+                    $"黒点<{result.DeadThreshold:F1} (max={maxCode})");
+        }
+
+        sb.Append($"検出: 白点 {result.HotCount} / 黒点 {result.DeadCount}")
+            .Append(result.Truncated ? "  ⚠ 上限で打ち切り" : "");
+        SummaryText.Text = sb.ToString();
 
         var rows = new List<DefectRow>(result.Defects.Count);
         for (int i = 0; i < result.Defects.Count; i++)

@@ -434,6 +434,43 @@ public static class ImageAnalysis
             }
         }
 
+        // 画像サイズが奇数だと画像境界へのクランプで(x1-x0)や(y1-y0)が奇数になり、
+        // 2x2ブロックに入らない最終列/行が黙って統計から抜けるため、別途走査する
+        int oddColumnX = ((x1 - x0) & 1) == 1 ? x1 - 1 : -1;
+        int oddRowY = ((y1 - y0) & 1) == 1 ? y1 - 1 : -1;
+        if (oddColumnX >= 0 && blocksY > 0)
+        {
+            var pair = new ushort[2];
+            for (int by = 0; by < blocksY; by += strideBlocks)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                int y = y0 + by * 2;
+                image.CopyRegion(frame, oddColumnX, y, 1, 2, pair);
+                Accumulate(pair[0], parityToChannel[(y & 1) * 2 + (oddColumnX & 1)]);
+                Accumulate(pair[1], parityToChannel[((y + 1) & 1) * 2 + (oddColumnX & 1)]);
+            }
+        }
+
+        if (oddRowY >= 0 && blocksX > 0)
+        {
+            var lastRow = new ushort[blocksX * 2];
+            image.CopyRegion(frame, x0, oddRowY, lastRow.Length, 1, lastRow);
+            for (int bx = 0; bx < blocksX; bx += strideBlocks)
+            {
+                int xi = bx * 2;
+                Accumulate(lastRow[xi], parityToChannel[(oddRowY & 1) * 2 + ((x0 + xi) & 1)]);
+                Accumulate(
+                    lastRow[xi + 1], parityToChannel[(oddRowY & 1) * 2 + ((x0 + xi + 1) & 1)]);
+            }
+        }
+
+        if (oddColumnX >= 0 && oddRowY >= 0)
+        {
+            var corner = new ushort[1];
+            image.CopyRegion(frame, oddColumnX, oddRowY, 1, 1, corner);
+            Accumulate(corner[0], parityToChannel[(oddRowY & 1) * 2 + (oddColumnX & 1)]);
+        }
+
         void Accumulate(ushort value, int channel)
         {
             int code = value >> shift;

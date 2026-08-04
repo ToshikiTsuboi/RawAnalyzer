@@ -20,6 +20,35 @@ public class ChannelAnalysisTests
     }
 
     [Theory]
+    [InlineData(5, 5)]
+    [InlineData(5, 4)]
+    [InlineData(4, 5)]
+    [InlineData(1, 1)]
+    [InlineData(1, 4)]
+    [InlineData(5, 1)]
+    public void ComputeChannelAnalysis_OddSize_CountsAllPixels(int width, int height)
+    {
+        // 奇数サイズでも最終行/列が統計から脱落しないこと
+        var codes = new ushort[width * height];
+        long expectedSum = 0;
+        for (int i = 0; i < codes.Length; i++)
+        {
+            codes[i] = (ushort)(100 + i);
+            expectedSum += 100 + i;
+        }
+
+        using RawImage image = LoadImage(codes, width, height);
+        ChannelAnalysisResult result = ImageAnalysis.ComputeChannelAnalysis(
+            image, 0, BayerPattern.Rggb);
+
+        Assert.Equal(width * height, result.Total.Statistics.SampleCount);
+        Assert.Equal(
+            (double)expectedSum / (width * height), result.Total.Statistics.Mean, 6);
+        Assert.Equal(
+            width * height, result.Channels.Sum(c => c.Statistics.SampleCount));
+    }
+
+    [Theory]
     [InlineData(BayerPattern.Rggb)]
     [InlineData(BayerPattern.Bggr)]
     [InlineData(BayerPattern.Grbg)]

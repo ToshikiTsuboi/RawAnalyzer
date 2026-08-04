@@ -3212,6 +3212,9 @@ public partial class MainWindow : Window
         int frame = Viewport.Frame;
         int maxCode = (1 << image.Format.BitDepth) - 1;
 
+        // Bayerはチャネル感度差で混合σが膨らみ閾値が値域外へ出るため、チャネル別に判定する
+        BayerPattern pattern = ActiveFormat?.Bayer ?? BayerPattern.None;
+
         // 巨大画像では数十秒かかるため、進捗表示とキャンセルを付ける
         DefectDetectionResult? result = null;
         ProgressWindow progress = ProgressWindow.Run(
@@ -3220,7 +3223,7 @@ public partial class MainWindow : Window
             (report, ct) => Task.Run(
                 () => result = DefectPixelDetector.Detect(
                     image, frame, sigma, detectHot, detectDead,
-                    progress: report, cancellationToken: ct),
+                    pattern: pattern, progress: report, cancellationToken: ct),
                 ct));
 
         if (progress.Error is not null)
@@ -3369,7 +3372,7 @@ public partial class MainWindow : Window
                 if (request.ReferencePath is null)
                 {
                     measurement = NoiseAnalysis.MeasureSingle(
-                        image, frame, roi, request.SaturationCode, ct);
+                        image, frame, roi, format.Bayer, request.SaturationCode, ct);
                     return;
                 }
 
@@ -3377,7 +3380,8 @@ public partial class MainWindow : Window
                     ? RawLoader.Load(request.ReferencePath, format with { FrameCount = 1 })
                     : ImageFileLoader.Load(request.ReferencePath).Luminance;
                 measurement = NoiseAnalysis.MeasurePair(
-                    image, reference, frame, 0, roi, request.SaturationCode, ct);
+                    image, reference, frame, 0, roi, format.Bayer,
+                    request.SaturationCode, ct);
             }, ct));
 
         if (result.Error is not null)
@@ -3396,7 +3400,8 @@ public partial class MainWindow : Window
 
         _noiseWindow?.ShowResult(
             measurement, format.BitDepth,
-            request.ReferencePath is null ? null : Path.GetFileName(request.ReferencePath));
+            request.ReferencePath is null ? null : Path.GetFileName(request.ReferencePath),
+            perChannel: format.Bayer != BayerPattern.None);
     }
 
     private async void OnDefectCorrectionRequested(

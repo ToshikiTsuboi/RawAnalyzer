@@ -85,7 +85,8 @@ public partial class NoiseMeasureDialog : Window
     /// <param name="measurement">測定結果。</param>
     /// <param name="bitDepth">ビット深度(表示用)。</param>
     /// <param name="pairPath">2枚目に使ったファイル名(単一測定ならnull)。</param>
-    public void ShowResult(NoiseMeasurement measurement, int bitDepth, string? pairPath)
+    public void ShowResult(
+        NoiseMeasurement measurement, int bitDepth, string? pairPath, bool perChannel = false)
     {
         var sb = new StringBuilder();
         sb.Append("評価画素数: ").Append(measurement.SampleCount.ToString("N0"))
@@ -93,6 +94,12 @@ public partial class NoiseMeasureDialog : Window
         sb.Append("測定方法: ").AppendLine(pairPath is null
             ? "単一フレーム(時間ノイズとFPNは分離できません)"
             : $"2枚差分 (B = {pairPath})");
+        if (perChannel)
+        {
+            // チャネル混合だと感度差がσ_FPNに乗るため、Coreがチャネル別に集計している
+            sb.AppendLine("空間統計: Bayerチャネル別に算出して合成(チャネル間の感度差を除外)");
+        }
+
         sb.AppendLine();
 
         sb.Append("σ_total  (時間+FPN) : ")
