@@ -119,6 +119,17 @@ public partial class MainWindow : Window
     private TilePyramid? _mainPyramid;
     private BayerPyramid? _mainBayerPyramid;
     private BayerPyramid? _derivedBayerPyramid;
+
+    // ピラミッドは生成元フレーム専用。派生ビューからの復帰時に別フレーム産を
+    // frame=0として誤登録しないよう、生成元フレームを一緒に記録する
+    private int _mainPyramidFrame;
+    private int _mainBayerPyramidFrame;
+
+    // 欠陥検出リストの座標系はこの画像・フレームでのみ有効。
+    // 別画像(HDR派生ビュー・ファイル送り後)へ適用すると無関係な画素を壊すため、
+    // 補正時に一致を検証する
+    private RawImage? _defectSourceImage;
+    private int _defectSourceFrame;
     private DisplayParameters[]? _hdrFrameParams;
     private int _hdrSegmentWidth;
 
@@ -572,6 +583,7 @@ public partial class MainWindow : Window
         }
 
         _mainPyramid = pyramid;
+        _mainPyramidFrame = frame;
         if (_derivedImage is null)
         {
             Viewport.SetPyramid(pyramid, frame);
@@ -627,6 +639,7 @@ public partial class MainWindow : Window
         {
             _mainBayerPyramid?.Dispose();
             _mainBayerPyramid = bayer;
+            _mainBayerPyramidFrame = frame;
         }
 
         Viewport.SetBayerPyramid(bayer, frame);
@@ -1808,6 +1821,14 @@ public partial class MainWindow : Window
         // 旧画像を読んでいる解析タスクを止めてから破棄する
         CancelAnalysis();
         await Viewport.ClearImageAsync();
+
+        // 旧画像から作られたBayerピラミッドを残すと、EnsureBayerPyramidAsyncの
+        // 早期returnで補正後画像のピラミッドが作られず、縮小カラー表示が
+        // 補正前の画素を出し続ける
+        _mainBayerPyramid?.Dispose();
+        _mainBayerPyramid = null;
+        _derivedBayerPyramid?.Dispose();
+        _derivedBayerPyramid = null;
         _currentImage?.Dispose();
         _currentImage = processed;
         _currentFormat = processed.Format;
@@ -2330,6 +2351,11 @@ public partial class MainWindow : Window
         // 旧派生画像を読んでいる描画・解析を止めてから破棄する
         CancelAnalysis();
         await Viewport.ClearImageAsync();
+
+        // 旧派生画像のBayerピラミッドを残すと、EnsureBayerPyramidAsyncが
+        // 非nullを見て早期returnし、新しい派生画像のピラミッドが二度と作られない
+        _derivedBayerPyramid?.Dispose();
+        _derivedBayerPyramid = null;
         _derivedImage?.Dispose();
         _derivedImage = derived;
         _hdrFloatImage = null;
@@ -2376,8 +2402,10 @@ public partial class MainWindow : Window
         _derivedBayerPyramid?.Dispose();
         _derivedBayerPyramid = null;
         Viewport.SetImage(_currentImage!, _currentFormat!);
-        Viewport.SetPyramid(_mainPyramid);
-        Viewport.SetBayerPyramid(_mainBayerPyramid);
+
+        // 生成元フレームを偽らずに渡す(別フレーム産はレンダラ側で使われない)
+        Viewport.SetPyramid(_mainPyramid, _mainPyramidFrame);
+        Viewport.SetBayerPyramid(_mainBayerPyramid, _mainBayerPyramidFrame);
         Viewport.SetLut(BuildLut());
         UpdateNoiseWindowSource();
         UpdateProcessingBadge();
@@ -3242,6 +3270,10 @@ public partial class MainWindow : Window
         }
 
         _defectWindow.ShowResult(result, maxCode);
+
+        // このリストの座標は「この画像・このフレーム」でのみ有効(補正時に検証する)
+        _defectSourceImage = image;
+        _defectSourceFrame = frame;
         Viewport.SetDefectMarkers(result.Defects);
     }
 
@@ -3410,6 +3442,21 @@ public partial class MainWindow : Window
         if (_currentImage is null || _currentFormat is null || _derivedImage is not null)
         {
             MessageBox.Show(this, "HDR表示中は欠陥補正できません。Raw表示に戻してから実行してください。",
+                "欠陥画素補正", MessageBoxButton.OK, MessageBoxImage.Information);
+            _defectWindow?.ResetRunButton();
+            return;
+        }
+
+        // HDR分割ビューで検出→Raw表示へ戻す→補正、やファイル送り後の適用は
+        // 座標系/データが異なるのに配列範囲内に収まるため、例外にならず
+        // 健全画素を黙って上書きしてしまう。検出時の画像・フレームと一致しない
+        // リストの適用は拒否する
+        if (!ReferenceEquals(_defectSourceImage, _currentImage)
+            || _defectSourceFrame != Viewport.Frame)
+        {
+            MessageBox.Show(this,
+                "この検出結果は現在表示中の画像・フレームのものではないため適用できません。" +
+                "再度「検出実行」を行ってください。",
                 "欠陥画素補正", MessageBoxButton.OK, MessageBoxImage.Information);
             _defectWindow?.ResetRunButton();
             return;
