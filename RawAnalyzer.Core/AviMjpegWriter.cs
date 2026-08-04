@@ -87,9 +87,15 @@ public sealed class AviMjpegWriter : IDisposable
             throw new InvalidOperationException("Finish後にフレームは追加できません。");
         }
 
+        // Motion-JPEG in AVI 仕様(Microsoft MJPEG DIB / OpenDML)は、各フレームの
+        // APP0セグメントに 'AVI1' 識別子を要求する。WPFのJpegBitmapEncoderは
+        // JFIF APP0 を出すため、先頭のAPP0を AVI1 形式へ差し替えて書き込む
+        byte[]? avi1Frame = BuildAvi1Frame(jpegBytes, out int frameLength);
+        ReadOnlySpan<byte> frame = avi1Frame is null ? jpegBytes : avi1Frame.AsSpan(0, frameLength);
+
         // 上限を超えると idx1 のオフセットと RIFF サイズが 32bit で巻き戻り、
         // 「書き出し完了」と表示されるのに先頭数フレームしか再生できない壊れたAVIになる
-        long chunkBytes = 8 + jpegBytes.Length + (jpegBytes.Length & 1);
+        long chunkBytes = 8 + frame.Length + (frame.Length & 1);
 
         // idx1(16バイト/フレーム)とそのヘッダ8バイトも最終ファイルサイズに含める
         long fileAfter = _stream.Position + chunkBytes + ((_index.Count + 1) * 16L) + 8;
@@ -102,17 +108,62 @@ public sealed class AviMjpegWriter : IDisposable
         }
 
         uint offset = (uint)(_stream.Position - _moviDataStart + 4);
-        uint size = (uint)jpegBytes.Length;
+        uint size = (uint)frame.Length;
         WriteFourCc("00dc");
         WriteU32(size);
-        _stream.Write(jpegBytes);
-        if ((jpegBytes.Length & 1) == 1)
+        _stream.Write(frame);
+        if ((frame.Length & 1) == 1)
         {
             _stream.WriteByte(0);
         }
 
         _index.Add((offset, size));
         _maxFrameSize = Math.Max(_maxFrameSize, size);
+    }
+
+    // AVI1 APP0セグメント: マーカ(2) + 長さ(2, 自身を含む0x10) + "AVI1"(4)
+    // + ポラリティ(1, 0=ノンインターレース) + 予約(9)。計18バイト
+    private static readonly byte[] Avi1App0 =
+    {
+        0xFF, 0xE0, 0x00, 0x10,
+        (byte)'A', (byte)'V', (byte)'I', (byte)'1',
+        0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    };
+
+    /// <summary>
+    /// JPEGフレームの先頭APP0(JFIF等)を AVI1 APP0 へ差し替えたバッファを作る。
+    /// SOIの直後がAPP0でない場合は AVI1 APP0 を挿入する。
+    /// JPEGとして解釈できない場合は null(そのまま書き込む)。
+    /// </summary>
+    private static byte[]? BuildAvi1Frame(ReadOnlySpan<byte> jpeg, out int length)
+    {
+        length = 0;
+        if (jpeg.Length < 4 || jpeg[0] != 0xFF || jpeg[1] != 0xD8)
+        {
+            return null; // SOIがない。JPEGではないのでそのまま
+        }
+
+        int rest = 2;
+        if (jpeg[2] == 0xFF && jpeg[3] == 0xE0 && jpeg.Length >= 6)
+        {
+            // 既存のAPP0を読み飛ばして置き換える
+            int segmentLength = (jpeg[4] << 8) | jpeg[5];
+            if (segmentLength < 2 || 4 + segmentLength > jpeg.Length)
+            {
+                return null;
+            }
+
+            rest = 4 + segmentLength;
+        }
+
+        var buffer = new byte[2 + Avi1App0.Length + (jpeg.Length - rest)];
+        buffer[0] = 0xFF;
+        buffer[1] = 0xD8;
+        Avi1App0.CopyTo(buffer, 2);
+        jpeg[rest..].CopyTo(buffer.AsSpan(2 + Avi1App0.Length));
+        length = buffer.Length;
+        return buffer;
     }
 
     /// <summary>

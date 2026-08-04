@@ -176,9 +176,18 @@ public partial class SaveDialog : Window
             case SaveFormat.FloatRaw:
                 return "✓ 無処理: HDR合成結果(float32・線形)をそのまま出力します";
             default:
+                // 実際のパイプライン順(デモザイク → 黒/白点 → WB → マトリクス →
+                // コントラスト → ガンマ)と同じ順で表示・記録する。
+                // 順序を偽ると、サイドカーから再現計算したときに値が合わない
                 var stages = new List<string>();
                 if (DemosaicCheck.IsChecked == true)
                 {
+                    stages.Add("デモザイク");
+                    if (LutCheck.IsChecked == true)
+                    {
+                        stages.Add("黒/白点正規化");
+                    }
+
                     if (WbCheck.IsChecked == true)
                     {
                         stages.Add("WBゲイン");
@@ -189,10 +198,9 @@ public partial class SaveDialog : Window
                         stages.Add("カラーマトリクス");
                     }
 
-                    stages.Add("デモザイク");
                     if (LutCheck.IsChecked == true)
                     {
-                        stages.Add("黒レベル/ガンマ");
+                        stages.Add("コントラスト・ガンマ");
                     }
                 }
                 else if (LutCheck.IsChecked == true)

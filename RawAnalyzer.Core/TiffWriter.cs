@@ -8,7 +8,14 @@ namespace RawAnalyzer.Core;
 /// </summary>
 public static class TiffWriter
 {
-    private const int EntryCount = 9;
+    // TIFF6.0のグレースケール必須フィールド一式
+    // (ImageWidth/Length, BitsPerSample, Compression, Photometric,
+    //  StripOffsets, SamplesPerPixel, RowsPerStrip, StripByteCounts,
+    //  XResolution, YResolution, ResolutionUnit)
+    private const int EntryCount = 12;
+
+    // XResolution/YResolutionのRATIONAL値(8byte×2)をIFD直後に置く
+    private const int RationalBytes = 16;
 
     /// <summary>
     /// 画像の1フレームを16bitグレースケールTIFFとして保存する。
@@ -39,7 +46,7 @@ public static class TiffWriter
         int stripCount = (height + rowsPerStrip - 1) / rowsPerStrip;
 
         int ifdSize = 2 + EntryCount * 12 + 4;
-        int arraysOffset = 8 + ifdSize;
+        int arraysOffset = 8 + ifdSize + RationalBytes;
         int arraysSize = stripCount > 1 ? stripCount * 8 : 0;
         long dataOffset = arraysOffset + arraysSize;
         long totalSize = dataOffset + rowBytes * height;
@@ -114,7 +121,18 @@ public static class TiffWriter
             ? WriteEntry(header, entry, 279, 4, 1, (uint)(rowBytes * height))
             : WriteEntry(header, entry, 279, 4, (uint)stripCount,
                 (uint)(arraysOffset + stripCount * 4));
+
+        // TIFF6.0でグレースケール必須の解像度タグ(72dpi固定。RATIONALは外部参照)
+        int rationalOffset = arraysOffset - RationalBytes;
+        entry = WriteEntry(header, entry, 282, 5, 1, (uint)rationalOffset);
+        entry = WriteEntry(header, entry, 283, 5, 1, (uint)(rationalOffset + 8));
+        entry = WriteEntry(header, entry, 296, 3, 1, 2);
         WriteU32(header, entry, 0);
+
+        WriteU32(header, rationalOffset, 72);
+        WriteU32(header, rationalOffset + 4, 1);
+        WriteU32(header, rationalOffset + 8, 72);
+        WriteU32(header, rationalOffset + 12, 1);
 
         if (stripCount > 1)
         {

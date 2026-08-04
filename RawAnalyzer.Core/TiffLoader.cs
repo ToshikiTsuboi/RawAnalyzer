@@ -17,6 +17,8 @@ public sealed record TiffPixelLayout(
 /// <summary>
 /// 8/16bit 非圧縮グレースケールTIFF(ストリップ形式)の最小パーサ。
 /// リトル/ビッグエンディアン両対応。CoreはWICを参照できないため自前実装。
+/// クラシックTIFFのオフセットはuint32(最大4GB-1)なので、
+/// 2GB超のファイル後方にあるIFDも読めるようlongオフセットでアクセスする。
 /// </summary>
 public static unsafe class TiffLoader
 {
@@ -101,9 +103,11 @@ public static unsafe class TiffLoader
             accessor.SafeMemoryMappedViewHandle.AcquirePointer(ref pointer);
             try
             {
-                int mapped = (int)Math.Min(fileLength, int.MaxValue);
-                var data = new ReadOnlySpan<byte>(pointer + accessor.PointerOffset, mapped);
-                return TryProbeCore(data, fileLength, out layout, out reason);
+                // 2GB超のTIFF(まさに直接読み出しの主目的)はIFDやストリップ配列が
+                // ファイル後方に置かれることがある。Spanのint長へ切り詰めず
+                // longオフセットのままアクセスする
+                var data = new TiffBytes(pointer + accessor.PointerOffset, fileLength);
+                return TryProbeCore(data, out layout, out reason);
             }
             finally
             {
@@ -141,7 +145,7 @@ public static unsafe class TiffLoader
     }
 
     private static bool TryProbeCore(
-        ReadOnlySpan<byte> data, long fileLength, out TiffPixelLayout? layout, out string reason)
+        TiffBytes data, out TiffPixelLayout? layout, out string reason)
     {
         layout = null;
         bool bigEndian = data[0] == (byte)'M' && data[1] == (byte)'M';
@@ -152,13 +156,13 @@ public static unsafe class TiffLoader
             return false;
         }
 
-        if (ReadU16(data, 2, bigEndian) != 42)
+        if (data.ReadU16(2, bigEndian) != 42)
         {
             reason = "TIFFのマジックナンバーが不正です(BigTIFFは未対応)。";
             return false;
         }
 
-        List<IfdEntry> entries = ReadIfd(data, ReadU32(data, 4, bigEndian), bigEndian);
+        List<IfdEntry> entries = ReadIfd(data, data.ReadU32(4, bigEndian), bigEndian);
         uint width = GetScalar(entries, data, TagImageWidth, bigEndian) ?? 0;
         uint height = GetScalar(entries, data, TagImageLength, bigEndian) ?? 0;
         uint bits = GetScalar(entries, data, TagBitsPerSample, bigEndian) ?? 0;
@@ -236,7 +240,7 @@ public static unsafe class TiffLoader
             return false;
         }
 
-        if (offsets[0] + total > fileLength)
+        if (offsets[0] + total > data.Length)
         {
             reason = "画素データがファイル範囲外を指しています。";
             return false;
@@ -262,6 +266,14 @@ public static unsafe class TiffLoader
             throw new InvalidDataException("TIFFヘッダが不足しています。");
         }
 
+        fixed (byte* pointer = data)
+        {
+            return LoadCore(new TiffBytes(pointer, data.Length));
+        }
+    }
+
+    private static RawImage LoadCore(TiffBytes data)
+    {
         bool bigEndian = data[0] == (byte)'M' && data[1] == (byte)'M';
         bool littleEndian = data[0] == (byte)'I' && data[1] == (byte)'I';
         if (!bigEndian && !littleEndian)
@@ -269,12 +281,12 @@ public static unsafe class TiffLoader
             throw new InvalidDataException("TIFFのバイトオーダーマークが不正です。");
         }
 
-        if (ReadU16(data, 2, bigEndian) != 42)
+        if (data.ReadU16(2, bigEndian) != 42)
         {
             throw new InvalidDataException("TIFFのマジックナンバーが不正です。");
         }
 
-        long ifdOffset = ReadU32(data, 4, bigEndian);
+        long ifdOffset = data.ReadU32(4, bigEndian);
         var entries = ReadIfd(data, ifdOffset, bigEndian);
 
         uint width = GetScalar(entries, data, TagImageWidth, bigEndian)
@@ -286,6 +298,8 @@ public static unsafe class TiffLoader
         uint compression = GetScalar(entries, data, TagCompression, bigEndian) ?? 1;
         uint samplesPerPixel = GetScalar(entries, data, TagSamplesPerPixel, bigEndian) ?? 1;
         uint rowsPerStrip = GetScalar(entries, data, TagRowsPerStrip, bigEndian) ?? height;
+        uint photometric = GetScalar(entries, data, TagPhotometric, bigEndian) ?? 1;
+        uint sampleFormat = GetScalar(entries, data, TagSampleFormat, bigEndian) ?? 1;
 
         if (compression != 1)
         {
@@ -301,6 +315,20 @@ public static unsafe class TiffLoader
         if (bits != 8 && bits != 16)
         {
             throw new InvalidDataException($"8/16bit TIFFのみサポートします(BitsPerSample={bits})。");
+        }
+
+        // WhiteIsZero(値が反転)や符号付き/浮動小数点をそのまま読むと、例外にならない
+        // まま誤った測定値になる。プローブ(TryProbeCore)と同じ基準で弾く
+        if (photometric != 1)
+        {
+            throw new InvalidDataException(
+                $"BlackIsZeroのTIFFのみサポートします(Photometric={photometric})。");
+        }
+
+        if (sampleFormat != 1)
+        {
+            throw new InvalidDataException(
+                $"符号なし整数のTIFFのみサポートします(SampleFormat={sampleFormat})。");
         }
 
         if (width == 0 || height == 0 || width > int.MaxValue || height > int.MaxValue)
@@ -341,13 +369,18 @@ public static unsafe class TiffLoader
                     $"ストリップ{strip}のバイト数が不正です(期待 {expectedBytes}, 実際 {stripByteCounts[strip]})。");
             }
 
+            if (expectedBytes > int.MaxValue)
+            {
+                throw new InvalidDataException($"ストリップ{strip}が大きすぎます。");
+            }
+
             long offset = stripOffsets[strip];
             if (offset + expectedBytes > data.Length)
             {
                 throw new InvalidDataException($"ストリップ{strip}がファイル範囲外を指しています。");
             }
 
-            ReadOnlySpan<byte> stripData = data.Slice((int)offset, (int)expectedBytes);
+            ReadOnlySpan<byte> stripData = data.Slice(offset, (int)expectedBytes);
             long stripPixels = stripRows * width;
             if (bits == 8)
             {
@@ -360,7 +393,9 @@ public static unsafe class TiffLoader
             {
                 for (int i = 0; i < stripPixels; i++)
                 {
-                    pixels[pixelIndex + i] = ReadU16(stripData, i * 2, bigEndian);
+                    pixels[pixelIndex + i] = bigEndian
+                        ? BinaryPrimitives.ReadUInt16BigEndian(stripData.Slice(i * 2, 2))
+                        : BinaryPrimitives.ReadUInt16LittleEndian(stripData.Slice(i * 2, 2));
                 }
             }
 
@@ -384,16 +419,71 @@ public static unsafe class TiffLoader
         return new RawImage(format, pixels);
     }
 
-    private readonly record struct IfdEntry(ushort Tag, ushort Type, uint Count, int ValueFieldOffset);
+    private readonly record struct IfdEntry(ushort Tag, ushort Type, uint Count, long ValueFieldOffset);
 
-    private static List<IfdEntry> ReadIfd(ReadOnlySpan<byte> data, long ifdOffset, bool bigEndian)
+    /// <summary>
+    /// ファイル全体へのlongオフセットアクセス。クラシックTIFFのオフセット上限は
+    /// uint32(4GB-1)なので、Spanのint長では2GB超のファイル後方に届かない。
+    /// 範囲外参照はすべてInvalidDataException(不正TIFFの報告)にする。
+    /// </summary>
+    private readonly struct TiffBytes
+    {
+        private readonly byte* _data;
+
+        public TiffBytes(byte* data, long length)
+        {
+            _data = data;
+            Length = length;
+        }
+
+        public long Length { get; }
+
+        public byte this[long offset]
+        {
+            get
+            {
+                CheckRange(offset, 1);
+                return _data[offset];
+            }
+        }
+
+        public ushort ReadU16(long offset, bool bigEndian)
+        {
+            return bigEndian
+                ? BinaryPrimitives.ReadUInt16BigEndian(Slice(offset, 2))
+                : BinaryPrimitives.ReadUInt16LittleEndian(Slice(offset, 2));
+        }
+
+        public uint ReadU32(long offset, bool bigEndian)
+        {
+            return bigEndian
+                ? BinaryPrimitives.ReadUInt32BigEndian(Slice(offset, 4))
+                : BinaryPrimitives.ReadUInt32LittleEndian(Slice(offset, 4));
+        }
+
+        public ReadOnlySpan<byte> Slice(long offset, int length)
+        {
+            CheckRange(offset, length);
+            return new ReadOnlySpan<byte>(_data + offset, length);
+        }
+
+        private void CheckRange(long offset, int length)
+        {
+            if (offset < 0 || offset + length > Length)
+            {
+                throw new InvalidDataException("参照がファイル範囲外を指しています。");
+            }
+        }
+    }
+
+    private static List<IfdEntry> ReadIfd(TiffBytes data, long ifdOffset, bool bigEndian)
     {
         if (ifdOffset < 8 || ifdOffset + 2 > data.Length)
         {
             throw new InvalidDataException("IFDオフセットが不正です。");
         }
 
-        int entryCount = ReadU16(data, (int)ifdOffset, bigEndian);
+        int entryCount = data.ReadU16(ifdOffset, bigEndian);
         long end = ifdOffset + 2 + entryCount * 12L + 4;
         if (end > data.Length)
         {
@@ -403,11 +493,11 @@ public static unsafe class TiffLoader
         var entries = new List<IfdEntry>(entryCount);
         for (int i = 0; i < entryCount; i++)
         {
-            int entryOffset = (int)(ifdOffset + 2 + i * 12);
+            long entryOffset = ifdOffset + 2 + i * 12L;
             entries.Add(new IfdEntry(
-                ReadU16(data, entryOffset, bigEndian),
-                ReadU16(data, entryOffset + 2, bigEndian),
-                ReadU32(data, entryOffset + 4, bigEndian),
+                data.ReadU16(entryOffset, bigEndian),
+                data.ReadU16(entryOffset + 2, bigEndian),
+                data.ReadU32(entryOffset + 4, bigEndian),
                 entryOffset + 8));
         }
 
@@ -415,14 +505,14 @@ public static unsafe class TiffLoader
     }
 
     private static uint? GetScalar(
-        List<IfdEntry> entries, ReadOnlySpan<byte> data, ushort tag, bool bigEndian)
+        List<IfdEntry> entries, TiffBytes data, ushort tag, bool bigEndian)
     {
         uint[]? values = GetArray(entries, data, tag, bigEndian);
         return values is { Length: > 0 } ? values[0] : null;
     }
 
     private static uint[]? GetArray(
-        List<IfdEntry> entries, ReadOnlySpan<byte> data, ushort tag, bool bigEndian)
+        List<IfdEntry> entries, TiffBytes data, ushort tag, bool bigEndian)
     {
         foreach (IfdEntry entry in entries)
         {
@@ -440,44 +530,26 @@ public static unsafe class TiffLoader
 
             long totalSize = (long)valueSize * entry.Count;
 
-            // checked((int)) だと int.MaxValue 超のオフセットが OverflowException になり、
-            // 不正TIFFの報告にならない。uint のまま範囲判定してから絞る
-            // (負値へ落とすと後段の Slice が別の例外になるため先に弾く)
+            // 4byte以下はエントリ内にインライン格納、超える場合はオフセット参照
             long valueOffset = totalSize <= 4
                 ? entry.ValueFieldOffset
-                : ReadU32(data, entry.ValueFieldOffset, bigEndian);
+                : data.ReadU32(entry.ValueFieldOffset, bigEndian);
             if (valueOffset < 0 || valueOffset + totalSize > data.Length)
             {
                 throw new InvalidDataException($"タグ{tag}の値がファイル範囲外を指しています。");
             }
 
-            // ここまでで valueOffset + totalSize <= data.Length を確認済みなのでintに収まる
-            int start = (int)valueOffset;
             var values = new uint[entry.Count];
             for (int i = 0; i < entry.Count; i++)
             {
                 values[i] = valueSize == 2
-                    ? ReadU16(data, start + i * 2, bigEndian)
-                    : ReadU32(data, start + i * 4, bigEndian);
+                    ? data.ReadU16(valueOffset + i * 2, bigEndian)
+                    : data.ReadU32(valueOffset + i * 4, bigEndian);
             }
 
             return values;
         }
 
         return null;
-    }
-
-    private static ushort ReadU16(ReadOnlySpan<byte> data, int offset, bool bigEndian)
-    {
-        return bigEndian
-            ? BinaryPrimitives.ReadUInt16BigEndian(data.Slice(offset, 2))
-            : BinaryPrimitives.ReadUInt16LittleEndian(data.Slice(offset, 2));
-    }
-
-    private static uint ReadU32(ReadOnlySpan<byte> data, int offset, bool bigEndian)
-    {
-        return bigEndian
-            ? BinaryPrimitives.ReadUInt32BigEndian(data.Slice(offset, 4))
-            : BinaryPrimitives.ReadUInt32LittleEndian(data.Slice(offset, 4));
     }
 }

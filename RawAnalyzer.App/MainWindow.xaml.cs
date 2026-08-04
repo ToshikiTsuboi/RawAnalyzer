@@ -1573,7 +1573,9 @@ public partial class MainWindow : Window
             }
 
             // RawSaver はヘッダを出力しないため、保存したrawを開き直したときに
-            // 元のHeaderOffsetのままだと開けない。出力実体に合うフォーマットを記憶する
+            // 元のHeaderOffsetのままだと開けない。出力実体に合うフォーマットを記憶する。
+            // Bayerはパネルで変更した値が_currentFormat側にしか反映されないため、
+            // 読み込み時のimage.FormatではなくActiveFormatから取る
             if (choice.Format == SaveFormat.Raw)
             {
                 RememberFileFormat(path, image.Format with
@@ -1581,6 +1583,7 @@ public partial class MainWindow : Window
                     HeaderOffset = 0,
                     Packing = choice.Packing,
                     Endianness = choice.Endianness,
+                    Bayer = ActiveFormat?.Bayer ?? image.Format.Bayer,
                 });
             }
 
@@ -1661,8 +1664,15 @@ public partial class MainWindow : Window
                     _vm.Contrast.ToString("F3", CultureInfo.InvariantCulture));
             }
 
-            sb.Append("  ホワイトバランス: ").AppendLine(choice.ApplyWhiteBalance ? "適用" : "なし");
-            if (choice.ApplyWhiteBalance)
+            // WB/マトリクスはデモザイク経路でのみ画素に適用される。
+            // チェックだけ見て「適用」と書くと、デモザイクOFF保存で来歴が実体と食い違う
+            bool wbApplied = choice.ApplyWhiteBalance && choice.ApplyDemosaic;
+            bool matrixApplied =
+                choice.ApplyMatrix && choice.ApplyDemosaic && !_colorMatrix.IsIdentity;
+            sb.Append("  ホワイトバランス: ").AppendLine(
+                wbApplied ? "適用"
+                : choice.ApplyWhiteBalance ? "なし(デモザイクなしのため未適用)" : "なし");
+            if (wbApplied)
             {
                 sb.Append("    R/G/B ゲイン: ")
                     .Append(developParameters.GainR.ToString("F3", CultureInfo.InvariantCulture))
@@ -1673,8 +1683,10 @@ public partial class MainWindow : Window
             }
 
             sb.Append("  カラーマトリクス: ").AppendLine(
-                choice.ApplyMatrix && !_colorMatrix.IsIdentity ? "適用" : "なし");
-            if (choice.ApplyMatrix && !_colorMatrix.IsIdentity)
+                matrixApplied ? "適用"
+                : choice.ApplyMatrix && !_colorMatrix.IsIdentity
+                    ? "なし(デモザイクなしのため未適用)" : "なし");
+            if (matrixApplied)
             {
                 double[] m = _colorMatrix.ToArray();
                 for (int row = 0; row < 3; row++)

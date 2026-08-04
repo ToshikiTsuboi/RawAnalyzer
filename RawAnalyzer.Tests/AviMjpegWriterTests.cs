@@ -78,14 +78,21 @@ public class AviMjpegWriterTests
             Assert.Equal("MJPG", Encoding.ASCII.GetString(data, strh + 12, 4));
             Assert.Equal(3u, ReadU32(data, strh + 8 + 32));                // dwLength
 
-            // moviとフレームチャンク(奇数フレームはパディングされる)
+            // moviとフレームチャンク(奇数フレームはパディングされる)。
+            // 各フレームはSOI直後に AVI1 APP0(18バイト)が挿入される
+            const uint App0 = 18;
             int movi = FindFourCc(data, "movi");
             Assert.True(movi > 0);
             int firstChunk = movi + 4;
             Assert.Equal("00dc", Encoding.ASCII.GetString(data, firstChunk, 4));
-            Assert.Equal(7u, ReadU32(data, firstChunk + 4));
+            Assert.Equal(7u + App0, ReadU32(data, firstChunk + 4));
             Assert.Equal(0xFF, data[firstChunk + 8]);
             Assert.Equal(0xD8, data[firstChunk + 9]);
+
+            // MJPEG in AVI 仕様のAVI1識別子がAPP0に入っていること
+            Assert.Equal(0xFF, data[firstChunk + 10]);
+            Assert.Equal(0xE0, data[firstChunk + 11]);
+            Assert.Equal("AVI1", Encoding.ASCII.GetString(data, firstChunk + 14, 4));
 
             // idx1: 3エントリ、オフセットは最初のフレームで4
             int idx1 = FindFourCc(data, "idx1");
@@ -94,10 +101,10 @@ public class AviMjpegWriterTests
             Assert.Equal("00dc", Encoding.ASCII.GetString(data, idx1 + 8, 4));
             Assert.Equal(0x10u, ReadU32(data, idx1 + 12));                 // AVIIF_KEYFRAME
             Assert.Equal(4u, ReadU32(data, idx1 + 16));                    // 先頭フレームのオフセット
-            Assert.Equal(7u, ReadU32(data, idx1 + 20));                    // 先頭フレームのサイズ
+            Assert.Equal(7u + App0, ReadU32(data, idx1 + 20));             // 先頭フレームのサイズ
 
-            // 2フレーム目のオフセット = 4 + 8 + 7(+1パディング) = 20
-            Assert.Equal(20u, ReadU32(data, idx1 + 8 + 16 + 8));
+            // 2フレーム目のオフセット = 4 + 8 + 25(+1パディング) = 38
+            Assert.Equal(4u + 8 + 7 + App0 + 1, ReadU32(data, idx1 + 8 + 16 + 8));
         }
         finally
         {

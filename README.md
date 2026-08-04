@@ -260,7 +260,7 @@ dotnet test RawAnalyzer.sln
 |---|---|
 | `RawAnalyzer.Core` | 画像処理・解析。UI 非依存(`System.Windows` を参照しない) |
 | `RawAnalyzer.App` | WPF 本体。MVVM は自前実装 |
-| `RawAnalyzer.Tests` | xUnit。355 テスト |
+| `RawAnalyzer.Tests` | xUnit。370+ テスト |
 
 `tools/` に検証用の合成 Raw を生成する PowerShell スクリプトがあります。
 

@@ -62,7 +62,10 @@ public sealed record DevelopParameters(
 /// </summary>
 public sealed class DevelopLuts
 {
-    private const int GammaLutSize = 4096;
+    // γ=2.2の暗部はLUT入力の量子化が見えやすい(4096では出力が0,6,8,10…と跳び、
+    // 非マトリクス経路の65536エントリ直接計算と最大4コードずれる)。
+    // 65536にして非マトリクス経路と同じ入力分解能を確保する
+    private const int GammaLutSize = 65536;
 
     private readonly float[]? _linearR;
     private readonly float[]? _linearG;

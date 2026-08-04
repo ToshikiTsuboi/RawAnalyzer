@@ -59,11 +59,13 @@ internal static class ImageFileLoader
         CancellationToken cancellationToken = default,
         IProgress<double>? progress = null)
     {
-        // 非圧縮グレースケールTIFFは画素データが連続しているので、WICでデコードせず
-        // rawと同じ経路(必要ならMemoryMappedFile)で開く。画素数の上限に縛られない
-        if (TiffLoader.TryProbePixelLayout(path, out TiffPixelLayout? layout, out string reason))
+        // 非圧縮グレースケール16bit TIFFは画素データが連続しているので、WICでデコード
+        // せずrawと同じ経路(必要ならMemoryMappedFile)で開く。画素数の上限に縛られない。
+        // 8bitはWIC経路(×257で16bitフルスケールへ展開)の方が表示が正確なため対象外
+        if (TiffLoader.TryProbePixelLayout(path, out TiffPixelLayout? layout, out string reason)
+            && layout!.BitDepth == 16)
         {
-            RawFormat tiffFormat = TiffLoader.ToRawFormat(layout!);
+            RawFormat tiffFormat = TiffLoader.ToRawFormat(layout);
             AppLog.Info(
                 $"TIFFを直接読み出し: {tiffFormat.Width}×{tiffFormat.Height} " +
                 $"{tiffFormat.BitDepth}bit (オフセット {tiffFormat.HeaderOffset})");
@@ -82,14 +84,32 @@ internal static class ImageFileLoader
             // WICにURIを渡すと転送の進捗が取れないため、自前でメモリへ読んでから
             // デコードする。NASなどの低速ストレージでは転送が時間の大半を占める
             using Stream source = ReadToMemory(path, cancellationToken, progress);
+
+            // まずヘッダだけ読んで(BitmapCacheOption.None)画素数を検証する。
+            // OnLoadでデコードしてから拒否したのでは、上限の目的
+            // (巨大画像でメモリを使い切らない)を果たせない
+            var probe = BitmapDecoder.Create(
+                source,
+                BitmapCreateOptions.PreservePixelFormat,
+                BitmapCacheOption.None);
+            long declaredPixels =
+                (long)probe.Frames[0].PixelWidth * probe.Frames[0].PixelHeight;
+            if (declaredPixels > MaxPixels)
+            {
+                throw new NotSupportedException(
+                    $"{probe.Frames[0].PixelWidth}×{probe.Frames[0].PixelHeight} " +
+                    $"({declaredPixels / 1_000_000.0:F0}M画素) は" +
+                    $"デコード画像の上限 {MaxPixels / 1_000_000} M画素を超えています。");
+            }
+
+            source.Position = 0;
             var decoder = BitmapDecoder.Create(
                 source,
                 BitmapCreateOptions.PreservePixelFormat,
                 BitmapCacheOption.OnLoad);
             frame = decoder.Frames[0];
         }
-        catch (Exception ex) when (ex is NotSupportedException or FileFormatException
-            or ArgumentException)
+        catch (Exception ex) when (ex is FileFormatException or ArgumentException)
         {
             throw new InvalidDataException($"画像をデコードできません: {ex.Message}", ex);
         }
@@ -99,17 +119,8 @@ internal static class ImageFileLoader
 
         int width = frame.PixelWidth;
         int height = frame.PixelHeight;
-        PixelFormat format = frame.Format;
-
-        // BitmapCacheOption.OnLoad で WIC 側も全画素を展開するため、
-        // rawのようなMMF退避ができない。上限を超えるものは明示的に拒否する
         long pixelCount = (long)width * height;
-        if (pixelCount > MaxPixels)
-        {
-            throw new NotSupportedException(
-                $"{width}×{height} ({pixelCount / 1_000_000.0:F0}M画素) は" +
-                $"デコード画像の上限 {MaxPixels / 1_000_000} M画素を超えています。");
-        }
+        PixelFormat format = frame.Format;
 
         if (format == PixelFormats.Gray16)
         {
@@ -126,7 +137,9 @@ internal static class ImageFileLoader
             var pixels = new ushort[(long)width * height];
             for (long i = 0; i < pixels.LongLength; i++)
             {
-                pixels[i] = (ushort)(bytes[i] << 8);
+                // ×257 で 0..255 → 0..65535(<<8 だと白が65280止まりで表示が1コード暗い)。
+                // 257=0x101 なので value>>8 によるcode復元は全値で厳密に保たれる
+                pixels[i] = (ushort)(bytes[i] * 257);
             }
 
             var rawFormat = new RawFormat { Width = width, Height = height, BitDepth = 8 };
@@ -170,9 +183,10 @@ internal static class ImageFileLoader
         var rgb8 = new ushort[(long)width * height * 3];
         for (long i = 0; i < (long)width * height; i++)
         {
-            rgb8[i * 3] = (ushort)(bgra[i * 4 + 2] << 8);
-            rgb8[i * 3 + 1] = (ushort)(bgra[i * 4 + 1] << 8);
-            rgb8[i * 3 + 2] = (ushort)(bgra[i * 4] << 8);
+            // ×257: 0..255 → 0..65535(<<8 だと白が65280止まりで表示が1コード暗い)
+            rgb8[i * 3] = (ushort)(bgra[i * 4 + 2] * 257);
+            rgb8[i * 3 + 1] = (ushort)(bgra[i * 4 + 1] * 257);
+            rgb8[i * 3 + 2] = (ushort)(bgra[i * 4] * 257);
         }
 
         ColorImage color = ColorImage.FromInterleaved(width, height, 8, rgb8);
