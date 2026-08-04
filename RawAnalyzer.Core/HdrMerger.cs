@@ -20,14 +20,20 @@ public sealed record HdrMergeParameters(
 /// </summary>
 public sealed class HdrImage
 {
-    internal HdrImage(int width, int height, float[] pixels, float fullScale, BayerPattern bayer)
+    internal HdrImage(
+        int width, int height, float[] pixels, float fullScale, BayerPattern bayer,
+        int sourceBitDepth)
     {
         Width = width;
         Height = height;
         Pixels = pixels;
         FullScale = fullScale;
         Bayer = bayer;
+        SourceBitDepth = sourceBitDepth;
     }
+
+    /// <summary>元素材のビット深度(情報損失の基準)。</summary>
+    public int SourceBitDepth { get; }
 
     /// <summary>幅(画素数)。</summary>
     public int Width { get; }
@@ -45,16 +51,28 @@ public sealed class HdrImage
     public BayerPattern Bayer { get; }
 
     /// <summary>
-    /// <see cref="ToRawImage16"/> の1codeが表す合成域の値(量子化ステップ)。
-    /// 1.0 なら無損失、2.0 なら1bit失われている。
+    /// <see cref="ToRawImage16"/> の1codeが表す合成域の値
+    /// (16bit正規化値域での量子化ステップ)。
     /// </summary>
     public double QuantizationStep => FullScale > 0 ? FullScale / 65535.0 : 0;
 
     /// <summary>
-    /// <see cref="ToRawImage16"/> で失われるビット数(0なら無損失)。
-    /// 例: 14bit素材・2段・露光比16 では2bit、3段・露光比16 では4bit失われる。
+    /// <see cref="ToRawImage16"/> で元素材の量子化に対して失われるビット数(0なら無損失)。
+    /// Nビット素材の正規化LSBは 2^(16-N) なので、損失は
+    /// log2(QuantizationStep / 2^(16-N))。16bitコンテナのLSB基準で数えると
+    /// 常に (16-N) bit ぶん過大になる(例: 12bit・2段・露光比16は実際には無損失)。
+    /// 例: 14bit素材・2段・露光比16 では2bit、3段・露光比16 では6bit失われる。
     /// </summary>
-    public double LostBits => QuantizationStep > 1 ? Math.Log2(QuantizationStep) : 0;
+    public double LostBits
+    {
+        get
+        {
+            double sourceLsb = 1 << (16 - SourceBitDepth);
+            return QuantizationStep > sourceLsb
+                ? Math.Log2(QuantizationStep / sourceLsb)
+                : 0;
+        }
+    }
 
     /// <summary>
     /// フルスケールを65535へスケーリングした16bit画像へ量子化する
@@ -92,6 +110,7 @@ public sealed class HdrImage
 
     /// <summary>
     /// float32リトルエンディアンのrawバイナリとして保存する(行単位ストリーミング)。
+    /// キャンセル・例外時は書きかけのファイルを削除する(RawSaver等と同じ契約)。
     /// </summary>
     /// <param name="path">出力先パス。</param>
     /// <param name="progress">進捗通知(0〜1)。</param>
@@ -100,23 +119,45 @@ public sealed class HdrImage
         string path, IProgress<double>? progress = null,
         CancellationToken cancellationToken = default)
     {
-        using var stream = new FileStream(
-            path, FileMode.Create, FileAccess.Write, FileShare.None, bufferSize: 1 << 20);
-        var row = new byte[Width * 4];
-        for (int y = 0; y < Height; y++)
+        try
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            for (int x = 0; x < Width; x++)
+            using var stream = new FileStream(
+                path, FileMode.Create, FileAccess.Write, FileShare.None, bufferSize: 1 << 20);
+            var row = new byte[Width * 4];
+            for (int y = 0; y < Height; y++)
             {
-                BinaryPrimitives.WriteSingleLittleEndian(
-                    row.AsSpan(x * 4, 4), Pixels[y * Width + x]);
-            }
+                cancellationToken.ThrowIfCancellationRequested();
+                for (int x = 0; x < Width; x++)
+                {
+                    BinaryPrimitives.WriteSingleLittleEndian(
+                        row.AsSpan(x * 4, 4), Pixels[y * Width + x]);
+                }
 
-            stream.Write(row, 0, row.Length);
-            if ((y & 255) == 0 || y == Height - 1)
-            {
-                progress?.Report((double)(y + 1) / Height);
+                stream.Write(row, 0, row.Length);
+                if ((y & 255) == 0 || y == Height - 1)
+                {
+                    progress?.Report((double)(y + 1) / Height);
+                }
             }
+        }
+        catch
+        {
+            TryDeletePartialFile(path);
+            throw;
+        }
+    }
+
+    private static void TryDeletePartialFile(string path)
+    {
+        try
+        {
+            File.Delete(path);
+        }
+        catch (IOException)
+        {
+        }
+        catch (UnauthorizedAccessException)
+        {
         }
     }
 }
@@ -207,7 +248,8 @@ public static class HdrMerger
 
         cancellationToken.ThrowIfCancellationRequested();
         return new HdrImage(
-            width, height, current, currentFullScale, frames[0].Format.Bayer);
+            width, height, current, currentFullScale, frames[0].Format.Bayer,
+            frames[0].Format.BitDepth);
     }
 
     private static float[] ToLinear(RawImage frame, float black, CancellationToken ct)

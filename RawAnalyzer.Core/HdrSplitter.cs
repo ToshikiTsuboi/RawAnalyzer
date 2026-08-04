@@ -150,14 +150,19 @@ public static class HdrSplitter
         int lowest = Math.Min(0, maxOffset);
         int highest = Math.Max(0, maxOffset);
         int subHeight = fullSubHeight - (highest - lowest);
-
-        // 部分画像の先頭行が奇数だとモザイクの位相が変わるため、
-        // 段ごとに切り出し位置に合ったBayerパターンを付ける
         if (subHeight <= 0)
         {
             throw new InvalidOperationException(
                 "行オフセットが大きすぎて重なる領域がありません。設定値を見直してください。");
         }
+
+        // Bayer位相は整列後のコンテンツ(=実際に読み出したセンサ行)で決まる。
+        // パイプライン遅延は「どのセンサ行のデータがどのファイル行に書かれるか」を
+        // ずらすだけで、画素のCFA色は変えない。整列後の各段は同一のセンサ行を
+        // 含むため、位相は全段共通で -lowest 行ぶんのシフトになる
+        // (切り出し位置 startRow で段ごとに回すと、奇数オフセットのとき
+        // 非基準段のチャネルラベルが R↔Gb / Gr↔B で入れ替わってしまう)。
+        BayerPattern alignedBayer = BayerHelper.ShiftOrigin(format.Bayer, 0, -lowest);
 
         var frames = new RawImage[stages];
         for (int stage = 0; stage < stages; stage++)
@@ -178,7 +183,7 @@ public static class HdrSplitter
                 Height = subHeight,
                 FrameCount = 1,
                 Hdr = HdrMode.None,
-                Bayer = BayerHelper.ShiftOrigin(format.Bayer, 0, startRow),
+                Bayer = alignedBayer,
             };
             frames[stage] = new RawImage(subFormat, pixels);
         }

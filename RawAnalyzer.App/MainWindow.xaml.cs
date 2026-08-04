@@ -2386,9 +2386,10 @@ public partial class MainWindow : Window
         _vm.HdrTargetVisible = false;
 
         // 16bit量子化で情報が落ちる構成では、解析値がその精度で読まれることを明示する
+        // (LostBitsは元素材のLSB基準。12bit・2段・露光比16などは無損失なので出ない)
         string lossNote = merged.LostBits >= 0.5
             ? $", 表示・解析は16bit量子化後 (1LSB={merged.QuantizationStep:F1}, " +
-              $"約{merged.LostBits:F0}bit損失 / 無損失はfloat raw保存)"
+              $"元素材比 約{merged.LostBits:F0}bit損失 / 無損失はfloat raw保存)"
             : "";
         _vm.LevelOverlayText =
             $"HDR合成表示 (フルスケール {merged.FullScale:F0}, ゲイン=露出{lossNote})";

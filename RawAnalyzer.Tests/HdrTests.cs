@@ -259,8 +259,13 @@ public class HdrSplitterTests
     }
 
     [Fact]
-    public void Split_OddRowOffsetWithBayer_ShiftsPatternPhase()
+    public void Split_OddRowOffsetWithBayer_KeepsPhaseAcrossStages()
     {
+        // 位相は整列後のコンテンツ(実際に読み出したセンサ行)で決まる。
+        // Split_RowOffset_AlignsStagesAndCropsOverlap が保証するとおり
+        // 整列後の全段は同一のセンサ行を含むため、奇数オフセットでも
+        // Bayerパターンは全段で同一でなければならない
+        // (旧実装は切り出し位置基準で短秒側を Gbrg にしてしまっていた)
         const int width = 2;
         const int height = 16;
         var format = new RawFormat
@@ -274,9 +279,38 @@ public class HdrSplitterTests
         IReadOnlyList<RawImage> frames = HdrSplitter.Split(image, format);
         try
         {
-            // 奇数行から切り出す側は色位相が1行ずれる
             Assert.Equal(BayerPattern.Rggb, frames[0].Format.Bayer);
-            Assert.Equal(BayerPattern.Gbrg, frames[1].Format.Bayer);
+            Assert.Equal(BayerPattern.Rggb, frames[1].Format.Bayer);
+        }
+        finally
+        {
+            foreach (RawImage frame in frames)
+            {
+                frame.Dispose();
+            }
+        }
+    }
+
+    [Fact]
+    public void Split_NegativeOddRowOffset_ShiftsAllStagesTogether()
+    {
+        // 負のオフセットでは基準段側が奇数行から始まるため、
+        // 全段が同じ1行シフトの位相(Rggb→Gbrg)になる
+        const int width = 2;
+        const int height = 16;
+        var format = new RawFormat
+        {
+            Width = width, Height = height, BitDepth = 16,
+            Hdr = HdrMode.Auto, HdrStages = 2, Bayer = BayerPattern.Rggb,
+            HdrLineBlock = 1, HdrRowOffset = -1,
+        };
+        using RawImage image = LoadImage(new ushort[width * height], format);
+
+        IReadOnlyList<RawImage> frames = HdrSplitter.Split(image, format);
+        try
+        {
+            Assert.Equal(frames[0].Format.Bayer, frames[1].Format.Bayer);
+            Assert.Equal(BayerPattern.Gbrg, frames[0].Format.Bayer);
         }
         finally
         {
@@ -633,6 +667,47 @@ public class HdrMergerTests
             Assert.Equal(BayerPattern.Rggb, merged.Bayer);
             using RawImage quantized = merged.ToRawImage16();
             Assert.Equal(BayerPattern.Rggb, quantized.Format.Bayer);
+        }
+    }
+
+    [Theory]
+    [InlineData(12, 2, 0.0)]  // step=16 = 12bit素材の正規化LSB → 無損失
+    [InlineData(14, 2, 2.0)]  // LSB=4, step=16 → 2bit
+    [InlineData(16, 2, 4.0)]  // LSB=1, step=16 → 4bit
+    [InlineData(14, 3, 6.0)]  // step=256, LSB=4 → 6bit
+    public void LostBits_IsRelativeToSourceBitDepth(int bitDepth, int stages, double expected)
+    {
+        // 16bitコンテナのLSB基準で数えると (16-N)bit ぶん過大になる回帰の確認
+        var format = new RawFormat { Width = 4, Height = 4, BitDepth = bitDepth };
+        var frames = new RawImage[stages];
+        try
+        {
+            for (int i = 0; i < stages; i++)
+            {
+                string path = TestData.WriteTempFile(
+                    TestData.EncodeRawFile(new ushort[16], format));
+                try
+                {
+                    frames[i] = RawLoader.Load(path, format);
+                }
+                finally
+                {
+                    File.Delete(path);
+                }
+            }
+
+            HdrImage merged = HdrMerger.Merge(
+                frames, new HdrMergeParameters(ExposureRatio: 16));
+
+            Assert.Equal(bitDepth, merged.SourceBitDepth);
+            Assert.Equal(expected, merged.LostBits, 6);
+        }
+        finally
+        {
+            foreach (RawImage? frame in frames)
+            {
+                frame?.Dispose();
+            }
         }
     }
 
