@@ -314,6 +314,24 @@ public sealed class ImageViewport : FrameworkElement
         RequestRender(fast: false);
     }
 
+    /// <summary>
+    /// 進行中の描画を止めてBayerピラミッドを切り離す。
+    /// 完了後は取り付けていたピラミッドを安全にDisposeできる
+    /// (描画中にDisposeすると読み出しがObjectDisposedExceptionになる)。
+    /// </summary>
+    public async Task DetachBayerPyramidAsync()
+    {
+        _renderCts?.Cancel();
+        _bayerPyramid = null;
+        try
+        {
+            await _renderTask;
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
     /// <summary>現在の表示フレームに対応するピラミッドを持っているか。</summary>
     public bool HasPyramidForCurrentFrame =>
         _pyramid is not null && _pyramidFrame == _frame;
@@ -1179,6 +1197,12 @@ public sealed class ImageViewport : FrameworkElement
             }
             catch (OperationCanceledException)
             {
+            }
+            catch (ObjectDisposedException)
+            {
+                // 画像/ピラミッドの差し替え中に破棄と競合したときの読み出し。
+                // 破棄後の描画結果は不要なのでキャンセル扱いにする
+                // (伝播させると後続のClear/ReplaceのawaitでUIまで届いてしまう)
             }
             finally
             {

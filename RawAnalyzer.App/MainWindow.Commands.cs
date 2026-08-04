@@ -40,6 +40,14 @@ public partial class MainWindow
 
         // 入力中は修飾キーなし/Shiftのみのショートカットを無効にする
         bool typing = IsTextEntryFocused();
+        if (typing && IsTextEditingGesture(key, modifiers))
+        {
+            // Ctrl+C(コピー)やCtrl+A(全選択)などの標準編集操作は
+            // テキストボックスに渡す。ここで横取りすると選択テキストの
+            // コピーのつもりが「画素値コピー」「自動コントラスト」になる
+            return;
+        }
+
         foreach (AppCommand command in Commands)
         {
             if (!command.HasGesture || command.Key != key || command.Modifiers != modifiers)
@@ -70,6 +78,22 @@ public partial class MainWindow
     private static bool IsTextEntryFocused()
     {
         return Keyboard.FocusedElement is TextBoxBase or ComboBox;
+    }
+
+    /// <summary>テキスト編集の標準ショートカット(入力中はコマンドに横取りさせない)。</summary>
+    private static bool IsTextEditingGesture(Key key, ModifierKeys modifiers)
+    {
+        if (modifiers == ModifierKeys.Control)
+        {
+            return key is Key.A or Key.C or Key.V or Key.X or Key.Z or Key.Y or Key.Insert;
+        }
+
+        if (modifiers == (ModifierKeys.Control | ModifierKeys.Shift))
+        {
+            return key is Key.Z; // やり直し(Redo)
+        }
+
+        return modifiers == ModifierKeys.Shift && key is Key.Insert or Key.Delete;
     }
 
     /// <summary>コマンドを実行する(例外はログへ送り、UIは落とさない)。</summary>

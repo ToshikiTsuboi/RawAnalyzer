@@ -496,7 +496,12 @@ public partial class MainWindow : Window
         }
         finally
         {
-            _vm.IsLoading = false;
+            // 読み込み中に別ファイルが開かれた場合、後続世代の進捗表示を
+            // 先行世代のfinallyが消してしまわないよう、現行世代のみ落とす
+            if (generation == _openGeneration)
+            {
+                _vm.IsLoading = false;
+            }
         }
 
         if (cts.IsCancellationRequested || generation != _openGeneration)
@@ -621,6 +626,11 @@ public partial class MainWindow : Window
         }
         catch (OperationCanceledException)
         {
+            return;
+        }
+        catch (ObjectDisposedException)
+        {
+            // 画像切替と競合して生成元が破棄された。作り直しは次の表示切替に任せる
             return;
         }
 
@@ -2250,6 +2260,8 @@ public partial class MainWindow : Window
 
     private async Task EnterHdrSplitAsync()
     {
+        // 再生タイマーの連番送りと競合すると、Split中の画像が背後で破棄される
+        using BusyScope busy = EnterBusy();
         RawImage image = _currentImage!;
 
         // フォーマットパネルで変更したBayerパターンやHDR方式を反映する
@@ -2259,6 +2271,13 @@ public partial class MainWindow : Window
         try
         {
             frames = await Task.Run(() => HdrSplitter.Split(image, splitFormat));
+        }
+        catch (ObjectDisposedException)
+        {
+            // 別ファイルへの切替と競合して元画像が破棄された。結果は不要
+            // (InvalidOperationExceptionの派生なので先に受ける)
+            DisplayModeCombo.SelectedIndex = 0;
+            return;
         }
         catch (InvalidOperationException ex)
         {
@@ -2294,6 +2313,9 @@ public partial class MainWindow : Window
                 Height = subHeight,
                 FrameCount = 1,
                 Hdr = HdrMode.None,
+
+                // 負の行オフセットでは整列後の位相が元と変わる(分割フレーム側に合わせる)
+                Bayer = frames[0].Format.Bayer,
             };
             return RawImage.FromPixels(format, pixels);
         });
@@ -2341,6 +2363,8 @@ public partial class MainWindow : Window
             return;
         }
 
+        // 再生タイマーの連番送りと競合すると、Split/Merge中の画像が背後で破棄される
+        using BusyScope busy = EnterBusy();
         RawImage image = _currentImage!;
         RawFormat format = _currentFormat!;
         HdrImage merged;
@@ -2364,6 +2388,13 @@ public partial class MainWindow : Window
                     }
                 }
             });
+        }
+        catch (ObjectDisposedException)
+        {
+            // 別ファイルへの切替と競合して元画像が破棄された。結果は不要
+            // (InvalidOperationExceptionの派生なので先に受ける)
+            DisplayModeCombo.SelectedIndex = 0;
+            return;
         }
         catch (InvalidOperationException ex)
         {
@@ -2822,9 +2853,17 @@ public partial class MainWindow : Window
             Viewport.SetDefectMarkers(null);
             if (_sequenceMode == SequenceMode.Frames)
             {
-                // ピラミッドは生成元フレーム専用なので、フレームを移ったら捨てる
-                _mainBayerPyramid?.Dispose();
-                _mainBayerPyramid = null;
+                // ピラミッドは生成元フレーム専用なので、フレームを移ったら捨てる。
+                // 進行中の描画が読んでいる可能性があるため、切り離して描画停止を
+                // 待ってからDisposeする(即Disposeすると読み出しがODEになり、
+                // 後続のawaitで未処理例外としてUIまで届く)
+                if (_mainBayerPyramid is not null)
+                {
+                    await Viewport.DetachBayerPyramidAsync();
+                    _mainBayerPyramid.Dispose();
+                    _mainBayerPyramid = null;
+                }
+
                 Viewport.SetFrame(index);
                 _sequenceIndex = index;
             }
@@ -2840,6 +2879,15 @@ public partial class MainWindow : Window
                 catch (Exception)
                 {
                     return; // 消えた/読めないファイルはスキップ
+                }
+
+                // await中にモーダル(保存・測定・演算)が開いていたら差し替えない。
+                // モーダルのディスパッチャポンプ内でここが再開すると、処理対象の
+                // 画像を背後で破棄してしまう
+                if (_busyDepth > 0 || !ReferenceEquals(format, _currentFormat))
+                {
+                    image.Dispose();
+                    return;
                 }
 
                 RawImage? old = await Viewport.ReplaceImageAsync(image, format);
@@ -3453,6 +3501,24 @@ public partial class MainWindow : Window
 
         using BusyScope busy = EnterBusy();
         int frame = Viewport.Frame;
+
+        // 2枚目は常にフレーム0を読む。対象Aと同一ファイルをフレーム0表示中に
+        // 指定すると完全に同一のデータ同士になり、σ_temporal=0という
+        // 誤った測定値が無警告で出てしまう
+        if (request.ReferencePath is not null && _currentPath is not null
+            && _derivedImage is null && frame == 0
+            && string.Equals(request.ReferencePath, _currentPath,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            MessageBox.Show(this,
+                "2枚目に対象Aと同じファイルが指定されています。同一データ同士の差分は" +
+                "常に0になり、時間ノイズを測定できません。別撮りのフレームを指定するか、" +
+                "マルチフレームファイルなら表示フレームを変えてください(2枚目はフレーム0を使います)。",
+                "ノイズ測定", MessageBoxButton.OK, MessageBoxImage.Warning);
+            _noiseWindow?.ResetRunButton();
+            return;
+        }
+
         RegionOfInterest? roi = request.UseRoi && Viewport.Roi is { PixelCount: > 0 } r ? r : null;
         NoiseMeasurement measurement = default;
 
