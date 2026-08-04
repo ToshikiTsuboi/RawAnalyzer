@@ -847,17 +847,25 @@
         <Border x:Name="Bd" CornerRadius="4" Padding="10,6" Background="Transparent">
             <Grid>
                 <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="16" />
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
-                <ContentPresenter ContentSource="Header" RecognizesAccessKey="True"
-                                  VerticalAlignment="Center" />
-                <TextBlock Grid.Column="1" Text="{TemplateBinding InputGestureText}"
+                <!-- IsCheckableな項目のオン状態。無いとチェック状態が視覚化されない -->
+                <Path x:Name="CheckMark" Data="M0,4 L3,7 L8,0"
+                      Stroke="{StaticResource AccentBrush}" StrokeThickness="1.8"
+                      VerticalAlignment="Center" Margin="0,0,6,0" Visibility="Collapsed" />
+                <ContentPresenter Grid.Column="1" ContentSource="Header"
+                                  RecognizesAccessKey="True" VerticalAlignment="Center" />
+                <TextBlock Grid.Column="2" Text="{TemplateBinding InputGestureText}"
                            Foreground="{StaticResource TextFaint}" FontSize="11"
                            Margin="28,0,0,0" VerticalAlignment="Center" />
             </Grid>
         </Border>
         <ControlTemplate.Triggers>
+            <Trigger Property="IsChecked" Value="True">
+                <Setter TargetName="CheckMark" Property="Visibility" Value="Visible" />
+            </Trigger>
             <Trigger Property="IsHighlighted" Value="True">
                 <Setter TargetName="Bd" Property="Background" Value="{StaticResource HoverBrush}" />
             </Trigger>

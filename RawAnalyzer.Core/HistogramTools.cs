@@ -93,11 +93,14 @@ public static class HistogramTools
             throw new ArgumentOutOfRangeException(nameof(columns), "列数は1以上である必要があります。");
         }
 
+        // 比例写像 i*columns/len で全列へ均等に配分する。
+        // 「列あたりビン数」の固定値で割ると端数のぶん右端の列が使われず、
+        // ヒストグラム全体が左へ圧縮される(8bit/210列では右39%が常に空白で、
+        // 飽和スパイクが中央付近に描画されていた)
         var result = new double[columns];
-        int binsPerColumn = bins.Length / columns + 1;
         for (int i = 0; i < bins.Length; i++)
         {
-            result[Math.Min(i / binsPerColumn, columns - 1)] += bins[i];
+            result[(int)((long)i * columns / bins.Length)] += bins[i];
         }
 
         if (cumulative)

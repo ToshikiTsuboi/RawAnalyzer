@@ -945,6 +945,36 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>
+    /// 表示上のクリック座標を元画像の座標へ写像する。
+    /// チャネル分割表示は R/Gr/Gb/B の2x2タイル並置なので、タイル内座標を
+    /// 元のBayer座標に戻さないと、クリックした位置と異なる画素を読むことになる。
+    /// </summary>
+    /// <returns>写像できない座標(端数行/列)ならfalse。</returns>
+    private bool TryMapToSourceCoordinates(
+        RawImage image, int x, int y, out int sourceX, out int sourceY)
+    {
+        sourceX = x;
+        sourceY = y;
+        if (Viewport.DisplayMode != ViewportDisplayMode.ChannelSplit)
+        {
+            return true;
+        }
+
+        int evenW = image.Width & ~1;
+        int evenH = image.Height & ~1;
+        if (x >= evenW || y >= evenH)
+        {
+            return false;
+        }
+
+        (sourceX, sourceY) = BayerSplit.MapTiledToSource(x, y, evenW, evenH);
+        return true;
+    }
+
+    // チャネル分割表示でプロファイルマーカーをクリック位置に出し続けるための表示座標
+    private (int X, int Y) _profilePickDisplayPoint;
+
     private async void OnProfilePointClicked(object? sender, CursorPixelEventArgs e)
     {
         if (ActiveImage is null || ActiveFormat is null)
@@ -953,6 +983,11 @@ public partial class MainWindow : Window
         }
 
         RawImage image = ActiveImage;
+        if (!TryMapToSourceCoordinates(image, e.X, e.Y, out int sourceX, out int sourceY))
+        {
+            return;
+        }
+
         int frame = Viewport.Frame;
         RegionOfInterest? roi = Viewport.Roi is { PixelCount: > 0 } r ? r : null;
         double[] row;
@@ -964,9 +999,9 @@ public partial class MainWindow : Window
             (row, column, horizontalProjection, verticalProjection) = await Task.Run(() =>
             {
                 double[] rowValues = Array.ConvertAll(
-                    ImageAnalysis.ExtractRowProfile(image, frame, e.Y), v => (double)v);
+                    ImageAnalysis.ExtractRowProfile(image, frame, sourceY), v => (double)v);
                 double[] columnValues = Array.ConvertAll(
-                    ImageAnalysis.ExtractColumnProfile(image, frame, e.X), v => (double)v);
+                    ImageAnalysis.ExtractColumnProfile(image, frame, sourceX), v => (double)v);
                 double[] hp = roi is { } region
                     ? ImageAnalysis.ComputeHorizontalProjection(image, frame, region)
                     : Array.Empty<double>();
@@ -991,9 +1026,10 @@ public partial class MainWindow : Window
             _profileWindow = new LineProfileWindow { Owner = this };
             _profileWindow.DirectionChanged += horizontal =>
             {
-                if (_profileWindow is { } window)
+                if (_profileWindow is not null)
                 {
-                    (int px, int py) = window.CurrentPoint;
+                    // マーカーは表示座標に出す(チャネル分割では元座標とずれるため)
+                    (int px, int py) = _profilePickDisplayPoint;
                     Viewport.SetProfileMarker(px, py, horizontal);
                 }
             };
@@ -1007,7 +1043,9 @@ public partial class MainWindow : Window
 
         int maxCode = (1 << ActiveFormat!.BitDepth) - 1;
         _profileWindow.SetProfiles(
-            row, column, horizontalProjection, verticalProjection, roi, e.X, e.Y, maxCode);
+            row, column, horizontalProjection, verticalProjection, roi,
+            sourceX, sourceY, maxCode);
+        _profilePickDisplayPoint = (e.X, e.Y);
         Viewport.SetProfileMarker(e.X, e.Y, _profileWindow.IsHorizontal);
         _profileWindow.Activate();
     }
@@ -1067,36 +1105,7 @@ public partial class MainWindow : Window
                 ApplyLevelCodes(_vm.BlackLevel, _vm.WhiteLevel);
             }
 
-            if (_vm.HasImage)
-            {
-                if (_hdrFrameParams is not null)
-                {
-                    // HDR分割表示中は調整対象フレームのLUTのみ更新する
-                    DisplayParameters parameters = CurrentDisplayParameters();
-                    int target = HdrTargetCombo.SelectedIndex;
-                    if (target <= 0)
-                    {
-                        for (int i = 0; i < _hdrFrameParams.Length; i++)
-                        {
-                            _hdrFrameParams[i] = parameters;
-                        }
-                    }
-                    else
-                    {
-                        int frame = Math.Min(target - 1, _hdrFrameParams.Length - 1);
-                        _hdrFrameParams[frame] = parameters;
-                    }
-
-                    ApplySplitLuts();
-                    return;
-                }
-
-                Viewport.SetLut(BuildLut());
-
-                // ゲイン・コントラストも現像LUTに影響する。ここを絞ると
-                // ColorDevelopモードでスライダーが完全に無反応になる
-                UpdateDevelopLuts();
-            }
+            ApplyDisplayParametersToViews();
         }
 
         if (e.PropertyName is nameof(MainViewModel.WbGainR) or nameof(MainViewModel.WbGainG)
@@ -1105,6 +1114,48 @@ public partial class MainWindow : Window
         {
             UpdateDevelopLuts();
         }
+    }
+
+    /// <summary>
+    /// 現在の表示調整パラメータを、いま画面に効いているLUT経路すべてへ反映する。
+    /// スライダー変更・リセット・自動コントラストで共通に使う。
+    /// Raw表示のLUTだけ更新すると、HDR分割(SegmentLuts)やカラー現像(_developLuts)
+    /// 表示中に見た目が変わらず「効かないボタン」になる。
+    /// </summary>
+    private void ApplyDisplayParametersToViews()
+    {
+        if (!_vm.HasImage)
+        {
+            return;
+        }
+
+        if (_hdrFrameParams is not null)
+        {
+            // HDR分割表示中は調整対象フレームのLUTのみ更新する
+            DisplayParameters parameters = CurrentDisplayParameters();
+            int target = HdrTargetCombo.SelectedIndex;
+            if (target <= 0)
+            {
+                for (int i = 0; i < _hdrFrameParams.Length; i++)
+                {
+                    _hdrFrameParams[i] = parameters;
+                }
+            }
+            else
+            {
+                int frame = Math.Min(target - 1, _hdrFrameParams.Length - 1);
+                _hdrFrameParams[frame] = parameters;
+            }
+
+            ApplySplitLuts();
+            return;
+        }
+
+        Viewport.SetLut(BuildLut());
+
+        // ゲイン・コントラストも現像LUTに影響する。ここを絞ると
+        // ColorDevelopモードでスライダーが完全に無反応になる
+        UpdateDevelopLuts();
     }
 
     private DevelopParameters CurrentDevelopParameters()
@@ -2445,17 +2496,21 @@ public partial class MainWindow : Window
 
         RawImage image = ActiveImage;
         BayerPattern pattern = ActiveFormat.Bayer;
+
+        // フレーム0固定にすると、マルチフレームでフレームN表示中のAWBが
+        // 見えていない画素から計算される
+        int frame = Viewport.Frame;
         WhiteBalanceGains gains;
         try
         {
-            gains = await Task.Run(() => WhiteBalance.ComputeGrayWorld(image, 0, pattern));
+            gains = await Task.Run(() => WhiteBalance.ComputeGrayWorld(image, frame, pattern));
         }
         catch (Exception)
         {
             return;
         }
 
-        if (!ReferenceEquals(image, ActiveImage))
+        if (!ReferenceEquals(image, ActiveImage) || frame != Viewport.Frame)
         {
             return;
         }
@@ -2487,8 +2542,14 @@ public partial class MainWindow : Window
             return;
         }
 
+        // 表示フレーム・元画像座標(チャネル分割はタイル→元座標)で計算する
+        if (!TryMapToSourceCoordinates(ActiveImage, e.X, e.Y, out int sourceX, out int sourceY))
+        {
+            return;
+        }
+
         WhiteBalanceGains gains = WhiteBalance.ComputeSpotGains(
-            ActiveImage, 0, ActiveFormat.Bayer, e.X, e.Y);
+            ActiveImage, Viewport.Frame, ActiveFormat.Bayer, sourceX, sourceY);
         _vm.WbGainG = 1.0;
         _vm.WbGainR = Math.Clamp(gains.GainR, 0.5, 4.0);
         _vm.WbGainB = Math.Clamp(gains.GainB, 0.5, 4.0);
@@ -2527,10 +2588,7 @@ public partial class MainWindow : Window
     private void OnResetDisplayClick(object sender, RoutedEventArgs e)
     {
         ResetDisplayParameters();
-        if (_vm.HasImage)
-        {
-            Viewport.SetLut(BuildLut());
-        }
+        ApplyDisplayParametersToViews();
     }
 
     private void OnAutoContrastClick(object sender, RoutedEventArgs e)
@@ -2550,8 +2608,7 @@ public partial class MainWindow : Window
         _vm.WhiteLevel = levels.WhiteCode;
         _updatingSliders = false;
         ApplyLevelCodes(levels.BlackCode, levels.WhiteCode);
-        Viewport.SetLut(BuildLut());
-        UpdateDevelopLuts();
+        ApplyDisplayParametersToViews();
     }
 
     // ---- ビューポートイベント ----
@@ -2582,18 +2639,9 @@ public partial class MainWindow : Window
         }
 
         // チャネル分割表示ではタイル座標を元画像座標へ写像する
-        int sourceX = e.X;
-        int sourceY = e.Y;
-        if (Viewport.DisplayMode == ViewportDisplayMode.ChannelSplit)
+        if (!TryMapToSourceCoordinates(image, e.X, e.Y, out int sourceX, out int sourceY))
         {
-            int evenW = image.Width & ~1;
-            int evenH = image.Height & ~1;
-            if (e.X >= evenW || e.Y >= evenH)
-            {
-                return;
-            }
-
-            (sourceX, sourceY) = BayerSplit.MapTiledToSource(e.X, e.Y, evenW, evenH);
+            return;
         }
 
         ushort value;
@@ -2864,6 +2912,17 @@ public partial class MainWindow : Window
         else
         {
             StopPlayback();
+        }
+    }
+
+    private void OnFpsChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+    {
+        // 再生中の変更も即座にタイマー間隔へ反映する(開始時にしか読まないと
+        // 表示上の選択値と実際の再生速度が食い違う)
+        if (_playTimer?.IsEnabled == true)
+        {
+            int fps = PlaybackFpsValues[Math.Clamp(FpsCombo.SelectedIndex, 0, 4)];
+            _playTimer.Interval = TimeSpan.FromSeconds(1.0 / fps);
         }
     }
 

@@ -83,6 +83,44 @@ public class HistogramToolsTests
 
         Assert.Equal(4, columns.Length);
         Assert.Equal(8, columns.Sum());
+
+        // 均等配分され、最終列が空にならないこと(旧実装は3/3/2/0だった)
+        Assert.All(columns, c => Assert.Equal(2, c));
+    }
+
+    [Fact]
+    public void Aggregate_LastBinMapsToLastColumn()
+    {
+        // 飽和スパイク(最終ビン)は必ず右端の列に描画されること。
+        // 旧実装は 256ビン/210列 で列127、4096ビンで列204へ写像され、
+        // ヒストグラムが左に圧縮されていた
+        foreach (int binCount in new[] { 256, 1024, 4096, 65536 })
+        {
+            var bins = new uint[binCount];
+            bins[0] = 5;
+            bins[^1] = 7;
+
+            double[] columns = HistogramTools.Aggregate(bins, 210);
+
+            Assert.Equal(5, columns[0]);
+            Assert.Equal(7, columns[^1]);
+            Assert.Equal(12, columns.Sum());
+        }
+    }
+
+    [Fact]
+    public void Aggregate_FewerBinsThanColumns_PreservesEndpoints()
+    {
+        // ビン数 < 列数 でも先頭・末尾の位置関係が保たれること
+        var bins = new uint[16];
+        bins[0] = 1;
+        bins[15] = 2;
+
+        double[] columns = HistogramTools.Aggregate(bins, 210);
+
+        Assert.Equal(1, columns[0]);
+        Assert.Equal(2, columns[196]); // 15*210/16 = 196
+        Assert.Equal(3, columns.Sum());
     }
 
     [Fact]

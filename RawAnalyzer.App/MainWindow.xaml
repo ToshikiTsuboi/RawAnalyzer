@@ -389,7 +389,8 @@
                                 Click="OnSeqLastClick" Padding="8,3"
                                 AutomationProperties.Name="最終フレームへ" ToolTip="最終フレームへ" />
                         <ComboBox x:Name="FpsCombo" DockPanel.Dock="Right" MinWidth="76"
-                                  SelectedIndex="2" FontSize="11" VerticalAlignment="Center">
+                                  SelectedIndex="2" FontSize="11" VerticalAlignment="Center"
+                                  SelectionChanged="OnFpsChanged">
                             <ComboBoxItem Content="5 fps" />
                             <ComboBoxItem Content="10 fps" />
                             <ComboBoxItem Content="15 fps" />
