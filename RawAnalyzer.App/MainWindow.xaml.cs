@@ -3672,6 +3672,10 @@ public partial class MainWindow : Window
         {
             RememberFileFormat(_currentPath, _currentFormat);
         }
+
+        // チャネル別統計はパターンに依存するため作り直す。
+        // 放置すると RGGB→BGGR で R と B を入れ替えた値を表示したままになる
+        RefreshHistogram(Viewport.Roi is { PixelCount: > 0 } roi ? roi : null);
     }
 
     // ---- 右クリックメニュー ----

@@ -184,8 +184,6 @@
                               ToolTip="飽和(≥98%)を赤 / 黒潰れ(≤2%)を青のストライプで警告"
                               IsChecked="{Binding ZebraOn, Mode=TwoWay}" />
                 <Border Style="{StaticResource ToolSep}" />
-                <Button Style="{StaticResource ToolButton}" Content="ヒストグラム"
-                        Click="OnHistogramRefreshClick" IsEnabled="{Binding HasImage}" />
                 <ToggleButton x:Name="ProfileToggle" Content="ラインプロファイル"
                               Style="{StaticResource ToolToggle}" IsEnabled="{Binding HasImage}"
                               Checked="OnProfileToggleChanged" Unchecked="OnProfileToggleChanged" />
