@@ -88,13 +88,24 @@ internal static class BuildInfo
     {
         if (IsTagged(version, describe, dirty))
         {
+            // リリース(タグ上・変更なし)ではバージョン以外の但し書きを出さない
             return version;
         }
 
         // タグから進んでいる場合、アセンブリバージョンは csproj の既定値(1.0.0)のままで
-        // 実体を表さない。git describe の方が「何を動かしているか」を正しく示す
-        string basis = describe.Length > 0 ? describe : version;
-        return dirty ? $"{basis} (開発ビルド・未コミットの変更あり)" : $"{basis} (開発ビルド)";
+        // 実体を表さない。git describe の方が「何を動かしているか」を正しく示す。
+        // 未コミットの有無はコミット行に出すので、ここでは重ねて書かない
+        // (describe 末尾の "-dirty" も落とす)
+        string basis = describe.Length > 0 ? TrimDirtySuffix(describe) : version;
+        return $"{basis} (開発ビルド)";
+    }
+
+    private static string TrimDirtySuffix(string describe)
+    {
+        const string Suffix = "-dirty";
+        return describe.EndsWith(Suffix, StringComparison.Ordinal)
+            ? describe[..^Suffix.Length]
+            : describe;
     }
 
     private static bool IsTagged(string version, string describe, bool dirty)

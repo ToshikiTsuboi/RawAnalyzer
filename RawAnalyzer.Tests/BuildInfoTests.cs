@@ -22,11 +22,13 @@ public class BuildInfoTests
     }
 
     [Fact]
-    public void FormatVersionLabel_Dirty_MentionsUncommittedChanges()
+    public void FormatVersionLabel_Dirty_DoesNotRepeatUncommittedState()
     {
+        // 未コミットである旨はコミット行に出すので、バージョン行では繰り返さない。
+        // describe 末尾の "-dirty" も落とす
         Assert.Equal(
-            "v1.2.0-dirty (開発ビルド・未コミットの変更あり)",
-            BuildInfo.FormatVersionLabel("1.2.0", "v1.2.0-dirty", dirty: true));
+            "v1.2.0-2-gabc1234 (開発ビルド)",
+            BuildInfo.FormatVersionLabel("1.0.0", "v1.2.0-2-gabc1234-dirty", dirty: true));
     }
 
     [Fact]
@@ -34,8 +36,19 @@ public class BuildInfoTests
     {
         // ハッシュはタグと同じでも作業ツリーが汚れていれば配布物とは別物
         Assert.Equal(
-            "v1.2.0 (開発ビルド・未コミットの変更あり)",
+            "v1.2.0 (開発ビルド)",
             BuildInfo.FormatVersionLabel("1.2.0", "v1.2.0", dirty: true));
+    }
+
+    [Fact]
+    public void FormatVersionLabel_Release_HasNoAnnotation()
+    {
+        // リリース版に開発向けの但し書きが出ないこと
+        string label = BuildInfo.FormatVersionLabel("1.3.0", "v1.3.0", dirty: false);
+
+        Assert.Equal("1.3.0", label);
+        Assert.DoesNotContain("開発", label);
+        Assert.DoesNotContain("dirty", label);
     }
 
     [Fact]
