@@ -1,0 +1,93 @@
+<Window x:Class="RawAnalyzer.App.Views.AboutWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="ソフト情報" Width="520" SizeToContent="Height"
+        Background="{StaticResource PanelBrush}" Foreground="{StaticResource TextBrush}"
+        WindowStartupLocation="CenterOwner" ResizeMode="NoResize"
+        ShowInTaskbar="False" WindowStyle="ToolWindow">
+    <Window.Resources>
+        <!-- 項目名の列。値と行位置を揃えるため共通スタイルにする -->
+        <Style x:Key="FieldLabel" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="Margin" Value="0,0,14,6" />
+            <Setter Property="Foreground" Value="{StaticResource TextDim}" />
+        </Style>
+        <Style x:Key="FieldValue" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="Margin" Value="0,0,0,6" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+        </Style>
+    </Window.Resources>
+
+    <StackPanel Margin="20,16,20,14">
+        <TextBlock Text="RawAnalyzer" FontSize="17" FontWeight="SemiBold"
+                   Foreground="{StaticResource AccentBrush}" />
+        <TextBlock Margin="0,4,0,0" FontSize="12" TextWrapping="Wrap"
+                   Foreground="{StaticResource TextDim}"
+                   Text="Raw 画像を表示・分析するための Windows デスクトップアプリ" />
+
+        <Border Margin="0,14,0,12" Height="1" Background="{StaticResource BorderBrushDark}" />
+
+        <Grid>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+
+            <TextBlock Grid.Row="0" Grid.Column="0" Text="バージョン"
+                       Style="{StaticResource FieldLabel}" />
+            <TextBlock x:Name="VersionText" Grid.Row="0" Grid.Column="1"
+                       Style="{StaticResource FieldValue}" />
+
+            <TextBlock Grid.Row="1" Grid.Column="0" Text="コミット"
+                       Style="{StaticResource FieldLabel}" />
+            <TextBlock x:Name="CommitText" Grid.Row="1" Grid.Column="1"
+                       FontFamily="Consolas" Style="{StaticResource FieldValue}" />
+
+            <TextBlock Grid.Row="2" Grid.Column="0" Text="ビルド"
+                       Style="{StaticResource FieldLabel}" />
+            <TextBlock x:Name="BuildText" Grid.Row="2" Grid.Column="1"
+                       FontFamily="Consolas" Style="{StaticResource FieldValue}" />
+
+            <TextBlock Grid.Row="3" Grid.Column="0" Text="ランタイム"
+                       Style="{StaticResource FieldLabel}" />
+            <TextBlock x:Name="RuntimeText" Grid.Row="3" Grid.Column="1"
+                       Style="{StaticResource FieldValue}" />
+
+            <TextBlock Grid.Row="4" Grid.Column="0" Text="ライセンス"
+                       Style="{StaticResource FieldLabel}" />
+            <TextBlock x:Name="LicenseText" Grid.Row="4" Grid.Column="1"
+                       Style="{StaticResource FieldValue}" />
+
+            <TextBlock Grid.Row="5" Grid.Column="0" Text="リポジトリ"
+                       Style="{StaticResource FieldLabel}" />
+            <TextBlock Grid.Row="5" Grid.Column="1" Style="{StaticResource FieldValue}">
+                <Hyperlink x:Name="RepositoryLink" RequestNavigate="OnRequestNavigate"
+                           Foreground="{StaticResource AccentBrush}">
+                    <Run x:Name="RepositoryRun" />
+                </Hyperlink>
+            </TextBlock>
+        </Grid>
+
+        <TextBlock x:Name="CopyrightText" Margin="0,6,0,0" FontSize="11"
+                   Foreground="{StaticResource TextFaint}" />
+
+        <DockPanel Margin="0,16,0,0">
+            <Button DockPanel.Dock="Right" Content="OK" IsDefault="True" IsCancel="True"
+                    MinWidth="80" Margin="8,0,0,0" Click="OnCloseClick" />
+            <Button DockPanel.Dock="Right" Content="情報をコピー" MinWidth="110"
+                    Click="OnCopyClick"
+                    ToolTip="不具合報告に貼り付けられる形式でコピーします" />
+            <Border />
+        </DockPanel>
+    </StackPanel>
+</Window>

@@ -1391,12 +1391,7 @@ public partial class MainWindow : Window
 
     private void OnAboutClick(object sender, RoutedEventArgs e)
     {
-        string version = typeof(MainWindow).Assembly.GetName().Version?.ToString(3) ?? "1.0.0";
-        ShowInfoWindow("バージョン情報",
-            $"RawAnalyzer {version}\n\n" +
-            "イメージセンサRaw画像評価アプリ\n" +
-            "10億画素(2GB)対応 / DOL・Staggered HDR / Bayer現像\n\n" +
-            $".NET {Environment.Version} / WPF");
+        new AboutWindow { Owner = this }.ShowDialog();
     }
 
     private void ShowInfoWindow(string title, string message)

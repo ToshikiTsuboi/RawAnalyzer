@@ -149,7 +149,7 @@
                           Click="OnShortcutHelpClick" />
                 <Separator />
                 <MenuItem Header="操作ガイド" Click="OnUsageGuideClick" />
-                <MenuItem Header="バージョン情報" Click="OnAboutClick" />
+                <MenuItem Header="ソフト情報" Click="OnAboutClick" />
             </MenuItem>
         </Menu>
 

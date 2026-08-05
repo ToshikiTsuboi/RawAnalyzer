@@ -193,6 +193,14 @@ public partial class MainWindow
             },
             new()
             {
+                Id = "about",
+                Category = "全般",
+                Title = "ソフト情報",
+                Description = "バージョン・コミット・ビルド日時・ライセンス",
+                Execute = () => OnAboutClick(this, empty),
+            },
+            new()
+            {
                 Id = "open",
                 Category = "ファイル",
                 Title = "開く…",

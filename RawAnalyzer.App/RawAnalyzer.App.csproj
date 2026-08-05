@@ -6,11 +6,13 @@
     <UseWPF>true</UseWPF>
     <ApplicationIcon>Assets\RawAnalyzer.ico</ApplicationIcon>
 
-    <!-- バージョン情報の表示に使う。リリース時はタグの値で上書きする -->
+    <!-- ソフト情報の表示に使う。リリース時はタグの値で上書きする -->
     <Version>1.0.0</Version>
     <Product>RawAnalyzer</Product>
     <Authors>Toshiki Tsuboi</Authors>
     <Copyright>Copyright (c) 2025-2026 Toshiki Tsuboi</Copyright>
+    <RepositoryUrl>https://github.com/ToshikiTsuboi/RawAnalyzer</RepositoryUrl>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
   </PropertyGroup>
 
   <ItemGroup>
@@ -23,5 +25,62 @@
       <_Parameter1>RawAnalyzer.Tests</_Parameter1>
     </AssemblyAttribute>
   </ItemGroup>
+
+  <!--
+    ソフト情報ダイアログ用に、ビルド時点のgit情報とビルド日時を埋め込む。
+    「手元のexeがどのコミットのものか」を後から確認できるようにするのが目的。
+    gitが無い環境やリポジトリ外でも値が空になるだけでビルドは止めない
+    (IgnoreExitCode。Windowsではコマンド自体が無い場合もcmdが9009を返す)。
+    ビルド日時が毎回変わるため、このプロジェクトは常に再コンパイルされる。
+  -->
+  <Target Name="EmbedBuildInfo" BeforeTargets="GetAssemblyAttributes">
+    <Exec Command="git -C &quot;$(MSBuildProjectDirectory)&quot; rev-parse HEAD"
+          ConsoleToMSBuild="true" IgnoreExitCode="true" EchoOff="true"
+          StandardOutputImportance="low" StandardErrorImportance="low">
+      <Output TaskParameter="ConsoleOutput" PropertyName="_CommitOut" />
+      <Output TaskParameter="ExitCode" PropertyName="_CommitExit" />
+    </Exec>
+
+    <Exec Command="git -C &quot;$(MSBuildProjectDirectory)&quot; rev-parse --abbrev-ref HEAD"
+          ConsoleToMSBuild="true" IgnoreExitCode="true" EchoOff="true"
+          StandardOutputImportance="low" StandardErrorImportance="low">
+      <Output TaskParameter="ConsoleOutput" PropertyName="_BranchOut" />
+      <Output TaskParameter="ExitCode" PropertyName="_BranchExit" />
+    </Exec>
+
+    <!-- タグからの相対位置。リリースビルドではタグ名そのもの(例 v1.2.0)になる -->
+    <Exec Command="git -C &quot;$(MSBuildProjectDirectory)&quot; describe --tags --always --dirty"
+          ConsoleToMSBuild="true" IgnoreExitCode="true" EchoOff="true"
+          StandardOutputImportance="low" StandardErrorImportance="low">
+      <Output TaskParameter="ConsoleOutput" PropertyName="_DescribeOut" />
+      <Output TaskParameter="ExitCode" PropertyName="_DescribeExit" />
+    </Exec>
+
+    <Exec Command="git -C &quot;$(MSBuildProjectDirectory)&quot; status --porcelain --untracked-files=no"
+          ConsoleToMSBuild="true" IgnoreExitCode="true" EchoOff="true"
+          StandardOutputImportance="low" StandardErrorImportance="low">
+      <Output TaskParameter="ConsoleOutput" PropertyName="_StatusOut" />
+      <Output TaskParameter="ExitCode" PropertyName="_StatusExit" />
+    </Exec>
+
+    <PropertyGroup>
+      <_Commit Condition="'$(_CommitExit)' == '0'">$(_CommitOut.Trim())</_Commit>
+      <_Branch Condition="'$(_BranchExit)' == '0'">$(_BranchOut.Trim())</_Branch>
+      <_Describe Condition="'$(_DescribeExit)' == '0'">$(_DescribeOut.Trim())</_Describe>
+      <_Dirty>false</_Dirty>
+      <_Dirty Condition="'$(_StatusExit)' == '0' and '$(_StatusOut.Trim())' != ''">true</_Dirty>
+      <_BuildTime>$([System.DateTime]::UtcNow.ToString("o"))</_BuildTime>
+    </PropertyGroup>
+
+    <ItemGroup>
+      <AssemblyMetadata Include="BuildTimeUtc" Value="$(_BuildTime)" />
+      <AssemblyMetadata Include="BuildConfiguration" Value="$(Configuration)" />
+      <AssemblyMetadata Include="GitCommit" Value="$(_Commit)" />
+      <AssemblyMetadata Include="GitBranch" Value="$(_Branch)" />
+      <AssemblyMetadata Include="GitDescribe" Value="$(_Describe)" />
+      <AssemblyMetadata Include="GitDirty" Value="$(_Dirty)" />
+      <AssemblyMetadata Include="RepositoryUrl" Value="$(RepositoryUrl)" />
+    </ItemGroup>
+  </Target>
 
 </Project>
