@@ -2776,11 +2776,16 @@ public partial class MainWindow : Window
                 _sequenceMode = SequenceMode.Frames;
                 _sequenceIndex = Viewport.Frame;
             }
-            else if (_currentPath is not null && IsRawFile(_currentPath))
+            else if (_currentPath is not null)
             {
-                // 同一フォルダ・同一拡張子・同一サイズのファイル群をバーチャルスタックとみなす
-                IReadOnlyList<string> files = SequenceScanner.FindStack(
-                    _currentPath, CurrentFileLength(), CandidateFiles());
+                // 同一フォルダのファイル群をバーチャルスタックとみなす。
+                // rawはファイルサイズが解像度そのものを表すためサイズ一致で判定できるが、
+                // 画像ファイルは解像度がヘッダにあるうえ圧縮でサイズが変わるので、
+                // ファイル名の連番で判定する
+                IReadOnlyList<string> files = IsRawFile(_currentPath)
+                    ? SequenceScanner.FindStack(
+                        _currentPath, CurrentFileLength(), CandidateFiles())
+                    : SequenceScanner.FindNumberedStack(_currentPath, CandidateFiles());
                 if (files.Count > 1)
                 {
                     _sequenceMode = SequenceMode.Files;
@@ -2877,11 +2882,23 @@ public partial class MainWindow : Window
             else
             {
                 string path = _sequenceFiles[index];
-                RawFormat format = _currentFormat!;
+                bool isRaw = IsRawFile(path);
+                RawFormat expectedFormat = _currentFormat!;
                 RawImage image;
+                ColorImage? color = null;
                 try
                 {
-                    image = await Task.Run(() => RawLoader.Load(path, format));
+                    if (isRaw)
+                    {
+                        image = await Task.Run(() => RawLoader.Load(path, expectedFormat));
+                    }
+                    else
+                    {
+                        // TIFF等の連番。フォーマットはファイル自身が持っている
+                        DecodedImage decoded = await Task.Run(() => ImageFileLoader.Load(path));
+                        image = decoded.Luminance;
+                        color = decoded.Color;
+                    }
                 }
                 catch (Exception)
                 {
@@ -2891,14 +2908,31 @@ public partial class MainWindow : Window
                 // await中にモーダル(保存・測定・演算)が開いていたら差し替えない。
                 // モーダルのディスパッチャポンプ内でここが再開すると、処理対象の
                 // 画像を背後で破棄してしまう
-                if (_busyDepth > 0 || !ReferenceEquals(format, _currentFormat))
+                if (_busyDepth > 0 || !ReferenceEquals(expectedFormat, _currentFormat))
                 {
                     image.Dispose();
                     return;
                 }
 
+                // ReplaceImageAsyncは同一サイズが前提。連番に別サイズが混ざっていたら送らない
+                if (_currentImage is not null
+                    && (image.Width != _currentImage.Width
+                        || image.Height != _currentImage.Height))
+                {
+                    image.Dispose();
+                    return;
+                }
+
+                RawFormat format = isRaw ? expectedFormat : image.Format;
+
+                // カラー画像は輝度と一緒に差し替える。片方だけだと前フレームの色が残る
+                _colorImage = color;
+                _vm.IsColorImage = color is not null;
+                Viewport.SetColorImage(color);
+
                 RawImage? old = await Viewport.ReplaceImageAsync(image, format);
                 _currentImage = image;
+                _currentFormat = format;
                 _currentPath = path;
                 _mainPyramid = null;
                 _mainBayerPyramid?.Dispose();
