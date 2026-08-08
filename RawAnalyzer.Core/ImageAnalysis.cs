@@ -738,6 +738,55 @@ public static class ImageAnalysis
     }
 
     /// <summary>
+    /// 領域の水平射影と垂直射影を1回の走査で同時に求める。
+    /// </summary>
+    /// <remarks>
+    /// 別々に呼ぶと同じ領域を2回読むことになる。全面ROIの10億画素では
+    /// 2GBを2度読み直すため、まとめて1パスにする。
+    /// </remarks>
+    /// <param name="image">対象画像。</param>
+    /// <param name="frame">フレーム番号。</param>
+    /// <param name="roi">対象領域。</param>
+    /// <param name="cancellationToken">キャンセルトークン。</param>
+    /// <returns>水平射影(領域幅ぶん)と垂直射影(領域高さぶん)。</returns>
+    public static (double[] Horizontal, double[] Vertical) ComputeProjections(
+        RawImage image, int frame, RegionOfInterest roi,
+        CancellationToken cancellationToken = default)
+    {
+        roi = roi.Clamp(image.Width, image.Height);
+        if (roi.PixelCount == 0)
+        {
+            return (Array.Empty<double>(), Array.Empty<double>());
+        }
+
+        int shift = 16 - image.Format.BitDepth;
+        var columnSums = new double[roi.Width];
+        var rowMeans = new double[roi.Height];
+        var buffer = new ushort[roi.Width];
+        for (int row = 0; row < roi.Height; row++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            image.CopyRegion(frame, roi.X, roi.Y + row, roi.Width, 1, buffer);
+            double rowSum = 0;
+            for (int x = 0; x < roi.Width; x++)
+            {
+                int code = buffer[x] >> shift;
+                columnSums[x] += code;
+                rowSum += code;
+            }
+
+            rowMeans[row] = rowSum / roi.Width;
+        }
+
+        for (int x = 0; x < columnSums.Length; x++)
+        {
+            columnSums[x] /= roi.Height;
+        }
+
+        return (columnSums, rowMeans);
+    }
+
+    /// <summary>
     /// 水平ラインプロファイル(指定行のraw code列)を抽出する。
     /// </summary>
     /// <param name="image">対象画像。</param>

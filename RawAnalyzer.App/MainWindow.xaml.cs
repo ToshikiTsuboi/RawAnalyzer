@@ -1,4 +1,4 @@
-using System.ComponentModel;
+﻿using System.ComponentModel;
 using System.IO;
 using System.Windows;
 using System.Windows.Input;
@@ -70,8 +70,22 @@ public partial class MainWindow : Window
         previous?.Cancel();
     }
 
+    // プロファイル/射影はヒストグラムとは独立に走るので別のトークンで打ち切る
+    private CancellationTokenSource? _profileCts;
+
+    private void ReplaceProfileCts(CancellationTokenSource? next)
+    {
+        CancellationTokenSource? previous = _profileCts;
+        _profileCts = next;
+        previous?.Cancel();
+    }
+
     /// <summary>進行中の解析をキャンセルし、参照も外す。</summary>
-    private void CancelAnalysis() => ReplaceAnalysisCts(null);
+    private void CancelAnalysis()
+    {
+        ReplaceAnalysisCts(null);
+        ReplaceProfileCts(null);
+    }
     private HistogramResult? _histogram;
     private IReadOnlyList<ChannelHistogram>? _channelHistograms;
     private string? _correctionLabel;
@@ -159,7 +173,7 @@ public partial class MainWindow : Window
         };
         RebuildRecentMenu();
         InitFolderTree();
-        Loaded += (_, _) =>
+        Loaded += async (_, _) =>
         {
             // 起動時に構築してショートカット重複を早期に検出する
             _ = Commands;
@@ -169,7 +183,7 @@ public partial class MainWindow : Window
 
             if (App.StartupPath is { } startup)
             {
-                OpenStartupPath(startup);
+                await OpenStartupPath(startup);
                 return;
             }
 
@@ -195,15 +209,16 @@ public partial class MainWindow : Window
 
     /// <summary>起動引数で渡されたパスを開く(フォルダなら一覧表示のみ)。</summary>
     /// <param name="path">ファイルまたはフォルダのパス。</param>
-    private void OpenStartupPath(string path)
+    private async Task OpenStartupPath(string path)
     {
         if (Directory.Exists(path))
         {
-            LoadFolder(path, selectPath: null);
+            await LoadFolderAsync(path, selectPath: null);
             return;
         }
 
-        LoadFolder(Path.GetDirectoryName(path)!, selectPath: path);
+        // 連番判定はファイル一覧を見るので、一覧が揃ってから開く
+        await LoadFolderAsync(Path.GetDirectoryName(path)!, selectPath: path);
         OpenPath(path);
     }
 
@@ -324,13 +339,33 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>
+    /// フォルダ一覧を読み込む(待つ必要がない場所向けの投げっぱなし版)。
+    /// </summary>
+    /// <param name="folder">対象フォルダ。</param>
+    /// <param name="selectPath">読み込み後に選択するファイル。</param>
     private void LoadFolder(string folder, string? selectPath)
+    {
+        _ = LoadFolderAsync(folder, selectPath);
+    }
+
+    /// <summary>
+    /// フォルダ一覧を読み込む。列挙はバックグラウンドで行う。
+    /// </summary>
+    /// <remarks>
+    /// DirectoryInfo.EnumerateFiles はネットワーク共有だと数秒かかることがあり、
+    /// UIスレッドで回すとその間ウィンドウが固まる。
+    /// </remarks>
+    /// <param name="folder">対象フォルダ。</param>
+    /// <param name="selectPath">読み込み後に選択するファイル。</param>
+    /// <returns>読み込み完了を表すタスク。</returns>
+    private async Task LoadFolderAsync(string folder, string? selectPath)
     {
         folder = Path.GetFullPath(folder);
         List<FileEntry> entries;
         try
         {
-            entries = EnumerateFolder(folder);
+            entries = await Task.Run(() => EnumerateFolder(folder));
         }
         catch (Exception ex)
         {
@@ -1004,6 +1039,12 @@ public partial class MainWindow : Window
         double[] column;
         double[] horizontalProjection = Array.Empty<double>();
         double[] verticalProjection = Array.Empty<double>();
+
+        // 全面ROIの巨大画像では射影に時間がかかる。次のクリックや
+        // 画像切替で確実に打ち切れるようにトークンを渡す
+        var cts = new CancellationTokenSource();
+        ReplaceProfileCts(cts);
+        CancellationToken token = cts.Token;
         try
         {
             (row, column, horizontalProjection, verticalProjection) = await Task.Run(() =>
@@ -1012,16 +1053,20 @@ public partial class MainWindow : Window
                     ImageAnalysis.ExtractRowProfile(image, frame, sourceY), v => (double)v);
                 double[] columnValues = Array.ConvertAll(
                     ImageAnalysis.ExtractColumnProfile(image, frame, sourceX), v => (double)v);
-                double[] hp = roi is { } region
-                    ? ImageAnalysis.ComputeHorizontalProjection(image, frame, region)
-                    : Array.Empty<double>();
-                double[] vp = roi is { } region2
-                    ? ImageAnalysis.ComputeVerticalProjection(image, frame, region2)
-                    : Array.Empty<double>();
+
+                // 水平・垂直を別々に呼ぶとROIを2回走査することになる
+                (double[] hp, double[] vp) = roi is { } region
+                    ? ImageAnalysis.ComputeProjections(image, frame, region, token)
+                    : (Array.Empty<double>(), Array.Empty<double>());
                 return (rowValues, columnValues, hp, vp);
-            });
+            }, token);
         }
         catch (Exception)
+        {
+            return;
+        }
+
+        if (token.IsCancellationRequested)
         {
             return;
         }
@@ -1299,9 +1344,10 @@ public partial class MainWindow : Window
                 ToolTip = path,
             };
             string captured = path;
-            item.Click += (_, _) =>
+            item.Click += async (_, _) =>
             {
-                LoadFolder(Path.GetDirectoryName(captured)!, captured);
+                // 連番判定はファイル一覧を見るので、一覧が揃ってから開く
+                await LoadFolderAsync(Path.GetDirectoryName(captured)!, captured);
                 OpenPath(captured);
             };
             RecentMenu.Items.Add(item);

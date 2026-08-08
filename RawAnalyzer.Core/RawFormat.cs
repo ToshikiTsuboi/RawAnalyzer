@@ -11,6 +11,16 @@ public sealed record RawFormat
     /// <summary>サポートされるビット深度の一覧。</summary>
     public static readonly IReadOnlyList<int> SupportedBitDepths = new[] { 8, 10, 12, 14, 16 };
 
+    /// <summary>
+    /// 1フレームあたりの画素数の上限(100G画素)。
+    /// </summary>
+    /// <remarks>
+    /// 実用上の上限ではなく、幅×高さ×フレーム数の掛け算が桁あふれして
+    /// 負のサイズになるのを防ぐためのもの。10億画素の100倍あるので
+    /// 現実的な用途を妨げない。
+    /// </remarks>
+    public const long MaxTotalPixels = 100_000_000_000L;
+
     /// <summary>画像の幅(画素数)。</summary>
     public required int Width { get; init; }
 
@@ -82,6 +92,28 @@ public sealed record RawFormat
     public long TotalPixels => (long)Width * Height * FrameCount;
 
     /// <summary>
+    /// ファイルに必要な総バイト数(ヘッダ + 全フレーム)。
+    /// </summary>
+    /// <remarks>
+    /// 幅・高さ・フレーム数はいずれもintのため、素直に掛けるとlongでも桁あふれする。
+    /// あふれた値は負になり、ファイル長の検証を素通りしてしまう。
+    /// checked で確実に例外にする。
+    /// </remarks>
+    /// <exception cref="ArgumentException">値が大きすぎて表現できない場合。</exception>
+    public long RequiredBytes()
+    {
+        try
+        {
+            return checked(HeaderOffset + FrameSizeInBytes * FrameCount);
+        }
+        catch (OverflowException)
+        {
+            throw new ArgumentException(
+                $"指定サイズ({Width}×{Height}×{FrameCount}フレーム)が大きすぎます。");
+        }
+    }
+
+    /// <summary>
     /// フォーマット値の妥当性を検証する。
     /// </summary>
     /// <exception cref="ArgumentException">いずれかの値が不正な場合。</exception>
@@ -95,6 +127,14 @@ public sealed record RawFormat
         if (Height <= 0)
         {
             throw new ArgumentException($"高さは正の値である必要があります: {Height}");
+        }
+
+        // 桁あふれで負のサイズになると、ファイル長の検証が意味を失う
+        if ((long)Width * Height > MaxTotalPixels)
+        {
+            throw new ArgumentException(
+                $"画素数が大きすぎます: {Width}×{Height}" +
+                $"(上限 {MaxTotalPixels / 1_000_000_000.0:F0}G画素)");
         }
 
         if (!SupportedBitDepths.Contains(BitDepth))

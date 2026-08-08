@@ -119,7 +119,7 @@ public static class RawLoader
         IProgress<double>? progress = null)
     {
         format.Validate();
-        long requiredBytes = format.HeaderOffset + format.FrameSizeInBytes * format.FrameCount;
+        long requiredBytes = format.RequiredBytes();
         long fileLength = new FileInfo(path).Length;
         if (fileLength < requiredBytes)
         {
