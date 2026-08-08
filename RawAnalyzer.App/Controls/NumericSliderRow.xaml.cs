@@ -185,8 +185,14 @@ public partial class NumericSliderRow : UserControl
         ValueSlider.SmallChange = Step;
         ValueSlider.LargeChange = Step * 10;
         ValueSlider.TickFrequency = TickFrequency > 0 ? TickFrequency : (Maximum - Minimum) / 10;
-        ValueSlider.Value = Math.Clamp(Value, Minimum, Maximum);
-        ValueBox.Text = Value.ToString(Format, CultureInfo.InvariantCulture);
+
+        // NaN/±∞ が来ると Math.Clamp は素通しさせ、スライダーの描画が壊れる。
+        // 表示だけは必ず有限値にしておく(Valueの値域はバインド元の責任)
+        double displayed = double.IsFinite(Value)
+            ? Math.Clamp(Value, Minimum, Maximum)
+            : Minimum;
+        ValueSlider.Value = displayed;
+        ValueBox.Text = displayed.ToString(Format, CultureInfo.InvariantCulture);
         UnitText.Text = Unit;
 
         // 目盛は幅が限られるので末尾の0を落として詰める(-20.0 → -20)
@@ -265,8 +271,11 @@ public partial class NumericSliderRow : UserControl
 
     private void CommitText()
     {
+        // TryParse は "NaN" / "Infinity" も通す。Math.Clamp(NaN,..) は NaN のままなので
+        // そのまま Value に入るとスライダーとLUTが壊れる
         if (double.TryParse(
-                ValueBox.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out double parsed))
+                ValueBox.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out double parsed)
+            && double.IsFinite(parsed))
         {
             Value = Math.Clamp(parsed, Minimum, Maximum);
         }

@@ -168,9 +168,17 @@ public sealed class TilePyramid
 
             cancellationToken.ThrowIfCancellationRequested();
             PyramidLevel level;
-            if (previous is not null && previous.Factor * 2 == factor)
+
+            // 前段からの縮小は安いが、端に factor 未満の半端なブロックが出ると
+            // 画素数の違うブロック同士を同じ重みで平均してしまい、
+            // 元画像を直接ブロック平均した値からずれる
+            // (例: 幅7・factor4 では 4,5 の平均と 6 を等分してしまう)。
+            // 元画像が factor で割り切れるときだけ、全ブロックが同じ画素数になる
+            bool canChain = previous is not null && previous.Factor * 2 == factor
+                && image.Width % factor == 0 && image.Height % factor == 0;
+            if (canChain)
             {
-                PyramidLevel source = previous;
+                PyramidLevel source = previous!;
                 level = Downsample(
                     source.Width, source.Height, 2, factor,
                     (y, buffer) => source.CopyRegion(0, y, source.Width, 1, buffer),

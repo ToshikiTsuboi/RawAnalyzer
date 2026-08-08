@@ -2893,15 +2893,18 @@ public partial class MainWindow : Window
     {
         int count = SequenceCount;
 
-        // 重い処理の実行中は画像を差し替えない(処理対象が背後で破棄されるため)
+        // 重い処理の実行中は画像を差し替えない(処理対象が背後で破棄されるため)。
+        // スライダーが先に動いてしまっているので、表示中のフレームへ戻す
         if (count <= 1 || _sequenceBusy || _busyDepth > 0)
         {
+            UpdateSequenceUi();
             return;
         }
 
         index = ((index % count) + count) % count;
         if (index == _sequenceIndex)
         {
+            UpdateSequenceUi();
             return;
         }
 
@@ -2990,10 +2993,12 @@ public partial class MainWindow : Window
                     f.FullPath, path, StringComparison.OrdinalIgnoreCase));
             }
 
-            UpdateSequenceUi();
         }
         finally
         {
+            // 読み込み失敗・サイズ不一致などで送れなかった場合も、
+            // スライダーとフレーム番号を実際の表示内容へ戻す
+            UpdateSequenceUi();
             _sequenceBusy = false;
         }
 
