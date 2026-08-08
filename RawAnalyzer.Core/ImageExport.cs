@@ -7,6 +7,19 @@ namespace RawAnalyzer.Core;
 public static class ImageExport
 {
     /// <summary>
+    /// 1つのバッファに確保できる最大画素数。
+    /// </summary>
+    /// <remarks>
+    /// .NETの配列は要素数が int.MaxValue までなので、RGB24(3バイト/画素)では
+    /// 約7.1億画素で確保自体が失敗する。10億画素のカラー書き出しは
+    /// この形式では原理的に成立しないため、確保前に理由の分かる形で断る。
+    /// </remarks>
+    public const long MaxRgb24Pixels = int.MaxValue / 3;
+
+    /// <summary>グレー8bitで1つのバッファに確保できる最大画素数。</summary>
+    public const long MaxGray8Pixels = int.MaxValue;
+
+    /// <summary>
     /// 表示LUTを全画素に適用したグレー8bitバッファを生成する(行並列)。
     /// </summary>
     /// <param name="image">対象画像。</param>
@@ -19,6 +32,7 @@ public static class ImageExport
     {
         int width = image.Width;
         int height = image.Height;
+        EnsureExportable((long)width * height, MaxGray8Pixels, "8bitグレー");
         var gray = new byte[(long)width * height];
 
         Parallel.For(
@@ -64,6 +78,7 @@ public static class ImageExport
     {
         int width = image.Width;
         int height = image.Height;
+        EnsureExportable((long)width * height, MaxRgb24Pixels, "カラー(RGB24)");
         var rgb24 = new byte[(long)width * height * 3];
         const int bandRows = 256;
 
@@ -112,5 +127,23 @@ public static class ImageExport
         }
 
         return rgb24;
+    }
+
+    /// <summary>
+    /// 1バッファに収まるかを確保前に確かめる。
+    /// </summary>
+    /// <param name="pixels">画素数。</param>
+    /// <param name="limit">この形式で確保できる上限画素数。</param>
+    /// <param name="what">形式名(メッセージ用)。</param>
+    /// <exception cref="NotSupportedException">上限を超える場合。</exception>
+    private static void EnsureExportable(long pixels, long limit, string what)
+    {
+        if (pixels > limit)
+        {
+            throw new NotSupportedException(
+                $"{pixels / 1_000_000.0:F0}M画素は{what}書き出しの上限 " +
+                $"{limit / 1_000_000.0:F0}M画素を超えています" +
+                "(1つの配列に収まらないため)。raw または 16bit TIFF で保存してください。");
+        }
     }
 }

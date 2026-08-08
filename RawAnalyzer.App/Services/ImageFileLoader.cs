@@ -23,6 +23,16 @@ internal static class ImageFileLoader
     /// </summary>
     public const long MaxPixels = 200_000_000;
 
+    /// <summary>
+    /// デコードに使う中間バッファの合計上限(バイト)。
+    /// </summary>
+    /// <remarks>
+    /// 画素数だけで制限すると、1画素あたりの必要バイト数が形式で最大16倍違うため
+    /// 上限内でも数GBを同時に確保してしまう(RGBA64の2億画素で約3.2GB)。
+    /// 形式ごとの所要バイトで判定する。
+    /// </remarks>
+    public const long MaxDecodedBytes = 1_500_000_000;
+
     /// <summary>WICで読み込む拡張子。</summary>
     public static readonly string[] SupportedExtensions =
     {
@@ -43,6 +53,65 @@ internal static class ImageFileLoader
         string extension = Path.GetExtension(path);
         return string.Equals(extension, ".tif", StringComparison.OrdinalIgnoreCase)
             || string.Equals(extension, ".tiff", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// 展開後の画素形式から、1画素あたりに確保する中間バッファのバイト数を見積もる。
+    /// </summary>
+    /// <param name="format">デコード後の画素形式。</param>
+    /// <returns>1画素あたりのバイト数。</returns>
+    internal static int EstimateBytesPerPixel(PixelFormat format)
+    {
+        if (format == PixelFormats.Gray16)
+        {
+            return 2; // ushort[]
+        }
+
+        if (format == PixelFormats.Gray8)
+        {
+            return 1 + 2; // byte[] + ushort[]
+        }
+
+        if (format == PixelFormats.Rgb48)
+        {
+            return 6 + 2; // ushort[px*3](出力と共用) + 輝度
+        }
+
+        if (format == PixelFormats.Rgba64)
+        {
+            return 8 + 6 + 2; // 読み出し + RGB詰め直し + 輝度
+        }
+
+        // その他はBgra32へ変換して取り出す: byte[px*4] + ushort[px*3] + 輝度
+        return 4 + 6 + 2;
+    }
+
+    /// <summary>
+    /// デコードして問題ないサイズかを、確保する前に検証する。
+    /// </summary>
+    /// <param name="width">幅。</param>
+    /// <param name="height">高さ。</param>
+    /// <param name="format">画素形式。</param>
+    /// <exception cref="NotSupportedException">上限を超える場合。</exception>
+    internal static void EnsureDecodable(int width, int height, PixelFormat format)
+    {
+        long pixels = (long)width * height;
+        if (pixels > MaxPixels)
+        {
+            throw new NotSupportedException(
+                $"{width}×{height} ({pixels / 1_000_000.0:F0}M画素) は" +
+                $"デコード画像の上限 {MaxPixels / 1_000_000} M画素を超えています。");
+        }
+
+        long bytes = pixels * EstimateBytesPerPixel(format);
+        if (bytes > MaxDecodedBytes)
+        {
+            throw new NotSupportedException(
+                $"{width}×{height} の{format}画像は展開に約 " +
+                $"{bytes / (1024.0 * 1024 * 1024):F1} GB 必要で、上限 " +
+                $"{MaxDecodedBytes / (1024.0 * 1024 * 1024):F1} GB を超えています。" +
+                "非圧縮の16bitグレースケールTIFFかrawであれば、この制限なしに開けます。");
+        }
     }
 
     /// <summary>
@@ -92,15 +161,9 @@ internal static class ImageFileLoader
                 source,
                 BitmapCreateOptions.PreservePixelFormat,
                 BitmapCacheOption.None);
-            long declaredPixels =
-                (long)probe.Frames[0].PixelWidth * probe.Frames[0].PixelHeight;
-            if (declaredPixels > MaxPixels)
-            {
-                throw new NotSupportedException(
-                    $"{probe.Frames[0].PixelWidth}×{probe.Frames[0].PixelHeight} " +
-                    $"({declaredPixels / 1_000_000.0:F0}M画素) は" +
-                    $"デコード画像の上限 {MaxPixels / 1_000_000} M画素を超えています。");
-            }
+            BitmapFrame probeFrame = probe.Frames[0];
+            EnsureDecodable(
+                probeFrame.PixelWidth, probeFrame.PixelHeight, probeFrame.Format);
 
             source.Position = 0;
             var decoder = BitmapDecoder.Create(

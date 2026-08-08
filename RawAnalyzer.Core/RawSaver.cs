@@ -1,4 +1,4 @@
-using System.Buffers.Binary;
+﻿using System.Buffers.Binary;
 
 namespace RawAnalyzer.Core;
 
@@ -22,7 +22,7 @@ public static class RawSaver
     /// <param name="packing">出力の詰め方向。</param>
     /// <param name="endianness">出力のバイト順。</param>
     /// <param name="progress">進捗通知(0〜1)。</param>
-    /// <param name="cancellationToken">キャンセルトークン。キャンセル時は出力ファイルを削除する。</param>
+    /// <param name="cancellationToken">キャンセルトークン。キャンセル時は既存ファイルを残したまま中断する。</param>
     /// <exception cref="OperationCanceledException">キャンセルされた場合。</exception>
     public static void Save(
         RawImage image,
@@ -38,10 +38,10 @@ public static class RawSaver
         int width = image.Width;
         long totalRows = (long)image.Height * image.FrameCount;
 
-        try
+        // 一時ファイルへ書いてから置き換える。直接開くと、失敗した時点で
+        // 上書き対象だった既存ファイルまで失われる
+        AtomicFileWriter.Write(path, stream =>
         {
-            using var stream = new FileStream(
-                path, FileMode.Create, FileAccess.Write, FileShare.None, bufferSize: 1 << 20);
             var pixelRow = new ushort[width];
             var byteRow = new byte[width * bytesPerPixel];
             long rowIndex = 0;
@@ -60,17 +60,7 @@ public static class RawSaver
                     }
                 }
             }
-        }
-        catch (OperationCanceledException)
-        {
-            TryDelete(path);
-            throw;
-        }
-        catch (Exception)
-        {
-            TryDelete(path);
-            throw;
-        }
+        });
     }
 
     private static void EncodeRow(
@@ -104,20 +94,4 @@ public static class RawSaver
         }
     }
 
-    private static void TryDelete(string path)
-    {
-        try
-        {
-            if (File.Exists(path))
-            {
-                File.Delete(path);
-            }
-        }
-        catch (IOException)
-        {
-        }
-        catch (UnauthorizedAccessException)
-        {
-        }
-    }
 }

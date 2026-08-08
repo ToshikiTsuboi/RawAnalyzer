@@ -1,4 +1,4 @@
-using System.Buffers.Binary;
+﻿using System.Buffers.Binary;
 
 namespace RawAnalyzer.Core;
 
@@ -110,7 +110,7 @@ public sealed class HdrImage
 
     /// <summary>
     /// float32リトルエンディアンのrawバイナリとして保存する(行単位ストリーミング)。
-    /// キャンセル・例外時は書きかけのファイルを削除する(RawSaver等と同じ契約)。
+    /// キャンセル・例外時は既存ファイルを残したまま中断する(RawSaver等と同じ契約)。
     /// </summary>
     /// <param name="path">出力先パス。</param>
     /// <param name="progress">進捗通知(0〜1)。</param>
@@ -119,10 +119,10 @@ public sealed class HdrImage
         string path, IProgress<double>? progress = null,
         CancellationToken cancellationToken = default)
     {
-        try
+        // 一時ファイルへ書いてから置き換える。直接開くと、失敗した時点で
+        // 上書き対象だった既存ファイルまで失われる
+        AtomicFileWriter.Write(path, stream =>
         {
-            using var stream = new FileStream(
-                path, FileMode.Create, FileAccess.Write, FileShare.None, bufferSize: 1 << 20);
             var row = new byte[Width * 4];
             for (int y = 0; y < Height; y++)
             {
@@ -139,26 +139,7 @@ public sealed class HdrImage
                     progress?.Report((double)(y + 1) / Height);
                 }
             }
-        }
-        catch
-        {
-            TryDeletePartialFile(path);
-            throw;
-        }
-    }
-
-    private static void TryDeletePartialFile(string path)
-    {
-        try
-        {
-            File.Delete(path);
-        }
-        catch (IOException)
-        {
-        }
-        catch (UnauthorizedAccessException)
-        {
-        }
+        });
     }
 }
 

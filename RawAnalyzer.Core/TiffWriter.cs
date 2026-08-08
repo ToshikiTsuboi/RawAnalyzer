@@ -1,4 +1,4 @@
-using System.Buffers.Binary;
+﻿using System.Buffers.Binary;
 
 namespace RawAnalyzer.Core;
 
@@ -25,7 +25,7 @@ public static class TiffWriter
     /// <param name="frame">フレーム番号。</param>
     /// <param name="path">出力先パス。</param>
     /// <param name="progress">進捗通知(0〜1)。</param>
-    /// <param name="cancellationToken">キャンセルトークン。キャンセル時は出力ファイルを削除する。</param>
+    /// <param name="cancellationToken">キャンセルトークン。キャンセル時は既存ファイルを残したまま中断する。</param>
     /// <param name="rowsPerStripOverride">ストリップあたりの行数の明示指定(既定は約1MB単位)。</param>
     /// <exception cref="NotSupportedException">データが4GBを超えTIFFの32bitオフセットで表現できない場合。</exception>
     /// <exception cref="OperationCanceledException">キャンセルされた場合。</exception>
@@ -56,10 +56,10 @@ public static class TiffWriter
                 "TIFFの32bitオフセット上限(4GB)を超えるため保存できません。raw形式を使用してください。");
         }
 
-        try
+        // 一時ファイルへ書いてから置き換える。直接開くと、失敗した時点で
+        // 上書き対象だった既存ファイルまで失われる
+        AtomicFileWriter.Write(path, stream =>
         {
-            using var stream = new FileStream(
-                path, FileMode.Create, FileAccess.Write, FileShare.None, bufferSize: 1 << 20);
             WriteHeaderAndIfd(
                 stream, width, height, rowsPerStrip, stripCount, arraysOffset, dataOffset, rowBytes);
 
@@ -82,17 +82,7 @@ public static class TiffWriter
                     progress?.Report((double)(y + 1) / height);
                 }
             }
-        }
-        catch (OperationCanceledException)
-        {
-            TryDelete(path);
-            throw;
-        }
-        catch (Exception)
-        {
-            TryDelete(path);
-            throw;
-        }
+        });
     }
 
     private static void WriteHeaderAndIfd(
@@ -178,20 +168,4 @@ public static class TiffWriter
         return offset + 12;
     }
 
-    private static void TryDelete(string path)
-    {
-        try
-        {
-            if (File.Exists(path))
-            {
-                File.Delete(path);
-            }
-        }
-        catch (IOException)
-        {
-        }
-        catch (UnauthorizedAccessException)
-        {
-        }
-    }
 }
