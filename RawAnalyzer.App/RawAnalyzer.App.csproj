@@ -1,10 +1,13 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net8.0-windows</TargetFramework>
     <UseWPF>true</UseWPF>
     <ApplicationIcon>Assets\RawAnalyzer.ico</ApplicationIcon>
+
+    <!-- MP4書き出し(Media Foundation)のフレーム詰め替えでポインタを使う -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
 
     <!-- ソフト情報の表示に使う。リリース時はタグの値で上書きする -->
     <Version>1.0.0</Version>

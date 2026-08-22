@@ -22,7 +22,13 @@
             <ComboBoxItem Content="JPEG (8bit・現像/LUT焼き込み)" />
             <ComboBoxItem Content="TIFF (16bit グレー・raw値そのまま)" />
             <ComboBoxItem Content="AVI動画 (MJPEG・現像/LUT焼き込み)" />
+            <ComboBoxItem Content="MP4動画 (H.264・現像/LUT焼き込み)" />
         </ComboBox>
+
+        <CheckBox x:Name="DisplayLutCheck" Margin="0,10,0,0" IsChecked="True"
+                  Foreground="{StaticResource TextDim}" FontSize="12"
+                  Content="表示調整(黒/白点・ゲイン・ガンマ・コントラスト)を焼き込む"
+                  ToolTip="オフにすると調整前の素の見え方で出力します(WB・マトリクス・デモザイクの現像は適用されます)" />
 
         <StackPanel x:Name="FpsPanel" Margin="0,10,0,0" Visibility="Collapsed">
             <TextBlock Text="フレームレート" />

@@ -2061,13 +2061,34 @@ public partial class MainWindow : Window
     {
         BayerPattern pattern = format.Bayer;
         bool color = pattern != BayerPattern.None;
-        DisplayLut lut = BuildLut();
-        var devLuts = DevelopLuts.Create(CurrentDevelopParameters());
+
+        // 「表示調整を焼き込む」オフなら黒/白点・ゲイン・ガンマ・コントラストを
+        // ニュートラルにする。WB・マトリクス・デモザイクの現像段は残す
+        // (どう写っているかの色は保ちつつ、見え方の調整だけ外す)
+        DisplayLut lut = choice.ApplyDisplayLut
+            ? BuildLut()
+            : DisplayLut.Create(new DisplayParameters());
+        DevelopParameters developParameters = CurrentDevelopParameters();
+        if (!choice.ApplyDisplayLut)
+        {
+            developParameters = developParameters with
+            {
+                BlackLevel = 0,
+                WhitePoint = 65535,
+                Gain = 1.0,
+                Gamma = 1.0,
+                Contrast = 1.0,
+            };
+        }
+
+        var devLuts = DevelopLuts.Create(developParameters);
         int width = format.Width;
         int height = format.Height;
-        string aviPath = Path.Combine(
+        bool video = choice.Format is BatchFormat.AviMjpeg or BatchFormat.Mp4H264;
+        string videoPath = Path.Combine(
             choice.OutputFolder,
-            Path.GetFileNameWithoutExtension(targets[0]) + "_seq.avi");
+            Path.GetFileNameWithoutExtension(targets[0])
+                + (choice.Format == BatchFormat.Mp4H264 ? "_seq.mp4" : "_seq.avi"));
 
         ProgressWindow result = ProgressWindow.Run(
             this,
@@ -2076,11 +2097,16 @@ public partial class MainWindow : Window
             {
                 Directory.CreateDirectory(choice.OutputFolder);
                 AviMjpegWriter? avi = null;
+                Mp4H264Writer? mp4 = null;
                 try
                 {
                     if (choice.Format == BatchFormat.AviMjpeg)
                     {
-                        avi = new AviMjpegWriter(aviPath, width, height, choice.Fps);
+                        avi = new AviMjpegWriter(videoPath, width, height, choice.Fps);
+                    }
+                    else if (choice.Format == BatchFormat.Mp4H264)
+                    {
+                        mp4 = new Mp4H264Writer(videoPath, width, height, choice.Fps);
                     }
 
                     for (int i = 0; i < targets.Count; i++)
@@ -2104,25 +2130,33 @@ public partial class MainWindow : Window
                         }
 
                         using RawImage owned = image;
-                        if (choice.Format == BatchFormat.AviMjpeg
-                            && (image.Width != width || image.Height != height))
+                        if (video && (image.Width != width || image.Height != height))
                         {
-                            // AVIは全フレーム同一サイズが前提。黙って混ぜると壊れる
+                            // 動画は全フレーム同一サイズが前提。黙って混ぜると壊れる
                             throw new NotSupportedException(
                                 $"{Path.GetFileName(file)} のサイズ " +
                                 $"({image.Width}×{image.Height}) が先頭のフレーム " +
                                 $"({width}×{height}) と異なるため動画にできません。");
                         }
 
-                        if (choice.Format == BatchFormat.AviMjpeg)
+                        if (video)
                         {
                             // マルチフレームファイルは全フレームを動画化する
                             for (int frame = 0; frame < image.FrameCount; frame++)
                             {
                                 ct.ThrowIfCancellationRequested();
-                                avi!.AddFrame(EncodeJpegFrame(
-                                    image, frame, color, pattern, devLuts, lut,
-                                    trueColor, ct));
+                                if (avi is not null)
+                                {
+                                    avi.AddFrame(EncodeJpegFrame(
+                                        image, frame, color, pattern, devLuts, lut,
+                                        trueColor, ct));
+                                }
+                                else
+                                {
+                                    mp4!.AddFrameRgb24(RenderRgb24Frame(
+                                        image, frame, color, pattern, devLuts, lut,
+                                        trueColor, ct));
+                                }
                             }
                         }
                         else
@@ -2157,27 +2191,29 @@ public partial class MainWindow : Window
                     }
 
                     avi?.Finish();
+                    mp4?.Finish();
                 }
                 finally
                 {
                     avi?.Dispose();
+                    mp4?.Dispose();
                 }
             }, ct));
 
-        // 中断だけでなくエラー時も、途中まで書かれた再生不能なAVIを残さない
-        if ((result.WasCanceled || result.Error is not null)
-            && choice.Format == BatchFormat.AviMjpeg)
+        // 中断だけでなくエラー時も、途中まで書かれた再生不能な動画を残さない
+        // (MP4はDispose側でも消しているが、AVIと同じ経路でも保証する)
+        if ((result.WasCanceled || result.Error is not null) && video)
         {
             try
             {
-                if (File.Exists(aviPath))
+                if (File.Exists(videoPath))
                 {
-                    File.Delete(aviPath);
+                    File.Delete(videoPath);
                 }
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
-                AppLog.Warn($"途中まで書かれたAVIの削除に失敗: {ex.Message}");
+                AppLog.Warn($"途中まで書かれた動画の削除に失敗: {ex.Message}");
             }
         }
 
@@ -2188,10 +2224,41 @@ public partial class MainWindow : Window
         }
         else if (!result.WasCanceled)
         {
-            _vm.ImageInfoText = choice.Format == BatchFormat.AviMjpeg
-                ? $"動画書き出し完了: {Path.GetFileName(aviPath)}"
+            _vm.ImageInfoText = video
+                ? $"動画書き出し完了: {Path.GetFileName(videoPath)}"
                 : $"バッチ書き出し完了: {targets.Count}件 → {choice.OutputFolder}";
         }
+    }
+
+    /// <summary>
+    /// 1フレームぶんのRGB24バッファを生成する(MP4エンコード用)。
+    /// カラー画像はLUTのみ、Bayerは現像、モノクロはLUT適用後にRGBへ展開する。
+    /// </summary>
+    private static byte[] RenderRgb24Frame(
+        RawImage image, int frame, bool color, BayerPattern pattern,
+        DevelopLuts devLuts, DisplayLut lut, ColorImage? trueColor, CancellationToken ct)
+    {
+        if (trueColor is not null)
+        {
+            return ImageExport.RenderColorRgb24(trueColor, lut, ct);
+        }
+
+        if (color)
+        {
+            return ImageExport.DevelopRgb24(image, frame, pattern, devLuts, null, ct);
+        }
+
+        byte[] gray = ImageExport.RenderGray8(image, frame, lut, ct);
+        var rgb = new byte[(long)gray.Length * 3];
+        for (long i = 0; i < gray.Length; i++)
+        {
+            byte v = gray[i];
+            rgb[i * 3] = v;
+            rgb[i * 3 + 1] = v;
+            rgb[i * 3 + 2] = v;
+        }
+
+        return rgb;
     }
 
     /// <summary>デコード済みカラー画像に表示LUTを焼き込んでRGB24を作る。</summary>
