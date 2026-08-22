@@ -1,7 +1,8 @@
-<Window x:Class="RawAnalyzer.App.MainWindow"
+﻿<Window x:Class="RawAnalyzer.App.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:controls="clr-namespace:RawAnalyzer.App.Controls"
+        xmlns:compare="clr-namespace:RawAnalyzer.App.Compare"
         Title="RawAnalyzer" Width="1280" Height="820"
         Background="#FF252528" Foreground="#FFD8D8D4"
         AllowDrop="True" Drop="OnFileDrop" DragOver="OnFileDragOver">
@@ -78,6 +79,10 @@
                 <Separator />
                 <MenuItem Header="フルスクリーン" InputGestureText="F11"
                           IsCheckable="True" IsChecked="{Binding IsFullscreen}" />
+                <Separator />
+                <MenuItem Header="比較モード (複数画像を並べる)" IsCheckable="True"
+                          IsChecked="{Binding IsCompareMode, Mode=OneWay}"
+                          Click="OnCompareModeClick" />
                 <Separator />
                 <MenuItem Header="ファイルパネル" InputGestureText="Ctrl+L"
                           IsCheckable="True" IsChecked="{Binding LeftPanelVisible}" />
@@ -412,6 +417,9 @@
                     <TextBlock Style="{StaticResource OverlayText}" Text="{Binding LevelOverlayText}"
                                Foreground="#FF8A8A85" />
                 </Border>
+
+                <!-- 比較モード(表示中は通常ビューを覆う) -->
+                <compare:CompareView x:Name="CompareArea" Visibility="Collapsed" />
             </Grid>
 
             <GridSplitter x:Name="RightSplitter" Grid.Column="4" Width="5"

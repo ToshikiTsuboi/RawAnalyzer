@@ -55,6 +55,20 @@ public class DisplaySettingsTests
     }
 }
 
+public class CompareViewLayoutTests
+{
+    [Theory]
+    [InlineData(1, 1)]  // ペイン0 + 追加タイル
+    [InlineData(2, 2)]  // ペイン1 + タイル
+    [InlineData(3, 3)]  // ペイン2 + タイル(横一列)
+    [InlineData(4, 2)]  // ペイン3 + タイル → 2×2
+    [InlineData(5, 2)]  // 上限超えは来ないが2列のまま
+    public void ColumnsFor_ThreeAcrossThenGrid(int elements, int expected)
+    {
+        Assert.Equal(expected, CompareView.ColumnsFor(elements));
+    }
+}
+
 public class ComparePaneTests
 {
     private static string WriteRaw(ushort[] codes, RawFormat format)

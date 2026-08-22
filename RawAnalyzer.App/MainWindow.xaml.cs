@@ -172,6 +172,9 @@ public partial class MainWindow : Window
         };
         RebuildRecentMenu();
         InitFolderTree();
+        CompareArea.PanePicker = PickComparePaneAsync;
+        CompareArea.PaneLoader = LoadComparePaneAsync;
+        CompareArea.ExitRequested += async (_, _) => await ExitCompareModeAsync();
         Loaded += async (_, _) =>
         {
             // 起動時に構築してショートカット重複を早期に検出する
@@ -198,6 +201,7 @@ public partial class MainWindow : Window
             ReplaceLoadCts(null);
             CancelAnalysis();
             _profileWindow?.Close();
+            await CompareArea.CloseAllAsync();
             await Viewport.ClearImageAsync();
             _mainBayerPyramid?.Dispose();
             _derivedBayerPyramid?.Dispose();
@@ -312,16 +316,16 @@ public partial class MainWindow : Window
 
     // ---- ファイル読込 ----
 
+    private const string OpenImageFilter =
+        "対応画像 (*.raw;*.bin;*.tif;*.tiff;*.jpg;*.jpeg;*.png;*.bmp)"
+        + "|*.raw;*.bin;*.tif;*.tiff;*.jpg;*.jpeg;*.png;*.bmp"
+        + "|Raw (*.raw;*.bin)|*.raw;*.bin"
+        + "|画像 (*.tif;*.tiff;*.jpg;*.jpeg;*.png;*.bmp)|*.tif;*.tiff;*.jpg;*.jpeg;*.png;*.bmp"
+        + "|すべてのファイル (*.*)|*.*";
+
     private void OnOpenFileClick(object sender, RoutedEventArgs e)
     {
-        var dialog = new OpenFileDialog
-        {
-            Filter = "対応画像 (*.raw;*.bin;*.tif;*.tiff;*.jpg;*.jpeg;*.png;*.bmp)"
-                + "|*.raw;*.bin;*.tif;*.tiff;*.jpg;*.jpeg;*.png;*.bmp"
-                + "|Raw (*.raw;*.bin)|*.raw;*.bin"
-                + "|画像 (*.tif;*.tiff;*.jpg;*.jpeg;*.png;*.bmp)|*.tif;*.tiff;*.jpg;*.jpeg;*.png;*.bmp"
-                + "|すべてのファイル (*.*)|*.*",
-        };
+        var dialog = new OpenFileDialog { Filter = OpenImageFilter };
         if (dialog.ShowDialog(this) == true)
         {
             LoadFolder(Path.GetDirectoryName(dialog.FileName)!, dialog.FileName);
@@ -1431,6 +1435,117 @@ public partial class MainWindow : Window
             "  スポイト: クリック画素を無彩色として計算\n\n" +
             "HDR\n" +
             "  フォーマットでHDR方式を指定 → 表示モードで分割/合成");
+    }
+
+    // ---- 比較モード ----
+
+    private bool _compareMode;
+
+    private async void OnCompareModeClick(object sender, RoutedEventArgs e)
+    {
+        await ToggleCompareModeAsync();
+    }
+
+    /// <summary>比較モードへ入る/抜ける。</summary>
+    private async Task ToggleCompareModeAsync()
+    {
+        if (_compareMode)
+        {
+            await ExitCompareModeAsync();
+        }
+        else
+        {
+            await EnterCompareModeAsync();
+        }
+    }
+
+    private async Task EnterCompareModeAsync()
+    {
+        if (_compareMode)
+        {
+            return;
+        }
+
+        StopPlayback();
+        _compareMode = true;
+        _vm.IsCompareMode = true;
+        CompareArea.Visibility = Visibility.Visible;
+
+        // 開いている画像があれば最初のペイン(A)として読み直す。
+        // メイン表示の画像を共有せず独立にロードするのは、所有権を
+        // 比較モードに閉じ、終了時の後始末を単純にするため
+        // (補正・HDR適用中はファイルと内容が一致しないため対象外)
+        if (CompareArea.PaneCount == 0 && _currentPath is not null
+            && _derivedImage is null && _correctionLabel is null)
+        {
+            await CompareArea.AddPaneFromPathAsync(_currentPath);
+        }
+    }
+
+    private async Task ExitCompareModeAsync()
+    {
+        if (!_compareMode)
+        {
+            return;
+        }
+
+        await CompareArea.CloseAllAsync();
+        CompareArea.Visibility = Visibility.Collapsed;
+        _compareMode = false;
+        _vm.IsCompareMode = false;
+    }
+
+    /// <summary>ファイル選択ダイアログを出して比較ペイン資源を用意する。</summary>
+    /// <returns>読み込んだ資源。キャンセル・失敗はnull。</returns>
+    private async Task<Compare.ComparePane?> PickComparePaneAsync()
+    {
+        var dialog = new OpenFileDialog { Filter = OpenImageFilter };
+        if (dialog.ShowDialog(this) != true)
+        {
+            return null;
+        }
+
+        return await LoadComparePaneAsync(dialog.FileName);
+    }
+
+    /// <summary>
+    /// 指定パスから比較ペイン資源を読み込む。rawは記憶フォーマットを使い、
+    /// なければインポートダイアログで確認する。
+    /// </summary>
+    /// <param name="path">対象ファイル。</param>
+    /// <returns>読み込んだ資源。キャンセル・失敗はnull。</returns>
+    private async Task<Compare.ComparePane?> LoadComparePaneAsync(string path)
+    {
+        try
+        {
+            RawFormat? format = null;
+            if (Compare.ComparePane.IsRawFile(path))
+            {
+                format = TryGetRememberedFormat(path, SafeFileSize(path));
+                if (format is null)
+                {
+                    var dialog = new RawImportDialog(path, _presetStore, _currentFormat)
+                    {
+                        Owner = this,
+                    };
+                    if (dialog.ShowDialog() != true || dialog.Result is null)
+                    {
+                        return null;
+                    }
+
+                    format = dialog.Result;
+                    RememberFileFormat(path, format);
+                }
+            }
+
+            return await Compare.ComparePane.LoadAsync(path, format);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, $"読み込みに失敗しました: {ex.Message}", "比較モード",
+                MessageBoxButton.OK, MessageBoxImage.Warning);
+            return null;
+        }
     }
 
     private void OnAboutClick(object sender, RoutedEventArgs e)

@@ -1,0 +1,67 @@
+<UserControl x:Class="RawAnalyzer.App.Compare.ComparePaneView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:controls="clr-namespace:RawAnalyzer.App.Controls">
+    <UserControl.Resources>
+        <Style x:Key="HeaderButton" TargetType="Button">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Foreground" Value="{StaticResource TextDim}" />
+            <Setter Property="BorderBrush" Value="{StaticResource BorderBrushDark}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Padding" Value="7,1" />
+            <Setter Property="Margin" Value="4,0,0,0" />
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="3" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Background"
+                                        Value="{StaticResource HoverBrush}" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </UserControl.Resources>
+
+    <!-- アクティブペインはアクセント色の枠で示す -->
+    <Border x:Name="ActiveBorder" BorderThickness="2" BorderBrush="Transparent"
+            Background="#FF161618" Margin="2">
+        <DockPanel>
+            <Border DockPanel.Dock="Top" Background="{StaticResource PanelBrush}"
+                    BorderBrush="{StaticResource BorderBrushDark}" BorderThickness="0,0,0,1"
+                    Padding="8,4">
+                <DockPanel>
+                    <Border Background="{StaticResource AccentSoftBrush}" CornerRadius="3"
+                            Padding="6,0" VerticalAlignment="Center">
+                        <TextBlock x:Name="LabelText" FontSize="12" FontWeight="Bold"
+                                   Foreground="{StaticResource AccentBrush}" />
+                    </Border>
+                    <Button DockPanel.Dock="Right" Content="✕" Style="{StaticResource HeaderButton}"
+                            Click="OnCloseClick" AutomationProperties.Name="ペインを閉じる"
+                            ToolTip="このペインを閉じる" />
+                    <Button x:Name="AutoButton" DockPanel.Dock="Right" Content="自動"
+                            Style="{StaticResource HeaderButton}" Click="OnAutoClick"
+                            ToolTip="このペインだけ自動コントラスト (0.35%クリップ)" />
+                    <Button DockPanel.Dock="Right" Content="リセット"
+                            Style="{StaticResource HeaderButton}" Click="OnResetClick"
+                            ToolTip="このペインの表示調整を初期値へ戻す" />
+                    <TextBlock x:Name="FileNameText" FontSize="12" Margin="8,0,8,0"
+                               VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
+                               Foreground="{StaticResource TextBrush}" />
+                </DockPanel>
+            </Border>
+            <controls:ImageViewport x:Name="Viewport" />
+        </DockPanel>
+    </Border>
+</UserControl>

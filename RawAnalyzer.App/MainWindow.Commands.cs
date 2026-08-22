@@ -1,4 +1,4 @@
-using System.Windows;
+﻿using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
@@ -190,6 +190,14 @@ public partial class MainWindow
                 Title = "ショートカット一覧",
                 Key = Key.F1,
                 Execute = ShowShortcutHelp,
+            },
+            new()
+            {
+                Id = "compare-mode",
+                Category = "表示",
+                Title = "比較モード切替",
+                Description = "複数画像を並べて比較(最大4面)",
+                Execute = () => _ = ToggleCompareModeAsync(),
             },
             new()
             {

@@ -1,4 +1,4 @@
-using System.Collections.ObjectModel;
+﻿using System.Collections.ObjectModel;
 using System.Windows.Media;
 using RawAnalyzer.App.Mvvm;
 
@@ -26,6 +26,7 @@ public sealed class MainViewModel : ObservableObject
     private string _imageInfoText = "画像未読込";
     private bool _isLoading;
     private double _loadProgress;
+    private bool _isCompareMode;
     private bool _isProcessed;
     private string _processingStateText = "";
     private string _processingStateTooltip = "";
@@ -104,6 +105,13 @@ public sealed class MainViewModel : ObservableObject
     {
         get => _imageInfoText;
         set => SetProperty(ref _imageInfoText, value);
+    }
+
+    /// <summary>比較モード中か(メニューのチェック表示に使う)。</summary>
+    public bool IsCompareMode
+    {
+        get => _isCompareMode;
+        set => SetProperty(ref _isCompareMode, value);
     }
 
     /// <summary>ファイル読み込み中か(ステータスバーの進捗バー表示に使う)。</summary>
