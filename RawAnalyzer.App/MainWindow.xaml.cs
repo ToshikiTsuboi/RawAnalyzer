@@ -1990,32 +1990,51 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (!IsRawFile(_currentPath))
+        // 補正・HDR派生を適用した画像はディスク上のファイルと一致しないため、
+        // ファイル単位で読み直すバッチの対象にしない
+        if (_derivedImage is not null || _correctionLabel is not null)
         {
-            MessageBox.Show(this, "バッチ書き出しはrawファイルを開いた状態で実行してください。",
+            MessageBox.Show(this,
+                "補正・HDR表示を適用中はバッチ書き出しできません。元のファイルを開き直してください。",
                 "バッチ書き出し", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
 
         using BusyScope busy = EnterBusy();
+        bool rawTargets = IsRawFile(_currentPath);
         RawFormat format = _currentFormat;
-        long size = SafeFileSize(_currentPath);
-        if (size <= 0)
+        IReadOnlyList<string> targets;
+        if (rawTargets)
         {
-            MessageBox.Show(this, "対象ファイルのサイズを取得できませんでした。",
-                "バッチ書き出し", MessageBoxButton.OK, MessageBoxImage.Warning);
-            return;
+            long size = SafeFileSize(_currentPath);
+            if (size <= 0)
+            {
+                MessageBox.Show(this, "対象ファイルのサイズを取得できませんでした。",
+                    "バッチ書き出し", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            targets = SequenceScanner.FindStack(_currentPath, size, CandidateFiles());
+        }
+        else
+        {
+            // TIFF等は連番の命名で対象を決める(再生パネルと同じ規則)。
+            // 連番でなければ開いているファイル1件だけを対象にする
+            targets = SequenceScanner.FindNumberedStack(_currentPath, CandidateFiles());
+            if (targets.Count == 0)
+            {
+                targets = new[] { _currentPath };
+            }
         }
 
-        IReadOnlyList<string> targets = SequenceScanner.FindStack(
-            _currentPath, size, CandidateFiles());
         if (targets.Count == 0)
         {
             return;
         }
 
         string folder = Path.GetDirectoryName(_currentPath)!;
-        var dialog = new BatchExportDialog(targets.Count, Path.Combine(folder, "export"))
+        var dialog = new BatchExportDialog(
+            targets.Count, Path.Combine(folder, "export"), rawTargets)
         {
             Owner = this,
         };
@@ -2069,7 +2088,32 @@ public partial class MainWindow : Window
                         ct.ThrowIfCancellationRequested();
                         string file = targets[i];
                         string baseName = Path.GetFileNameWithoutExtension(file);
-                        using RawImage image = RawLoader.Load(file, format);
+                        ColorImage? trueColor = null;
+                        RawImage image;
+                        if (IsRawFile(file))
+                        {
+                            image = RawLoader.Load(file, format);
+                        }
+                        else
+                        {
+                            // TIFF等はファイル自身のフォーマットで読む。
+                            // カラーは既にRGBなので現像でなくLUTのみ焼き込む
+                            DecodedImage decoded = ImageFileLoader.Load(file, ct);
+                            image = decoded.Luminance;
+                            trueColor = decoded.Color;
+                        }
+
+                        using RawImage owned = image;
+                        if (choice.Format == BatchFormat.AviMjpeg
+                            && (image.Width != width || image.Height != height))
+                        {
+                            // AVIは全フレーム同一サイズが前提。黙って混ぜると壊れる
+                            throw new NotSupportedException(
+                                $"{Path.GetFileName(file)} のサイズ " +
+                                $"({image.Width}×{image.Height}) が先頭のフレーム " +
+                                $"({width}×{height}) と異なるため動画にできません。");
+                        }
+
                         if (choice.Format == BatchFormat.AviMjpeg)
                         {
                             // マルチフレームファイルは全フレームを動画化する
@@ -2077,7 +2121,8 @@ public partial class MainWindow : Window
                             {
                                 ct.ThrowIfCancellationRequested();
                                 avi!.AddFrame(EncodeJpegFrame(
-                                    image, frame, color, pattern, devLuts, lut, ct));
+                                    image, frame, color, pattern, devLuts, lut,
+                                    trueColor, ct));
                             }
                         }
                         else
@@ -2103,7 +2148,7 @@ public partial class MainWindow : Window
                                         image, frame, color, pattern, devLuts, lut,
                                         Path.Combine(choice.OutputFolder,
                                             stem + (jpeg ? ".jpg" : ".png")),
-                                        jpeg, ct);
+                                        jpeg, trueColor, ct);
                                 }
                             }
                         }
@@ -2149,6 +2194,16 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>デコード済みカラー画像に表示LUTを焼き込んでRGB24を作る。</summary>
+    private static BitmapSource BakeColorFrame(
+        ColorImage color, DisplayLut lut, CancellationToken ct)
+    {
+        byte[] rgb = ImageExport.RenderColorRgb24(color, lut, ct);
+        return BitmapSource.Create(
+            color.Width, color.Height, 96, 96, PixelFormats.Rgb24, null, rgb,
+            color.Width * 3);
+    }
+
     private static BitmapSource BakeFrame(
         RawImage image, int frame, bool color, BayerPattern pattern,
         DevelopLuts devLuts, DisplayLut lut, bool forceRgb, CancellationToken ct)
@@ -2189,10 +2244,11 @@ public partial class MainWindow : Window
 
     private static byte[] EncodeJpegFrame(
         RawImage image, int frame, bool color, BayerPattern pattern,
-        DevelopLuts devLuts, DisplayLut lut, CancellationToken ct)
+        DevelopLuts devLuts, DisplayLut lut, ColorImage? trueColor, CancellationToken ct)
     {
-        BitmapSource source = BakeFrame(image, frame, color, pattern, devLuts, lut,
-            forceRgb: true, ct);
+        BitmapSource source = trueColor is not null
+            ? BakeColorFrame(trueColor, lut, ct)
+            : BakeFrame(image, frame, color, pattern, devLuts, lut, forceRgb: true, ct);
         var encoder = new JpegBitmapEncoder { QualityLevel = 90 };
         encoder.Frames.Add(BitmapFrame.Create(source));
         using var stream = new MemoryStream();
@@ -2202,10 +2258,11 @@ public partial class MainWindow : Window
 
     private static void SaveBakedImage(
         RawImage image, int frame, bool color, BayerPattern pattern, DevelopLuts devLuts,
-        DisplayLut lut, string path, bool jpeg, CancellationToken ct)
+        DisplayLut lut, string path, bool jpeg, ColorImage? trueColor, CancellationToken ct)
     {
-        BitmapSource source = BakeFrame(image, frame, color, pattern, devLuts, lut,
-            forceRgb: false, ct);
+        BitmapSource source = trueColor is not null
+            ? BakeColorFrame(trueColor, lut, ct)
+            : BakeFrame(image, frame, color, pattern, devLuts, lut, forceRgb: false, ct);
         BitmapEncoder encoder = jpeg
             ? new JpegBitmapEncoder { QualityLevel = 95 }
             : new PngBitmapEncoder();

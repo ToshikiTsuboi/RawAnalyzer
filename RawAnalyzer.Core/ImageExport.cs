@@ -1,4 +1,4 @@
-namespace RawAnalyzer.Core;
+﻿namespace RawAnalyzer.Core;
 
 /// <summary>
 /// 8bit出力用の焼き込みレンダリング(表示LUT・現像結果を全画素へ適用)。
@@ -126,6 +126,47 @@ public static class ImageExport
             progress?.Report((double)(bandY + rows) / height);
         }
 
+        return rgb24;
+    }
+
+    /// <summary>
+    /// 表示LUTを各チャネルへ適用したRGB24バッファを生成する(行並列)。
+    /// TIFF/PNG等から読み込んだカラー画像のバッチ焼き込み用
+    /// (既にRGBなのでデモザイク・WB・マトリクスは適用しない)。
+    /// </summary>
+    /// <param name="color">対象カラー画像。</param>
+    /// <param name="lut">表示LUT。</param>
+    /// <param name="cancellationToken">キャンセルトークン。</param>
+    /// <returns>width×height×3 のRGB24バッファ(R,G,Bの順)。</returns>
+    public static byte[] RenderColorRgb24(
+        ColorImage color, DisplayLut lut, CancellationToken cancellationToken = default)
+    {
+        int width = color.Width;
+        int height = color.Height;
+        EnsureExportable((long)width * height, MaxRgb24Pixels, "カラー(RGB24)");
+        var rgb24 = new byte[(long)width * height * 3];
+
+        Parallel.For(
+            0,
+            height,
+            () => new ushort[width * 3],
+            (y, state, row) =>
+            {
+                if (cancellationToken.IsCancellationRequested)
+                {
+                    state.Stop();
+                    return row;
+                }
+
+                color.CopyRow(y, 0, width, row);
+
+                // LUTは要素単位なのでインターリーブRGBにもそのまま使える
+                lut.Apply(row, rgb24.AsSpan(y * width * 3, width * 3));
+                return row;
+            },
+            _ => { });
+
+        cancellationToken.ThrowIfCancellationRequested();
         return rgb24;
     }
 

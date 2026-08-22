@@ -1,4 +1,4 @@
-using RawAnalyzer.Core;
+﻿using RawAnalyzer.Core;
 using Xunit;
 
 namespace RawAnalyzer.Tests;
@@ -251,6 +251,33 @@ public class SaveTests
             {
                 Assert.Equal(lut.Map(image.GetPixel(x, y)), gray[y * 8 + x]);
             }
+        }
+    }
+
+    [Fact]
+    public void ImageExport_RenderColorRgb24_AppliesLutPerChannel()
+    {
+        // TIFF/PNG等のカラー連番のバッチ焼き込み経路。
+        // 現像は通らず、表示LUTだけが各チャネルへ効くこと
+        const int width = 4;
+        const int height = 2;
+        var interleaved = new ushort[width * height * 3];
+        for (int i = 0; i < width * height; i++)
+        {
+            interleaved[i * 3] = (ushort)(1000 * i);
+            interleaved[i * 3 + 1] = (ushort)(2000 * i);
+            interleaved[i * 3 + 2] = (ushort)(3000 * i);
+        }
+
+        ColorImage color = ColorImage.FromInterleaved(width, height, 16, interleaved);
+        var lut = DisplayLut.Create(new DisplayParameters(Gain: 1.5, Gamma: 2.2));
+
+        byte[] rgb = ImageExport.RenderColorRgb24(color, lut);
+
+        Assert.Equal(width * height * 3, rgb.Length);
+        for (int i = 0; i < interleaved.Length; i++)
+        {
+            Assert.Equal(lut.Map(interleaved[i]), rgb[i]);
         }
     }
 

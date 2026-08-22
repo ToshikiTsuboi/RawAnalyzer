@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Windows;
 using Microsoft.Win32;
 
@@ -36,10 +36,22 @@ public partial class BatchExportDialog : Window
     /// <summary>ダイアログを生成する。</summary>
     /// <param name="targetCount">対象ファイル数。</param>
     /// <param name="defaultOutputFolder">出力先の初期値。</param>
-    public BatchExportDialog(int targetCount, string defaultOutputFolder)
+    /// <param name="rawTargets">対象がrawか(falseならTIFF等の連番画像)。</param>
+    public BatchExportDialog(int targetCount, string defaultOutputFolder, bool rawTargets = true)
     {
         InitializeComponent();
-        TargetInfoText.Text = $"対象: フォーマットが一致するrawファイル {targetCount} 件";
+        TargetInfoText.Text = rawTargets
+            ? $"対象: フォーマットが一致するrawファイル {targetCount} 件"
+            : $"対象: 連番の画像ファイル {targetCount} 件";
+        if (!rawTargets)
+        {
+            // カラー画像は既にRGBなので、現像段(WB/マトリクス/デモザイク)は適用されない
+            ProcessingNoteText.Text =
+                "※ カラー画像は表示LUT(黒/白点・ゲイン・ガンマ・コントラスト)のみ焼き込みます。" +
+                "TIFF 16bitグレーはカラーの場合、輝度(BT.601)を出力します。";
+            ProcessingNoteText.Visibility = Visibility.Visible;
+        }
+
         OutputFolderBox.Text = defaultOutputFolder;
         FormatCombo.SelectedIndex = 0;
     }
