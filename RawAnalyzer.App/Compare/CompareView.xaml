@@ -1,4 +1,4 @@
-<UserControl x:Class="RawAnalyzer.App.Compare.CompareView"
+﻿<UserControl x:Class="RawAnalyzer.App.Compare.CompareView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              AllowDrop="True" Drop="OnDrop" DragOver="OnDragOver"
@@ -14,6 +14,17 @@
                 <Button DockPanel.Dock="Right" Content="✕ 比較モードを終了"
                         Click="OnExitClick" FontSize="11" Padding="8,2"
                         VerticalAlignment="Center" />
+                <TextBlock Text="同期:" FontSize="11" Margin="16,0,4,0"
+                           VerticalAlignment="Center"
+                           Foreground="{StaticResource TextDim}" />
+                <ComboBox x:Name="SyncCombo" MinWidth="110" FontSize="11"
+                          VerticalAlignment="Center" SelectedIndex="0"
+                          SelectionChanged="OnSyncModeChanged"
+                          ToolTip="視野: 画像に対する相対範囲を合わせる(解像度違いの構図比較)&#x0a;等倍: ズーム倍率を合わせる(ノイズ・解像感の比較)">
+                    <ComboBoxItem Content="視野(相対)" />
+                    <ComboBoxItem Content="等倍(1:1)" />
+                    <ComboBoxItem Content="オフ" />
+                </ComboBox>
                 <TextBlock x:Name="HintText" FontSize="11" Margin="14,0,0,0"
                            VerticalAlignment="Center"
                            Foreground="{StaticResource TextDim}"

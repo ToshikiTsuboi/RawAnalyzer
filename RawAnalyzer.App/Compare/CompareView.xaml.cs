@@ -1,4 +1,4 @@
-using System.Windows;
+﻿using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Media;
@@ -22,6 +22,8 @@ public partial class CompareView : UserControl
     private Button? _addTile;
     private ComparePaneView? _active;
     private bool _loading;
+    private CompareSyncMode _syncMode = CompareSyncMode.FieldOfView;
+    private bool _syncing;
 
     /// <summary>ビューを生成する。</summary>
     public CompareView()
@@ -124,10 +126,133 @@ public partial class CompareView : UserControl
         var view = new ComparePaneView();
         view.CloseRequested += OnPaneCloseRequested;
         view.ActivateRequested += SetActive;
+        view.ViewChanged += OnPaneViewChanged;
+        view.CursorMoved += OnPaneCursorMoved;
+        view.CursorLeft += OnPaneCursorLeft;
         _panes.Add(view);
         Relayout();
         await view.AttachAsync(pane);
         SetActive(view);
+
+        // 既存ペインがあれば、その表示範囲に合わせて開始する
+        ComparePaneView? reference = _panes.FirstOrDefault(
+            p => !ReferenceEquals(p, view) && p.Pane is not null);
+        if (reference is not null)
+        {
+            SyncFrom(reference);
+        }
+    }
+
+    // ---- ペイン間同期 ----
+
+    private void OnSyncModeChanged(object sender, SelectionChangedEventArgs e)
+    {
+        _syncMode = SyncCombo.SelectedIndex switch
+        {
+            1 => CompareSyncMode.PixelZoom,
+            2 => CompareSyncMode.Off,
+            _ => CompareSyncMode.FieldOfView,
+        };
+
+        // モードを入れたら、アクティブ(なければ先頭)ペイン基準で即座に揃える
+        if (_syncMode != CompareSyncMode.Off)
+        {
+            ComparePaneView? source = _active ?? _panes.FirstOrDefault();
+            if (source?.Pane is not null)
+            {
+                SyncFrom(source);
+            }
+        }
+    }
+
+    private void OnPaneViewChanged(ComparePaneView source)
+    {
+        if (_syncMode != CompareSyncMode.Off)
+        {
+            SyncFrom(source);
+        }
+    }
+
+    /// <summary>指定ペインのビュー状態を、他の全ペインへ写像して適用する。</summary>
+    private void SyncFrom(ComparePaneView source)
+    {
+        if (_syncing || source.Pane is null)
+        {
+            return;
+        }
+
+        // ApplyViewはViewChangedを発火しない設計だが、将来の変更に備えて再入も遮断する
+        _syncing = true;
+        try
+        {
+            PaneViewState sourceState = StateOf(source);
+            if (sourceState.ViewWidth < 1 || sourceState.ViewHeight < 1)
+            {
+                return;
+            }
+
+            foreach (ComparePaneView pane in _panes)
+            {
+                if (ReferenceEquals(pane, source) || pane.Pane is null)
+                {
+                    continue;
+                }
+
+                PaneViewState targetState = StateOf(pane);
+                if (targetState.ViewWidth < 1 || targetState.ViewHeight < 1)
+                {
+                    continue;
+                }
+
+                ViewTransform mapped = CompareSync.MapView(_syncMode, sourceState, targetState);
+                pane.ApplyView(mapped.Zoom, mapped.OriginX, mapped.OriginY);
+            }
+        }
+        finally
+        {
+            _syncing = false;
+        }
+    }
+
+    private static PaneViewState StateOf(ComparePaneView pane)
+    {
+        Controls.ImageViewport viewport = pane.ViewportControl;
+        return new PaneViewState(
+            viewport.Zoom, viewport.OriginX, viewport.OriginY,
+            viewport.ActualWidth, viewport.ActualHeight,
+            pane.Pane!.Image.Width, pane.Pane.Image.Height);
+    }
+
+    private void OnPaneCursorMoved(ComparePaneView source, int x, int y)
+    {
+        if (_syncMode == CompareSyncMode.Off || source.Pane is null)
+        {
+            return;
+        }
+
+        (int Width, int Height) sourceSize = (source.Pane.Image.Width, source.Pane.Image.Height);
+        foreach (ComparePaneView pane in _panes)
+        {
+            if (ReferenceEquals(pane, source) || pane.Pane is null)
+            {
+                continue;
+            }
+
+            (double gx, double gy) = CompareSync.MapCursor(
+                x, y, sourceSize, (pane.Pane.Image.Width, pane.Pane.Image.Height));
+            pane.ShowGhostCursor(gx, gy);
+        }
+    }
+
+    private void OnPaneCursorLeft(ComparePaneView source)
+    {
+        foreach (ComparePaneView pane in _panes)
+        {
+            if (!ReferenceEquals(pane, source))
+            {
+                pane.HideGhostCursor();
+            }
+        }
     }
 
     private async void OnPaneCloseRequested(ComparePaneView view)

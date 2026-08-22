@@ -1,4 +1,4 @@
-using System.Buffers;
+﻿using System.Buffers;
 using System.Globalization;
 using System.Windows;
 using System.Windows.Input;
@@ -202,6 +202,54 @@ public sealed class ImageViewport : FrameworkElement
 
     /// <summary>現在のズーム率。</summary>
     public double Zoom => _zoom;
+
+    /// <summary>表示原点X(画面左上に写る画像X座標)。</summary>
+    public double OriginX => _originX;
+
+    /// <summary>表示原点Y(画面左上に写る画像Y座標)。</summary>
+    public double OriginY => _originY;
+
+    /// <summary>
+    /// ズームと表示原点を直接設定する(比較モードのペイン間同期用)。
+    /// </summary>
+    /// <param name="zoom">ズーム倍率。</param>
+    /// <param name="originX">表示原点X。</param>
+    /// <param name="originY">表示原点Y。</param>
+    public void SetViewTransform(double zoom, double originX, double originY)
+    {
+        _zoom = Math.Clamp(zoom, MinZoom, MaxZoom);
+        _originX = originX;
+        _originY = originY;
+        RequestRender(fast: true);
+        RestartIdleTimer();
+    }
+
+    /// <summary>
+    /// 他ペインのカーソル位置(ゴーストカーソル)を表示する。
+    /// </summary>
+    /// <param name="imageX">画像X座標(小数可)。</param>
+    /// <param name="imageY">画像Y座標(小数可)。</param>
+    public void SetGhostCursor(double imageX, double imageY)
+    {
+        _ghostVisible = true;
+        _ghostX = imageX;
+        _ghostY = imageY;
+        InvalidateVisual();
+    }
+
+    /// <summary>ゴーストカーソルを消す。</summary>
+    public void ClearGhostCursor()
+    {
+        if (_ghostVisible)
+        {
+            _ghostVisible = false;
+            InvalidateVisual();
+        }
+    }
+
+    private bool _ghostVisible;
+    private double _ghostX;
+    private double _ghostY;
 
     /// <summary>表示中の画像(未設定ならnull)。</summary>
     public RawImage? Image => _image;
@@ -559,6 +607,7 @@ public sealed class ImageViewport : FrameworkElement
         DrawDefectMarkers(dc);
         DrawProfileMarker(dc);
         DrawKeyboardCursor(dc);
+        DrawGhostCursor(dc);
     }
 
     private static readonly Pen KeyCursorPen = CreateKeyCursorPen(0xE6);
@@ -571,6 +620,37 @@ public sealed class ImageViewport : FrameworkElement
         var pen = new Pen(brush, 1.2);
         pen.Freeze();
         return pen;
+    }
+
+    private static readonly Pen GhostCursorPen = CreateGhostCursorPen();
+
+    private static Pen CreateGhostCursorPen()
+    {
+        // キーボードカーソル(緑)と区別できる暖色。控えめな太さで実画素を隠さない
+        var brush = new SolidColorBrush(Color.FromArgb(0xC8, 0xE8, 0xA3, 0x4B));
+        brush.Freeze();
+        var pen = new Pen(brush, 1.2);
+        pen.Freeze();
+        return pen;
+    }
+
+    /// <summary>他ペインのカーソル位置を示すクロスヘアを描く(比較モード用)。</summary>
+    private void DrawGhostCursor(DrawingContext dc)
+    {
+        if (!_ghostVisible || _image is null)
+        {
+            return;
+        }
+
+        double x = (_ghostX + 0.5 - _originX) * _zoom;
+        double y = (_ghostY + 0.5 - _originY) * _zoom;
+        if (x < -50 || y < -50 || x > ActualWidth + 50 || y > ActualHeight + 50)
+        {
+            return;
+        }
+
+        dc.DrawLine(GhostCursorPen, new Point(x, 0), new Point(x, ActualHeight));
+        dc.DrawLine(GhostCursorPen, new Point(0, y), new Point(ActualWidth, y));
     }
 
     private void DrawKeyboardCursor(DrawingContext dc)

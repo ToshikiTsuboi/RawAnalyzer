@@ -2,6 +2,8 @@
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Threading;
+using RawAnalyzer.App.Controls;
 using RawAnalyzer.App.Services;
 using RawAnalyzer.Core;
 
@@ -37,9 +39,42 @@ public partial class ComparePaneView : UserControl
             }
         };
 
-        // ズーム/パンの手動操作が入ったら追従をやめる
-        Viewport.PreviewMouseWheel += (_, _) => _autoFit = false;
+        // ズーム/パンの手動操作が入ったら追従をやめ、同期を発火する。
+        // ImageViewport自身のハンドラが状態を更新した「後」に読みたいので
+        // BeginInvokeで一拍置く(Previewイベントは処理前に来る)
+        Viewport.PreviewMouseWheel += (_, _) =>
+        {
+            _autoFit = false;
+            ScheduleViewChanged();
+        };
         Viewport.PreviewMouseDown += (_, _) => _autoFit = false;
+        Viewport.PreviewMouseMove += (_, e) =>
+        {
+            if (e.LeftButton == MouseButtonState.Pressed)
+            {
+                ScheduleViewChanged();
+            }
+        };
+
+        // カーソル連動(他ペインへのゴーストカーソル表示)用
+        Viewport.CursorPixelChanged += (_, e) =>
+        {
+            if (e.IsInsideImage)
+            {
+                CursorMoved?.Invoke(this, e.X, e.Y);
+            }
+            else
+            {
+                CursorLeft?.Invoke(this);
+            }
+        };
+        Viewport.MouseLeave += (_, _) => CursorLeft?.Invoke(this);
+    }
+
+    private void ScheduleViewChanged()
+    {
+        Dispatcher.BeginInvoke(
+            new Action(() => ViewChanged?.Invoke(this)), DispatcherPriority.Input);
     }
 
     /// <summary>「✕」が押されたときに発火する。</summary>
@@ -48,8 +83,48 @@ public partial class ComparePaneView : UserControl
     /// <summary>ペインがクリックされたときに発火する(アクティブ化要求)。</summary>
     public event Action<ComparePaneView>? ActivateRequested;
 
+    /// <summary>ユーザー操作でズーム/パンが変わったときに発火する(同期の起点)。</summary>
+    public event Action<ComparePaneView>? ViewChanged;
+
+    /// <summary>カーソルが画像上を動いたときに発火する(画素座標)。</summary>
+    public event Action<ComparePaneView, int, int>? CursorMoved;
+
+    /// <summary>カーソルが画像から離れたときに発火する。</summary>
+    public event Action<ComparePaneView>? CursorLeft;
+
     /// <summary>装着中の資源。未装着ならnull。</summary>
     internal ComparePane? Pane { get; private set; }
+
+    /// <summary>ビューポート(同期計算がビュー状態とサイズを読むために公開)。</summary>
+    internal ImageViewport ViewportControl => Viewport;
+
+    /// <summary>
+    /// 同期によるビュー変換の適用。ユーザー操作扱いにならず、
+    /// <see cref="ViewChanged"/> は発火しない(入力イベント由来でないため)。
+    /// 以後は同期に従うので全体表示の自動追従は解除する。
+    /// </summary>
+    /// <param name="zoom">ズーム倍率。</param>
+    /// <param name="originX">表示原点X。</param>
+    /// <param name="originY">表示原点Y。</param>
+    internal void ApplyView(double zoom, double originX, double originY)
+    {
+        _autoFit = false;
+        Viewport.SetViewTransform(zoom, originX, originY);
+    }
+
+    /// <summary>他ペインのカーソル位置をゴースト表示する。</summary>
+    /// <param name="imageX">画像X座標。</param>
+    /// <param name="imageY">画像Y座標。</param>
+    internal void ShowGhostCursor(double imageX, double imageY)
+    {
+        Viewport.SetGhostCursor(imageX, imageY);
+    }
+
+    /// <summary>ゴーストカーソルを消す。</summary>
+    internal void HideGhostCursor()
+    {
+        Viewport.ClearGhostCursor();
+    }
 
     /// <summary>アクティブ表示(枠の強調)を切り替える。</summary>
     public bool IsActive
