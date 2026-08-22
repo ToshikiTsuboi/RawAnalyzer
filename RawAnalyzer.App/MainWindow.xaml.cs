@@ -22,10 +22,9 @@ namespace RawAnalyzer.App;
 /// </summary>
 public partial class MainWindow : Window
 {
-    private static readonly string[] RawExtensions = { ".raw", ".bin" };
-
     private static readonly string[] SupportedExtensions =
-        RawExtensions.Concat(ImageFileLoader.SupportedExtensions).ToArray();
+        Compare.ComparePane.RawExtensions
+            .Concat(ImageFileLoader.SupportedExtensions).ToArray();
 
     private readonly MainViewModel _vm = new();
     private readonly FormatPresetStore _presetStore = new();
@@ -453,8 +452,7 @@ public partial class MainWindow : Window
     /// <summary>フォーマット指定が必要な生バイナリ(.raw/.bin)かどうか。</summary>
     private static bool IsRawFile(string path)
     {
-        return RawExtensions.Contains(
-            Path.GetExtension(path), StringComparer.OrdinalIgnoreCase);
+        return Compare.ComparePane.IsRawFile(path);
     }
 
     private async void OpenPath(string path, RawFormat? initialFormat = null)
