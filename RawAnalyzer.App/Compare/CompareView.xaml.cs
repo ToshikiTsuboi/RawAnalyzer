@@ -129,10 +129,12 @@ public partial class CompareView : UserControl
         view.ViewChanged += OnPaneViewChanged;
         view.CursorMoved += OnPaneCursorMoved;
         view.CursorLeft += OnPaneCursorLeft;
+        view.DisplayChanged += OnPaneDisplayChanged;
         _panes.Add(view);
         Relayout();
         await view.AttachAsync(pane);
         SetActive(view);
+        RefreshChips();
 
         // 既存ペインがあれば、その表示範囲に合わせて開始する
         ComparePaneView? reference = _panes.FirstOrDefault(
@@ -255,6 +257,78 @@ public partial class CompareView : UserControl
         }
     }
 
+    // ---- 表示条件(条件チップと調整リンク) ----
+
+    private void OnPaneDisplayChanged(ComparePaneView source)
+    {
+        // 🔗同士なら操作結果を他ペインへ転写(ApplyDisplayはDisplayChangedを発火しない)
+        if (source.IsLinked && source.Pane is not null)
+        {
+            DisplaySettings settings = source.Pane.Display;
+            int bits = source.Pane.Format.BitDepth;
+            foreach (ComparePaneView pane in _panes)
+            {
+                if (ReferenceEquals(pane, source) || pane.Pane is null || !pane.IsLinked)
+                {
+                    continue;
+                }
+
+                pane.ApplyDisplay(
+                    DisplayConditions.Transfer(settings, bits, pane.Pane.Format.BitDepth));
+            }
+        }
+
+        RefreshChips();
+    }
+
+    private void OnAlignConditionsClick(object sender, RoutedEventArgs e)
+    {
+        ComparePaneView? source = _active?.Pane is not null
+            ? _active
+            : _panes.FirstOrDefault(p => p.Pane is not null);
+        if (source?.Pane is null)
+        {
+            return;
+        }
+
+        DisplaySettings settings = source.Pane.Display;
+        int bits = source.Pane.Format.BitDepth;
+        foreach (ComparePaneView pane in _panes)
+        {
+            if (ReferenceEquals(pane, source) || pane.Pane is null)
+            {
+                continue;
+            }
+
+            pane.ApplyDisplay(
+                DisplayConditions.Transfer(settings, bits, pane.Pane.Format.BitDepth));
+        }
+
+        RefreshChips();
+    }
+
+    /// <summary>全ペインの条件チップを再計算する(他ペインと不一致の項目を強調)。</summary>
+    private void RefreshChips()
+    {
+        List<ComparePaneView> loaded = _panes.Where(p => p.Pane is not null).ToList();
+        foreach (ComparePaneView pane in loaded)
+        {
+            DisplaySettings settings = pane.Pane!.Display;
+            int bits = pane.Pane.Format.BitDepth;
+            var chips = new List<(string Text, bool Differs)>();
+            foreach (ConditionKey key in DisplayConditions.Keys)
+            {
+                bool differs = loaded.Any(other =>
+                    !ReferenceEquals(other, pane) && !DisplayConditions.AreEqual(
+                        key, settings, bits,
+                        other.Pane!.Display, other.Pane.Format.BitDepth));
+                chips.Add((DisplayConditions.Format(key, settings, bits), differs));
+            }
+
+            pane.SetChips(chips);
+        }
+    }
+
     private async void OnPaneCloseRequested(ComparePaneView view)
     {
         _panes.Remove(view);
@@ -264,6 +338,7 @@ public partial class CompareView : UserControl
         }
 
         Relayout();
+        RefreshChips();
         await view.DetachAndDisposeAsync();
     }
 

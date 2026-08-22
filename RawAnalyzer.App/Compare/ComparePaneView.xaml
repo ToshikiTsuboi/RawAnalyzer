@@ -1,4 +1,4 @@
-<UserControl x:Class="RawAnalyzer.App.Compare.ComparePaneView"
+﻿<UserControl x:Class="RawAnalyzer.App.Compare.ComparePaneView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:controls="clr-namespace:RawAnalyzer.App.Controls">
@@ -32,6 +32,43 @@
                 </Setter.Value>
             </Setter>
         </Style>
+        <Style x:Key="HeaderToggle" TargetType="ToggleButton">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Foreground" Value="{StaticResource TextDim}" />
+            <Setter Property="BorderBrush" Value="{StaticResource BorderBrushDark}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Padding" Value="7,1" />
+            <Setter Property="Margin" Value="4,0,0,0" />
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ToggleButton">
+                        <Border x:Name="Chrome" Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="3" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Chrome" Property="Background"
+                                        Value="{StaticResource HoverBrush}" />
+                            </Trigger>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Chrome" Property="Background"
+                                        Value="{StaticResource AccentSoftBrush}" />
+                                <Setter TargetName="Chrome" Property="BorderBrush"
+                                        Value="{StaticResource AccentBrush}" />
+                                <Setter Property="Foreground"
+                                        Value="{StaticResource AccentBrush}" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
     </UserControl.Resources>
 
     <!-- アクティブペインはアクセント色の枠で示す -->
@@ -56,10 +93,21 @@
                     <Button DockPanel.Dock="Right" Content="リセット"
                             Style="{StaticResource HeaderButton}" Click="OnResetClick"
                             ToolTip="このペインの表示調整を初期値へ戻す" />
+                    <ToggleButton x:Name="LinkToggle" DockPanel.Dock="Right" Content="🔗"
+                                  Style="{StaticResource HeaderToggle}"
+                                  AutomationProperties.Name="調整リンク"
+                                  ToolTip="調整をリンク: 🔗がONのペイン同士で自動/リセットの結果を共有 (黒/白は%FS換算)" />
                     <TextBlock x:Name="FileNameText" FontSize="12" Margin="8,0,8,0"
                                VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
                                Foreground="{StaticResource TextBrush}" />
                 </DockPanel>
+            </Border>
+            <Border x:Name="ChipsBar" DockPanel.Dock="Top" Visibility="Collapsed"
+                    Background="{StaticResource PanelBrush}"
+                    BorderBrush="{StaticResource BorderBrushDark}" BorderThickness="0,0,0,1"
+                    Padding="8,1"
+                    ToolTip="このペインの表示条件。オレンジは他ペインと不一致の項目">
+                <StackPanel x:Name="ChipsPanel" Orientation="Horizontal" />
             </Border>
             <controls:ImageViewport x:Name="Viewport" />
         </DockPanel>

@@ -92,6 +92,9 @@ public partial class ComparePaneView : UserControl
     /// <summary>カーソルが画像から離れたときに発火する。</summary>
     public event Action<ComparePaneView>? CursorLeft;
 
+    /// <summary>ユーザー操作(自動/リセット)で表示調整が変わったときに発火する。</summary>
+    public event Action<ComparePaneView>? DisplayChanged;
+
     /// <summary>装着中の資源。未装着ならnull。</summary>
     internal ComparePane? Pane { get; private set; }
 
@@ -126,6 +129,61 @@ public partial class ComparePaneView : UserControl
         Viewport.ClearGhostCursor();
     }
 
+    /// <summary>調整リンク(🔗)がONか。</summary>
+    internal bool IsLinked => LinkToggle.IsChecked == true;
+
+    /// <summary>
+    /// リンク/揃える操作による表示調整の適用。
+    /// <see cref="DisplayChanged"/> は発火しない(ブロードキャストのループ防止)。
+    /// </summary>
+    /// <param name="settings">適用する表示調整。</param>
+    internal void ApplyDisplay(DisplaySettings settings)
+    {
+        if (Pane is null)
+        {
+            return;
+        }
+
+        Pane.Display = settings;
+        Viewport.SetLut(Pane.BuildLut());
+    }
+
+    // 不一致チップの強調色(ゴーストカーソルと同系の暖色)
+    private static readonly Brush ChipDiffForeground = CreateFrozen(0xFF, 0xE8, 0xA3, 0x4B);
+    private static readonly Brush ChipDiffBackground = CreateFrozen(0x28, 0xE8, 0xA3, 0x4B);
+
+    private static Brush CreateFrozen(byte a, byte r, byte g, byte b)
+    {
+        var brush = new SolidColorBrush(Color.FromArgb(a, r, g, b));
+        brush.Freeze();
+        return brush;
+    }
+
+    /// <summary>条件チップを表示し直す(不一致判定の計算はCompareView側)。</summary>
+    /// <param name="chips">テキストと不一致フラグの列。</param>
+    internal void SetChips(IReadOnlyList<(string Text, bool Differs)> chips)
+    {
+        ChipsPanel.Children.Clear();
+        foreach ((string text, bool differs) in chips)
+        {
+            ChipsPanel.Children.Add(new Border
+            {
+                CornerRadius = new CornerRadius(3),
+                Padding = new Thickness(5, 0, 5, 0),
+                Margin = new Thickness(0, 0, 4, 0),
+                Background = differs ? ChipDiffBackground : Brushes.Transparent,
+                Child = new TextBlock
+                {
+                    Text = text,
+                    FontSize = 11,
+                    Foreground = differs
+                        ? ChipDiffForeground
+                        : (Brush)FindResource("TextDim"),
+                },
+            });
+        }
+    }
+
     /// <summary>アクティブ表示(枠の強調)を切り替える。</summary>
     public bool IsActive
     {
@@ -152,6 +210,7 @@ public partial class ComparePaneView : UserControl
         Pane = pane;
         FileNameText.Text = pane.FileName;
         FileNameText.ToolTip = pane.Path;
+        ChipsBar.Visibility = Visibility.Visible;
 
         Viewport.SetImage(pane.Image, pane.Format);
         Viewport.SetColorImage(pane.Color);
@@ -221,6 +280,7 @@ public partial class ComparePaneView : UserControl
                     WhiteCode = levels.WhiteCode,
                 };
                 Viewport.SetLut(pane.BuildLut());
+                DisplayChanged?.Invoke(this);
             }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -242,5 +302,6 @@ public partial class ComparePaneView : UserControl
 
         Pane.Display = DisplaySettings.CreateDefault(Pane.Format.BitDepth);
         Viewport.SetLut(Pane.BuildLut());
+        DisplayChanged?.Invoke(this);
     }
 }
