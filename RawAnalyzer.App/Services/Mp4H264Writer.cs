@@ -142,8 +142,10 @@ internal sealed unsafe class Mp4H264Writer : IDisposable
             Dispose();
             throw new IOException(
                 "MP4(H.264)エンコーダを初期化できませんでした。" +
-                $"解像度({width}×{height})がエンコーダの上限を超えている可能性があります。" +
-                $" (HRESULT 0x{ex.HResult:X8})", ex);
+                $"解像度({width}×{height})がエンコーダの上限を超えているか、" +
+                "この環境のH.264エンコーダが対応していない設定の可能性があります。" +
+                "AVI(MJPEG)での書き出しもお試しください。" +
+                $" (HRESULT 0x{ex.HResult:X8}, 出力先 {Path.GetExtension(path)})", ex);
         }
         catch
         {

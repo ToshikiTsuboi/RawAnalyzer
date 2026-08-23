@@ -2298,7 +2298,7 @@ public partial class MainWindow : Window
 
         // 動画は一時ファイルへ書き切ってから置換する。最終パスへ直接書くと、
         // 失敗・キャンセル時に上書き対象だった既存の動画を失う
-        string videoTempPath = videoPath + ".part";
+        string videoTempPath = OutputPaths.BuildPartialPath(videoPath);
 
         ProgressWindow result = ProgressWindow.Run(
             this,
