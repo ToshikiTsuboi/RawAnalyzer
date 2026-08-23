@@ -1,14 +1,14 @@
-using RawAnalyzer.Core;
+﻿using RawAnalyzer.Core;
 using Xunit;
 
 namespace RawAnalyzer.Tests;
 
 public class HistogramToolsTests
 {
-    private static uint[] MakeBins(int size, params (int Code, uint Count)[] entries)
+    private static long[] MakeBins(int size, params (int Code, long Count)[] entries)
     {
-        var bins = new uint[size];
-        foreach ((int code, uint count) in entries)
+        var bins = new long[size];
+        foreach ((int code, long count) in entries)
         {
             bins[code] = count;
         }
@@ -19,14 +19,14 @@ public class HistogramToolsTests
     [Fact]
     public void ComputeAutoLevels_EmptyHistogram_ReturnsNull()
     {
-        Assert.Null(HistogramTools.ComputeAutoLevels(new uint[256]));
+        Assert.Null(HistogramTools.ComputeAutoLevels(new long[256]));
     }
 
     [Fact]
     public void ComputeAutoLevels_SingleValue_ReturnsNull()
     {
         // 全画素が同じ値だと黒点<白点にできない
-        uint[] bins = MakeBins(256, (128, 1000));
+        long[] bins = MakeBins(256, (128, 1000));
         Assert.Null(HistogramTools.ComputeAutoLevels(bins));
     }
 
@@ -34,7 +34,7 @@ public class HistogramToolsTests
     public void ComputeAutoLevels_ClipsTails()
     {
         // 両端に1%ずつ外れ値、本体は100〜200
-        var bins = new uint[256];
+        var bins = new long[256];
         bins[0] = 100;
         bins[255] = 100;
         for (int i = 100; i <= 200; i++)
@@ -53,7 +53,7 @@ public class HistogramToolsTests
     [Fact]
     public void ComputeAutoLevels_ZeroClip_UsesFullRange()
     {
-        uint[] bins = MakeBins(256, (10, 5), (240, 5));
+        long[] bins = MakeBins(256, (10, 5), (240, 5));
 
         AutoLevels? levels = HistogramTools.ComputeAutoLevels(bins, clipRatio: 0);
 
@@ -67,13 +67,13 @@ public class HistogramToolsTests
     public void ComputeAutoLevels_InvalidClipRatio_Throws(double ratio)
     {
         Assert.Throws<ArgumentOutOfRangeException>(
-            () => HistogramTools.ComputeAutoLevels(new uint[16], ratio));
+            () => HistogramTools.ComputeAutoLevels(new long[16], ratio));
     }
 
     [Fact]
     public void Aggregate_SumsIntoColumns()
     {
-        var bins = new uint[8];
+        var bins = new long[8];
         for (int i = 0; i < bins.Length; i++)
         {
             bins[i] = 1;
@@ -96,7 +96,7 @@ public class HistogramToolsTests
         // ヒストグラムが左に圧縮されていた
         foreach (int binCount in new[] { 256, 1024, 4096, 65536 })
         {
-            var bins = new uint[binCount];
+            var bins = new long[binCount];
             bins[0] = 5;
             bins[^1] = 7;
 
@@ -112,7 +112,7 @@ public class HistogramToolsTests
     public void Aggregate_FewerBinsThanColumns_PreservesEndpoints()
     {
         // ビン数 < 列数 でも先頭・末尾の位置関係が保たれること
-        var bins = new uint[16];
+        var bins = new long[16];
         bins[0] = 1;
         bins[15] = 2;
 
@@ -126,7 +126,7 @@ public class HistogramToolsTests
     [Fact]
     public void Aggregate_Cumulative_IsMonotonicAndEndsAtTotal()
     {
-        uint[] bins = MakeBins(64, (0, 3), (20, 5), (63, 2));
+        long[] bins = MakeBins(64, (0, 3), (20, 5), (63, 2));
 
         double[] columns = HistogramTools.Aggregate(bins, 8, cumulative: true);
 
@@ -142,13 +142,13 @@ public class HistogramToolsTests
     public void Aggregate_InvalidColumns_Throws()
     {
         Assert.Throws<ArgumentOutOfRangeException>(
-            () => HistogramTools.Aggregate(new uint[16], 0));
+            () => HistogramTools.Aggregate(new long[16], 0));
     }
 
     [Fact]
     public void BuildTable_WithoutChannels_HasCumulativeColumn()
     {
-        uint[] bins = MakeBins(4, (0, 2), (2, 3));
+        long[] bins = MakeBins(4, (0, 2), (2, 3));
 
         string table = HistogramTools.BuildTable(bins, '\t');
         string[] lines = table.TrimEnd().Split(Environment.NewLine);
@@ -163,7 +163,7 @@ public class HistogramToolsTests
     [Fact]
     public void BuildTable_WithChannels_AppendsFourColumns()
     {
-        uint[] bins = MakeBins(2, (0, 4));
+        long[] bins = MakeBins(2, (0, 4));
         var channels = new List<ChannelHistogram>
         {
             MakeChannel(BayerChannel.R, MakeBins(2, (0, 1))),
@@ -182,19 +182,19 @@ public class HistogramToolsTests
     [Fact]
     public void BuildTable_ChannelBinLengthMismatch_Throws()
     {
-        uint[] bins = MakeBins(4, (0, 1));
+        long[] bins = MakeBins(4, (0, 1));
         var channels = new List<ChannelHistogram>
         {
-            MakeChannel(BayerChannel.R, new uint[2]),
-            MakeChannel(BayerChannel.Gr, new uint[4]),
-            MakeChannel(BayerChannel.Gb, new uint[4]),
-            MakeChannel(BayerChannel.B, new uint[4]),
+            MakeChannel(BayerChannel.R, new long[2]),
+            MakeChannel(BayerChannel.Gr, new long[4]),
+            MakeChannel(BayerChannel.Gb, new long[4]),
+            MakeChannel(BayerChannel.B, new long[4]),
         };
 
         Assert.Throws<ArgumentException>(() => HistogramTools.BuildTable(bins, ',', channels));
     }
 
-    private static ChannelHistogram MakeChannel(BayerChannel channel, uint[] bins) => new()
+    private static ChannelHistogram MakeChannel(BayerChannel channel, long[] bins) => new()
     {
         Channel = channel,
         Bins = bins,

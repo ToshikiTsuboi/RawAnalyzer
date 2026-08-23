@@ -29,6 +29,7 @@ public partial class MainWindow : Window
     private readonly MainViewModel _vm = new();
     private readonly FormatPresetStore _presetStore = new();
     private readonly RecentFilesStore _recentFiles = new();
+    private int _recentMenuGeneration;
     private readonly SessionStore _sessionStore = new();
     private readonly SessionState _session;
     private ColorMatrix _colorMatrix = ColorMatrix.Identity;
@@ -143,6 +144,19 @@ public partial class MainWindow : Window
     // 補正時に一致を検証する
     private RawImage? _defectSourceImage;
     private int _defectSourceFrame;
+
+    /// <summary>
+    /// 欠陥検出の検出元画像への参照を手放す。
+    /// </summary>
+    /// <remarks>
+    /// 表示画像を差し替えたら検出結果は流用できない(補正適用時は
+    /// ReferenceEquals で弾かれる)。参照を残すと破棄済み画像のヒープ側画素配列
+    /// (最大約200MB)が回収されないため、差し替えのたびに明示的に切る。
+    /// </remarks>
+    private void ClearDefectSource()
+    {
+        _defectSourceImage = null;
+    }
     private DisplayParameters[]? _hdrFrameParams;
     private int _hdrSegmentWidth;
 
@@ -323,12 +337,13 @@ public partial class MainWindow : Window
         + "|画像 (*.tif;*.tiff;*.jpg;*.jpeg;*.png;*.bmp)|*.tif;*.tiff;*.jpg;*.jpeg;*.png;*.bmp"
         + "|すべてのファイル (*.*)|*.*";
 
-    private void OnOpenFileClick(object sender, RoutedEventArgs e)
+    private async void OnOpenFileClick(object sender, RoutedEventArgs e)
     {
         var dialog = new OpenFileDialog { Filter = OpenImageFilter };
         if (dialog.ShowDialog(this) == true)
         {
-            LoadFolder(Path.GetDirectoryName(dialog.FileName)!, dialog.FileName);
+            // 連番判定はファイル一覧を見るので、一覧が揃ってから開く
+            await LoadFolderAsync(Path.GetDirectoryName(dialog.FileName)!, dialog.FileName);
             OpenPath(dialog.FileName);
         }
     }
@@ -567,6 +582,7 @@ public partial class MainWindow : Window
         _vm.HdrTargetVisible = false;
         _currentImage?.Dispose();
         _currentImage = image;
+        ClearDefectSource();
         _currentFormat = image.Format;
         _currentPath = path;
         _histogram = null;
@@ -661,13 +677,10 @@ public partial class MainWindow : Window
             bayer = await BayerPyramid.CreateAsync(
                 image, format, frame, cancellationToken: _loadCts?.Token ?? default);
         }
-        catch (OperationCanceledException)
+        catch (Exception ex) when (TaskRaceGuard.IsAbandoned(ex))
         {
-            return;
-        }
-        catch (ObjectDisposedException)
-        {
-            // 画像切替と競合して生成元が破棄された。作り直しは次の表示切替に任せる
+            // キャンセル、または画像切替と競合して生成元が破棄された。
+            // 作り直しは次の表示切替に任せる
             return;
         }
 
@@ -792,13 +805,9 @@ public partial class MainWindow : Window
                     cts.Token);
             }
         }
-        catch (OperationCanceledException)
+        catch (Exception ex) when (TaskRaceGuard.IsAbandoned(ex))
         {
-            return;
-        }
-        catch (ObjectDisposedException)
-        {
-            return;
+            return; // キャンセル、または解析中に画像が差し替わった
         }
 
         if (cts.IsCancellationRequested || !ReferenceEquals(image, ActiveImage))
@@ -912,7 +921,7 @@ public partial class MainWindow : Window
         return bitmap;
     }
 
-    private static ImageSource RenderHistogram(uint[] bins, bool logScale, bool cumulative)
+    private static ImageSource RenderHistogram(long[] bins, bool logScale, bool cumulative)
     {
         const int width = 210;
         const int height = 70;
@@ -1327,7 +1336,7 @@ public partial class MainWindow : Window
     private void RebuildRecentMenu()
     {
         RecentMenu.Items.Clear();
-        List<string> recent = _recentFiles.Load().Where(File.Exists).ToList();
+        List<string> recent = _recentFiles.Load();
         if (recent.Count == 0)
         {
             RecentMenu.Items.Add(new System.Windows.Controls.MenuItem
@@ -1353,6 +1362,51 @@ public partial class MainWindow : Window
                 OpenPath(captured);
             };
             RecentMenu.Items.Add(item);
+        }
+
+        // 存在確認は切断されたNAS/UNCパスでSMBタイムアウトまでブロックするため、
+        // メニューは先に出してから裏で確認し、消えていた項目だけ後から取り除く
+        int generation = ++_recentMenuGeneration;
+        _ = PruneMissingRecentItemsAsync(generation, recent);
+    }
+
+    /// <summary>最近使ったファイルのうち実在しないものをメニューから取り除く。</summary>
+    /// <param name="generation">起動した時点の世代(後発の再構築があれば破棄する)。</param>
+    /// <param name="paths">確認対象のパス。</param>
+    /// <returns>取り除きの完了を表すタスク。</returns>
+    private async Task PruneMissingRecentItemsAsync(int generation, List<string> paths)
+    {
+        List<string> missing;
+        try
+        {
+            missing = await Task.Run(() => paths.Where(p => !File.Exists(p)).ToList());
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn($"最近使ったファイルの存在確認に失敗: {ex.Message}");
+            return;
+        }
+
+        if (generation != _recentMenuGeneration || missing.Count == 0)
+        {
+            return; // 確認中に作り直された(結果は古い)
+        }
+
+        foreach (System.Windows.Controls.MenuItem item in RecentMenu.Items
+                     .OfType<System.Windows.Controls.MenuItem>()
+                     .Where(i => i.ToolTip is string path && missing.Contains(path))
+                     .ToList())
+        {
+            RecentMenu.Items.Remove(item);
+        }
+
+        if (RecentMenu.Items.Count == 0)
+        {
+            RecentMenu.Items.Add(new System.Windows.Controls.MenuItem
+            {
+                Header = "(なし)",
+                IsEnabled = false,
+            });
         }
     }
 
@@ -1496,8 +1550,9 @@ public partial class MainWindow : Window
     }
 
     /// <summary>ファイル選択ダイアログを出して比較ペイン資源を用意する。</summary>
+    /// <param name="cancellationToken">キャンセルトークン。</param>
     /// <returns>読み込んだ資源。キャンセル・失敗はnull。</returns>
-    private async Task<Compare.ComparePane?> PickComparePaneAsync()
+    private async Task<Compare.ComparePane?> PickComparePaneAsync(CancellationToken cancellationToken)
     {
         var dialog = new OpenFileDialog { Filter = OpenImageFilter };
         if (dialog.ShowDialog(this) != true)
@@ -1505,7 +1560,7 @@ public partial class MainWindow : Window
             return null;
         }
 
-        return await LoadComparePaneAsync(dialog.FileName);
+        return await LoadComparePaneAsync(dialog.FileName, cancellationToken);
     }
 
     /// <summary>
@@ -1513,8 +1568,10 @@ public partial class MainWindow : Window
     /// なければインポートダイアログで確認する。
     /// </summary>
     /// <param name="path">対象ファイル。</param>
+    /// <param name="cancellationToken">キャンセルトークン。</param>
     /// <returns>読み込んだ資源。キャンセル・失敗はnull。</returns>
-    private async Task<Compare.ComparePane?> LoadComparePaneAsync(string path)
+    private async Task<Compare.ComparePane?> LoadComparePaneAsync(
+        string path, CancellationToken cancellationToken)
     {
         try
         {
@@ -1538,7 +1595,11 @@ public partial class MainWindow : Window
                 }
             }
 
-            return await Compare.ComparePane.LoadAsync(path, format);
+            return await Compare.ComparePane.LoadAsync(path, format, cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            return null; // 比較モード終了で打ち切られた
         }
         catch (Exception ex)
         {
@@ -2058,6 +2119,7 @@ public partial class MainWindow : Window
         _derivedBayerPyramid = null;
         _currentImage?.Dispose();
         _currentImage = processed;
+        ClearDefectSource();
         _currentFormat = processed.Format;
         _histogram = null;
         _channelHistograms = null;
@@ -2447,8 +2509,10 @@ public partial class MainWindow : Window
             ? new JpegBitmapEncoder { QualityLevel = 95 }
             : new PngBitmapEncoder();
         encoder.Frames.Add(BitmapFrame.Create(source));
-        using var stream = new FileStream(path, FileMode.Create, FileAccess.Write);
-        encoder.Save(stream);
+
+        // 途中で失敗しても壊れたファイルを出力フォルダに残さない
+        // (同名の前回出力も、書き切るまでは差し替えない)
+        AtomicFileWriter.Write(path, encoder.Save);
     }
 
     // ---- 表示モード・ホワイトバランス ----
@@ -2548,6 +2612,22 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>
+    /// HDR派生ビューの計算結果を適用してよいか判定する。
+    /// </summary>
+    /// <remarks>
+    /// 分割・合成は数秒かかり、その間も表示モードは操作できる。元画像の差し替えだけでなく
+    /// モード変更も見ないと、ユーザーが選び直した表示を計算結果が後から上書きしてしまう。
+    /// </remarks>
+    /// <param name="expectedModeIndex">開始時の表示モード(分割=4、合成=5)。</param>
+    /// <param name="source">計算元の画像。</param>
+    /// <returns>適用してよければtrue。</returns>
+    private bool CanApplyHdrView(int expectedModeIndex, RawImage source)
+    {
+        return DisplayModeCombo.SelectedIndex == expectedModeIndex
+            && ReferenceEquals(source, _currentImage);
+    }
+
     private async Task EnterHdrSplitAsync()
     {
         // 再生タイマーの連番送りと競合すると、Split中の画像が背後で破棄される
@@ -2562,7 +2642,7 @@ public partial class MainWindow : Window
         {
             frames = await Task.Run(() => HdrSplitter.Split(image, splitFormat));
         }
-        catch (ObjectDisposedException)
+        catch (Exception ex) when (TaskRaceGuard.IsAbandoned(ex))
         {
             // 別ファイルへの切替と競合して元画像が破棄された。結果は不要
             // (InvalidOperationExceptionの派生なので先に受ける)
@@ -2576,8 +2656,13 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (!ReferenceEquals(image, _currentImage))
+        if (!CanApplyHdrView(4, image))
         {
+            foreach (RawImage frame in frames)
+            {
+                frame.Dispose();
+            }
+
             return;
         }
 
@@ -2614,7 +2699,7 @@ public partial class MainWindow : Window
             frame.Dispose();
         }
 
-        if (!ReferenceEquals(image, _currentImage))
+        if (!CanApplyHdrView(4, image))
         {
             composite.Dispose();
             return;
@@ -2679,7 +2764,7 @@ public partial class MainWindow : Window
                 }
             });
         }
-        catch (ObjectDisposedException)
+        catch (Exception ex) when (TaskRaceGuard.IsAbandoned(ex))
         {
             // 別ファイルへの切替と競合して元画像が破棄された。結果は不要
             // (InvalidOperationExceptionの派生なので先に受ける)
@@ -2693,7 +2778,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (!ReferenceEquals(image, _currentImage))
+        if (!CanApplyHdrView(5, image))
         {
             quantized.Dispose();
             return;
@@ -2731,6 +2816,7 @@ public partial class MainWindow : Window
         _derivedBayerPyramid = null;
         _derivedImage?.Dispose();
         _derivedImage = derived;
+        ClearDefectSource();
         _hdrFloatImage = null;
         _hdrFrameParams = null;
         _vm.HasRoi = false;
@@ -2768,6 +2854,7 @@ public partial class MainWindow : Window
         await Viewport.ClearImageAsync();
         _derivedImage?.Dispose();
         _derivedImage = null;
+        ClearDefectSource();
         _hdrFloatImage = null;
         _hdrFrameParams = null;
         _vm.HdrTargetVisible = false;
@@ -3224,6 +3311,10 @@ public partial class MainWindow : Window
                 _mainBayerPyramid?.Dispose();
                 _mainBayerPyramid = null;
                 _sequenceIndex = index;
+
+                // 旧画像を読んでいる解析を止めてから破棄する
+                // (走行中だとParallel.For内でObjectDisposedExceptionになる)
+                CancelAnalysis();
                 old?.Dispose();
                 Title = $"RawAnalyzer — {Path.GetFileName(path)}";
                 _vm.SelectedFile = _vm.Files.FirstOrDefault(f => string.Equals(
@@ -4189,7 +4280,7 @@ public partial class MainWindow : Window
         e.Handled = true;
     }
 
-    private void OnFileDrop(object sender, DragEventArgs e)
+    private async void OnFileDrop(object sender, DragEventArgs e)
     {
         if (e.Data.GetData(DataFormats.FileDrop) is not string[] { Length: > 0 } paths)
         {
@@ -4203,7 +4294,8 @@ public partial class MainWindow : Window
         }
         else if (File.Exists(path))
         {
-            LoadFolder(Path.GetDirectoryName(path)!, path);
+            // 連番判定はファイル一覧を見るので、一覧が揃ってから開く
+            await LoadFolderAsync(Path.GetDirectoryName(path)!, path);
             OpenPath(path);
         }
     }

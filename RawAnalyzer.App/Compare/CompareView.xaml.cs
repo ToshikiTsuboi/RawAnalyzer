@@ -25,6 +25,11 @@ public partial class CompareView : UserControl
     private CompareSyncMode _syncMode = CompareSyncMode.FieldOfView;
     private bool _syncing;
 
+    // 読み込み中に比較モードを抜けた場合の判定。CloseAllAsyncで進めることで、
+    // 完了した資源を「もう要らないもの」として破棄できる
+    private int _generation;
+    private CancellationTokenSource? _lifetime;
+
     /// <summary>ビューを生成する。</summary>
     public CompareView()
     {
@@ -36,10 +41,13 @@ public partial class CompareView : UserControl
     public event EventHandler? ExitRequested;
 
     /// <summary>ファイル選択ダイアログ込みでペイン資源を用意する(キャンセルはnull)。</summary>
-    internal Func<Task<ComparePane?>>? PanePicker { get; set; }
+    internal Func<CancellationToken, Task<ComparePane?>>? PanePicker { get; set; }
 
     /// <summary>パス指定でペイン資源を用意する(ドロップ用。失敗はnull)。</summary>
-    internal Func<string, Task<ComparePane?>>? PaneLoader { get; set; }
+    internal Func<string, CancellationToken, Task<ComparePane?>>? PaneLoader { get; set; }
+
+    /// <summary>読み込み中の処理を比較モード終了で打ち切るためのトークン源。</summary>
+    private CancellationTokenSource Lifetime => _lifetime ??= new CancellationTokenSource();
 
     /// <summary>現在のペイン数。</summary>
     public int PaneCount => _panes.Count;
@@ -57,16 +65,28 @@ public partial class CompareView : UserControl
         }
 
         _loading = true;
+        int generation = _generation;
+        CancellationToken token = Lifetime.Token;
         try
         {
-            ComparePane? pane = await PaneLoader(path);
+            ComparePane? pane = await PaneLoader(path, token);
             if (pane is null)
             {
                 return false;
             }
 
-            await AddPaneAsync(pane);
+            if (generation != _generation)
+            {
+                pane.Dispose(); // 読み込み中に比較モードを抜けた
+                return false;
+            }
+
+            await AddPaneAsync(pane, token);
             return true;
+        }
+        catch (OperationCanceledException)
+        {
+            return false;
         }
         finally
         {
@@ -78,6 +98,16 @@ public partial class CompareView : UserControl
     /// <returns>破棄完了を表すタスク。</returns>
     public async Task CloseAllAsync()
     {
+        // 進行中の読み込みを打ち切り、完了しても追加されないようにする
+        _generation++;
+        CancellationTokenSource? lifetime = _lifetime;
+        _lifetime = null;
+        if (lifetime is not null)
+        {
+            lifetime.Cancel();
+            lifetime.Dispose();
+        }
+
         foreach (ComparePaneView pane in _panes.ToList())
         {
             await pane.DetachAndDisposeAsync();
@@ -107,13 +137,27 @@ public partial class CompareView : UserControl
         }
 
         _loading = true;
+        int generation = _generation;
+        CancellationToken token = Lifetime.Token;
         try
         {
-            ComparePane? pane = await PanePicker();
-            if (pane is not null)
+            ComparePane? pane = await PanePicker(token);
+            if (pane is null)
             {
-                await AddPaneAsync(pane);
+                return;
             }
+
+            if (generation != _generation)
+            {
+                pane.Dispose(); // 読み込み中に比較モードを抜けた
+                return;
+            }
+
+            await AddPaneAsync(pane, token);
+        }
+        catch (OperationCanceledException)
+        {
+            // 比較モード終了で打ち切られた
         }
         finally
         {
@@ -121,7 +165,7 @@ public partial class CompareView : UserControl
         }
     }
 
-    private async Task AddPaneAsync(ComparePane pane)
+    private async Task AddPaneAsync(ComparePane pane, CancellationToken cancellationToken)
     {
         var view = new ComparePaneView();
         view.CloseRequested += OnPaneCloseRequested;
@@ -132,16 +176,22 @@ public partial class CompareView : UserControl
         view.DisplayChanged += OnPaneDisplayChanged;
         _panes.Add(view);
         Relayout();
-        await view.AttachAsync(pane);
+        await view.AttachAsync(pane, cancellationToken);
         SetActive(view);
         RefreshChips();
 
-        // 既存ペインがあれば、その表示範囲に合わせて開始する
+        // 同期中なら、既存ペインの表示範囲に合わせて新規ペインだけを開始位置に置く
+        // (同期オフでは各ペイン独立なので、既存の表示は一切動かさない)
+        if (_syncMode == CompareSyncMode.Off)
+        {
+            return;
+        }
+
         ComparePaneView? reference = _panes.FirstOrDefault(
             p => !ReferenceEquals(p, view) && p.Pane is not null);
         if (reference is not null)
         {
-            SyncFrom(reference);
+            SyncFrom(reference, only: view);
         }
     }
 
@@ -175,8 +225,10 @@ public partial class CompareView : UserControl
         }
     }
 
-    /// <summary>指定ペインのビュー状態を、他の全ペインへ写像して適用する。</summary>
-    private void SyncFrom(ComparePaneView source)
+    /// <summary>指定ペインのビュー状態を、他のペインへ写像して適用する。</summary>
+    /// <param name="source">基準にするペイン。</param>
+    /// <param name="only">指定するとこのペインだけに適用する(ペイン追加時の初期合わせ用)。</param>
+    private void SyncFrom(ComparePaneView source, ComparePaneView? only = null)
     {
         if (_syncing || source.Pane is null)
         {
@@ -195,7 +247,8 @@ public partial class CompareView : UserControl
 
             foreach (ComparePaneView pane in _panes)
             {
-                if (ReferenceEquals(pane, source) || pane.Pane is null)
+                if (ReferenceEquals(pane, source) || pane.Pane is null
+                    || (only is not null && !ReferenceEquals(pane, only)))
                 {
                     continue;
                 }

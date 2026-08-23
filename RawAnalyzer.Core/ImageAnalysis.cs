@@ -1,4 +1,4 @@
-namespace RawAnalyzer.Core;
+﻿namespace RawAnalyzer.Core;
 
 /// <summary>画像上の矩形領域(画素座標)。</summary>
 /// <param name="X">左端X座標。</param>
@@ -41,7 +41,7 @@ public readonly record struct RegionStatistics(
 public sealed class HistogramResult
 {
     /// <summary>ビン配列。長さは 2^BitDepth。</summary>
-    public required uint[] Bins { get; init; }
+    public required long[] Bins { get; init; }
 
     /// <summary>ビット深度。</summary>
     public required int BitDepth { get; init; }
@@ -102,7 +102,7 @@ public sealed class ChannelHistogram
     public required BayerChannel Channel { get; init; }
 
     /// <summary>ビン配列(raw code値域、長さ2^BitDepth)。</summary>
-    public required uint[] Bins { get; init; }
+    public required long[] Bins { get; init; }
 
     /// <summary>このチャネルの統計。</summary>
     public required RegionStatistics Statistics { get; init; }
@@ -182,7 +182,10 @@ public static class ImageAnalysis
         int shift = 16 - image.Format.BitDepth;
         object gate = new();
         long totalSum = 0;
-        long totalSumSq = 0;
+
+        // 16bitでは code^2 が最大約4.3e9。longだと約2.1e9サンプルで桁あふれし、
+        // varianceが負→σ=0に握りつぶされて無警告で壊れる(ギガピクセルは対応範囲)
+        UInt128 totalSumSq = UInt128.Zero;
         long totalCount = 0;
         int totalMin = int.MaxValue;
         int totalMax = int.MinValue;
@@ -228,7 +231,7 @@ public static class ImageAnalysis
                 lock (gate)
                 {
                     totalSum += local.Sum;
-                    totalSumSq += local.SumSq;
+                    totalSumSq += (ulong)local.SumSq;
                     totalCount += local.Count;
                     totalMin = Math.Min(totalMin, local.Min);
                     totalMax = Math.Max(totalMax, local.Max);
@@ -268,7 +271,7 @@ public static class ImageAnalysis
             .Clamp(image.Width, image.Height);
         int bitDepth = image.Format.BitDepth;
         int shift = 16 - bitDepth;
-        var bins = new uint[1 << bitDepth];
+        var bins = new long[1 << bitDepth];
         if (roi.PixelCount == 0)
         {
             return new HistogramResult
@@ -296,7 +299,7 @@ public static class ImageAnalysis
 
         var buffer = new ushort[roi.Width];
         long sum = 0;
-        long sumSq = 0;
+        UInt128 sumSq = UInt128.Zero;
         int min = int.MaxValue;
         int max = int.MinValue;
         long count = 0;
@@ -310,7 +313,7 @@ public static class ImageAnalysis
                 int code = buffer[x] >> shift;
                 bins[code]++;
                 sum += code;
-                sumSq += (long)code * code;
+                sumSq += (ulong)((long)code * code);
                 if (code < min)
                 {
                     min = code;
@@ -374,20 +377,20 @@ public static class ImageAnalysis
         int blocksX = Math.Max(0, (x1 - x0) / 2);
         int blocksY = Math.Max(0, (y1 - y0) / 2);
 
-        var channelBins = new uint[4][];
+        var channelBins = new long[4][];
         var sums = new long[4];
-        var sumSqs = new long[4];
+        var sumSqs = new UInt128[4];
         var mins = new int[4];
         var maxs = new int[4];
         var counts = new long[4];
         for (int i = 0; i < 4; i++)
         {
-            channelBins[i] = new uint[binCount];
+            channelBins[i] = new long[binCount];
             mins[i] = int.MaxValue;
             maxs[i] = int.MinValue;
         }
 
-        var totalBins = new uint[binCount];
+        var totalBins = new long[binCount];
 
         long totalPixels = 4L * blocksX * blocksY;
         int strideBlocks = totalPixels > maxSamples
@@ -477,7 +480,7 @@ public static class ImageAnalysis
             totalBins[code]++;
             channelBins[channel][code]++;
             sums[channel] += code;
-            sumSqs[channel] += (long)code * code;
+            sumSqs[channel] += (ulong)((long)code * code);
             if (code < mins[channel])
             {
                 mins[channel] = code;
@@ -494,7 +497,12 @@ public static class ImageAnalysis
         // 全体統計をチャネル合算から求める
         long totalCount = counts.Sum();
         long totalSum = sums.Sum();
-        long totalSumSq = sumSqs.Sum();
+        UInt128 totalSumSq = UInt128.Zero;
+        foreach (UInt128 channelSumSq in sumSqs)
+        {
+            totalSumSq += channelSumSq;
+        }
+
         double totalMean = totalCount > 0 ? (double)totalSum / totalCount : 0;
         double totalVar = totalCount > 0 ? (double)totalSumSq / totalCount - totalMean * totalMean : 0;
         var total = new HistogramResult
@@ -596,7 +604,7 @@ public static class ImageAnalysis
     /// <returns>解析指標。</returns>
     public static HistogramMetrics ComputeHistogramMetrics(HistogramResult histogram)
     {
-        uint[] bins = histogram.Bins;
+        long[] bins = histogram.Bins;
         long total = histogram.SampleCount;
         if (total <= 0)
         {
@@ -607,7 +615,7 @@ public static class ImageAnalysis
         int p1 = 0;
         int p99 = bins.Length - 1;
         int mode = 0;
-        uint modeCount = 0;
+        long modeCount = 0;
         long accumulated = 0;
         bool medianFound = false;
         bool p1Found = false;
@@ -621,7 +629,7 @@ public static class ImageAnalysis
 
         for (int i = 0; i < bins.Length; i++)
         {
-            uint count = bins[i];
+            long count = bins[i];
             if (count > modeCount)
             {
                 modeCount = count;

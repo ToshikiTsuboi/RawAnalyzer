@@ -6,6 +6,7 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using RawAnalyzer.App.Rendering;
+using RawAnalyzer.App.Services;
 using RawAnalyzer.Core;
 
 namespace RawAnalyzer.App.Controls;
@@ -123,6 +124,16 @@ public sealed class ImageViewport : FrameworkElement
 
     private OverlayData? _overlay;
 
+    // raw値オーバーレイの描画結果。FormattedTextの生成が重いので、
+    // 表示範囲(ズーム/原点/サイズ)と元データが変わるまで使い回す
+    private Drawing? _overlayDrawing;
+    private OverlayData? _overlayDrawingSource;
+    private double _overlayDrawingZoom;
+    private double _overlayDrawingOriginX;
+    private double _overlayDrawingOriginY;
+    private double _overlayDrawingWidth;
+    private double _overlayDrawingHeight;
+
     /// <summary>コントロールを生成する。</summary>
     public ImageViewport()
     {
@@ -231,6 +242,12 @@ public sealed class ImageViewport : FrameworkElement
     /// <param name="imageY">画像Y座標(小数可)。</param>
     public void SetGhostCursor(double imageX, double imageY)
     {
+        // 同じ画素を指し続ける間の再描画は無駄(raw値オーバーレイ表示中は特に高価)
+        if (_ghostVisible && _ghostX == imageX && _ghostY == imageY)
+        {
+            return;
+        }
+
         _ghostVisible = true;
         _ghostX = imageX;
         _ghostY = imageY;
@@ -1275,12 +1292,9 @@ public sealed class ImageViewport : FrameworkElement
                     Present(buffer, destW, destH, effectiveFactor, displayZoom, fast);
                 });
             }
-            catch (OperationCanceledException)
+            catch (Exception ex) when (TaskRaceGuard.IsAbandoned(ex))
             {
-            }
-            catch (ObjectDisposedException)
-            {
-                // 画像/ピラミッドの差し替え中に破棄と競合したときの読み出し。
+                // キャンセル、または画像/ピラミッドの差し替え中に破棄と競合した読み出し。
                 // 破棄後の描画結果は不要なのでキャンセル扱いにする
                 // (伝播させると後続のClear/ReplaceのawaitでUIまで届いてしまう)
             }
@@ -1311,6 +1325,8 @@ public sealed class ImageViewport : FrameworkElement
             RenderedFactor = factor,
         });
     }
+
+    private static readonly Typeface OverlayTypeface = new("Consolas");
 
     private sealed record OverlayData(int X0, int Y0, int Cols, int Rows, ushort[] Values);
 
@@ -1344,10 +1360,35 @@ public sealed class ImageViewport : FrameworkElement
             return;
         }
 
-        OverlayData ov = _overlay;
-        int shift = 16 - _format.BitDepth;
+        // ROIドラッグやゴーストカーソル移動でもOnRenderは走るが、
+        // そのときオーバーレイの内容は変わらないので作り直さない
+        if (_overlayDrawing is null
+            || !ReferenceEquals(_overlayDrawingSource, _overlay)
+            || _overlayDrawingZoom != _zoom
+            || _overlayDrawingOriginX != _originX
+            || _overlayDrawingOriginY != _originY
+            || _overlayDrawingWidth != ActualWidth
+            || _overlayDrawingHeight != ActualHeight)
+        {
+            _overlayDrawing = BuildRawValueOverlay(_overlay);
+            _overlayDrawingSource = _overlay;
+            _overlayDrawingZoom = _zoom;
+            _overlayDrawingOriginX = _originX;
+            _overlayDrawingOriginY = _originY;
+            _overlayDrawingWidth = ActualWidth;
+            _overlayDrawingHeight = ActualHeight;
+        }
+
+        dc.DrawDrawing(_overlayDrawing);
+    }
+
+    private Drawing BuildRawValueOverlay(OverlayData ov)
+    {
+        var group = new DrawingGroup();
+        using DrawingContext dc = group.Open();
+
+        int shift = 16 - _format!.BitDepth;
         double fontSize = Math.Clamp(_zoom / 4.5, 9, 15);
-        var typeface = new Typeface("Consolas");
         double pixelsPerDip = VisualTreeHelper.GetDpi(this).PixelsPerDip;
         Brush dark = Brushes.Black;
         Brush light = Brushes.White;
@@ -1375,7 +1416,7 @@ public sealed class ImageViewport : FrameworkElement
                     code.ToString(CultureInfo.InvariantCulture),
                     CultureInfo.InvariantCulture,
                     FlowDirection.LeftToRight,
-                    typeface,
+                    OverlayTypeface,
                     fontSize,
                     brush,
                     pixelsPerDip);
@@ -1384,5 +1425,8 @@ public sealed class ImageViewport : FrameworkElement
                     top + (_zoom - text.Height) / 2));
             }
         }
+
+        group.Freeze();
+        return group;
     }
 }

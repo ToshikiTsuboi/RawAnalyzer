@@ -1,4 +1,4 @@
-using System.IO.MemoryMappedFiles;
+﻿using System.IO.MemoryMappedFiles;
 
 namespace RawAnalyzer.Core;
 
@@ -127,7 +127,11 @@ public static class RawLoader
                 $"ファイルサイズ {fileLength} バイトはフォーマットが要求する {requiredBytes} バイトに足りません。");
         }
 
-        if (format.TotalPixels <= inMemoryPixelThreshold)
+        // ネットワーク上のファイルはMMFにしない。表示中に接続が切れたり
+        // サーバが再起動するとページインが EXCEPTION_IN_PAGE_ERROR になり、
+        // .NETでは捕捉できずプロセスごと落ちる(解析セッションが全損する)。
+        // 転送は重くなるが、進捗とキャンセルが効くヒープ展開で読み切る
+        if (format.TotalPixels <= inMemoryPixelThreshold || IsNetworkPath(path))
         {
             return LoadInMemory(path, format, cancellationToken, progress);
         }
@@ -180,6 +184,36 @@ public static class RawLoader
 
     /// <summary>1回に読み込むバイト数の目安(チャンク境界は行に揃える)。</summary>
     private const int LoadChunkBytes = 8 << 20;
+
+    /// <summary>
+    /// パスがネットワーク上(UNC またはネットワークドライブ)かを判定する。
+    /// </summary>
+    /// <remarks>
+    /// 判定できない場合はローカル扱い(false)にして従来どおりの経路を選ぶ。
+    /// </remarks>
+    /// <param name="path">対象のパス。</param>
+    /// <returns>ネットワーク上ならtrue。</returns>
+    public static bool IsNetworkPath(string path)
+    {
+        try
+        {
+            string full = Path.GetFullPath(path);
+            if (full.StartsWith(@"\\", StringComparison.Ordinal))
+            {
+                return true; // UNC (\\server\share\...)
+            }
+
+            string? root = Path.GetPathRoot(full);
+            return root is { Length: > 0 }
+                && new DriveInfo(root).DriveType == DriveType.Network;
+        }
+        catch (Exception ex) when (
+            ex is ArgumentException or IOException or UnauthorizedAccessException
+                or NotSupportedException)
+        {
+            return false;
+        }
+    }
 
     private static RawImage LoadInMemory(
         string path, RawFormat format, CancellationToken cancellationToken,

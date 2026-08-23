@@ -1,4 +1,4 @@
-using System.Buffers.Binary;
+﻿using System.Buffers.Binary;
 using System.IO.MemoryMappedFiles;
 
 namespace RawAnalyzer.Core;
@@ -504,14 +504,22 @@ public static unsafe class TiffLoader
         return entries;
     }
 
-    private static uint? GetScalar(
-        List<IfdEntry> entries, TiffBytes data, ushort tag, bool bigEndian)
-    {
-        uint[]? values = GetArray(entries, data, tag, bigEndian);
-        return values is { Length: > 0 } ? values[0] : null;
-    }
+    /// <summary>
+    /// タグ値の所在。<see cref="Count"/> は検証済みだが、確保はまだ行っていない。
+    /// </summary>
+    private readonly record struct TagValues(long Offset, int ValueSize, uint Count);
 
-    private static uint[]? GetArray(
+    /// <summary>
+    /// 配列として読み出すタグの要素数上限。
+    /// </summary>
+    /// <remarks>
+    /// このパーサが配列で読むのは strip 単位のタグ(要素数は高々画像の行数)だけ。
+    /// 破損・悪意あるIFDが巨大な Count を宣言してもファイル長の範囲チェックだけでは
+    /// 数GBの確保が通ってしまうため、確保前に妥当な上限で弾く。
+    /// </remarks>
+    private const uint MaxTagArrayCount = 1 << 24;
+
+    private static TagValues? FindTagValues(
         List<IfdEntry> entries, TiffBytes data, ushort tag, bool bigEndian)
     {
         foreach (IfdEntry entry in entries)
@@ -539,17 +547,48 @@ public static unsafe class TiffLoader
                 throw new InvalidDataException($"タグ{tag}の値がファイル範囲外を指しています。");
             }
 
-            var values = new uint[entry.Count];
-            for (int i = 0; i < entry.Count; i++)
-            {
-                values[i] = valueSize == 2
-                    ? data.ReadU16(valueOffset + i * 2, bigEndian)
-                    : data.ReadU32(valueOffset + i * 4, bigEndian);
-            }
-
-            return values;
+            return new TagValues(valueOffset, valueSize, entry.Count);
         }
 
         return null;
+    }
+
+    private static uint? GetScalar(
+        List<IfdEntry> entries, TiffBytes data, ushort tag, bool bigEndian)
+    {
+        // 先頭の1値しか使わないので、宣言された要素数がいくら大きくても確保しない
+        if (FindTagValues(entries, data, tag, bigEndian) is not { Count: > 0 } found)
+        {
+            return null;
+        }
+
+        return found.ValueSize == 2
+            ? data.ReadU16(found.Offset, bigEndian)
+            : data.ReadU32(found.Offset, bigEndian);
+    }
+
+    private static uint[]? GetArray(
+        List<IfdEntry> entries, TiffBytes data, ushort tag, bool bigEndian)
+    {
+        if (FindTagValues(entries, data, tag, bigEndian) is not { } found)
+        {
+            return null;
+        }
+
+        if (found.Count > MaxTagArrayCount)
+        {
+            throw new InvalidDataException(
+                $"タグ{tag}の要素数({found.Count})が上限({MaxTagArrayCount})を超えています。");
+        }
+
+        var values = new uint[found.Count];
+        for (int i = 0; i < values.Length; i++)
+        {
+            values[i] = found.ValueSize == 2
+                ? data.ReadU16(found.Offset + (i * 2), bigEndian)
+                : data.ReadU32(found.Offset + (i * 4), bigEndian);
+        }
+
+        return values;
     }
 }

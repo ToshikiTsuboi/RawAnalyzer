@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 using System.Text;
 
 namespace RawAnalyzer.Core;
@@ -30,7 +30,7 @@ public static class HistogramTools
     /// </returns>
     /// <exception cref="ArgumentOutOfRangeException">clipRatioが範囲外の場合。</exception>
     public static AutoLevels? ComputeAutoLevels(
-        ReadOnlySpan<uint> bins, double clipRatio = DefaultClipRatio)
+        ReadOnlySpan<long> bins, double clipRatio = DefaultClipRatio)
     {
         if (clipRatio < 0 || clipRatio >= 0.5)
         {
@@ -39,7 +39,7 @@ public static class HistogramTools
         }
 
         long total = 0;
-        foreach (uint count in bins)
+        foreach (long count in bins)
         {
             total += count;
         }
@@ -86,7 +86,7 @@ public static class HistogramTools
     /// <param name="cumulative">trueなら累積(左から積み上げ)にする。</param>
     /// <returns>長さcolumnsの集約結果。</returns>
     /// <exception cref="ArgumentOutOfRangeException">columnsが1未満の場合。</exception>
-    public static double[] Aggregate(uint[] bins, int columns, bool cumulative = false)
+    public static double[] Aggregate(long[] bins, int columns, bool cumulative = false)
     {
         if (columns < 1)
         {
@@ -125,7 +125,7 @@ public static class HistogramTools
     /// <returns>ヘッダ付きのテキスト。</returns>
     /// <exception cref="ArgumentException">チャネル別ビンの長さが一致しない場合。</exception>
     public static string BuildTable(
-        uint[] bins, char separator, IReadOnlyList<ChannelHistogram>? channels = null)
+        long[] bins, char separator, IReadOnlyList<ChannelHistogram>? channels = null)
     {
         bool byChannel = channels is { Count: 4 };
         if (byChannel)

@@ -204,8 +204,9 @@ public partial class ComparePaneView : UserControl
     /// (<see cref="DetachAndDisposeAsync"/> で破棄する)。
     /// </summary>
     /// <param name="pane">装着する資源。</param>
+    /// <param name="cancellationToken">キャンセルトークン。</param>
     /// <returns>初期表示の完了を表すタスク。</returns>
-    internal async Task AttachAsync(ComparePane pane)
+    internal async Task AttachAsync(ComparePane pane, CancellationToken cancellationToken = default)
     {
         Pane = pane;
         FileNameText.Text = pane.FileName;
@@ -224,7 +225,7 @@ public partial class ComparePaneView : UserControl
         // 縮小表示用ピラミッド。失敗しても等倍表示はできるので落とさない
         try
         {
-            await pane.EnsureTilePyramidAsync();
+            await pane.EnsureTilePyramidAsync(frame: 0, cancellationToken);
             if (ReferenceEquals(pane, Pane) && pane.Pyramid is not null)
             {
                 Viewport.SetPyramid(pane.Pyramid, pane.PyramidFrame);
