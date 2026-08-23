@@ -1,4 +1,4 @@
-namespace RawAnalyzer.Core;
+﻿namespace RawAnalyzer.Core;
 
 /// <summary>欠陥画素の種別。</summary>
 public enum DefectType
@@ -107,7 +107,8 @@ public static class DefectPixelDetector
         IProgress<double>? progress = null,
         CancellationToken cancellationToken = default)
     {
-        if (sigmaFactor <= 0)
+        // NaN は比較を素通りするため、有限性を先に確かめる
+        if (!double.IsFinite(sigmaFactor) || sigmaFactor <= 0)
         {
             throw new ArgumentOutOfRangeException(nameof(sigmaFactor), "σ係数は正の値である必要があります。");
         }

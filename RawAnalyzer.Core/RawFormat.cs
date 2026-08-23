@@ -1,4 +1,4 @@
-using System.Text.Json.Serialization;
+﻿using System.Text.Json.Serialization;
 
 namespace RawAnalyzer.Core;
 
@@ -127,6 +127,14 @@ public sealed record RawFormat
         if (Height <= 0)
         {
             throw new ArgumentException($"高さは正の値である必要があります: {Height}");
+        }
+
+        // NaN は比較を素通りするため、有限性を明示的に確かめる
+        // (NaN のまま HDR 合成へ入ると全画素が NaN になる)
+        if (!double.IsFinite(ExposureRatio) || ExposureRatio <= 0)
+        {
+            throw new ArgumentException(
+                $"露光比は有限の正の値である必要があります: {ExposureRatio}");
         }
 
         // 桁あふれで負のサイズになると、ファイル長の検証が意味を失う

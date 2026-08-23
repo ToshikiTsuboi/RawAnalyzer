@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 using System.IO;
 using System.Text;
 using System.Windows;
@@ -116,8 +116,7 @@ public partial class DefectPixelWindow : Window
 
     private void OnRunClick(object sender, RoutedEventArgs e)
     {
-        if (!double.TryParse(SigmaBox.Text, NumberStyles.Float,
-                CultureInfo.InvariantCulture, out double sigma) || sigma <= 0)
+        if (!NumericInput.TryParsePositive(SigmaBox.Text, out double sigma))
         {
             MessageBox.Show(this, "σ係数は正の数値で指定してください。", "欠陥画素検出",
                 MessageBoxButton.OK, MessageBoxImage.Warning);

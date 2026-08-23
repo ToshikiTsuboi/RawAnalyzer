@@ -196,14 +196,17 @@ public static class ImageAnalysis
             0,
             rowCount,
             new ParallelOptions { CancellationToken = cancellationToken },
-            () => (Buffer: new ushort[roi.Width], Sum: 0L, SumSq: 0L, Count: 0L,
+            () => (Buffer: new ushort[roi.Width], Sum: 0L, SumSq: UInt128.Zero, Count: 0L,
                 Min: int.MaxValue, Max: int.MinValue),
             (rowIndex, _, local) =>
             {
                 image.CopyRegion(
                     frame, roi.X, roi.Y + rowIndex * sampleStride, roi.Width, 1, local.Buffer);
                 long sum = local.Sum;
-                long sumSq = local.SumSq;
+
+                // スレッドローカルも UInt128 で持つ。1スレッドが担当する行数だけでも
+                // 約21億サンプルを超え得るので、long のままだと合算前に桁あふれする
+                UInt128 sumSq = local.SumSq;
                 long count = local.Count;
                 int min = local.Min;
                 int max = local.Max;
@@ -211,7 +214,7 @@ public static class ImageAnalysis
                 {
                     int code = local.Buffer[x] >> shift;
                     sum += code;
-                    sumSq += (long)code * code;
+                    sumSq += (ulong)((long)code * code);
                     count++;
                     if (code < min)
                     {
@@ -231,7 +234,7 @@ public static class ImageAnalysis
                 lock (gate)
                 {
                     totalSum += local.Sum;
-                    totalSumSq += (ulong)local.SumSq;
+                    totalSumSq += local.SumSq;
                     totalCount += local.Count;
                     totalMin = Math.Min(totalMin, local.Min);
                     totalMax = Math.Max(totalMax, local.Max);

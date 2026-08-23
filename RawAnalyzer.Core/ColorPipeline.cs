@@ -1,4 +1,4 @@
-namespace RawAnalyzer.Core;
+﻿namespace RawAnalyzer.Core;
 
 /// <summary>
 /// 3x3カラーマトリクス(行優先: 出力R = M11*R + M12*G + M13*B)。
@@ -20,6 +20,22 @@ public sealed record ColorMatrix(
 {
     /// <summary>単位行列(色変換なし)。</summary>
     public static readonly ColorMatrix Identity = new(1, 0, 0, 0, 1, 0, 0, 0, 1);
+
+    /// <summary>係数がすべて有限であることを確かめる。</summary>
+    /// <exception cref="ArgumentException">NaN や無限大が含まれる場合。</exception>
+    public void Validate()
+    {
+        // NaN は大小比較を素通りするため、範囲チェックだけでは防げない。
+        // 1要素でも非有限だと現像後の全画素が壊れる
+        foreach (double value in ToArray())
+        {
+            if (!double.IsFinite(value))
+            {
+                throw new ArgumentException(
+                    $"カラーマトリクスに有限でない値が含まれています: {value}");
+            }
+        }
+    }
 
     /// <summary>単位行列かどうか。</summary>
     public bool IsIdentity => this == Identity;
@@ -113,6 +129,20 @@ public sealed class DevelopLuts
     /// <exception cref="ArgumentOutOfRangeException">Gammaが0以下、またはゲインが負の場合。</exception>
     public static DevelopLuts Create(DevelopParameters parameters)
     {
+        // NaN は以降の大小比較をすべて素通りし、現像後の全画素を壊す
+        if (!double.IsFinite(parameters.Gamma)
+            || !double.IsFinite(parameters.GainR)
+            || !double.IsFinite(parameters.GainG)
+            || !double.IsFinite(parameters.GainB)
+            || !double.IsFinite(parameters.Gain)
+            || !double.IsFinite(parameters.Contrast))
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(parameters), "現像パラメータに有限でない値が含まれています。");
+        }
+
+        parameters.Matrix?.Validate();
+
         if (parameters.Gamma <= 0)
         {
             throw new ArgumentOutOfRangeException(nameof(parameters), "Gammaは正の値である必要があります。");

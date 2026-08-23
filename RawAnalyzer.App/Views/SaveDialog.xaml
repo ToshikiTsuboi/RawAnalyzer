@@ -1,4 +1,4 @@
-<Window x:Class="RawAnalyzer.App.Views.SaveDialog"
+﻿<Window x:Class="RawAnalyzer.App.Views.SaveDialog"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="保存" Width="430" SizeToContent="Height"
@@ -21,8 +21,8 @@
         <TextBlock Text="出力形式" />
         <ComboBox x:Name="FormatCombo" SelectionChanged="OnFormatChanged">
             <ComboBoxItem Content="raw (16bitコンテナ・無処理)" />
-            <ComboBoxItem Content="TIFF (16bit グレー・無処理)" />
-            <ComboBoxItem Content="PNG (16bit グレー・無処理)" />
+            <ComboBoxItem Content="TIFF (16bit グレー/カラーはRGB48・無処理)" />
+            <ComboBoxItem Content="PNG (16bit グレー/カラーはRGB48・無処理)" />
             <ComboBoxItem Content="PNG (8bit・処理を焼き込み)" />
             <ComboBoxItem Content="JPEG (8bit・処理を焼き込み)" />
         </ComboBox>

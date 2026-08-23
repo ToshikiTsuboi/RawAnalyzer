@@ -141,19 +141,21 @@ public static class NoiseAnalysis
             roi.Height,
             new ParallelOptions { CancellationToken = cancellationToken },
             () => (RowA: new ushort[roi.Width], RowB: new ushort[roi.Width],
-                   Sum: 0L, SumSq: 0L, Count: 0L),
+                   Sum: 0L, SumSq: UInt128.Zero, Count: 0L),
             (row, _, local) =>
             {
                 imageA.CopyRegion(frameA, roi.X, roi.Y + row, roi.Width, 1, local.RowA);
                 imageB.CopyRegion(frameB, roi.X, roi.Y + row, roi.Width, 1, local.RowB);
                 long rowSum = local.Sum;
-                long rowSumSq = local.SumSq;
+
+                // スレッドローカルも UInt128 で持つ(longでは合算前に桁あふれする)
+                UInt128 rowSumSq = local.SumSq;
                 long rowCount = local.Count;
                 for (int x = 0; x < roi.Width; x++)
                 {
                     int diff = (local.RowA[x] >> shiftA) - (local.RowB[x] >> shiftB);
                     rowSum += diff;
-                    rowSumSq += (long)diff * diff;
+                    rowSumSq += (ulong)((long)diff * diff);
                     rowCount++;
                 }
 
@@ -164,7 +166,7 @@ public static class NoiseAnalysis
                 lock (gate)
                 {
                     sum += local.Sum;
-                    sumSq += (ulong)local.SumSq;
+                    sumSq += local.SumSq;
                     count += local.Count;
                 }
             });
@@ -233,6 +235,9 @@ public static class NoiseAnalysis
         double max = (1 << bitDepth) - 1;
 
         // 前のファイル(より深いビット深度)の飽和コードが残っていても DR を過大評価しない
-        return saturationCode > 0 ? Math.Min(saturationCode, max) : max;
+        // NaN は比較を素通りするので有限性も確かめる(NaNだとDRがNaNになる)
+        return double.IsFinite(saturationCode) && saturationCode > 0
+            ? Math.Min(saturationCode, max)
+            : max;
     }
 }

@@ -128,29 +128,50 @@ public static class RawLoader
                 $"ファイルサイズ {fileLength} バイトはフォーマットが要求する {requiredBytes} バイトに足りません。");
         }
 
-        // ネットワーク上のファイルはMMFにしない。表示中に接続が切れたり
-        // サーバが再起動するとページインが EXCEPTION_IN_PAGE_ERROR になり、
-        // .NETでは捕捉できずプロセスごと落ちる(解析セッションが全損する)。
-        // 転送は重くなるが、進捗とキャンセルが効くヒープ展開で読み切る
-        if (format.TotalPixels <= inMemoryPixelThreshold || IsNetworkPath(path))
+        if (format.TotalPixels <= inMemoryPixelThreshold)
         {
             return LoadInMemory(path, format, cancellationToken, progress);
         }
 
-        var mmf = MemoryMappedFile.CreateFromFile(
-            path, FileMode.Open, mapName: null, capacity: 0, MemoryMappedFileAccess.Read);
+        // ネットワーク上のファイルは直接マップしない。表示中に接続が切れたり
+        // サーバが再起動するとページインが EXCEPTION_IN_PAGE_ERROR になり、
+        // .NETでは捕捉できずプロセスごと落ちる(解析セッションが全損する)。
+        // かといってヒープ展開では数GBを一度に確保することになるため、
+        // ローカルの一時ファイルへ写してからマップする
+        string mapPath = path;
+        string? temporaryCopy = null;
+        if (IsNetworkPath(path))
+        {
+            temporaryCopy = CopyToLocalTemporary(path, cancellationToken, progress);
+            mapPath = temporaryCopy;
+        }
+
         try
         {
-            MemoryMappedViewAccessor accessor =
-                mmf.CreateViewAccessor(0, 0, MemoryMappedFileAccess.Read);
+            var mmf = MemoryMappedFile.CreateFromFile(
+                mapPath, FileMode.Open, mapName: null, capacity: 0, MemoryMappedFileAccess.Read);
+            try
+            {
+                MemoryMappedViewAccessor accessor =
+                    mmf.CreateViewAccessor(0, 0, MemoryMappedFileAccess.Read);
 
-            // MMFはマップするだけで実データの転送は表示時に発生するため、ここで完了扱い
-            progress?.Report(1.0);
-            return new RawImage(format, mmf, accessor);
+                // MMFはマップするだけで実データの転送は表示時に発生するため、ここで完了扱い
+                progress?.Report(1.0);
+                return new RawImage(format, mmf, accessor, temporaryCopy);
+            }
+            catch
+            {
+                mmf.Dispose();
+                throw;
+            }
         }
         catch
         {
-            mmf.Dispose();
+            if (temporaryCopy is not null)
+            {
+                AtomicFileWriter.TryDelete(temporaryCopy);
+            }
+
             throw;
         }
     }
@@ -227,13 +248,70 @@ public static class RawLoader
         }
     }
 
+    /// <summary>
+    /// ネットワーク上のファイルをローカルの一時ファイルへ複製する。
+    /// </summary>
+    /// <param name="path">元のパス。</param>
+    /// <param name="cancellationToken">キャンセルトークン。</param>
+    /// <param name="progress">転送の進捗(0〜1)。</param>
+    /// <returns>複製先のパス(呼び出し側が寿命を持つ)。</returns>
+    private static string CopyToLocalTemporary(
+        string path, CancellationToken cancellationToken, IProgress<double>? progress)
+    {
+        string directory = Path.Combine(Path.GetTempPath(), "RawAnalyzer");
+        Directory.CreateDirectory(directory);
+        string destination = Path.Combine(
+            directory, Guid.NewGuid().ToString("N") + Path.GetExtension(path));
+        try
+        {
+            using var source = new FileStream(
+                path, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 1 << 20);
+            using var target = new FileStream(
+                destination, FileMode.CreateNew, FileAccess.Write, FileShare.None,
+                bufferSize: 1 << 20);
+            byte[] buffer = ChunkPool.Rent(LoadChunkBytes);
+            try
+            {
+                long total = source.Length;
+                long done = 0;
+                double lastReported = -1;
+                int read;
+                while ((read = source.Read(buffer, 0, buffer.Length)) > 0)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    target.Write(buffer, 0, read);
+                    done += read;
+                    double ratio = (double)done / Math.Max(1, total);
+                    if (ratio - lastReported >= 0.01 || done == total)
+                    {
+                        lastReported = ratio;
+                        progress?.Report(ratio);
+                    }
+                }
+            }
+            finally
+            {
+                ChunkPool.Return(buffer);
+            }
+
+            return destination;
+        }
+        catch
+        {
+            AtomicFileWriter.TryDelete(destination);
+            throw;
+        }
+    }
+
     private static RawImage LoadInMemory(
         string path, RawFormat format, CancellationToken cancellationToken,
         IProgress<double>? progress)
     {
         int width = format.Width;
         int rowBytes = width * format.BytesPerPixel;
-        int totalRows = format.Height * format.FrameCount;
+
+        // 高さ×フレーム数はintに収まらないことがある(ギガピクセル・多フレーム)
+        long totalRows = (long)format.Height * format.FrameCount;
 
         // ファイル全体の byte[] と ushort[] を同時に持つとピークが約2倍になる
         // (16bit・1億画素で約400MB)。数MBのチャンクへストリーミングする
@@ -247,13 +325,13 @@ public static class RawLoader
                 path, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 1 << 20);
             stream.Seek(format.HeaderOffset, SeekOrigin.Begin);
 
-            for (int firstRow = 0; firstRow < totalRows; firstRow += rowsPerChunk)
+            for (long firstRow = 0; firstRow < totalRows; firstRow += rowsPerChunk)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                int rows = Math.Min(rowsPerChunk, totalRows - firstRow);
+                int rows = (int)Math.Min(rowsPerChunk, totalRows - firstRow);
                 stream.ReadExactly(chunk, 0, rows * rowBytes);
 
-                int chunkFirstRow = firstRow;
+                long chunkFirstRow = firstRow;
                 Parallel.For(
                     0,
                     rows,
@@ -262,7 +340,7 @@ public static class RawLoader
                     {
                         PixelNormalizer.Normalize(
                             chunk.AsSpan(row * rowBytes, rowBytes),
-                            pixels.AsSpan((chunkFirstRow + row) * width, width),
+                            pixels.AsSpan((int)((chunkFirstRow + row) * width), width),
                             format.BitDepth, format.Packing, format.Endianness);
                     });
 

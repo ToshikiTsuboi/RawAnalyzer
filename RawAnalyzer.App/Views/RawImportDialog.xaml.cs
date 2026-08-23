@@ -184,8 +184,7 @@ public partial class RawImportDialog : Window
             return null;
         }
 
-        if (!double.TryParse(ExposureRatioBox.Text, NumberStyles.Float,
-                CultureInfo.InvariantCulture, out double exposureRatio) || exposureRatio <= 0)
+        if (!NumericInput.TryParsePositive(ExposureRatioBox.Text, out double exposureRatio))
         {
             error = "露光比が不正です";
             return null;

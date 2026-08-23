@@ -151,22 +151,24 @@ internal static class ImageFileLoader
         BitmapFrame frame;
         try
         {
+            // 上限判定はファイルから直接ヘッダだけ読んで先に済ませる。
+            // 圧縮データ全体をメモリへ写してから拒否したのでは、上限の目的
+            // (巨大画像でメモリを使い切らない)を果たせない
+            using (var probeStream = new FileStream(
+                path, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 1 << 16))
+            {
+                var probe = BitmapDecoder.Create(
+                    probeStream,
+                    BitmapCreateOptions.PreservePixelFormat,
+                    BitmapCacheOption.None);
+                BitmapFrame probeFrame = probe.Frames[0];
+                EnsureDecodable(
+                    probeFrame.PixelWidth, probeFrame.PixelHeight, probeFrame.Format);
+            }
+
             // WICにURIを渡すと転送の進捗が取れないため、自前でメモリへ読んでから
             // デコードする。NASなどの低速ストレージでは転送が時間の大半を占める
             using Stream source = ReadToMemory(path, cancellationToken, progress);
-
-            // まずヘッダだけ読んで(BitmapCacheOption.None)画素数を検証する。
-            // OnLoadでデコードしてから拒否したのでは、上限の目的
-            // (巨大画像でメモリを使い切らない)を果たせない
-            var probe = BitmapDecoder.Create(
-                source,
-                BitmapCreateOptions.PreservePixelFormat,
-                BitmapCacheOption.None);
-            BitmapFrame probeFrame = probe.Frames[0];
-            EnsureDecodable(
-                probeFrame.PixelWidth, probeFrame.PixelHeight, probeFrame.Format);
-
-            source.Position = 0;
             var decoder = BitmapDecoder.Create(
                 source,
                 BitmapCreateOptions.PreservePixelFormat,

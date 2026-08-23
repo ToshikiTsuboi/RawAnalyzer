@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 using System.IO;
 using System.Text;
 using System.Windows;
@@ -56,9 +56,8 @@ public partial class NoiseMeasureDialog : Window
         _expectedReferenceSize = expectedReferenceSize;
 
         // 前の画像の飽和コードがビット深度上限を超えて残らないようにする
-        bool parsed = double.TryParse(SaturationBox.Text, NumberStyles.Float,
-            CultureInfo.InvariantCulture, out double current);
-        if (!parsed || current <= 0 || current > maxCode)
+        bool parsed = NumericInput.TryParsePositive(SaturationBox.Text, out double current);
+        if (!parsed || current > maxCode)
         {
             SaturationBox.Text = maxCode.ToString(CultureInfo.InvariantCulture);
         }
@@ -164,8 +163,7 @@ public partial class NoiseMeasureDialog : Window
 
     private void OnRunClick(object sender, RoutedEventArgs e)
     {
-        if (!double.TryParse(SaturationBox.Text, NumberStyles.Float,
-                CultureInfo.InvariantCulture, out double saturation) || saturation <= 0)
+        if (!NumericInput.TryParsePositive(SaturationBox.Text, out double saturation))
         {
             MessageBox.Show(this, "飽和信号レベルは正の数値で指定してください。", "ノイズ測定",
                 MessageBoxButton.OK, MessageBoxImage.Warning);

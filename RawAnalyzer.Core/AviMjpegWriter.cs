@@ -1,4 +1,4 @@
-using System.Buffers.Binary;
+﻿using System.Buffers.Binary;
 using System.Text;
 
 namespace RawAnalyzer.Core;
@@ -65,8 +65,19 @@ public sealed class AviMjpegWriter : IDisposable
         _width = width;
         _height = height;
         _fps = fps;
-        _stream = new FileStream(path, FileMode.Create, FileAccess.ReadWrite, FileShare.None, 1 << 20);
-        WriteHeaders();
+        _stream = new FileStream(
+            path, FileMode.Create, FileAccess.ReadWrite, FileShare.None, 1 << 20);
+        try
+        {
+            WriteHeaders();
+        }
+        catch
+        {
+            // コンストラクタが例外で抜けると呼び出し側はDisposeできない。
+            // 開いたままだと出力ファイルが掴まれたままになる
+            _stream.Dispose();
+            throw;
+        }
     }
 
     /// <summary>書き込んだフレーム数。</summary>

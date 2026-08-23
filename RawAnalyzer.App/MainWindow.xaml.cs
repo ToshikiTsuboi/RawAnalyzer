@@ -30,6 +30,7 @@ public partial class MainWindow : Window
     private readonly FormatPresetStore _presetStore = new();
     private readonly RecentFilesStore _recentFiles = new();
     private int _recentMenuGeneration;
+    private int _folderGeneration;
     private readonly SessionStore _sessionStore = new();
     private readonly SessionState _session;
     private ColorMatrix _colorMatrix = ColorMatrix.Identity;
@@ -381,6 +382,10 @@ public partial class MainWindow : Window
     private async Task LoadFolderAsync(string folder, string? selectPath)
     {
         folder = Path.GetFullPath(folder);
+
+        // 遅いフォルダの列挙中に別フォルダを開くと、後から終わった古い結果が
+        // 画面とセッションを巻き戻してしまう。ファイル読み込みと同じ世代番号で弾く
+        int generation = ++_folderGeneration;
         List<FileEntry> entries;
         try
         {
@@ -388,9 +393,18 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            MessageBox.Show(this, $"フォルダを読み込めません: {ex.Message}", "RawAnalyzer",
-                MessageBoxButton.OK, MessageBoxImage.Warning);
+            if (generation == _folderGeneration)
+            {
+                MessageBox.Show(this, $"フォルダを読み込めません: {ex.Message}", "RawAnalyzer",
+                    MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+
             return;
+        }
+
+        if (generation != _folderGeneration)
+        {
+            return; // 列挙中に別のフォルダが開かれた
         }
 
         _currentFolder = folder;
@@ -1292,8 +1306,8 @@ public partial class MainWindow : Window
         var values = new double[9];
         for (int i = 0; i < 9; i++)
         {
-            if (!double.TryParse(boxes[i].Text, NumberStyles.Float,
-                    CultureInfo.InvariantCulture, out values[i]))
+            // NaN/Infinity が入ると現像結果が全画素破綻するので有限値だけ通す
+            if (!NumericInput.TryParseFinite(boxes[i].Text, out values[i]))
             {
                 MatrixStateText.Text = "入力エラー";
                 return;
@@ -1706,6 +1720,10 @@ public partial class MainWindow : Window
         RawImage image = ActiveImage!;
         HdrImage? hdrFloat = _hdrFloatImage;
 
+        // 読み込んだRGB画像(JPEG/PNG/カラーTIFF)は輝度化せずそのまま保存する。
+        // 派生ビュー(HDR分割・合成)の表示中は元のカラーとは別物なので対象外
+        ColorImage? colorImage = _derivedImage is null ? _colorImage : null;
+
         // 表示中のフレームを保存する(rawは全フレーム出力なので対象外)
         int frame = Math.Clamp(Viewport.Frame, 0, image.FrameCount - 1);
 
@@ -1765,13 +1783,13 @@ public partial class MainWindow : Window
                         else
                         {
                             SaveWithWic(image, frame, path, choice.Format, mode, pattern,
-                                lut, devLuts, progress, ct);
+                                lut, devLuts, colorImage, progress, ct);
                         }
 
                         break;
                     default:
                         SaveWithWic(image, frame, path, choice.Format, mode, pattern,
-                            lut, devLuts, progress, ct);
+                            lut, devLuts, colorImage, progress, ct);
                         break;
                 }
             }, ct));
@@ -1927,18 +1945,28 @@ public partial class MainWindow : Window
 
     private static void SaveWithWic(
         RawImage image, int frame, string path, SaveFormat format, ViewportDisplayMode mode,
-        BayerPattern pattern, DisplayLut lut, DevelopLuts devLuts,
+        BayerPattern pattern, DisplayLut lut, DevelopLuts devLuts, ColorImage? trueColor,
         IProgress<double> progress, CancellationToken ct)
     {
         int width = image.Width;
         int height = image.Height;
-        try
+        BitmapSource source;
+        switch (format)
         {
-            BitmapSource source;
-            switch (format)
+            case SaveFormat.Tiff16:
+            case SaveFormat.Png16:
             {
-                case SaveFormat.Tiff16:
-                case SaveFormat.Png16:
+                // 読み込んだRGB画像は輝度化せずチャネルを保って書き出す
+                if (trueColor is not null)
+                {
+                    ushort[] rgb48 = ImageExport.RenderColorRgb48(trueColor, ct);
+                    progress.Report(0.7);
+                    source = BitmapSource.Create(
+                        trueColor.Width, trueColor.Height, 96, 96, PixelFormats.Rgb48, null,
+                        rgb48, trueColor.Width * 6);
+                    break;
+                }
+
                 {
                     var pixels = new ushort[(long)width * height];
                     for (int y = 0; y < height; y++)
@@ -1953,61 +1981,60 @@ public partial class MainWindow : Window
 
                     source = BitmapSource.Create(
                         width, height, 96, 96, PixelFormats.Gray16, null, pixels, width * 2);
-                    break;
                 }
 
-                default:
-                {
-                    // 8bit系は選択された処理を焼き込む
-                    bool color = mode == ViewportDisplayMode.ColorDevelop
-                        && pattern != BayerPattern.None;
-                    if (color)
-                    {
-                        byte[] rgb = ImageExport.DevelopRgb24(
-                            image, frame, pattern, devLuts,
-                            new Progress<double>(p => progress.Report(p * 0.7)), ct);
-                        source = BitmapSource.Create(
-                            width, height, 96, 96, PixelFormats.Rgb24, null, rgb, width * 3);
-                    }
-                    else
-                    {
-                        byte[] gray = ImageExport.RenderGray8(image, frame, lut, ct);
-                        progress.Report(0.7);
-                        source = BitmapSource.Create(
-                            width, height, 96, 96, PixelFormats.Gray8, null, gray, width);
-                    }
-
-                    break;
-                }
+                break;
             }
 
-            ct.ThrowIfCancellationRequested();
-            BitmapEncoder encoder = format switch
+            default:
             {
-                SaveFormat.Tiff16 => new TiffBitmapEncoder { Compression = TiffCompressOption.None },
-                SaveFormat.Jpeg8 => new JpegBitmapEncoder { QualityLevel = 95 },
-                _ => new PngBitmapEncoder(),
-            };
-            encoder.Frames.Add(BitmapFrame.Create(source));
-            using var stream = new FileStream(path, FileMode.Create, FileAccess.Write);
-            encoder.Save(stream);
-            progress.Report(1.0);
+                // 8bit系は選択された処理を焼き込む
+                if (trueColor is not null)
+                {
+                    // 読み込んだRGB画像はデモザイクせずLUTだけ適用する
+                    byte[] rgb = ImageExport.RenderColorRgb24(trueColor, lut, ct);
+                    progress.Report(0.7);
+                    source = BitmapSource.Create(
+                        trueColor.Width, trueColor.Height, 96, 96, PixelFormats.Rgb24, null,
+                        rgb, trueColor.Width * 3);
+                    break;
+                }
+
+                bool color = mode == ViewportDisplayMode.ColorDevelop
+                    && pattern != BayerPattern.None;
+                if (color)
+                {
+                    byte[] rgb = ImageExport.DevelopRgb24(
+                        image, frame, pattern, devLuts,
+                        new Progress<double>(p => progress.Report(p * 0.7)), ct);
+                    source = BitmapSource.Create(
+                        width, height, 96, 96, PixelFormats.Rgb24, null, rgb, width * 3);
+                }
+                else
+                {
+                    byte[] gray = ImageExport.RenderGray8(image, frame, lut, ct);
+                    progress.Report(0.7);
+                    source = BitmapSource.Create(
+                        width, height, 96, 96, PixelFormats.Gray8, null, gray, width);
+                }
+
+                break;
+            }
         }
-        catch (Exception)
+
+        ct.ThrowIfCancellationRequested();
+        BitmapEncoder encoder = format switch
         {
-            try
-            {
-                if (File.Exists(path))
-                {
-                    File.Delete(path);
-                }
-            }
-            catch (IOException)
-            {
-            }
+            SaveFormat.Tiff16 => new TiffBitmapEncoder { Compression = TiffCompressOption.None },
+            SaveFormat.Jpeg8 => new JpegBitmapEncoder { QualityLevel = 95 },
+            _ => new PngBitmapEncoder(),
+        };
+        encoder.Frames.Add(BitmapFrame.Create(source));
 
-            throw;
-        }
+        // 一時ファイルへ書き切ってから置換する。直接書くと、失敗・キャンセル時に
+        // 上書き対象だった既存ファイルを失う
+        AtomicFileWriter.Write(path, encoder.Save);
+        progress.Report(1.0);
     }
 
     // ---- 画像演算 (ダーク減算/フラット補正) ----
@@ -2269,9 +2296,9 @@ public partial class MainWindow : Window
             Path.GetFileNameWithoutExtension(targets[0])
                 + (choice.Format == BatchFormat.Mp4H264 ? "_seq.mp4" : "_seq.avi"));
 
-        // 出力先を実際に作ったかどうか。作っていないのに後始末で消すと、
-        // 同名の既存ファイル(前回の正常な書き出し)を巻き添えにしてしまう
-        bool videoFileCreated = false;
+        // 動画は一時ファイルへ書き切ってから置換する。最終パスへ直接書くと、
+        // 失敗・キャンセル時に上書き対象だった既存の動画を失う
+        string videoTempPath = videoPath + ".part";
 
         ProgressWindow result = ProgressWindow.Run(
             this,
@@ -2287,16 +2314,14 @@ public partial class MainWindow : Window
                 {
                     if (choice.Format == BatchFormat.AviMjpeg)
                     {
-                        avi = new AviMjpegWriter(videoPath, width, height, choice.Fps);
-                        videoFileCreated = true;
+                        avi = new AviMjpegWriter(videoTempPath, width, height, choice.Fps);
                     }
                     else if (choice.Format == BatchFormat.Mp4H264)
                     {
                         mp4 = new Mp4H264Writer(
-                            videoPath, width, height, choice.Fps,
+                            videoTempPath, width, height, choice.Fps,
                             VideoQualitySettings.EncoderQuality(choice.Quality),
                             VideoQualitySettings.BitsPerPixel(choice.Quality));
-                        videoFileCreated = true;
                     }
 
                     for (int i = 0; i < targets.Count; i++)
@@ -2394,23 +2419,19 @@ public partial class MainWindow : Window
                     avi?.Dispose();
                     mp4?.Dispose();
                 }
+
+                if (video)
+                {
+                    // 書き切れたときだけ最終パスへ置き換える
+                    File.Move(videoTempPath, videoPath, overwrite: true);
+                }
             }, ct));
 
-        // 中断だけでなくエラー時も、途中まで書かれた再生不能な動画を残さない
-        // (MP4はDispose側でも消しているが、AVIと同じ経路でも保証する)
-        if ((result.WasCanceled || result.Error is not null) && video && videoFileCreated)
+        // 中断・エラー時は一時ファイルだけを片付ける。最終パスは書き切るまで
+        // 触っていないので、同名の既存動画はそのまま残る
+        if (video && File.Exists(videoTempPath))
         {
-            try
-            {
-                if (File.Exists(videoPath))
-                {
-                    File.Delete(videoPath);
-                }
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            {
-                AppLog.Warn($"途中まで書かれた動画の削除に失敗: {ex.Message}");
-            }
+            AtomicFileWriter.TryDelete(videoTempPath);
         }
 
         if (result.Error is not null)
@@ -2465,23 +2486,22 @@ public partial class MainWindow : Window
         DevelopLuts devLuts, DisplayLut lut, ColorImage? trueColor, CancellationToken ct,
         FrameBuffers? buffers = null)
     {
+        buffers ??= new FrameBuffers();
         if (trueColor is not null)
         {
-            return ImageExport.RenderColorRgb24(trueColor, lut, ct);
-        }
-
-        if (color)
-        {
-            return ImageExport.DevelopRgb24(image, frame, pattern, devLuts, null, ct);
+            buffers.Ensure((long)trueColor.Width * trueColor.Height);
+            ImageExport.RenderColorRgb24(trueColor, lut, buffers.Rgb!, ct);
+            return buffers.Rgb!;
         }
 
         long pixels = (long)image.Width * image.Height;
-        if (buffers is null)
+        buffers.Ensure(pixels);
+        if (color)
         {
-            buffers = new FrameBuffers();
+            return ImageExport.DevelopRgb24(
+                image, frame, pattern, devLuts, null, ct, buffers.Rgb);
         }
 
-        buffers.Ensure(pixels);
         byte[] gray = buffers.Gray!;
         byte[] rgb = buffers.Rgb!;
         ImageExport.RenderGray8(image, frame, lut, gray, ct);
@@ -3369,6 +3389,12 @@ public partial class MainWindow : Window
 
                 RawFormat format = isRaw ? expectedFormat : image.Format;
 
+                // ビット深度やカラー/グレーが変わると、黒レベル上限・画像情報・
+                // フォーマットパネル・表示モードの前提が崩れる。追従させる
+                bool layoutChanged = format.BitDepth != _currentFormat!.BitDepth
+                    || (color is not null) != (_colorImage is not null)
+                    || format.Bayer != _currentFormat.Bayer;
+
                 // カラー画像は輝度と一緒に差し替える。片方だけだと前フレームの色が残る
                 _colorImage = color;
                 _vm.IsColorImage = color is not null;
@@ -3388,6 +3414,21 @@ public partial class MainWindow : Window
                 CancelAnalysis();
                 old?.Dispose();
                 Title = $"RawAnalyzer — {Path.GetFileName(path)}";
+                if (layoutChanged)
+                {
+                    _vm.BlackLevelMax = (1 << format.BitDepth) - 1;
+                    UpdateFormatPanel(format);
+                    _histogram = null;
+                    _channelHistograms = null;
+                }
+
+                long frameFileSize = SafeFileSize(path);
+                _vm.ImageInfoText =
+                    $"{image.Width}×{image.Height} · {format.BitDepth}bit"
+                    + (color is not null ? " · RGB" : "")
+                    + (frameFileSize >= 0
+                        ? $" · {frameFileSize / (1024.0 * 1024.0):F1} MB"
+                        : "");
                 _vm.SelectedFile = _vm.Files.FirstOrDefault(f => string.Equals(
                     f.FullPath, path, StringComparison.OrdinalIgnoreCase));
             }

@@ -95,6 +95,9 @@ public static class ImageExport
     /// <param name="luts">現像LUT。</param>
     /// <param name="progress">進捗通知(0〜1)。</param>
     /// <param name="cancellationToken">キャンセルトークン。</param>
+    /// <param name="destination">
+    /// 出力先。nullなら新たに確保する(動画書き出しでは使い回す)。
+    /// </param>
     /// <returns>width×height×3 のRGB24バッファ(R,G,Bの順)。</returns>
     public static byte[] DevelopRgb24(
         RawImage image,
@@ -102,12 +105,17 @@ public static class ImageExport
         BayerPattern pattern,
         DevelopLuts luts,
         IProgress<double>? progress = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        byte[]? destination = null)
     {
         int width = image.Width;
         int height = image.Height;
         EnsureExportable((long)width * height, MaxRgb24Pixels, "カラー(RGB24)");
-        var rgb24 = new byte[(long)width * height * 3];
+        byte[] rgb24 = destination ?? new byte[(long)width * height * 3];
+        if (rgb24.LongLength < (long)width * height * 3)
+        {
+            throw new ArgumentException("出力バッファが小さすぎます。", nameof(destination));
+        }
         const int bandRows = 256;
 
         // バンドごとに確保すると1億画素で約800MBのLOH割り当てになる。
@@ -158,6 +166,35 @@ public static class ImageExport
     }
 
     /// <summary>
+    /// カラー画像をRGB48(16bit×3)へ取り出す。表示LUTは適用しない。
+    /// </summary>
+    /// <remarks>
+    /// 16bit形式での保存用。輝度化すると色情報が失われるため、
+    /// カラー素材はチャネルを保ったまま書き出す。
+    /// </remarks>
+    /// <param name="color">対象のカラー画像。</param>
+    /// <param name="cancellationToken">キャンセルトークン。</param>
+    /// <returns>width×height×3 のRGB48バッファ(R,G,Bの順)。</returns>
+    /// <exception cref="NotSupportedException">画素数が上限を超える場合。</exception>
+    public static ushort[] RenderColorRgb48(
+        ColorImage color, CancellationToken cancellationToken = default)
+    {
+        int width = color.Width;
+        int height = color.Height;
+        EnsureExportable((long)width * height, MaxRgb24Pixels, "カラー(RGB48)");
+        var rgb48 = new ushort[(long)width * height * 3];
+
+        Parallel.For(
+            0,
+            height,
+            new ParallelOptions { CancellationToken = cancellationToken },
+            y => color.CopyRow(y, 0, width, rgb48.AsSpan(y * width * 3, width * 3)));
+
+        cancellationToken.ThrowIfCancellationRequested();
+        return rgb48;
+    }
+
+    /// <summary>
     /// 表示LUTを各チャネルへ適用したRGB24バッファを生成する(行並列)。
     /// TIFF/PNG等から読み込んだカラー画像のバッチ焼き込み用
     /// (既にRGBなのでデモザイク・WB・マトリクスは適用しない)。
@@ -169,10 +206,37 @@ public static class ImageExport
     public static byte[] RenderColorRgb24(
         ColorImage color, DisplayLut lut, CancellationToken cancellationToken = default)
     {
+        EnsureExportable((long)color.Width * color.Height, MaxRgb24Pixels, "カラー(RGB24)");
+        var rgb24 = new byte[(long)color.Width * color.Height * 3];
+        RenderColorRgb24(color, lut, rgb24, cancellationToken);
+        return rgb24;
+    }
+
+    /// <summary>
+    /// カラー画像へ表示LUTを適用したRGB24を、指定バッファへ書き込む。
+    /// </summary>
+    /// <remarks>
+    /// 動画書き出しのようにフレームごとに呼ぶ用途では、確保を使い回すために
+    /// こちらを使う(4Kで約25MB/フレームがLOH行きになる)。
+    /// </remarks>
+    /// <param name="color">対象のカラー画像。</param>
+    /// <param name="lut">表示LUT。</param>
+    /// <param name="destination">出力先(width×height×3 以上)。</param>
+    /// <param name="cancellationToken">キャンセルトークン。</param>
+    /// <exception cref="ArgumentException">出力先が小さい場合。</exception>
+    public static void RenderColorRgb24(
+        ColorImage color, DisplayLut lut, byte[] destination,
+        CancellationToken cancellationToken = default)
+    {
         int width = color.Width;
         int height = color.Height;
         EnsureExportable((long)width * height, MaxRgb24Pixels, "カラー(RGB24)");
-        var rgb24 = new byte[(long)width * height * 3];
+        if (destination.LongLength < (long)width * height * 3)
+        {
+            throw new ArgumentException("出力バッファが小さすぎます。", nameof(destination));
+        }
+
+        byte[] rgb24 = destination;
 
         Parallel.For(
             0,
@@ -195,7 +259,6 @@ public static class ImageExport
             _ => { });
 
         cancellationToken.ThrowIfCancellationRequested();
-        return rgb24;
     }
 
     /// <summary>

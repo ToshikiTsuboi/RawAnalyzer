@@ -1,4 +1,4 @@
-using System.Buffers.Binary;
+﻿using System.Buffers.Binary;
 using System.IO.MemoryMappedFiles;
 using System.Runtime.CompilerServices;
 
@@ -22,6 +22,9 @@ public sealed unsafe class RawImage : IDisposable
     private readonly MemoryMappedFile? _mmf;
     private readonly MemoryMappedViewAccessor? _accessor;
     private readonly bool _needSwap;
+
+    // ネットワーク上のファイルをローカルへ写して開いた場合の複製。破棄時に消す
+    private readonly string? _ownedTemporaryFile;
     private byte* _mapBase;
 
     // 破棄要求フラグ。Interlocked で読み書きしメモリバリアを張る(0=生存 / 1=破棄要求済み)
@@ -39,11 +42,16 @@ public sealed unsafe class RawImage : IDisposable
         _pixels = pixels;
     }
 
-    internal RawImage(RawFormat format, MemoryMappedFile mmf, MemoryMappedViewAccessor accessor)
+    internal RawImage(
+        RawFormat format,
+        MemoryMappedFile mmf,
+        MemoryMappedViewAccessor accessor,
+        string? ownedTemporaryFile = null)
     {
         Format = format;
         _mmf = mmf;
         _accessor = accessor;
+        _ownedTemporaryFile = ownedTemporaryFile;
         _needSwap = (format.Endianness == Endianness.Big) == BitConverter.IsLittleEndian;
         byte* pointer = null;
         accessor.SafeMemoryMappedViewHandle.AcquirePointer(ref pointer);
@@ -271,6 +279,19 @@ public sealed unsafe class RawImage : IDisposable
         }
 
         _mmf?.Dispose();
+
+        if (_ownedTemporaryFile is not null)
+        {
+            try
+            {
+                File.Delete(_ownedTemporaryFile);
+            }
+            catch (Exception ex) when (
+                ex is IOException or UnauthorizedAccessException)
+            {
+                // 消せなくても解析は続けられる。一時フォルダなので後で回収される
+            }
+        }
     }
 
     private long FileByteOffset(int frame, int y, int x)
