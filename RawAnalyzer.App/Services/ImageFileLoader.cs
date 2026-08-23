@@ -1,3 +1,4 @@
+﻿using System.Buffers;
 using System.IO;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -274,24 +275,33 @@ internal static class ImageFileLoader
         using (file)
         {
             var memory = new MemoryStream((int)file.Length);
-            byte[] buffer = new byte[1 << 20];
-            long total = file.Length;
-            long done = 0;
-            double lastReported = -1;
-            int read;
-            while ((read = file.Read(buffer, 0, buffer.Length)) > 0)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                memory.Write(buffer, 0, read);
-                done += read;
 
-                // 高速なストレージでUIスレッドへの通知が集中しないよう1%刻みに間引く
-                double p = ReadShare * done / Math.Max(1, total);
-                if (p - lastReported >= 0.01 || done == total)
+            // 転送バッファは連番再生でフレームごとに使い捨てられるためプールから借りる
+            byte[] buffer = ArrayPool<byte>.Shared.Rent(1 << 20);
+            try
+            {
+                long total = file.Length;
+                long done = 0;
+                double lastReported = -1;
+                int read;
+                while ((read = file.Read(buffer, 0, buffer.Length)) > 0)
                 {
-                    lastReported = p;
-                    progress?.Report(p);
+                    cancellationToken.ThrowIfCancellationRequested();
+                    memory.Write(buffer, 0, read);
+                    done += read;
+
+                    // 高速なストレージでUIスレッドへの通知が集中しないよう1%刻みに間引く
+                    double p = ReadShare * done / Math.Max(1, total);
+                    if (p - lastReported >= 0.01 || done == total)
+                    {
+                        lastReported = p;
+                        progress?.Report(p);
+                    }
                 }
+            }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(buffer);
             }
 
             memory.Position = 0;

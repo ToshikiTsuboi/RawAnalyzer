@@ -1,4 +1,5 @@
-﻿using System.IO.MemoryMappedFiles;
+﻿using System.Buffers;
+using System.IO.MemoryMappedFiles;
 
 namespace RawAnalyzer.Core;
 
@@ -186,6 +187,17 @@ public static class RawLoader
     private const int LoadChunkBytes = 8 << 20;
 
     /// <summary>
+    /// 読み込みチャンク用のプール。
+    /// </summary>
+    /// <remarks>
+    /// チャンクは数MBでLOH行き。連番再生ではフレームごとに確保・破棄され、
+    /// GC停止でコマ落ちの原因になる。ArrayPool.Shared は 1MB 超を貯めないので
+    /// チャンクサイズに合わせた専用プールを持つ。
+    /// </remarks>
+    private static readonly ArrayPool<byte> ChunkPool =
+        ArrayPool<byte>.Create(LoadChunkBytes, maxArraysPerBucket: 4);
+
+    /// <summary>
     /// パスがネットワーク上(UNC またはネットワークドライブ)かを判定する。
     /// </summary>
     /// <remarks>
@@ -226,34 +238,41 @@ public static class RawLoader
         // ファイル全体の byte[] と ushort[] を同時に持つとピークが約2倍になる
         // (16bit・1億画素で約400MB)。数MBのチャンクへストリーミングする
         int rowsPerChunk = Math.Max(1, LoadChunkBytes / Math.Max(1, rowBytes));
-        var chunk = new byte[(long)rowBytes * Math.Min(rowsPerChunk, totalRows)];
+        int chunkBytes = (int)((long)rowBytes * Math.Min(rowsPerChunk, totalRows));
         ushort[] pixels = new ushort[format.TotalPixels];
-
-        using var stream = new FileStream(
-            path, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 1 << 20);
-        stream.Seek(format.HeaderOffset, SeekOrigin.Begin);
-
-        for (int firstRow = 0; firstRow < totalRows; firstRow += rowsPerChunk)
+        byte[] chunk = ChunkPool.Rent(chunkBytes);
+        try
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            int rows = Math.Min(rowsPerChunk, totalRows - firstRow);
-            stream.ReadExactly(chunk, 0, rows * rowBytes);
+            using var stream = new FileStream(
+                path, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 1 << 20);
+            stream.Seek(format.HeaderOffset, SeekOrigin.Begin);
 
-            int chunkFirstRow = firstRow;
-            Parallel.For(
-                0,
-                rows,
-                new ParallelOptions { CancellationToken = cancellationToken },
-                row =>
-                {
-                    PixelNormalizer.Normalize(
-                        chunk.AsSpan(row * rowBytes, rowBytes),
-                        pixels.AsSpan((chunkFirstRow + row) * width, width),
-                        format.BitDepth, format.Packing, format.Endianness);
-                });
+            for (int firstRow = 0; firstRow < totalRows; firstRow += rowsPerChunk)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                int rows = Math.Min(rowsPerChunk, totalRows - firstRow);
+                stream.ReadExactly(chunk, 0, rows * rowBytes);
 
-            // チャンク(既定8MB)単位の報告なので、UIスレッドを圧迫する頻度にはならない
-            progress?.Report((double)(firstRow + rows) / totalRows);
+                int chunkFirstRow = firstRow;
+                Parallel.For(
+                    0,
+                    rows,
+                    new ParallelOptions { CancellationToken = cancellationToken },
+                    row =>
+                    {
+                        PixelNormalizer.Normalize(
+                            chunk.AsSpan(row * rowBytes, rowBytes),
+                            pixels.AsSpan((chunkFirstRow + row) * width, width),
+                            format.BitDepth, format.Packing, format.Endianness);
+                    });
+
+                // チャンク(既定8MB)単位の報告なので、UIスレッドを圧迫する頻度にはならない
+                progress?.Report((double)(firstRow + rows) / totalRows);
+            }
+        }
+        finally
+        {
+            ChunkPool.Return(chunk);
         }
 
         return new RawImage(format, pixels);

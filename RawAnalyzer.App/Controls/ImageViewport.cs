@@ -124,6 +124,9 @@ public sealed class ImageViewport : FrameworkElement
 
     private OverlayData? _overlay;
 
+    // カラー現像のデモザイク結果。表示範囲が同じ間はLUTだけ適用し直す
+    private readonly DemosaicCache _demosaicCache = new();
+
     // raw値オーバーレイの描画結果。FormattedTextの生成が重いので、
     // 表示範囲(ズーム/原点/サイズ)と元データが変わるまで使い回す
     private Drawing? _overlayDrawing;
@@ -292,6 +295,7 @@ public sealed class ImageViewport : FrameworkElement
         _pyramid = null;
         _bayerPyramid = null;
         _overlay = null;
+        _demosaicCache.Clear();
         _bitmap = null;
         try
         {
@@ -319,6 +323,7 @@ public sealed class ImageViewport : FrameworkElement
         _pyramid = null;
         _bayerPyramid = null;
         _overlay = null;
+        _demosaicCache.Clear();
         _segmentLuts = null;
         _colorImage = null;
         _displayMode = ViewportDisplayMode.Raw;
@@ -420,6 +425,7 @@ public sealed class ImageViewport : FrameworkElement
 
         _frame = frame;
         _overlay = null;
+        _demosaicCache.Clear();
         RequestRender(fast: false);
     }
 
@@ -442,6 +448,7 @@ public sealed class ImageViewport : FrameworkElement
         _pyramid = null;
         _bayerPyramid = null;
         _overlay = null;
+        _demosaicCache.Clear();
         RequestRender(fast: false);
         try
         {
@@ -480,6 +487,7 @@ public sealed class ImageViewport : FrameworkElement
     {
         _displayMode = mode;
         _overlay = null;
+        _demosaicCache.Clear();
         RequestRender(fast: false);
     }
 
@@ -505,6 +513,7 @@ public sealed class ImageViewport : FrameworkElement
         _colorImage = color;
         _displayMode = color is not null ? ViewportDisplayMode.TrueColor : ViewportDisplayMode.Raw;
         _overlay = null;
+        _demosaicCache.Clear();
         RequestRender(fast: false);
     }
 
@@ -1325,6 +1334,7 @@ public sealed class ImageViewport : FrameworkElement
             SegmentWidth = Math.Max(1, _segmentWidth / coordinateFactor),
             ZebraEnabled = _zebraEnabled,
             Color = _colorImage,
+            DemosaicCache = _demosaicCache,
         };
 
         _renderTask = Task.Run(() =>

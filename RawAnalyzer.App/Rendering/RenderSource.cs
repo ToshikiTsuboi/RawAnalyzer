@@ -1,4 +1,4 @@
-using System.Buffers;
+﻿using System.Buffers;
 using RawAnalyzer.Core;
 
 namespace RawAnalyzer.App.Rendering;
@@ -22,6 +22,11 @@ public abstract class RenderSource
 
     /// <summary>このソース自身の高さ。</summary>
     public abstract int LevelHeight { get; }
+
+    /// <summary>
+    /// 同じ画素データを指すソースなら等値になるキー(描画結果のキャッシュ照合用)。
+    /// </summary>
+    public abstract object CacheKey { get; }
 
     /// <summary>指定行の一部を読み出す。</summary>
     /// <param name="levelY">レベル座標系の行番号。</param>
@@ -62,6 +67,9 @@ public sealed class RawImageRenderSource : RenderSource
     public override int LevelHeight => _image.Height;
 
     /// <inheritdoc />
+    public override object CacheKey => (_image, _frame);
+
+    /// <inheritdoc />
     public override void ReadRow(int levelY, int levelX, int count, Span<ushort> destination)
     {
         _image.CopyRegion(_frame, levelX, levelY, count, 1, destination);
@@ -98,6 +106,9 @@ public sealed class PyramidLevelRenderSource : RenderSource
 
     /// <inheritdoc />
     public override int LevelHeight => _level.Height;
+
+    /// <inheritdoc />
+    public override object CacheKey => _level;
 
     /// <inheritdoc />
     public override void ReadRow(int levelY, int levelX, int count, Span<ushort> destination)
@@ -142,6 +153,9 @@ public sealed class ChannelSplitRenderSource : RenderSource
 
     /// <inheritdoc />
     public override int LevelHeight => _evenHeight;
+
+    /// <inheritdoc />
+    public override object CacheKey => (_image, _frame, nameof(ChannelSplitRenderSource));
 
     /// <inheritdoc />
     public override void ReadRow(int levelY, int levelX, int count, Span<ushort> destination)

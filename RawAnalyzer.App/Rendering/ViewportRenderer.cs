@@ -1,4 +1,4 @@
-using System.Buffers;
+﻿using System.Buffers;
 using RawAnalyzer.Core;
 
 namespace RawAnalyzer.App.Rendering;
@@ -54,6 +54,11 @@ public sealed class RenderRequest
 
     /// <summary>デコード済みカラー画像(TrueColorモードで使用)。</summary>
     public ColorImage? Color { get; init; }
+
+    /// <summary>
+    /// デモザイク結果の使い回し先(省略時は毎回やり直す)。
+    /// </summary>
+    public DemosaicCache? DemosaicCache { get; init; }
 }
 
 /// <summary>
@@ -471,22 +476,33 @@ public static class ViewportRenderer
         int rectW = sx1 - sx0 + 1;
         int rectH = sy1 - sy0 + 1;
 
-        ushort[] mosaic = ArrayPool<ushort>.Shared.Rent(rectW * rectH);
-        ushort[] rgb = ArrayPool<ushort>.Shared.Rent(rectW * rectH * 3);
+        // 可視領域とBayer位相が同じなら、モザイク読み出しとデモザイクは前回の結果でよい
+        // (現像スライダー操作で変わるのは最後のLUT適用だけ)
+        object cacheKey = (source.CacheKey, request.Pattern, sx0, sy0, sx1, sy1);
+        ushort[]? rgb = request.DemosaicCache?.TryGet(cacheKey);
+        bool reused = rgb is not null;
+        ushort[]? mosaic = null;
         try
         {
-            Parallel.For(0, rectH, y =>
+            if (rgb is null)
             {
-                if (!ct.IsCancellationRequested)
-                {
-                    source.ReadRow(sy0 + y, sx0, rectW, mosaic.AsSpan(y * rectW, rectW));
-                }
-            });
-            ct.ThrowIfCancellationRequested();
+                mosaic = ArrayPool<ushort>.Shared.Rent(rectW * rectH);
 
-            ColorPipeline.DemosaicBilinear(
-                mosaic, rectW, rectH, sx0, sy0, request.Pattern, rgb, ct);
-            ct.ThrowIfCancellationRequested();
+                // キャッシュへ載せるのでプールからは借りない(返却後に読まれないように)
+                rgb = new ushort[rectW * rectH * 3];
+                Parallel.For(0, rectH, y =>
+                {
+                    if (!ct.IsCancellationRequested)
+                    {
+                        source.ReadRow(sy0 + y, sx0, rectW, mosaic.AsSpan(y * rectW, rectW));
+                    }
+                });
+                ct.ThrowIfCancellationRequested();
+
+                ColorPipeline.DemosaicBilinear(
+                    mosaic, rectW, rectH, sx0, sy0, request.Pattern, rgb, ct);
+                ct.ThrowIfCancellationRequested();
+            }
 
             Parallel.For(0, destHeight, destY =>
             {
@@ -527,11 +543,18 @@ public static class ViewportRenderer
                     destRow[o + 3] = 255;
                 }
             });
+
+            if (!reused)
+            {
+                request.DemosaicCache?.Store(cacheKey, rgb);
+            }
         }
         finally
         {
-            ArrayPool<ushort>.Shared.Return(mosaic);
-            ArrayPool<ushort>.Shared.Return(rgb);
+            if (mosaic is not null)
+            {
+                ArrayPool<ushort>.Shared.Return(mosaic);
+            }
         }
     }
 
