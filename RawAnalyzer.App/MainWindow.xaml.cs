@@ -2065,9 +2065,11 @@ public partial class MainWindow : Window
             $"画像演算中: {Path.GetFileName(choice.ReferencePath)}",
             (progress, ct) => Task.Run(() =>
             {
+                // 読み込み段階からキャンセルを効かせる
+                // (NAS等では参照の読み込みだけで数十秒かかることがある)
                 reference = IsRawFile(choice.ReferencePath)
-                    ? RawLoader.Load(choice.ReferencePath, format with { FrameCount = 1 })
-                    : ImageFileLoader.Load(choice.ReferencePath).Luminance;
+                    ? RawLoader.Load(choice.ReferencePath, format with { FrameCount = 1 }, ct)
+                    : ImageFileLoader.Load(choice.ReferencePath, ct).Luminance;
                 corrected = ImageCalculator.Apply(
                     source, reference, choice.Operation, frame, 0, progress, ct);
             }, ct));
@@ -2265,6 +2267,10 @@ public partial class MainWindow : Window
             Path.GetFileNameWithoutExtension(targets[0])
                 + (choice.Format == BatchFormat.Mp4H264 ? "_seq.mp4" : "_seq.avi"));
 
+        // 出力先を実際に作ったかどうか。作っていないのに後始末で消すと、
+        // 同名の既存ファイル(前回の正常な書き出し)を巻き添えにしてしまう
+        bool videoFileCreated = false;
+
         ProgressWindow result = ProgressWindow.Run(
             this,
             $"バッチ書き出し中 ({targets.Count}件)",
@@ -2273,15 +2279,18 @@ public partial class MainWindow : Window
                 Directory.CreateDirectory(choice.OutputFolder);
                 AviMjpegWriter? avi = null;
                 Mp4H264Writer? mp4 = null;
+                var frameBuffers = new FrameBuffers();
                 try
                 {
                     if (choice.Format == BatchFormat.AviMjpeg)
                     {
                         avi = new AviMjpegWriter(videoPath, width, height, choice.Fps);
+                        videoFileCreated = true;
                     }
                     else if (choice.Format == BatchFormat.Mp4H264)
                     {
                         mp4 = new Mp4H264Writer(videoPath, width, height, choice.Fps);
+                        videoFileCreated = true;
                     }
 
                     for (int i = 0; i < targets.Count; i++)
@@ -2330,8 +2339,14 @@ public partial class MainWindow : Window
                                 {
                                     mp4!.AddFrameRgb24(RenderRgb24Frame(
                                         image, frame, color, pattern, devLuts, lut,
-                                        trueColor, ct));
+                                        trueColor, ct, frameBuffers));
                                 }
+
+                                // 1ファイル内の多数フレームを動画化する場合、
+                                // ファイル単位の報告だと完了まで0%のままになる
+                                progress.Report(
+                                    (i + ((frame + 1) / (double)image.FrameCount))
+                                    / targets.Count);
                             }
                         }
                         else
@@ -2377,7 +2392,7 @@ public partial class MainWindow : Window
 
         // 中断だけでなくエラー時も、途中まで書かれた再生不能な動画を残さない
         // (MP4はDispose側でも消しているが、AVIと同じ経路でも保証する)
-        if ((result.WasCanceled || result.Error is not null) && video)
+        if ((result.WasCanceled || result.Error is not null) && video && videoFileCreated)
         {
             try
             {
@@ -2409,9 +2424,40 @@ public partial class MainWindow : Window
     /// 1フレームぶんのRGB24バッファを生成する(MP4エンコード用)。
     /// カラー画像はLUTのみ、Bayerは現像、モノクロはLUT適用後にRGBへ展開する。
     /// </summary>
+    /// <summary>
+    /// モノクロ経路で使い回すバッファ。フレームごとに確保するとLOHを圧迫する。
+    /// </summary>
+    private sealed class FrameBuffers
+    {
+        internal byte[]? Gray;
+        internal byte[]? Rgb;
+
+        /// <summary>
+        /// 必要な大きさのバッファを用意する(同じ大きさなら使い回す)。
+        /// </summary>
+        /// <remarks>
+        /// 動画ライタは「長さがフレームぴったり」であることを要求するので、
+        /// 余りのある使い回しはせず、長さが違えば作り直す。
+        /// </remarks>
+        /// <param name="pixels">1フレームの画素数。</param>
+        internal void Ensure(long pixels)
+        {
+            if (Gray is null || Gray.LongLength != pixels)
+            {
+                Gray = new byte[pixels];
+            }
+
+            if (Rgb is null || Rgb.LongLength != pixels * 3)
+            {
+                Rgb = new byte[pixels * 3];
+            }
+        }
+    }
+
     private static byte[] RenderRgb24Frame(
         RawImage image, int frame, bool color, BayerPattern pattern,
-        DevelopLuts devLuts, DisplayLut lut, ColorImage? trueColor, CancellationToken ct)
+        DevelopLuts devLuts, DisplayLut lut, ColorImage? trueColor, CancellationToken ct,
+        FrameBuffers? buffers = null)
     {
         if (trueColor is not null)
         {
@@ -2423,14 +2469,22 @@ public partial class MainWindow : Window
             return ImageExport.DevelopRgb24(image, frame, pattern, devLuts, null, ct);
         }
 
-        byte[] gray = ImageExport.RenderGray8(image, frame, lut, ct);
-        var rgb = new byte[(long)gray.Length * 3];
-        for (long i = 0; i < gray.Length; i++)
+        long pixels = (long)image.Width * image.Height;
+        if (buffers is null)
+        {
+            buffers = new FrameBuffers();
+        }
+
+        buffers.Ensure(pixels);
+        byte[] gray = buffers.Gray!;
+        byte[] rgb = buffers.Rgb!;
+        ImageExport.RenderGray8(image, frame, lut, gray, ct);
+        for (long i = 0; i < pixels; i++)
         {
             byte v = gray[i];
             rgb[i * 3] = v;
-            rgb[i * 3 + 1] = v;
-            rgb[i * 3 + 2] = v;
+            rgb[(i * 3) + 1] = v;
+            rgb[(i * 3) + 2] = v;
         }
 
         return rgb;
@@ -3244,9 +3298,19 @@ public partial class MainWindow : Window
                 // 後続のawaitで未処理例外としてUIまで届く)
                 if (_mainBayerPyramid is not null)
                 {
-                    await Viewport.DetachBayerPyramidAsync();
-                    _mainBayerPyramid.Dispose();
+                    // フィールドはawait前にローカルへ退避して切っておく。
+                    // await中に別経路が同じインスタンスを掴むとDisposeが二重になる
+                    BayerPyramid pyramid = _mainBayerPyramid;
                     _mainBayerPyramid = null;
+                    await Viewport.DetachBayerPyramidAsync();
+                    pyramid.Dispose();
+                }
+
+                // await中にモーダル(保存・測定・演算)が開いたら差し替えない
+                // (ファイル連番側と同じガード)
+                if (_busyDepth > 0)
+                {
+                    return;
                 }
 
                 Viewport.SetFrame(index);
@@ -3964,8 +4028,8 @@ public partial class MainWindow : Window
                 }
 
                 using RawImage reference = IsRawFile(request.ReferencePath)
-                    ? RawLoader.Load(request.ReferencePath, format with { FrameCount = 1 })
-                    : ImageFileLoader.Load(request.ReferencePath).Luminance;
+                    ? RawLoader.Load(request.ReferencePath, format with { FrameCount = 1 }, ct)
+                    : ImageFileLoader.Load(request.ReferencePath, ct).Luminance;
                 measurement = NoiseAnalysis.MeasurePair(
                     image, reference, frame, 0, roi, format.Bayer,
                     request.SaturationCode, ct);

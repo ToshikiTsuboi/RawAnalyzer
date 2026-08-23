@@ -1,4 +1,4 @@
-namespace RawAnalyzer.Core;
+﻿namespace RawAnalyzer.Core;
 
 /// <summary>
 /// 「書き終わったものだけを目的地に置く」ファイル書き出し。
@@ -33,6 +33,15 @@ public static class AtomicFileWriter
                 temporary, FileMode.Create, FileAccess.Write, FileShare.None, bufferSize))
             {
                 write(stream);
+
+                // 置換前にディスクへ確定させる。書き込みがOSキャッシュに残ったまま
+                // File.Move が先に永続化されると、直後の電源断で
+                // 「新しい中身は未達・古いファイルは消滅」になり得る
+                // (writeがストリームを閉じた場合はフラッシュ済みなので何もしない)
+                if (stream.CanWrite)
+                {
+                    stream.Flush(flushToDisk: true);
+                }
             }
 
             File.Move(temporary, path, overwrite: true);

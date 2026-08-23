@@ -1,4 +1,5 @@
-using System.IO;
+﻿using System.IO;
+using System.Text;
 using System.Text.Json;
 using RawAnalyzer.Core;
 
@@ -88,16 +89,13 @@ internal sealed class SessionStore
             Directory.CreateDirectory(Path.GetDirectoryName(_filePath)!);
 
             // 一時ファイル経由で置換し、中断しても既存のセッションを壊さない
-            string temporary = _filePath + ".tmp";
-            File.WriteAllText(temporary, JsonSerializer.Serialize(state, Options));
-            if (File.Exists(_filePath))
+            // (AtomicFileWriter は置換前にディスクへ確定させる)
+            string json = JsonSerializer.Serialize(state, Options);
+            AtomicFileWriter.Write(_filePath, stream =>
             {
-                File.Replace(temporary, _filePath, destinationBackupFileName: null);
-            }
-            else
-            {
-                File.Move(temporary, _filePath);
-            }
+                using var writer = new StreamWriter(stream, new UTF8Encoding(false), 1 << 12, leaveOpen: true);
+                writer.Write(json);
+            });
         }
         catch (Exception)
         {

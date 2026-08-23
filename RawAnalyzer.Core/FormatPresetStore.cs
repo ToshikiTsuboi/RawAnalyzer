@@ -1,3 +1,4 @@
+﻿using System.Text;
 using System.Text.Json;
 
 namespace RawAnalyzer.Core;
@@ -100,16 +101,12 @@ public sealed class FormatPresetStore
         string json = JsonSerializer.Serialize(presets, SerializerOptions);
 
         // File.WriteAllText は truncate してから書くため、中断すると
-        // 0バイトや途中で切れたJSONが残る
-        string temporary = FilePath + ".tmp";
-        File.WriteAllText(temporary, json);
-        if (File.Exists(FilePath))
+        // 0バイトや途中で切れたJSONが残る。一時ファイル経由で置換する
+        // (AtomicFileWriter は置換前にディスクへ確定させる)
+        AtomicFileWriter.Write(FilePath, stream =>
         {
-            File.Replace(temporary, FilePath, destinationBackupFileName: null);
-        }
-        else
-        {
-            File.Move(temporary, FilePath);
-        }
+            using var writer = new StreamWriter(stream, new UTF8Encoding(false), 1 << 12, leaveOpen: true);
+            writer.Write(json);
+        });
     }
 }

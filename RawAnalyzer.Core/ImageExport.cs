@@ -30,11 +30,40 @@ public static class ImageExport
     public static byte[] RenderGray8(
         RawImage image, int frame, DisplayLut lut, CancellationToken cancellationToken = default)
     {
+        EnsureExportable((long)image.Width * image.Height, MaxGray8Pixels, "8bitグレー");
+        var gray = new byte[(long)image.Width * image.Height];
+        RenderGray8(image, frame, lut, gray, cancellationToken);
+        return gray;
+    }
+
+    /// <summary>
+    /// 表示LUTを全画素に適用したグレー8bitを、指定バッファへ書き込む。
+    /// </summary>
+    /// <remarks>
+    /// 動画書き出しのようにフレームごとに呼ぶ用途では、確保を使い回すために
+    /// こちらを使う(width×height はLOH行きになりGC負荷が無視できない)。
+    /// </remarks>
+    /// <param name="image">対象画像。</param>
+    /// <param name="frame">フレーム番号。</param>
+    /// <param name="lut">表示LUT。</param>
+    /// <param name="destination">出力先(width×height 以上)。</param>
+    /// <param name="cancellationToken">キャンセルトークン。</param>
+    /// <exception cref="ArgumentException">出力先が小さい場合。</exception>
+    public static void RenderGray8(
+        RawImage image, int frame, DisplayLut lut, byte[] destination,
+        CancellationToken cancellationToken = default)
+    {
         int width = image.Width;
         int height = image.Height;
         EnsureExportable((long)width * height, MaxGray8Pixels, "8bitグレー");
-        var gray = new byte[(long)width * height];
+        if (destination.LongLength < (long)width * height)
+        {
+            throw new ArgumentException(
+                $"出力バッファが小さすぎます({destination.LongLength} < {(long)width * height})。",
+                nameof(destination));
+        }
 
+        byte[] gray = destination;
         Parallel.For(
             0,
             height,
@@ -54,7 +83,6 @@ public static class ImageExport
             _ => { });
 
         cancellationToken.ThrowIfCancellationRequested();
-        return gray;
     }
 
     /// <summary>

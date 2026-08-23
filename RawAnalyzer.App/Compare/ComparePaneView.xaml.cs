@@ -47,7 +47,27 @@ public partial class ComparePaneView : UserControl
             _autoFit = false;
             ScheduleViewChanged();
         };
-        Viewport.PreviewMouseDown += (_, _) => _autoFit = false;
+        Viewport.PreviewMouseDown += (_, e) =>
+        {
+            _autoFit = false;
+
+            // ダブルクリックは全体表示(FitToView)。ドラッグと違い移動が
+            // 一度で終わるので、ここで同期を促さないと他ペインが取り残される
+            if (e.ClickCount == 2)
+            {
+                ScheduleViewChanged();
+            }
+        };
+
+        // 矢印キーのパンもビューを変える
+        Viewport.PreviewKeyDown += (_, e) =>
+        {
+            if (e.Key is Key.Left or Key.Right or Key.Up or Key.Down)
+            {
+                _autoFit = false;
+                ScheduleViewChanged();
+            }
+        };
         Viewport.PreviewMouseMove += (_, e) =>
         {
             if (e.LeftButton == MouseButtonState.Pressed)

@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
@@ -24,6 +24,29 @@ public partial class RawImportDialog : Window
     private Dictionary<string, RawFormat> _presets;
     private bool _initializing = true;
 
+    /// <summary>
+    /// ファイルサイズを取得する。取得できない場合は -1(サイズ不明)。
+    /// </summary>
+    /// <remarks>
+    /// コンストラクタで例外を投げると、呼び出し側の「読み込みに失敗しました」
+    /// ではなく未処理例外ダイアログになってしまう。
+    /// </remarks>
+    /// <param name="path">対象ファイル。</param>
+    /// <returns>バイト数。不明なら -1。</returns>
+    private static long SafeFileSize(string path)
+    {
+        try
+        {
+            return new FileInfo(path).Length;
+        }
+        catch (Exception ex) when (
+            ex is IOException or UnauthorizedAccessException or ArgumentException
+                or NotSupportedException)
+        {
+            return -1;
+        }
+    }
+
     /// <summary>ダイアログを生成する。</summary>
     /// <param name="filePath">開こうとしているRawファイルのパス。</param>
     /// <param name="presetStore">プリセットストア。</param>
@@ -32,7 +55,7 @@ public partial class RawImportDialog : Window
     {
         InitializeComponent();
         _filePath = filePath;
-        _fileSize = new FileInfo(filePath).Length;
+        _fileSize = SafeFileSize(filePath);
         _presetStore = presetStore;
         _presets = new Dictionary<string, RawFormat>(LoadPresetsSafe());
 

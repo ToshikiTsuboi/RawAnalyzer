@@ -252,15 +252,23 @@ public static class ViewportRenderer
                 IReadOnlyList<DisplayLut>? segmentLuts = request.SegmentLuts;
                 int segmentWidth = Math.Max(1, request.SegmentWidth);
                 bool zebra = request.ZebraEnabled;
+
+                // ループ不変の除算を外へ出す(画素ごとの割り算をなくす)
+                double invSegmentWidth = 1.0 / segmentWidth;
+                double invZoomOverFactor = invZoom / factor;
+                double originOverFactor = originX / factor;
                 for (int dx = s.Dx0; dx <= s.Dx1; dx++)
                 {
-                    double srcX = originX + (dx + 0.5) * invZoom;
+                    double srcX = originX + ((dx + 0.5) * invZoom);
                     int levelX = Math.Clamp(
-                        (int)(srcX / factor) - s.LevelX0, 0, s.Count - 1);
+                        (int)(originOverFactor + ((dx + 0.5) * invZoomOverFactor))
+                            - s.LevelX0,
+                        0,
+                        s.Count - 1);
                     DisplayLut activeLut = segmentLuts is null
                         ? lut
                         : segmentLuts[Math.Clamp(
-                            (int)srcX / segmentWidth, 0, segmentLuts.Count - 1)];
+                            (int)(srcX * invSegmentWidth), 0, segmentLuts.Count - 1)];
                     ushort value = rowBuffer[levelX];
                     byte d = activeLut.Map(value);
                     int o = dx * 4;

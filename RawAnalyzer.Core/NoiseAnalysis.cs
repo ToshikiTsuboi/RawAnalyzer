@@ -1,4 +1,4 @@
-namespace RawAnalyzer.Core;
+﻿namespace RawAnalyzer.Core;
 
 /// <summary>
 /// ノイズ分離とダイナミックレンジの測定結果(値はすべてraw code値域)。
@@ -128,31 +128,55 @@ public static class NoiseAnalysis
 
         int shiftA = 16 - imageA.Format.BitDepth;
         int shiftB = 16 - imageB.Format.BitDepth;
-        var rowA = new ushort[roi.Width];
-        var rowB = new ushort[roi.Width];
-        double sum = 0;
-        double sumSq = 0;
+
+        // 差分は ±65535 に収まるので、二乗和は long で 2.1e9 サンプルまで正確。
+        // doubleでの逐次加算より丸めも小さい
+        object gate = new();
+        long sum = 0;
+        UInt128 sumSq = UInt128.Zero;
         long count = 0;
 
-        for (int row = 0; row < roi.Height; row++)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            imageA.CopyRegion(frameA, roi.X, roi.Y + row, roi.Width, 1, rowA);
-            imageB.CopyRegion(frameB, roi.X, roi.Y + row, roi.Width, 1, rowB);
-            for (int x = 0; x < roi.Width; x++)
+        Parallel.For(
+            0,
+            roi.Height,
+            new ParallelOptions { CancellationToken = cancellationToken },
+            () => (RowA: new ushort[roi.Width], RowB: new ushort[roi.Width],
+                   Sum: 0L, SumSq: 0L, Count: 0L),
+            (row, _, local) =>
             {
-                int diff = (rowA[x] >> shiftA) - (rowB[x] >> shiftB);
-                sum += diff;
-                sumSq += (double)diff * diff;
-                count++;
-            }
-        }
+                imageA.CopyRegion(frameA, roi.X, roi.Y + row, roi.Width, 1, local.RowA);
+                imageB.CopyRegion(frameB, roi.X, roi.Y + row, roi.Width, 1, local.RowB);
+                long rowSum = local.Sum;
+                long rowSumSq = local.SumSq;
+                long rowCount = local.Count;
+                for (int x = 0; x < roi.Width; x++)
+                {
+                    int diff = (local.RowA[x] >> shiftA) - (local.RowB[x] >> shiftB);
+                    rowSum += diff;
+                    rowSumSq += (long)diff * diff;
+                    rowCount++;
+                }
+
+                return (local.RowA, local.RowB, rowSum, rowSumSq, rowCount);
+            },
+            local =>
+            {
+                lock (gate)
+                {
+                    sum += local.Sum;
+                    sumSq += (ulong)local.SumSq;
+                    count += local.Count;
+                }
+            });
+
+        cancellationToken.ThrowIfCancellationRequested();
 
         double sigmaTemporal = 0;
         if (count > 0)
         {
-            double meanDiff = sum / count;
-            double varianceDiff = Math.Max(0, sumSq / count - meanDiff * meanDiff);
+            double meanDiff = (double)sum / count;
+            double varianceDiff = Math.Max(
+                0, ((double)sumSq / count) - (meanDiff * meanDiff));
             // 独立な2枚の差分は分散が2倍になるため √2 で割る
             sigmaTemporal = Math.Sqrt(varianceDiff / 2.0);
         }

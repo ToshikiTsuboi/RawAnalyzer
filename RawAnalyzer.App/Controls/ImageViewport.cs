@@ -236,9 +236,14 @@ public sealed class ImageViewport : FrameworkElement
     /// <param name="originY">表示原点Y。</param>
     public void SetViewTransform(double zoom, double originX, double originY)
     {
+        // ズームだけ丸めて原点をそのまま使うと表示中心が大きくずれる
+        // (解像度差の大きい比較では画像が画面外に出て空表示になる)。
+        // 中心を保ったままクランプする
+        double centerX = originX + (ActualWidth / (2 * zoom));
+        double centerY = originY + (ActualHeight / (2 * zoom));
         _zoom = Math.Clamp(zoom, MinZoom, MaxZoom);
-        _originX = originX;
-        _originY = originY;
+        _originX = centerX - (ActualWidth / (2 * _zoom));
+        _originY = centerY - (ActualHeight / (2 * _zoom));
         RequestRender(fast: true);
         RestartIdleTimer();
     }
