@@ -202,11 +202,11 @@ public partial class ComparePaneView : UserControl
     /// <summary>
     /// 資源を装着して表示を開始する。所有権はこのビューに移る
     /// (<see cref="DetachAndDisposeAsync"/> で破棄する)。
+    /// 縮小表示用ピラミッドの生成完了は待たない。
     /// </summary>
     /// <param name="pane">装着する資源。</param>
     /// <param name="cancellationToken">キャンセルトークン。</param>
-    /// <returns>初期表示の完了を表すタスク。</returns>
-    internal async Task AttachAsync(ComparePane pane, CancellationToken cancellationToken = default)
+    internal void Attach(ComparePane pane, CancellationToken cancellationToken = default)
     {
         Pane = pane;
         FileNameText.Text = pane.FileName;
@@ -222,7 +222,17 @@ public partial class ComparePaneView : UserControl
             Viewport.FitToView();
         }
 
-        // 縮小表示用ピラミッド。失敗しても等倍表示はできるので落とさない
+        // 縮小表示用ピラミッドは表示開始を待たせない。
+        // 待つと次のファイルの読み込み開始まで止まり、複数枚ドロップで待ち時間が累積する
+        _ = BuildPyramidAsync(pane, cancellationToken);
+    }
+
+    /// <summary>縮小表示用ピラミッドを裏で用意する(失敗しても等倍表示はできる)。</summary>
+    /// <param name="pane">対象の資源。</param>
+    /// <param name="cancellationToken">キャンセルトークン。</param>
+    /// <returns>生成の完了を表すタスク。</returns>
+    private async Task BuildPyramidAsync(ComparePane pane, CancellationToken cancellationToken)
+    {
         try
         {
             await pane.EnsureTilePyramidAsync(frame: 0, cancellationToken);
@@ -231,7 +241,11 @@ public partial class ComparePaneView : UserControl
                 Viewport.SetPyramid(pane.Pyramid, pane.PyramidFrame);
             }
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (Exception ex) when (TaskRaceGuard.IsAbandoned(ex))
+        {
+            // ペインが閉じられた/比較モードを抜けた
+        }
+        catch (Exception ex)
         {
             AppLog.Warn($"比較ペインのピラミッド生成に失敗: {ex.Message}");
         }

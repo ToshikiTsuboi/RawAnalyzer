@@ -81,7 +81,7 @@ public partial class CompareView : UserControl
                 return false;
             }
 
-            await AddPaneAsync(pane, token);
+            AddPane(pane, token);
             return true;
         }
         catch (OperationCanceledException)
@@ -153,7 +153,7 @@ public partial class CompareView : UserControl
                 return;
             }
 
-            await AddPaneAsync(pane, token);
+            AddPane(pane, token);
         }
         catch (OperationCanceledException)
         {
@@ -165,7 +165,7 @@ public partial class CompareView : UserControl
         }
     }
 
-    private async Task AddPaneAsync(ComparePane pane, CancellationToken cancellationToken)
+    private void AddPane(ComparePane pane, CancellationToken cancellationToken)
     {
         var view = new ComparePaneView();
         view.CloseRequested += OnPaneCloseRequested;
@@ -176,7 +176,7 @@ public partial class CompareView : UserControl
         view.DisplayChanged += OnPaneDisplayChanged;
         _panes.Add(view);
         Relayout();
-        await view.AttachAsync(pane, cancellationToken);
+        view.Attach(pane, cancellationToken);
         SetActive(view);
         RefreshChips();
 

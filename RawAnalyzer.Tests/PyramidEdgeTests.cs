@@ -1,4 +1,4 @@
-using RawAnalyzer.Core;
+﻿using RawAnalyzer.Core;
 using Xunit;
 
 namespace RawAnalyzer.Tests;
@@ -71,6 +71,40 @@ public class PyramidEdgeTests
                     Assert.True(
                         Math.Abs(buffer[x] - expected) <= 1,
                         $"factor={level.Factor} ({x},{y}): {buffer[x]} vs {expected}");
+                }
+            }
+        }
+    }
+
+    [Theory]
+    [InlineData(13, 11)]
+    [InlineData(50, 30)]
+    [InlineData(37, 64)]
+    public void Levels_NonDivisibleSizes_MatchDirectBlockAverageExactly(int width, int height)
+    {
+        // 連鎖縮小は平均値ではなくブロック合計から積み上げるので、
+        // 端に半端なブロックがあっても直接ブロック平均と完全に一致する
+        // (以前は割り切れないと連鎖を諦め、レベルごとに元画像を読み直していた)
+        var codes = new ushort[width * height];
+        for (int i = 0; i < codes.Length; i++)
+        {
+            codes[i] = (ushort)((i * 7919) % 65536);
+        }
+
+        using RawImage image = LoadImage(codes, width, height);
+        TilePyramid pyramid = TilePyramid.Create(image, maxLevelPixels: long.MaxValue);
+
+        Assert.NotEmpty(pyramid.Levels);
+        foreach (PyramidLevel level in pyramid.Levels)
+        {
+            var buffer = new ushort[level.Width];
+            for (int y = 0; y < level.Height; y++)
+            {
+                level.CopyRegion(0, y, level.Width, 1, buffer);
+                for (int x = 0; x < level.Width; x++)
+                {
+                    Assert.Equal(
+                        BlockAverage(codes, width, height, x, y, level.Factor), buffer[x]);
                 }
             }
         }

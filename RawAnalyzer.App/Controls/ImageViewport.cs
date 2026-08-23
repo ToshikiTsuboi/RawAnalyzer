@@ -141,6 +141,11 @@ public sealed class ImageViewport : FrameworkElement
         _idleTimer.Tick += (_, _) =>
         {
             _idleTimer.Stop();
+            if (QualityRenderIsRedundant())
+            {
+                return;
+            }
+
             RequestRender(fast: false);
         };
         ClipToBounds = true;
@@ -1140,6 +1145,53 @@ public sealed class ImageViewport : FrameworkElement
         _idleTimer.Start();
     }
 
+    // 直近に表示した内容の素性(品質パスの要否判定に使う)
+    private bool _overlayEvaluated;
+    private double _presentedZoom = double.NaN;
+    private double _presentedOriginX = double.NaN;
+    private double _presentedOriginY = double.NaN;
+    private int _presentedWidth;
+    private int _presentedHeight;
+
+    /// <summary>
+    /// アイドル後の品質パスが、いま表示している内容と同じ結果にしかならないか判定する。
+    /// </summary>
+    /// <remarks>
+    /// 速報パスと品質パスの違いは「1段細かい縮小レベルを使う」ことと
+    /// 「raw値オーバーレイを取得する」ことだけ。等倍以上・ピラミッド未生成・ゼブラなど
+    /// 縮小レベルを使わない状況では両者の出力は完全に一致するため、
+    /// そのまま描き直すと同じ絵をもう一度作るだけになる(大画像では1回が数百ms)。
+    /// </remarks>
+    /// <returns>描き直す必要がなければtrue。</returns>
+    private bool QualityRenderIsRedundant()
+    {
+        if (_image is null || _bitmap is null)
+        {
+            return false;
+        }
+
+        // 表示中の内容が現在のビュー状態のものでなければ描き直す
+        if (_presentedZoom != _zoom
+            || _presentedOriginX != _originX
+            || _presentedOriginY != _originY
+            || _presentedWidth != Math.Max(1, (int)Math.Round(ActualWidth))
+            || _presentedHeight != Math.Max(1, (int)Math.Round(ActualHeight)))
+        {
+            return false;
+        }
+
+        // オーバーレイは品質パスでしか取得しない
+        if (!_overlayEvaluated
+            && _zoom >= RawOverlayMinZoom
+            && _displayMode != ViewportDisplayMode.ChannelSplit)
+        {
+            return false;
+        }
+
+        return SelectSource(fast: false) is { } quality
+            && quality.Source.Factor * quality.CoordinateFactor == _renderedFactor;
+    }
+
     /// <summary>
     /// 選択された画素供給元と座標倍率。
     /// </summary>
@@ -1318,6 +1370,14 @@ public sealed class ImageViewport : FrameworkElement
             && _displayMode != ViewportDisplayMode.ChannelSplit
             ? FetchOverlayData()
             : null;
+
+        // 表示中の内容の素性。アイドル後の品質パスが同じ結果にしかならないなら省く
+        _overlayEvaluated = !fast;
+        _presentedZoom = _zoom;
+        _presentedOriginX = _originX;
+        _presentedOriginY = _originY;
+        _presentedWidth = width;
+        _presentedHeight = height;
         InvalidateVisual();
         ViewportStateChanged?.Invoke(this, new ViewportStateEventArgs
         {

@@ -1,4 +1,4 @@
-namespace RawAnalyzer.Core;
+﻿namespace RawAnalyzer.Core;
 
 /// <summary>
 /// 縮小ピラミッドの1レベル。元画像を1/Factorに平均縮小した画素を保持する。
@@ -105,6 +105,16 @@ public sealed class TilePyramid
     /// <summary>1レベルあたりの画素数上限の既定値。超過するレベルは生成しない。</summary>
     public const long DefaultMaxLevelPixels = 100_000_000;
 
+    /// <summary>
+    /// 連鎖縮小のために前段のブロック合計を保持する上限画素数。
+    /// </summary>
+    /// <remarks>
+    /// 合計は画素あたり4バイト。これを超えるレベルでは保持せず、次のレベルは
+    /// 元画像から作り直す。高いfactorほどレベルは小さくなるので、
+    /// 繰り返しのフル読み込みが問題になる範囲は連鎖でまかなえる。
+    /// </remarks>
+    private const long MaxChainSumPixels = 32_000_000;
+
     private readonly PyramidLevel[] _levels;
 
     private TilePyramid(int sourceWidth, int sourceHeight, PyramidLevel[] levels)
@@ -157,6 +167,11 @@ public sealed class TilePyramid
     {
         var levels = new List<PyramidLevel>();
         PyramidLevel? previous = null;
+
+        // 前段の「ブロック合計」。平均値ではなく合計から連鎖することで、
+        // 端の半端なブロック(画素数が factor 未満)も正しい重みで足し合わせられ、
+        // 元画像を直接ブロック平均した値と完全に一致する
+        uint[]? previousSums = null;
         for (int factor = 2; factor <= MaxFactor; factor *= 2)
         {
             int width = (image.Width + factor - 1) / factor;
@@ -167,33 +182,22 @@ public sealed class TilePyramid
             }
 
             cancellationToken.ThrowIfCancellationRequested();
-            PyramidLevel level;
 
-            // 前段からの縮小は安いが、端に factor 未満の半端なブロックが出ると
-            // 画素数の違うブロック同士を同じ重みで平均してしまい、
-            // 元画像を直接ブロック平均した値からずれる
-            // (例: 幅7・factor4 では 4,5 の平均と 6 を等分してしまう)。
-            // 元画像が factor で割り切れるときだけ、全ブロックが同じ画素数になる
-            bool canChain = previous is not null && previous.Factor * 2 == factor
-                && image.Width % factor == 0 && image.Height % factor == 0;
-            if (canChain)
-            {
-                PyramidLevel source = previous!;
-                level = Downsample(
-                    source.Width, source.Height, 2, factor,
-                    (y, buffer) => source.CopyRegion(0, y, source.Width, 1, buffer),
-                    cancellationToken);
-            }
-            else
-            {
-                level = Downsample(
-                    image.Width, image.Height, factor, factor,
-                    (y, buffer) => image.CopyRegion(frame, 0, y, image.Width, 1, buffer),
-                    cancellationToken);
-            }
+            // 合計の保持は画素数ぶんの uint 配列。大きすぎるレベルでは持たず、
+            // 次のレベルは元画像から作り直す(メモリと再読込のつり合い)
+            bool keepSums = (long)width * height <= MaxChainSumPixels;
+            bool canChain = previous is not null && previousSums is not null
+                && previous.Factor * 2 == factor;
+
+            (PyramidLevel level, uint[]? sums) = canChain
+                ? DownsampleChained(
+                    previous!, previousSums!, image.Width, image.Height, factor, keepSums,
+                    cancellationToken)
+                : DownsampleDirect(image, frame, factor, keepSums, cancellationToken);
 
             levels.Add(level);
             previous = level;
+            previousSums = sums;
         }
 
         return new TilePyramid(image.Width, image.Height, levels.ToArray());
@@ -235,17 +239,23 @@ public sealed class TilePyramid
         return _levels.FirstOrDefault(l => l.Factor == factor);
     }
 
-    private static PyramidLevel Downsample(
-        int sourceWidth,
-        int sourceHeight,
-        int blockSize,
-        int resultFactor,
-        Action<int, ushort[]> readRow,
+    /// <summary>元画像を直接ブロック平均して1レベル作る。</summary>
+    /// <param name="image">元画像。</param>
+    /// <param name="frame">フレーム番号。</param>
+    /// <param name="factor">縮小率。</param>
+    /// <param name="keepSums">ブロック合計も返すか(次レベルの連鎖用)。</param>
+    /// <param name="cancellationToken">キャンセルトークン。</param>
+    /// <returns>生成したレベルと、要求された場合のブロック合計。</returns>
+    private static (PyramidLevel Level, uint[]? Sums) DownsampleDirect(
+        RawImage image, int frame, int factor, bool keepSums,
         CancellationToken cancellationToken)
     {
-        int width = (sourceWidth + blockSize - 1) / blockSize;
-        int height = (sourceHeight + blockSize - 1) / blockSize;
+        int sourceWidth = image.Width;
+        int sourceHeight = image.Height;
+        int width = (sourceWidth + factor - 1) / factor;
+        int height = (sourceHeight + factor - 1) / factor;
         var pixels = new ushort[(long)width * height];
+        uint[]? sums = keepSums ? new uint[(long)width * height] : null;
 
         Parallel.For(
             0,
@@ -255,22 +265,37 @@ public sealed class TilePyramid
             (destY, _, buffers) =>
             {
                 Array.Clear(buffers.Accumulator);
-                int rows = Math.Min(blockSize, sourceHeight - destY * blockSize);
+                int rows = Math.Min(factor, sourceHeight - (destY * factor));
                 for (int r = 0; r < rows; r++)
                 {
-                    readRow(destY * blockSize + r, buffers.Row);
-                    for (int sx = 0; sx < sourceWidth; sx++)
+                    image.CopyRegion(
+                        frame, 0, (destY * factor) + r, sourceWidth, 1, buffers.Row);
+
+                    // ブロックごとに区切って足す(画素ごとの除算 sx / factor を避ける)
+                    for (int destX = 0; destX < width; destX++)
                     {
-                        buffers.Accumulator[sx / blockSize] += buffers.Row[sx];
+                        int start = destX * factor;
+                        int cols = Math.Min(factor, sourceWidth - start);
+                        uint block = 0;
+                        for (int i = 0; i < cols; i++)
+                        {
+                            block += buffers.Row[start + i];
+                        }
+
+                        buffers.Accumulator[destX] += block;
                     }
                 }
 
                 long rowOffset = (long)destY * width;
                 for (int destX = 0; destX < width; destX++)
                 {
-                    int cols = Math.Min(blockSize, sourceWidth - destX * blockSize);
-                    pixels[rowOffset + destX] =
-                        (ushort)(buffers.Accumulator[destX] / (uint)(cols * rows));
+                    int cols = Math.Min(factor, sourceWidth - (destX * factor));
+                    uint sum = buffers.Accumulator[destX];
+                    pixels[rowOffset + destX] = (ushort)(sum / (uint)(cols * rows));
+                    if (sums is not null)
+                    {
+                        sums[rowOffset + destX] = sum;
+                    }
                 }
 
                 return buffers;
@@ -278,6 +303,74 @@ public sealed class TilePyramid
             _ => { });
 
         cancellationToken.ThrowIfCancellationRequested();
-        return new PyramidLevel(resultFactor, width, height, pixels);
+        return (new PyramidLevel(factor, width, height, pixels), sums);
+    }
+
+    /// <summary>
+    /// 前段レベルのブロック合計から1レベル作る(元画像は読まない)。
+    /// </summary>
+    /// <remarks>
+    /// 合計を足し合わせてから実画素数で割るので、端の半端なブロックがあっても
+    /// 元画像を直接ブロック平均した値と一致する。
+    /// </remarks>
+    /// <param name="source">前段レベル。</param>
+    /// <param name="sourceSums">前段レベルのブロック合計。</param>
+    /// <param name="imageWidth">元画像の幅(端ブロックの実画素数の算出に使う)。</param>
+    /// <param name="imageHeight">元画像の高さ。</param>
+    /// <param name="factor">生成する縮小率。</param>
+    /// <param name="keepSums">ブロック合計も返すか。</param>
+    /// <param name="cancellationToken">キャンセルトークン。</param>
+    /// <returns>生成したレベルと、要求された場合のブロック合計。</returns>
+    private static (PyramidLevel Level, uint[]? Sums) DownsampleChained(
+        PyramidLevel source,
+        uint[] sourceSums,
+        int imageWidth,
+        int imageHeight,
+        int factor,
+        bool keepSums,
+        CancellationToken cancellationToken)
+    {
+        int width = (imageWidth + factor - 1) / factor;
+        int height = (imageHeight + factor - 1) / factor;
+        int sourceFactor = source.Factor;
+        int sourceWidth = source.Width;
+        int sourceHeight = source.Height;
+        var pixels = new ushort[(long)width * height];
+        uint[]? sums = keepSums ? new uint[(long)width * height] : null;
+
+        Parallel.For(
+            0,
+            height,
+            new ParallelOptions { CancellationToken = cancellationToken },
+            destY =>
+            {
+                long rowOffset = (long)destY * width;
+                int sy1 = Math.Min(sourceHeight, (destY * 2) + 2);
+                for (int destX = 0; destX < width; destX++)
+                {
+                    int sx1 = Math.Min(sourceWidth, (destX * 2) + 2);
+                    uint sum = 0;
+                    long count = 0;
+                    for (int sy = destY * 2; sy < sy1; sy++)
+                    {
+                        int rows = Math.Min(sourceFactor, imageHeight - (sy * sourceFactor));
+                        for (int sx = destX * 2; sx < sx1; sx++)
+                        {
+                            int cols = Math.Min(sourceFactor, imageWidth - (sx * sourceFactor));
+                            sum += sourceSums[((long)sy * sourceWidth) + sx];
+                            count += (long)cols * rows;
+                        }
+                    }
+
+                    pixels[rowOffset + destX] = (ushort)(sum / (uint)count);
+                    if (sums is not null)
+                    {
+                        sums[rowOffset + destX] = sum;
+                    }
+                }
+            });
+
+        cancellationToken.ThrowIfCancellationRequested();
+        return (new PyramidLevel(factor, width, height, pixels), sums);
     }
 }

@@ -3578,28 +3578,46 @@ public partial class MainWindow : Window
     private void InitFolderTree()
     {
         FolderTree.Items.Clear();
+        var items = new List<(System.Windows.Controls.TreeViewItem Item, DriveInfo Drive)>();
         foreach (DriveInfo drive in DriveInfo.GetDrives())
         {
-            string label = "";
-            try
-            {
-                if (drive.IsReady)
-                {
-                    label = drive.VolumeLabel;
-                }
-            }
-            catch (IOException)
-            {
-            }
-
             var item = new System.Windows.Controls.TreeViewItem
             {
-                Header = $"💽 {drive.Name.TrimEnd('\\')}"
-                    + (string.IsNullOrEmpty(label) ? "" : $" ({label})"),
+                Header = $"💽 {drive.Name.TrimEnd('\\')}",
                 Tag = drive.RootDirectory.FullName,
             };
             item.Items.Add(TreeDummyChild);
             FolderTree.Items.Add(item);
+            items.Add((item, drive));
+        }
+
+        // IsReady/VolumeLabel は切断されたネットワークドライブだと
+        // タイムアウトまでブロックする。ツリーは先に出してから名前を足す
+        _ = AppendDriveLabelsAsync(items);
+    }
+
+    /// <summary>ドライブのボリュームラベルを後から見出しへ足す。</summary>
+    /// <param name="items">対象のツリー項目とドライブ。</param>
+    /// <returns>更新の完了を表すタスク。</returns>
+    private static async Task AppendDriveLabelsAsync(
+        List<(System.Windows.Controls.TreeViewItem Item, DriveInfo Drive)> items)
+    {
+        foreach ((System.Windows.Controls.TreeViewItem item, DriveInfo drive) in items)
+        {
+            string label;
+            try
+            {
+                label = await Task.Run(() => drive.IsReady ? drive.VolumeLabel : "");
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                continue;
+            }
+
+            if (!string.IsNullOrEmpty(label))
+            {
+                item.Header = $"{item.Header} ({label})";
+            }
         }
     }
 
@@ -3622,26 +3640,17 @@ public partial class MainWindow : Window
         item.Items.Clear();
         try
         {
-            foreach (string dir in Directory.EnumerateDirectories(path)
-                .OrderBy(p => p, NaturalOrderComparer.Instance))
+            // 属性は列挙結果に含まれているものを使う。ディレクトリごとに
+            // File.GetAttributes を呼ぶとSMBでは1件ごとに往復が増え、
+            // フォルダ数の多いネットワーク共有では展開1回で数秒固まる
+            foreach (DirectoryInfo dir in new DirectoryInfo(path).EnumerateDirectories()
+                .Where(d => (d.Attributes & (FileAttributes.Hidden | FileAttributes.System)) == 0)
+                .OrderBy(d => d.FullName, NaturalOrderComparer.Instance))
             {
-                try
-                {
-                    FileAttributes attributes = File.GetAttributes(dir);
-                    if ((attributes & (FileAttributes.Hidden | FileAttributes.System)) != 0)
-                    {
-                        continue;
-                    }
-                }
-                catch (IOException)
-                {
-                    continue;
-                }
-
                 var child = new System.Windows.Controls.TreeViewItem
                 {
-                    Header = $"📁 {Path.GetFileName(dir)}",
-                    Tag = dir,
+                    Header = $"📁 {dir.Name}",
+                    Tag = dir.FullName,
                 };
                 child.Items.Add(TreeDummyChild);
                 item.Items.Add(child);

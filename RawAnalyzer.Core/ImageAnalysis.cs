@@ -399,7 +399,7 @@ public static class ImageAnalysis
         bool sampled = strideBlocks > 1;
 
         // チャネルインデックス: 0=R, 1=Gr, 2=Gb, 3=B
-        Span<int> parityToChannel = stackalloc int[4];
+        var parityToChannel = new int[4];
         for (int py = 0; py < 2; py++)
         {
             for (int px = 0; px < 2; px++)
@@ -418,22 +418,51 @@ public static class ImageAnalysis
         if (blocksX > 0 && blocksY > 0)
         {
             int rowWidth = blocksX * 2;
-            var rowTop = new ushort[rowWidth];
-            var rowBottom = new ushort[rowWidth];
-            for (int by = 0; by < blocksY; by += strideBlocks)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                int y = y0 + by * 2;
-                image.CopyRegion(frame, x0, y, rowWidth, 1, rowTop);
-                image.CopyRegion(frame, x0, y + 1, rowWidth, 1, rowBottom);
-                for (int bx = 0; bx < blocksX; bx += strideBlocks)
+            int rowSteps = (blocksY + strideBlocks - 1) / strideBlocks;
+
+            // ブロック行単位で並列化する。チャネル別ビンはスレッドごとに要るので
+            // (16bitでは1区画あたり数MB)、区画数をコア数で頭打ちにして確保を抑える
+            int partitions = Math.Clamp(Environment.ProcessorCount, 1, rowSteps);
+            var partials = new ChannelAccumulator[partitions];
+            Parallel.For(
+                0,
+                partitions,
+                new ParallelOptions { CancellationToken = cancellationToken },
+                partition =>
                 {
-                    int xi = bx * 2;
-                    Accumulate(rowTop[xi], parityToChannel[(y & 1) * 2 + ((x0 + xi) & 1)]);
-                    Accumulate(rowTop[xi + 1], parityToChannel[(y & 1) * 2 + ((x0 + xi + 1) & 1)]);
-                    Accumulate(rowBottom[xi], parityToChannel[((y + 1) & 1) * 2 + ((x0 + xi) & 1)]);
-                    Accumulate(rowBottom[xi + 1], parityToChannel[((y + 1) & 1) * 2 + ((x0 + xi + 1) & 1)]);
-                }
+                    var local = new ChannelAccumulator(binCount);
+                    var rowTop = new ushort[rowWidth];
+                    var rowBottom = new ushort[rowWidth];
+                    for (int step = partition; step < rowSteps; step += partitions)
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        int y = y0 + (step * strideBlocks * 2);
+                        image.CopyRegion(frame, x0, y, rowWidth, 1, rowTop);
+                        image.CopyRegion(frame, x0, y + 1, rowWidth, 1, rowBottom);
+                        for (int bx = 0; bx < blocksX; bx += strideBlocks)
+                        {
+                            int xi = bx * 2;
+                            local.Add(
+                                rowTop[xi] >> shift,
+                                parityToChannel[((y & 1) * 2) + ((x0 + xi) & 1)]);
+                            local.Add(
+                                rowTop[xi + 1] >> shift,
+                                parityToChannel[((y & 1) * 2) + ((x0 + xi + 1) & 1)]);
+                            local.Add(
+                                rowBottom[xi] >> shift,
+                                parityToChannel[(((y + 1) & 1) * 2) + ((x0 + xi) & 1)]);
+                            local.Add(
+                                rowBottom[xi + 1] >> shift,
+                                parityToChannel[(((y + 1) & 1) * 2) + ((x0 + xi + 1) & 1)]);
+                        }
+                    }
+
+                    partials[partition] = local;
+                });
+
+            foreach (ChannelAccumulator local in partials)
+            {
+                local.MergeInto(totalBins, channelBins, sums, sumSqs, mins, maxs, counts);
             }
         }
 
@@ -812,6 +841,91 @@ public static class ImageAnalysis
         }
 
         return values;
+    }
+
+    /// <summary>
+    /// チャネル別集計のスレッドローカル蓄積。
+    /// </summary>
+    /// <remarks>
+    /// ロックなしで加算し、走査後に一度だけ合算する。ビン配列はチャネル分
+    /// (16bitでは4×64Ki要素)あるため、区画ごとに1個だけ作る。
+    /// </remarks>
+    private sealed class ChannelAccumulator
+    {
+        internal readonly long[] TotalBins;
+        internal readonly long[][] ChannelBins = new long[4][];
+        internal readonly long[] Sums = new long[4];
+        internal readonly UInt128[] SumSqs = new UInt128[4];
+        internal readonly int[] Mins = new int[4];
+        internal readonly int[] Maxs = new int[4];
+        internal readonly long[] Counts = new long[4];
+
+        internal ChannelAccumulator(int binCount)
+        {
+            TotalBins = new long[binCount];
+            for (int i = 0; i < 4; i++)
+            {
+                ChannelBins[i] = new long[binCount];
+                Mins[i] = int.MaxValue;
+                Maxs[i] = int.MinValue;
+            }
+        }
+
+        /// <summary>1画素を集計する。</summary>
+        /// <param name="code">raw code値(ビット深度に合わせてシフト済み)。</param>
+        /// <param name="channel">チャネル番号(0=R, 1=Gr, 2=Gb, 3=B)。</param>
+        internal void Add(int code, int channel)
+        {
+            TotalBins[code]++;
+            ChannelBins[channel][code]++;
+            Sums[channel] += code;
+            SumSqs[channel] += (ulong)((long)code * code);
+            if (code < Mins[channel])
+            {
+                Mins[channel] = code;
+            }
+
+            if (code > Maxs[channel])
+            {
+                Maxs[channel] = code;
+            }
+
+            Counts[channel]++;
+        }
+
+        /// <summary>集計結果を全体の配列へ合算する。</summary>
+        /// <param name="totalBins">全体ヒストグラム。</param>
+        /// <param name="channelBins">チャネル別ヒストグラム。</param>
+        /// <param name="sums">チャネル別の総和。</param>
+        /// <param name="sumSqs">チャネル別の二乗和。</param>
+        /// <param name="mins">チャネル別の最小値。</param>
+        /// <param name="maxs">チャネル別の最大値。</param>
+        /// <param name="counts">チャネル別のサンプル数。</param>
+        internal void MergeInto(
+            long[] totalBins, long[][] channelBins, long[] sums, UInt128[] sumSqs,
+            int[] mins, int[] maxs, long[] counts)
+        {
+            for (int i = 0; i < TotalBins.Length; i++)
+            {
+                totalBins[i] += TotalBins[i];
+            }
+
+            for (int c = 0; c < 4; c++)
+            {
+                long[] source = ChannelBins[c];
+                long[] destination = channelBins[c];
+                for (int i = 0; i < source.Length; i++)
+                {
+                    destination[i] += source[i];
+                }
+
+                sums[c] += Sums[c];
+                sumSqs[c] += SumSqs[c];
+                counts[c] += Counts[c];
+                mins[c] = Math.Min(mins[c], Mins[c]);
+                maxs[c] = Math.Max(maxs[c], Maxs[c]);
+            }
+        }
     }
 
     /// <summary>
