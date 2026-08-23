@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Runtime.InteropServices;
 
 namespace RawAnalyzer.App.Services;
@@ -30,9 +30,17 @@ internal sealed unsafe class Mp4H264Writer : IDisposable
     /// <param name="width">フレーム幅(偶数)。</param>
     /// <param name="height">フレーム高さ(偶数)。</param>
     /// <param name="fps">フレームレート。</param>
+    /// <param name="quality">
+    /// エンコーダ品質(0〜100)。ノイズの多いraw素材では高めが必要。
+    /// </param>
+    /// <param name="bitsPerPixel">
+    /// 品質モードが使えない環境で使う平均ビットレートの目安[bit/画素]。
+    /// </param>
     /// <exception cref="NotSupportedException">サイズが偶数でない場合。</exception>
     /// <exception cref="IOException">エンコーダを初期化できない場合。</exception>
-    public Mp4H264Writer(string path, int width, int height, int fps)
+    public Mp4H264Writer(
+        string path, int width, int height, int fps,
+        int quality = 75, double bitsPerPixel = 0.35)
     {
         if (width <= 0 || height <= 0 || fps <= 0)
         {
@@ -61,9 +69,12 @@ internal sealed unsafe class Mp4H264Writer : IDisposable
                 path, IntPtr.Zero, IntPtr.Zero, out IMFSinkWriter writer));
             _writer = writer;
 
-            // 出力: H.264。ビットレートは約0.1bit/画素(1〜40Mbpsへクランプ)
+            // 出力: H.264。ビットレートは画素あたりのビット数(品質)から決める。
+            // 上限を高くとってあるのは、ノイズの多いraw素材が一般的な実写より
+            // 多くのビットを要し、低いと目に見えてブロックノイズが出るため
             long pixelRate = (long)width * height * fps;
-            uint bitrate = (uint)Math.Clamp(pixelRate / 10, 1_000_000, 40_000_000);
+            uint bitrate = (uint)Math.Clamp(
+                (long)(pixelRate * bitsPerPixel), 1_000_000, 200_000_000);
 
             Marshal.ThrowExceptionForHR(NativeMethods.MFCreateMediaType(out IMFMediaType outType));
             try
@@ -96,7 +107,28 @@ internal sealed unsafe class Mp4H264Writer : IDisposable
                 inType.SetUINT64(
                     NativeMethods.MF_MT_FRAME_RATE, ((ulong)(uint)fps << 32) | 1);
                 inType.SetUINT64(NativeMethods.MF_MT_PIXEL_ASPECT_RATIO, (1UL << 32) | 1);
-                writer.SetInputMediaType(_streamIndex, inType, IntPtr.Zero);
+                // エンコーダの設定はここで渡すのが公式の経路。
+                // 出力タイプのMF_MT_AVG_BITRATEだけでは環境により効かない
+                IMFAttributes? encodingParameters = CreateEncodingParameters(quality);
+                IntPtr parametersPointer = encodingParameters is null
+                    ? IntPtr.Zero
+                    : Marshal.GetIUnknownForObject(encodingParameters);
+                try
+                {
+                    writer.SetInputMediaType(_streamIndex, inType, parametersPointer);
+                }
+                finally
+                {
+                    if (parametersPointer != IntPtr.Zero)
+                    {
+                        Marshal.Release(parametersPointer);
+                    }
+
+                    if (encodingParameters is not null)
+                    {
+                        Marshal.ReleaseComObject(encodingParameters);
+                    }
+                }
             }
             finally
             {
@@ -122,6 +154,40 @@ internal sealed unsafe class Mp4H264Writer : IDisposable
 
     /// <summary>書き込んだフレーム数。</summary>
     public long FrameCount => _frameCount;
+
+    /// <summary>
+    /// エンコーダへ渡す品質設定を作る。
+    /// </summary>
+    /// <remarks>
+    /// レート制御を品質基準にすると、圧縮しにくい内容ほどビットレートが伸びるため、
+    /// ノイズの多いraw素材でもブロックノイズが出にくい。作成に失敗した場合はnullを返し、
+    /// 出力タイプに指定した平均ビットレートのまま動かす。
+    /// </remarks>
+    /// <param name="quality">エンコーダ品質(0〜100)。</param>
+    /// <returns>設定の属性ストア。用意できない場合はnull。</returns>
+    private static IMFAttributes? CreateEncodingParameters(int quality)
+    {
+        try
+        {
+            if (NativeMethods.MFCreateAttributes(out IMFAttributes attributes, 2) < 0)
+            {
+                return null;
+            }
+
+            var encoderQuality = (uint)Math.Clamp(quality, 1, 100);
+            Guid modeKey = NativeMethods.CodecApiRateControlMode;
+            attributes.SetUINT32(ref modeKey, 3); // eAVEncCommonRateControlMode_Quality
+
+            Guid qualityKey = NativeMethods.CodecApiQuality;
+            attributes.SetUINT32(ref qualityKey, encoderQuality);
+            return attributes;
+        }
+        catch (COMException ex)
+        {
+            AppLog.Warn($"H.264エンコーダの品質設定を作れませんでした: {ex.Message}");
+            return null;
+        }
+    }
 
     /// <summary>
     /// RGB24(上から下、R,G,Bの順)のフレームを1枚追加する。
@@ -294,6 +360,14 @@ internal sealed unsafe class Mp4H264Writer : IDisposable
             new("34363248-0000-0010-8000-00aa00389b71");
         public static readonly Guid MFVideoFormat_RGB32 =
             new("00000016-0000-0010-8000-00aa00389b71");
+        /// <summary>CODECAPI_AVEncCommonRateControlMode。</summary>
+        public static readonly Guid CodecApiRateControlMode =
+            new("1c0608e9-370c-4710-8a58-cb6181c42423");
+
+        /// <summary>CODECAPI_AVEncCommonQuality(0〜100)。</summary>
+        public static readonly Guid CodecApiQuality =
+            new("fcbf57a3-7ea5-4b0c-9644-69b40c39c391");
+
         public static readonly Guid MF_MT_AVG_BITRATE =
             new("20332624-fb0d-4d9e-bd0d-cbf6786c102e");
         public static readonly Guid MF_MT_INTERLACE_MODE =
@@ -313,6 +387,10 @@ internal sealed unsafe class Mp4H264Writer : IDisposable
 
         [DllImport("mfplat.dll", ExactSpelling = true)]
         public static extern int MFCreateMediaType(out IMFMediaType mediaType);
+
+        [DllImport("mfplat.dll", ExactSpelling = true)]
+        public static extern int MFCreateAttributes(
+            out IMFAttributes attributes, uint initialSize);
 
         [DllImport("mfplat.dll", ExactSpelling = true)]
         public static extern int MFCreateSample(out IMFSample sample);
@@ -458,6 +536,34 @@ internal sealed unsafe class Mp4H264Writer : IDisposable
         void Slot05(); // GetMaxLength
     }
 
+    /// <summary>属性ストア(エンコード設定の受け渡しに使う)。</summary>
+    [ComImport]
+    [Guid("2cd2d921-c447-44a7-a13c-4adabfc247e3")]
+    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    private interface IMFAttributes
+    {
+        void Slot01(); // GetItem
+        void Slot02(); // GetItemType
+        void Slot03(); // CompareItem
+        void Slot04(); // Compare
+        void Slot05(); // GetUINT32
+        void Slot06(); // GetUINT64
+        void Slot07(); // GetDouble
+        void Slot08(); // GetGUID
+        void Slot09(); // GetStringLength
+        void Slot10(); // GetString
+        void Slot11(); // GetAllocatedString
+        void Slot12(); // GetBlobSize
+        void Slot13(); // GetBlob
+        void Slot14(); // GetAllocatedBlob
+        void Slot15(); // GetUnknown
+        void Slot16(); // SetItem
+        void Slot17(); // DeleteItem
+        void Slot18(); // DeleteAllItems
+
+        void SetUINT32([In] ref Guid key, uint value);
+    }
+
     [ComImport]
     [Guid("3137f1cd-fe5e-4805-a5d8-fb477448cb3d")]
     [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
@@ -481,5 +587,23 @@ internal sealed unsafe class Mp4H264Writer : IDisposable
 
         void Slot10(); // GetServiceForStream
         void Slot11(); // GetStatistics
+    }
+
+    [ComImport]
+    [Guid("901db4c7-31ce-41a2-85dc-8fa0bf41b8da")]
+    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    private interface ICodecApi
+    {
+        void Slot01(); // IsSupported
+        void Slot02(); // IsModifiable
+        void Slot03(); // GetParameterRange
+        void Slot04(); // GetParameterValues
+        void Slot05(); // GetDefaultValue
+        void Slot06(); // GetValue
+
+        [PreserveSig]
+        int SetValue(
+            [In] ref Guid api,
+            [In, MarshalAs(UnmanagedType.Struct)] ref object value);
     }
 }

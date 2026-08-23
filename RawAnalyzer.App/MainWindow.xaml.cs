@@ -110,7 +110,8 @@ public partial class MainWindow : Window
         Files,
     }
 
-    private static readonly int[] PlaybackFpsValues = { 5, 10, 15, 24, 30 };
+    /// <summary>再生フレームレートの既定値(コンボの初期選択と同じ)。</summary>
+    private const double DefaultPlaybackFps = 15;
 
     // 重い処理(保存/演算/バッチ/測定/検出)の実行中を数える。
     // ShowDialog は Dispatcher の入れ子ポンプなのでモーダル表示中もタイマーや
@@ -2211,7 +2212,8 @@ public partial class MainWindow : Window
 
         string folder = Path.GetDirectoryName(_currentPath)!;
         var dialog = new BatchExportDialog(
-            targets.Count, Path.Combine(folder, "export"), rawTargets)
+            targets.Count, Path.Combine(folder, "export"), rawTargets,
+            _currentFormat?.Width ?? 0, _currentFormat?.Height ?? 0)
         {
             Owner = this,
         };
@@ -2277,6 +2279,7 @@ public partial class MainWindow : Window
             (progress, ct) => Task.Run(() =>
             {
                 Directory.CreateDirectory(choice.OutputFolder);
+                int jpegQuality = VideoQualitySettings.JpegQuality(choice.Quality);
                 AviMjpegWriter? avi = null;
                 Mp4H264Writer? mp4 = null;
                 var frameBuffers = new FrameBuffers();
@@ -2289,7 +2292,10 @@ public partial class MainWindow : Window
                     }
                     else if (choice.Format == BatchFormat.Mp4H264)
                     {
-                        mp4 = new Mp4H264Writer(videoPath, width, height, choice.Fps);
+                        mp4 = new Mp4H264Writer(
+                            videoPath, width, height, choice.Fps,
+                            VideoQualitySettings.EncoderQuality(choice.Quality),
+                            VideoQualitySettings.BitsPerPixel(choice.Quality));
                         videoFileCreated = true;
                     }
 
@@ -2333,7 +2339,7 @@ public partial class MainWindow : Window
                                 {
                                     avi.AddFrame(EncodeJpegFrame(
                                         image, frame, color, pattern, devLuts, lut,
-                                        trueColor, ct));
+                                        trueColor, jpegQuality, ct));
                                 }
                                 else
                                 {
@@ -2540,12 +2546,13 @@ public partial class MainWindow : Window
 
     private static byte[] EncodeJpegFrame(
         RawImage image, int frame, bool color, BayerPattern pattern,
-        DevelopLuts devLuts, DisplayLut lut, ColorImage? trueColor, CancellationToken ct)
+        DevelopLuts devLuts, DisplayLut lut, ColorImage? trueColor, int jpegQuality,
+        CancellationToken ct)
     {
         BitmapSource source = trueColor is not null
             ? BakeColorFrame(trueColor, lut, ct)
             : BakeFrame(image, frame, color, pattern, devLuts, lut, forceRgb: true, ct);
-        var encoder = new JpegBitmapEncoder { QualityLevel = 90 };
+        var encoder = new JpegBitmapEncoder { QualityLevel = jpegQuality };
         encoder.Frames.Add(BitmapFrame.Create(source));
         using var stream = new MemoryStream();
         encoder.Save(stream);
@@ -3438,8 +3445,7 @@ public partial class MainWindow : Window
             _playTimer ??= new DispatcherTimer();
             _playTimer.Tick -= OnPlayTick;
             _playTimer.Tick += OnPlayTick;
-            int fps = PlaybackFpsValues[Math.Clamp(FpsCombo.SelectedIndex, 0, 4)];
-            _playTimer.Interval = TimeSpan.FromSeconds(1.0 / fps);
+            _playTimer.Interval = TimeSpan.FromSeconds(1.0 / CurrentPlaybackFps());
             _playTimer.Start();
         }
         else
@@ -3448,14 +3454,33 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>
+    /// 再生フレームレート。一覧の選択と手入力のどちらも同じ経路で読む。
+    /// </summary>
+    /// <returns>0.1〜240のフレームレート。</returns>
+    private double CurrentPlaybackFps()
+    {
+        return FpsInput.Parse(FpsCombo.Text, DefaultPlaybackFps);
+    }
+
     private void OnFpsChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
     {
+        ApplyPlaybackFps();
+    }
+
+    private void OnFpsTextChanged(object sender, System.Windows.Controls.TextChangedEventArgs e)
+    {
+        // 手入力(編集可能コンボ)はSelectionChangedが出ないのでこちらで拾う
+        ApplyPlaybackFps();
+    }
+
+    private void ApplyPlaybackFps()
+    {
         // 再生中の変更も即座にタイマー間隔へ反映する(開始時にしか読まないと
-        // 表示上の選択値と実際の再生速度が食い違う)
+        // 表示上の値と実際の再生速度が食い違う)
         if (_playTimer?.IsEnabled == true)
         {
-            int fps = PlaybackFpsValues[Math.Clamp(FpsCombo.SelectedIndex, 0, 4)];
-            _playTimer.Interval = TimeSpan.FromSeconds(1.0 / fps);
+            _playTimer.Interval = TimeSpan.FromSeconds(1.0 / CurrentPlaybackFps());
         }
     }
 

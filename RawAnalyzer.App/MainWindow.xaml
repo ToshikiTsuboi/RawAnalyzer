@@ -1,6 +1,7 @@
 ﻿<Window x:Class="RawAnalyzer.App.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:sys="clr-namespace:System;assembly=System.Runtime"
         xmlns:controls="clr-namespace:RawAnalyzer.App.Controls"
         xmlns:compare="clr-namespace:RawAnalyzer.App.Compare"
         Title="RawAnalyzer" Width="1280" Height="820"
@@ -393,12 +394,15 @@
                                 AutomationProperties.Name="最終フレームへ" ToolTip="最終フレームへ" />
                         <ComboBox x:Name="FpsCombo" DockPanel.Dock="Right" MinWidth="76"
                                   SelectedIndex="2" FontSize="11" VerticalAlignment="Center"
+                                  IsEditable="True" IsTextSearchEnabled="False"
+                                  ToolTip="一覧から選ぶか、数値を直接入力できます (0.1〜240 fps)"
+                                  TextBoxBase.TextChanged="OnFpsTextChanged"
                                   SelectionChanged="OnFpsChanged">
-                            <ComboBoxItem Content="5 fps" />
-                            <ComboBoxItem Content="10 fps" />
-                            <ComboBoxItem Content="15 fps" />
-                            <ComboBoxItem Content="24 fps" />
-                            <ComboBoxItem Content="30 fps" />
+                            <sys:String>5 fps</sys:String>
+                            <sys:String>10 fps</sys:String>
+                            <sys:String>15 fps</sys:String>
+                            <sys:String>24 fps</sys:String>
+                            <sys:String>30 fps</sys:String>
                         </ComboBox>
                         <TextBlock DockPanel.Dock="Right" Text="{Binding SequenceLabel}"
                                    FontFamily="Consolas" FontSize="12" Margin="10,0"
