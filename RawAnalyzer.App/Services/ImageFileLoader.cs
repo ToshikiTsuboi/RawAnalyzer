@@ -1,5 +1,7 @@
 ﻿using System.Buffers;
 using System.IO;
+using System.Runtime.InteropServices;
+using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using RawAnalyzer.Core;
@@ -9,7 +11,14 @@ namespace RawAnalyzer.App.Services;
 /// <summary>デコード済み画像ファイルの読込結果。</summary>
 /// <param name="Luminance">解析・グレー表示に使う輝度画像。</param>
 /// <param name="Color">カラー画像(グレースケール画像ならnull)。</param>
-public sealed record DecodedImage(RawImage Luminance, ColorImage? Color);
+public sealed record DecodedImage(RawImage Luminance, ColorImage? Color)
+{
+    /// <summary>ファイル内のページ数。画素は1ページだけを保持する。</summary>
+    public int PageCount { get; init; } = 1;
+
+    /// <summary>読み込んだページ(0起点)。Luminance内のフレーム番号は常に0。</summary>
+    public int PageIndex { get; init; }
+}
 
 /// <summary>
 /// WIC(BitmapDecoder)によるJPEG/PNG/TIFF/BMPの読込。
@@ -57,7 +66,7 @@ internal static class ImageFileLoader
     }
 
     /// <summary>
-    /// 展開後の画素形式から、1画素あたりに確保する中間バッファのバイト数を見積もる。
+    /// 展開後の画素形式から、出力とWIC内部バッファの保守的な合計バイト数を見積もる。
     /// </summary>
     /// <param name="format">デコード後の画素形式。</param>
     /// <returns>1画素あたりのバイト数。</returns>
@@ -115,32 +124,34 @@ internal static class ImageFileLoader
         }
     }
 
-    /// <summary>
-    /// 画像ファイルを読み込む。カラー画像は輝度画像とカラー画像の両方を返す。
-    /// </summary>
+    /// <summary>指定ページだけを読み込む。全ファイルや全ページの画素を一括展開しない。</summary>
     /// <param name="path">ファイルパス。</param>
     /// <param name="cancellationToken">キャンセルトークン。</param>
-    /// <param name="progress">読み込みの進捗(0〜1)。低速なストレージ向けの表示用。</param>
-    /// <returns>読込結果。</returns>
-    /// <exception cref="InvalidDataException">デコードできない場合。</exception>
-    /// <exception cref="NotSupportedException">画素数が上限を超える場合。</exception>
+    /// <param name="progress">対象ページの読込進捗(0〜1)。</param>
+    /// <param name="pageIndex">ページ番号(0起点)。通常の画像ファイルは0。</param>
+    /// <returns>対象ページの画像とファイル全体のページ数。</returns>
     public static DecodedImage Load(
-        string path,
-        CancellationToken cancellationToken = default,
-        IProgress<double>? progress = null)
+        string path, CancellationToken cancellationToken = default,
+        IProgress<double>? progress = null, int pageIndex = 0)
     {
-        // 非圧縮グレースケール16bit TIFFは画素データが連続しているので、WICでデコード
-        // せずrawと同じ経路(必要ならMemoryMappedFile)で開く。画素数の上限に縛られない。
-        // 8bitはWIC経路(×257で16bitフルスケールへ展開)の方が表示が正確なため対象外
-        if (TiffLoader.TryProbePixelLayout(path, out TiffPixelLayout? layout, out string reason)
-            && layout!.BitDepth == 16)
+        ArgumentOutOfRangeException.ThrowIfNegative(pageIndex);
+        cancellationToken.ThrowIfCancellationRequested();
+        progress?.Report(0);
+        // IFDごとに独立したオフセットを使い、ページ間の隙間を画素と誤解釈しない。
+        if (TiffLoader.TryProbePixelLayout(path, out TiffPixelLayout? layout, out string reason,
+                pageIndex, cancellationToken) && layout!.BitDepth == 16)
         {
-            RawFormat tiffFormat = TiffLoader.ToRawFormat(layout);
-            AppLog.Info(
-                $"TIFFを直接読み出し: {tiffFormat.Width}×{tiffFormat.Height} " +
-                $"{tiffFormat.BitDepth}bit (オフセット {tiffFormat.HeaderOffset})");
-            return new DecodedImage(
-                RawLoader.Load(path, tiffFormat, cancellationToken, progress), null);
+            RawImage image = RawLoader.Load(path, TiffLoader.ToRawFormat(layout), cancellationToken, progress);
+            try
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                return new DecodedImage(image, null) { PageCount = layout.PageCount, PageIndex = pageIndex };
+            }
+            catch
+            {
+                image.Dispose();
+                throw;
+            }
         }
 
         if (IsTiff(path) && reason.Length > 0)
@@ -148,166 +159,137 @@ internal static class ImageFileLoader
             AppLog.Info($"TIFFの直接読み出しは不可のためWICで開きます: {reason}");
         }
 
-        BitmapFrame frame;
-        try
+        // ストリームは選択ページのCopyPixels完了まで保持する。戻り値にWIC資源は含めない。
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read,
+            FileShare.Read, bufferSize: 1 << 16);
+        var (decoder, count) = DecodeWithWicErrorHandling(() =>
         {
-            // 上限判定はファイルから直接ヘッダだけ読んで先に済ませる。
-            // 圧縮データ全体をメモリへ写してから拒否したのでは、上限の目的
-            // (巨大画像でメモリを使い切らない)を果たせない
-            using (var probeStream = new FileStream(
-                path, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 1 << 16))
+            var created = BitmapDecoder.Create(stream,
+                BitmapCreateOptions.PreservePixelFormat | BitmapCreateOptions.DelayCreation,
+                BitmapCacheOption.None);
+            return (created, created.Frames.Count);
+        });
+        if (count is < 1 or > TiffLoader.MaxPages)
+        {
+            throw new NotSupportedException($"画像のページ数が対応範囲外です: {count}");
+        }
+
+        // 呼び出し側の引数エラーはWICのデコード失敗へ変換しない。
+        if ((uint)pageIndex >= (uint)count)
+        {
+            throw new ArgumentOutOfRangeException(nameof(pageIndex), $"ページは0〜{count - 1}です。");
+        }
+
+        return DecodeWithWicErrorHandling(() =>
+        {
+            BitmapFrame frame = decoder.Frames[pageIndex];
+            cancellationToken.ThrowIfCancellationRequested();
+            EnsureDecodable(frame.PixelWidth, frame.PixelHeight, frame.Format);
+            if (frame.Format == PixelFormats.Gray32Float)
             {
-                var probe = BitmapDecoder.Create(
-                    probeStream,
-                    BitmapCreateOptions.PreservePixelFormat,
-                    BitmapCacheOption.None);
-                BitmapFrame probeFrame = probe.Frames[0];
-                EnsureDecodable(
-                    probeFrame.PixelWidth, probeFrame.PixelHeight, probeFrame.Format);
+                throw new NotSupportedException("32bit浮動小数点TIFFは未対応です。8/16bit TIFFを使用してください。");
             }
 
-            // WICにURIを渡すと転送の進捗が取れないため、自前でメモリへ読んでから
-            // デコードする。NASなどの低速ストレージでは転送が時間の大半を占める
-            using Stream source = ReadToMemory(path, cancellationToken, progress);
-            var decoder = BitmapDecoder.Create(
-                source,
-                BitmapCreateOptions.PreservePixelFormat,
-                BitmapCacheOption.OnLoad);
-            frame = decoder.Frames[0];
+            DecodedImage decoded = DecodeFrame(frame, cancellationToken, progress);
+            return decoded with { PageCount = count, PageIndex = pageIndex };
+        });
+    }
+
+    internal static T DecodeWithWicErrorHandling<T>(Func<T> decode)
+    {
+        try
+        {
+            return decode();
         }
-        catch (Exception ex) when (ex is FileFormatException or ArgumentException)
+        catch (Exception ex) when (ex is FileFormatException or ArgumentException
+            or NotSupportedException or COMException)
         {
             throw new InvalidDataException($"画像をデコードできません: {ex.Message}", ex);
         }
+    }
 
-        // 残りはメモリ上の変換のみで、ファイル転送に比べれば短い
-        progress?.Report(1.0);
-
+    private static DecodedImage DecodeFrame(BitmapSource frame, CancellationToken ct, IProgress<double>? progress)
+    {
         int width = frame.PixelWidth;
         int height = frame.PixelHeight;
-        long pixelCount = (long)width * height;
         PixelFormat format = frame.Format;
-
-        if (format == PixelFormats.Gray16)
+        if (format == PixelFormats.Gray16 || format == PixelFormats.Gray8)
         {
-            var pixels = new ushort[(long)width * height];
-            frame.CopyPixels(pixels, width * 2, 0);
-            var rawFormat = new RawFormat { Width = width, Height = height, BitDepth = 16 };
-            return new DecodedImage(RawImage.FromPixels(rawFormat, pixels), null);
+            ushort[] pixels = ReadBands(frame, 1, 1, format == PixelFormats.Gray16, false, ct, progress);
+            ct.ThrowIfCancellationRequested();
+            progress?.Report(1);
+            ct.ThrowIfCancellationRequested();
+            return new DecodedImage(RawImage.FromPixels(
+                new RawFormat { Width = width, Height = height, BitDepth = format == PixelFormats.Gray16 ? 16 : 8 },
+                pixels), null);
         }
 
-        if (format == PixelFormats.Gray8)
+        bool sixteenBit = format == PixelFormats.Rgb48 || format == PixelFormats.Rgba64;
+        BitmapSource source = sixteenBit || format == PixelFormats.Bgra32 ? frame
+            : new FormatConvertedBitmap(frame, PixelFormats.Bgra32, null, 0);
+        int inputChannels = format == PixelFormats.Rgb48 ? 3 : 4;
+        ushort[] rgb = ReadBands(source, inputChannels, 3, sixteenBit, !sixteenBit, ct, progress);
+        ColorImage color = ColorImage.FromInterleaved(width, height, sixteenBit ? 16 : 8, rgb);
+        RawImage luminance = color.ToLuminance(ct);
+        try
         {
-            var bytes = new byte[(long)width * height];
-            frame.CopyPixels(bytes, width, 0);
-            var pixels = new ushort[(long)width * height];
-            for (long i = 0; i < pixels.LongLength; i++)
-            {
-                // ×257 で 0..255 → 0..65535(<<8 だと白が65280止まりで表示が1コード暗い)。
-                // 257=0x101 なので value>>8 によるcode復元は全値で厳密に保たれる
-                pixels[i] = (ushort)(bytes[i] * 257);
-            }
-
-            var rawFormat = new RawFormat { Width = width, Height = height, BitDepth = 8 };
-            return new DecodedImage(RawImage.FromPixels(rawFormat, pixels), null);
+            ct.ThrowIfCancellationRequested();
+            progress?.Report(1);
+            ct.ThrowIfCancellationRequested();
+            return new DecodedImage(luminance, color);
         }
-
-        if (format == PixelFormats.Rgb48 || format == PixelFormats.Rgba64)
+        catch
         {
-            int channels = format == PixelFormats.Rgb48 ? 3 : 4;
-            var source = new ushort[pixelCount * channels];
-            frame.CopyPixels(source, width * channels * 2, 0);
+            luminance.Dispose();
+            throw;
+        }
+    }
 
-            ushort[] rgb;
-            if (channels == 3)
+    private static ushort[] ReadBands(
+        BitmapSource source, int inputChannels, int outputChannels, bool sixteenBit, bool bgr,
+        CancellationToken ct, IProgress<double>? progress)
+    {
+        ct.ThrowIfCancellationRequested();
+        int width = source.PixelWidth;
+        int height = source.PixelHeight;
+        int stride = checked(width * inputChannels * (sixteenBit ? 2 : 1));
+        int bandRows = Math.Min(height, Math.Max(1, (1 << 20) / stride));
+        int bandSamples = checked(width * bandRows * inputChannels);
+        Array buffer = sixteenBit ? new ushort[bandSamples] : new byte[bandSamples];
+        var output = new ushort[checked(width * height * outputChannels)];
+        for (int y = 0; y < height; y += bandRows)
+        {
+            ct.ThrowIfCancellationRequested();
+            int rows = Math.Min(bandRows, height - y);
+            source.CopyPixels(new Int32Rect(0, y, width, rows), buffer, stride, 0);
+            int pixels = rows * width;
+            int offset = y * width * outputChannels;
+            if (buffer is ushort[] words && inputChannels == outputChannels)
             {
-                // Rgb48 は長さもレイアウトも出力と同一。ColorImage は配列を
-                // 参照保持するので、もう1本確保してコピーする必要はない
-                rgb = source;
+                words.AsSpan(0, pixels * outputChannels).CopyTo(output.AsSpan(offset));
             }
             else
             {
-                rgb = new ushort[pixelCount * 3];
-                for (long i = 0; i < pixelCount; i++)
+                for (int i = 0; i < pixels; i++)
                 {
-                    rgb[i * 3] = source[i * channels];
-                    rgb[i * 3 + 1] = source[i * channels + 1];
-                    rgb[i * 3 + 2] = source[i * channels + 2];
-                }
-            }
-
-            ColorImage color16 = ColorImage.FromInterleaved(width, height, 16, rgb);
-            return new DecodedImage(color16.ToLuminance(), color16);
-        }
-
-        // その他(Bgr24/Bgra32/Indexed/CMYK等)はBgra32へ変換して取り出す
-        BitmapSource converted = format == PixelFormats.Bgra32
-            ? frame
-            : new FormatConvertedBitmap(frame, PixelFormats.Bgra32, null, 0);
-        var bgra = new byte[(long)width * height * 4];
-        converted.CopyPixels(bgra, width * 4, 0);
-        var rgb8 = new ushort[(long)width * height * 3];
-        for (long i = 0; i < (long)width * height; i++)
-        {
-            // ×257: 0..255 → 0..65535(<<8 だと白が65280止まりで表示が1コード暗い)
-            rgb8[i * 3] = (ushort)(bgra[i * 4 + 2] * 257);
-            rgb8[i * 3 + 1] = (ushort)(bgra[i * 4 + 1] * 257);
-            rgb8[i * 3 + 2] = (ushort)(bgra[i * 4] * 257);
-        }
-
-        ColorImage color = ColorImage.FromInterleaved(width, height, 8, rgb8);
-        return new DecodedImage(color.ToLuminance(), color);
-    }
-
-    /// <summary>
-    /// ファイル全体をメモリへ読み込み、転送量に応じた進捗(0〜0.9)を報告する。
-    /// 2GB以上はMemoryStreamに載らないため、進捗なしのFileStreamをそのまま返す。
-    /// </summary>
-    private static Stream ReadToMemory(
-        string path, CancellationToken cancellationToken, IProgress<double>? progress)
-    {
-        const double ReadShare = 0.9;  // 残り0.1はデコードの分
-        var file = new FileStream(
-            path, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 1 << 20);
-        if (file.Length >= int.MaxValue)
-        {
-            return file;
-        }
-
-        using (file)
-        {
-            var memory = new MemoryStream((int)file.Length);
-
-            // 転送バッファは連番再生でフレームごとに使い捨てられるためプールから借りる
-            byte[] buffer = ArrayPool<byte>.Shared.Rent(1 << 20);
-            try
-            {
-                long total = file.Length;
-                long done = 0;
-                double lastReported = -1;
-                int read;
-                while ((read = file.Read(buffer, 0, buffer.Length)) > 0)
-                {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    memory.Write(buffer, 0, read);
-                    done += read;
-
-                    // 高速なストレージでUIスレッドへの通知が集中しないよう1%刻みに間引く
-                    double p = ReadShare * done / Math.Max(1, total);
-                    if (p - lastReported >= 0.01 || done == total)
+                    if ((i & 4095) == 0)
                     {
-                        lastReported = p;
-                        progress?.Report(p);
+                        ct.ThrowIfCancellationRequested();
+                    }
+
+                    for (int c = 0; c < outputChannels; c++)
+                    {
+                        int input = i * inputChannels + (bgr ? 2 - c : c);
+                        output[offset + i * outputChannels + c] = buffer is ushort[] data
+                            ? data[input] : (ushort)(((byte[])buffer)[input] * 257);
                     }
                 }
             }
-            finally
-            {
-                ArrayPool<byte>.Shared.Return(buffer);
-            }
 
-            memory.Position = 0;
-            return memory;
+            progress?.Report(0.9 * (y + rows) / height);
         }
+
+        ct.ThrowIfCancellationRequested();
+        return output;
     }
 }

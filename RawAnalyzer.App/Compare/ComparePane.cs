@@ -24,12 +24,13 @@ internal sealed class ComparePane : IDisposable
 
     private bool _disposed;
 
-    private ComparePane(string path, RawImage image, RawFormat format, ColorImage? color)
+    private ComparePane(string path, RawImage image, RawFormat format, ColorImage? color, int pageCount = 1)
     {
         Path = path;
         Image = image;
         Format = format;
         Color = color;
+        PageCount = pageCount;
         Display = DisplaySettings.CreateDefault(format.BitDepth);
     }
 
@@ -37,7 +38,11 @@ internal sealed class ComparePane : IDisposable
     public string Path { get; }
 
     /// <summary>表示用のファイル名。</summary>
-    public string FileName => System.IO.Path.GetFileName(Path);
+    public string FileName => System.IO.Path.GetFileName(Path)
+        + (PageCount > 1 ? $" [TIFFページ 1/{PageCount}]" : "");
+
+    /// <summary>画像ファイル内のページ数。比較ペインは先頭ページを表示する。</summary>
+    public int PageCount { get; }
 
     /// <summary>画像(raw、または画像ファイルの輝度)。</summary>
     public RawImage Image { get; }
@@ -103,7 +108,7 @@ internal sealed class ComparePane : IDisposable
 
         DecodedImage decoded = await Task.Run(
             () => ImageFileLoader.Load(path, cancellationToken), cancellationToken);
-        return new ComparePane(path, decoded.Luminance, decoded.Luminance.Format, decoded.Color);
+        return new ComparePane(path, decoded.Luminance, decoded.Luminance.Format, decoded.Color, decoded.PageCount);
     }
 
     /// <summary>

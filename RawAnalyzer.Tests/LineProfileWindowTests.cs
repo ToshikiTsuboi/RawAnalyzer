@@ -1,0 +1,405 @@
+using System.Globalization;
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
+using System.Windows.Shapes;
+using RawAnalyzer.App.Services;
+using RawAnalyzer.App.Views;
+using RawAnalyzer.Core;
+using Xunit;
+
+namespace RawAnalyzer.Tests;
+
+[Collection("WPF UI")]
+public class LineProfileWindowTests
+{
+    [Fact]
+    public Task ScaleModes_UpdateAxesAndKeepRawStatistics() => WpfTestHost.Run(() =>
+    {
+        var window = NewWindow();
+        try
+        {
+            var mode = (ComboBox)window.FindName("YScaleCombo");
+            var min = (TextBox)window.FindName("YMinimumBox");
+            var max = (TextBox)window.FindName("YMaximumBox");
+            Assert.Equal(new ProfileAxisRange(0, 4095), window.AxisRange);
+            Assert.False(min.IsEnabled);
+            string statistics = ((TextBlock)window.FindName("StatsText")).Text;
+            CaptureIfRequested(window, "profile-full");
+
+            mode.SelectedIndex = 1;
+            Assert.InRange(window.AxisRange.Minimum, 994, 995);
+            Assert.InRange(window.AxisRange.Maximum, 1005, 1006);
+            CaptureIfRequested(window, "profile-auto");
+
+            mode.SelectedIndex = 2;
+            Assert.True(min.IsEnabled);
+            min.Text = "998.5";
+            max.Text = "1001.5";
+            ((Button)window.FindName("ApplyYScaleButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Assert.Equal(new ProfileAxisRange(998.5, 1001.5), window.AxisRange);
+            Assert.Equal(statistics, ((TextBlock)window.FindName("StatsText")).Text);
+            CaptureIfRequested(window, "profile-manual");
+
+            var canvas = (Canvas)window.FindName("PlotCanvas");
+            var plot = Assert.Single(canvas.Children.OfType<System.Windows.Shapes.Path>());
+            Assert.InRange(plot.Data.Bounds.Top, 0, canvas.ActualHeight);
+            Assert.InRange(plot.Data.Bounds.Bottom, 0, canvas.ActualHeight);
+            Assert.All(canvas.Children.OfType<Line>(), line =>
+            {
+                Assert.InRange(line.Y1, 0, canvas.ActualHeight);
+                Assert.InRange(line.Y2, 0, canvas.ActualHeight);
+            });
+
+            mode.SelectedIndex = 0;
+            Assert.Equal(new ProfileAxisRange(0, 4095), window.AxisRange);
+            mode.SelectedIndex = 2;
+            Assert.Equal(new ProfileAxisRange(998.5, 1001.5), window.AxisRange);
+            Assert.Equal("998.5", min.Text);
+        }
+        finally
+        {
+            window.Close();
+        }
+    });
+
+    [Fact]
+    public Task ManualScale_PersistsAcrossDirectionProjectionAndDataUpdates() => WpfTestHost.Run(() =>
+    {
+        var window = NewWindow();
+        try
+        {
+            ((ComboBox)window.FindName("YScaleCombo")).SelectedIndex = 2;
+            ((TextBox)window.FindName("YMinimumBox")).Text = "-10.25";
+            ((TextBox)window.FindName("YMaximumBox")).Text = "1010.5";
+            ((Button)window.FindName("ApplyYScaleButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            var expected = new ProfileAxisRange(-10.25, 1010.5);
+            ((RadioButton)window.FindName("VerticalRadio")).IsChecked = true;
+            Assert.Equal(expected, window.AxisRange);
+            ((CheckBox)window.FindName("ProjectionCheck")).IsChecked = true;
+            Assert.Equal(expected, window.AxisRange);
+            window.SetProfiles(new double[] { 1, 2 }, new double[] { 10, 20 }, Array.Empty<double>(),
+                Array.Empty<double>(), null, 0, 0, 255);
+            Assert.Equal(expected, window.AxisRange);
+            ((ComboBox)window.FindName("YScaleCombo")).SelectedIndex = 0;
+            Assert.Equal(new ProfileAxisRange(0, 255), window.AxisRange);
+        }
+        finally
+        {
+            window.Close();
+        }
+    });
+
+    [Fact]
+    public Task InvalidInput_DoesNotReplaceLastAppliedRange() => WpfTestHost.Run(() =>
+    {
+        var window = NewWindow();
+        try
+        {
+            ((ComboBox)window.FindName("YScaleCombo")).SelectedIndex = 2;
+            var min = (TextBox)window.FindName("YMinimumBox");
+            var max = (TextBox)window.FindName("YMaximumBox");
+            var apply = (Button)window.FindName("ApplyYScaleButton");
+            var error = (TextBlock)window.FindName("YScaleErrorText");
+            foreach (string invalid in new[] { "", "NaN", "Infinity", "4095", "5000", "abc" })
+            {
+                min.Text = invalid;
+                Assert.False(apply.IsEnabled);
+                Assert.Equal(Visibility.Visible, error.Visibility);
+                apply.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                Assert.Equal(new ProfileAxisRange(0, 4095), window.AxisRange);
+            }
+
+            min.Text = "100";
+            max.Text = "200";
+            Assert.True(apply.IsEnabled);
+            Assert.Equal(Visibility.Collapsed, error.Visibility);
+            Assert.Equal(new ProfileAxisRange(0, 4095), window.AxisRange); // 入力だけでは未反映
+            apply.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Assert.Equal(new ProfileAxisRange(100, 200), window.AxisRange);
+        }
+        finally
+        {
+            window.Close();
+        }
+    });
+
+    [Fact]
+    public Task AutoScale_TracksProjectionAndHandlesEmptyOrSingleSample() => WpfTestHost.Run(() =>
+    {
+        var window = NewWindow();
+        try
+        {
+            ((ComboBox)window.FindName("YScaleCombo")).SelectedIndex = 1;
+            ((CheckBox)window.FindName("ProjectionCheck")).IsChecked = true;
+            Assert.True(window.AxisRange.Maximum - window.AxisRange.Minimum < 0.01);
+            window.SetProfiles(Array.Empty<double>(), Array.Empty<double>(), Array.Empty<double>(),
+                Array.Empty<double>(), null, 0, 0, 1023);
+            Assert.Equal(new ProfileAxisRange(0, 1023), window.AxisRange);
+            Assert.Equal("1023", ((TextBlock)window.FindName("MaxLabel")).Text);
+            window.SetProfiles(new double[] { 25 }, new double[] { 25 }, Array.Empty<double>(),
+                Array.Empty<double>(), null, 0, 0, 1023);
+            Assert.Equal(new ProfileAxisRange(24.5, 25.5), window.AxisRange);
+        }
+        finally
+        {
+            window.Close();
+        }
+    });
+
+    [Fact]
+    public Task AxisContextMenu_OffersFullAutoAndManualWithoutPermanentToolbar() => WpfTestHost.Run(() =>
+    {
+        var window = NewWindow();
+        try
+        {
+            var axis = (Border)window.FindName("YAxisArea");
+            var popup = (Popup)window.FindName("YScalePopup");
+            Assert.NotNull(axis.ContextMenu);
+            Assert.Equal(3, axis.ContextMenu.Items.Count);
+            Assert.False(popup.IsOpen);
+            ((MenuItem)window.FindName("YAutoRangeMenu")).RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+            Assert.InRange(window.AxisRange.Maximum - window.AxisRange.Minimum, 10.9, 11.1);
+            window.PrepareYScaleEditor(); // OSのポップアップを表示せず内容だけ検証
+            Assert.Equal(2, ((ComboBox)window.FindName("YScaleCombo")).SelectedIndex);
+            Assert.Equal(window.AxisRange.Minimum.ToString("G17", CultureInfo.CurrentCulture),
+                ((TextBox)window.FindName("YMinimumBox")).Text);
+            CaptureElementIfRequested((FrameworkElement)popup.Child, "profile-axis-editor", 330, 280);
+            ((MenuItem)window.FindName("YFullRangeMenu")).RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+            Assert.Equal(new ProfileAxisRange(0, 4095), window.AxisRange);
+            window.PrepareYScaleEditor();
+            Assert.Equal(new ProfileAxisRange(0, 4095), window.AxisRange); // 開くだけでは表示を変えない
+        }
+        finally
+        {
+            window.Close();
+        }
+    });
+
+    [Fact]
+    public Task WheelZoom_PreservesCursorCoordinateAndRawData() => WpfTestHost.Run(() =>
+    {
+        var window = NewWindow();
+        try
+        {
+            ((ComboBox)window.FindName("YScaleCombo")).SelectedIndex = 1;
+            string? data = window.BuildTable(',');
+            string stats = ((TextBlock)window.FindName("StatsText")).Text;
+            var canvas = (Canvas)window.FindName("PlotCanvas");
+            var cursor = new Point(canvas.ActualWidth * 0.3, 1 + (canvas.ActualHeight - 2) * 0.7);
+            ProfileAxisRange x = window.HorizontalRange;
+            ProfileAxisRange y = window.AxisRange;
+            for (int i = 0; i < 5; i++) window.ZoomAt(cursor, 120);
+            Assert.True(window.HorizontalRange.Maximum - window.HorizontalRange.Minimum < (x.Maximum - x.Minimum) / 2);
+            Assert.Equal(x.Minimum + (x.Maximum - x.Minimum) * 0.3,
+                window.HorizontalRange.Minimum + (window.HorizontalRange.Maximum - window.HorizontalRange.Minimum) * 0.3, 8);
+            Assert.Equal(y.Minimum + (y.Maximum - y.Minimum) * 0.3,
+                window.AxisRange.Minimum + (window.AxisRange.Maximum - window.AxisRange.Minimum) * 0.3, 8);
+            Assert.Equal(data, window.BuildTable(','));
+            Assert.Equal(stats, ((TextBlock)window.FindName("StatsText")).Text);
+            CaptureIfRequested(window, "profile-zoomed");
+            window.ResetView();
+            Assert.Equal(new ProfileAxisRange(0, 1999), window.HorizontalRange);
+            Assert.Equal(new ProfileAxisRange(0, 4095), window.AxisRange);
+        }
+        finally
+        {
+            window.Close();
+        }
+    });
+
+    [Fact]
+    public Task IndependentAxisZoomAndDrag_UpdateOnlyRequestedRanges() => WpfTestHost.Run(() =>
+    {
+        var window = NewWindow();
+        try
+        {
+            var canvas = (Canvas)window.FindName("PlotCanvas");
+            var center = new Point(canvas.ActualWidth / 2, canvas.ActualHeight / 2);
+            ProfileAxisRange originalY = window.AxisRange;
+            window.ZoomAt(center, 120, zoomHorizontal: true, zoomVertical: false);
+            Assert.Equal(originalY, window.AxisRange);
+            Assert.Equal(0, ((ComboBox)window.FindName("YScaleCombo")).SelectedIndex);
+            ProfileAxisRange originalX = window.HorizontalRange;
+            window.ZoomAt(center, 120, zoomHorizontal: false, zoomVertical: true);
+            Assert.Equal(originalX, window.HorizontalRange);
+            ProfileAxisRange y = window.AxisRange;
+            window.PanFrom(originalX, y, new Vector(canvas.ActualWidth * 0.05, canvas.ActualHeight * 0.1));
+            Assert.True(window.HorizontalRange.Minimum < originalX.Minimum);
+            Assert.True(window.AxisRange.Minimum > y.Minimum);
+            Assert.Equal(originalX.Maximum - originalX.Minimum,
+                window.HorizontalRange.Maximum - window.HorizontalRange.Minimum, 8);
+        }
+        finally
+        {
+            window.Close();
+        }
+    });
+
+    [Theory]
+    [InlineData(255, 0)]
+    [InlineData(4095, 0.37)]
+    [InlineData(65535, 1)]
+    public Task WheelZoom_StopsAtOneRawCodeAndCanZoomBackOut(int maxCode, double anchor) => WpfTestHost.Run(() =>
+    {
+        var window = NewWindow();
+        try
+        {
+            window.SetProfiles(new double[] { 0, maxCode }, new double[] { 0, maxCode },
+                Array.Empty<double>(), Array.Empty<double>(), null, 0, 0, maxCode);
+            var canvas = (Canvas)window.FindName("PlotCanvas");
+            var position = new Point(canvas.ActualWidth / 2, 1 + (1 - anchor) * (canvas.ActualHeight - 2));
+            for (int i = 0; i < 30; i++) window.ZoomAt(position, 1200, false, true);
+            ProfileAxisRange zoomed = window.AxisRange;
+            Assert.Equal(1, zoomed.Maximum - zoomed.Minimum, 8);
+            Assert.Equal(maxCode * anchor, zoomed.Minimum + anchor, 8);
+            window.ZoomAt(position, 120, false, true);
+            Assert.Equal(zoomed, window.AxisRange);
+            window.ZoomAt(position, -120, false, true);
+            Assert.Equal(1.2, window.AxisRange.Maximum - window.AxisRange.Minimum, 8);
+        }
+        finally
+        {
+            window.Close();
+        }
+    });
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public Task WheelZoom_PreservesSubCodeAutoOrManualRangeButAllowsZoomOut(bool manual) => WpfTestHost.Run(() =>
+    {
+        var window = NewWindow();
+        try
+        {
+            ((CheckBox)window.FindName("ProjectionCheck")).IsChecked = true;
+            var mode = (ComboBox)window.FindName("YScaleCombo");
+            mode.SelectedIndex = 1;
+            if (manual) window.PrepareYScaleEditor();
+            ProfileAxisRange original = window.AxisRange;
+            double span = original.Maximum - original.Minimum;
+            Assert.InRange(span, 0.001, 0.01);
+            var canvas = (Canvas)window.FindName("PlotCanvas");
+            var center = new Point(canvas.ActualWidth / 2, canvas.ActualHeight / 2);
+            for (int i = 0; i < 20; i++) window.ZoomAt(center, 1200, false, true);
+            Assert.Equal(original, window.AxisRange);
+            Assert.Equal(manual ? 2 : 1, mode.SelectedIndex);
+            window.ZoomAt(center, -120, false, true);
+            Assert.Equal(span * 1.2, window.AxisRange.Maximum - window.AxisRange.Minimum, 8);
+        }
+        finally
+        {
+            window.Close();
+        }
+    });
+
+    [Fact]
+    public Task HorizontalLabels_IdentifyDirectionAndUseRoiImageCoordinates() => WpfTestHost.Run(() =>
+    {
+        var window = NewWindow();
+        try
+        {
+            var title = (TextBlock)window.FindName("XAxisTitle");
+            Assert.Contains("水平プロファイル", title.Text);
+            Assert.Contains("x座標", title.Text);
+            ((RadioButton)window.FindName("VerticalRadio")).IsChecked = true;
+            Assert.Contains("垂直プロファイル", title.Text);
+            Assert.Contains("y座標", title.Text);
+            window.SetProfiles(new double[] { 1, 2, 3 }, new double[] { 4, 5, 6 },
+                new double[] { 10, 20, 30 }, new double[] { 40, 50, 60 },
+                new RegionOfInterest(100, 200, 3, 3), 0, 0, 255);
+            ((CheckBox)window.FindName("ProjectionCheck")).IsChecked = true;
+            var axis = (Canvas)window.FindName("XAxisCanvas");
+            Assert.Contains("垂直 ROI平均射影", title.Text);
+            Assert.Equal(new[] { "200", "201", "202" }, axis.Children.OfType<TextBlock>().Select(t => t.Text));
+            Assert.StartsWith("y,value" + Environment.NewLine + "200,40", window.BuildTable(','));
+            CaptureIfRequested(window, "profile-vertical-projection");
+            ((RadioButton)window.FindName("HorizontalRadio")).IsChecked = true;
+            Assert.Contains("水平 ROI平均射影", title.Text);
+            Assert.Equal(new[] { "100", "101", "102" }, axis.Children.OfType<TextBlock>().Select(t => t.Text));
+            Assert.StartsWith("x,value" + Environment.NewLine + "100,10", window.BuildTable(','));
+        }
+        finally
+        {
+            window.Close();
+        }
+    });
+
+    [Fact]
+    public Task DataOrDirectionChanges_ResetOnlyObsoleteHorizontalZoom() => WpfTestHost.Run(() =>
+    {
+        var window = NewWindow();
+        try
+        {
+            var canvas = (Canvas)window.FindName("PlotCanvas");
+            window.ZoomAt(new Point(canvas.ActualWidth / 2, canvas.ActualHeight / 2), 240);
+            ProfileAxisRange zoomedY = window.AxisRange;
+            ((RadioButton)window.FindName("VerticalRadio")).IsChecked = true;
+            Assert.Equal(new ProfileAxisRange(0, 3), window.HorizontalRange);
+            Assert.Equal(zoomedY, window.AxisRange);
+            window.ZoomAt(new Point(canvas.ActualWidth / 2, canvas.ActualHeight / 2), 120, true, false);
+            ProfileAxisRange x = window.HorizontalRange;
+            window.SetProfiles(new double[] { 1, 2 }, new double[] { 10, 20, 30, 40 },
+                Array.Empty<double>(), Array.Empty<double>(), null, 1, 1, 255);
+            Assert.Equal(x, window.HorizontalRange); // 同じ向き・長さの別ラインでは維持
+            window.SetProfiles(new double[] { 1, 2 }, new double[] { 10, 20 },
+                Array.Empty<double>(), Array.Empty<double>(), null, 1, 1, 255);
+            Assert.Equal(new ProfileAxisRange(0, 1), window.HorizontalRange);
+        }
+        finally
+        {
+            window.Close();
+        }
+    });
+
+    private static void CaptureElementIfRequested(FrameworkElement element, string name, int width, int height)
+    {
+        string? directory = Environment.GetEnvironmentVariable("RAWANALYZER_UI_SNAPSHOTS");
+        if (string.IsNullOrEmpty(directory)) return;
+        element.Measure(new Size(width, height));
+        element.Arrange(new Rect(0, 0, width, height));
+        element.UpdateLayout();
+        var bitmap = new RenderTargetBitmap(width, height, 96, 96, PixelFormats.Pbgra32);
+        bitmap.Render(element);
+        var encoder = new PngBitmapEncoder();
+        encoder.Frames.Add(BitmapFrame.Create(bitmap));
+        using var output = File.Create(System.IO.Path.Combine(directory, name + ".png"));
+        encoder.Save(output);
+    }
+
+    private static LineProfileWindow NewWindow()
+    {
+        CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo("ja-JP");
+        var window = new LineProfileWindow();
+        double[] row = Enumerable.Range(0, 2000).Select(i => 1000.0 + 5 * Math.Sin(i / 30.0)).ToArray();
+        double[] column = new double[] { 200, 220, 240, 220 };
+        double[] projection = new double[] { 1000.001, 1000.002, 1000.003 };
+        window.SetProfiles(row, column, projection, projection,
+            new RegionOfInterest(0, 0, 3, 3), 1000, 2, 4095);
+        var content = (FrameworkElement)window.Content;
+        content.Measure(new Size(800, 440));
+        content.Arrange(new Rect(0, 0, 800, 440));
+        content.UpdateLayout();
+        return window;
+    }
+
+    private static void CaptureIfRequested(Window window, string name)
+    {
+        string? directory = Environment.GetEnvironmentVariable("RAWANALYZER_UI_SNAPSHOTS");
+        if (string.IsNullOrEmpty(directory)) return;
+        var content = (FrameworkElement)window.Content;
+        content.UpdateLayout();
+        var bitmap = new RenderTargetBitmap(800, 440, 96, 96, PixelFormats.Pbgra32);
+        var background = new DrawingVisual();
+        using (DrawingContext dc = background.RenderOpen())
+            dc.DrawRectangle(window.Background, null, new Rect(0, 0, 800, 440));
+        bitmap.Render(background);
+        bitmap.Render(content);
+        var encoder = new PngBitmapEncoder();
+        encoder.Frames.Add(BitmapFrame.Create(bitmap));
+        using var output = File.Create(System.IO.Path.Combine(directory, name + ".png"));
+        encoder.Save(output);
+    }
+}

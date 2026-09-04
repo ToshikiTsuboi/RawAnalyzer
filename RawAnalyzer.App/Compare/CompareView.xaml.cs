@@ -1,7 +1,5 @@
 ﻿using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Controls.Primitives;
-using System.Windows.Media;
 
 namespace RawAnalyzer.App.Compare;
 
@@ -18,10 +16,22 @@ public partial class CompareView : UserControl
     /// <summary>同時に表示できる最大ペイン数。</summary>
     public const int MaxPanes = 4;
 
+    /// <summary>ホストの全画面状態と双方向連携する依存関係プロパティ。</summary>
+    public static readonly DependencyProperty IsFullscreenProperty = DependencyProperty.Register(
+        nameof(IsFullscreen), typeof(bool), typeof(CompareView),
+        new FrameworkPropertyMetadata(false, FrameworkPropertyMetadataOptions.BindsTwoWayByDefault));
+
+    /// <summary>全画面表示中か。F11やホスト側の変更もボタンに反映する。</summary>
+    public bool IsFullscreen
+    {
+        get => (bool)GetValue(IsFullscreenProperty);
+        set => SetValue(IsFullscreenProperty, value);
+    }
+
     private readonly List<ComparePaneView> _panes = new();
-    private Button? _addTile;
     private ComparePaneView? _active;
     private bool _loading;
+    private bool _closing;
     private CompareSyncMode _syncMode = CompareSyncMode.FieldOfView;
     private bool _syncing;
 
@@ -52,6 +62,8 @@ public partial class CompareView : UserControl
     /// <summary>現在のペイン数。</summary>
     public int PaneCount => _panes.Count;
 
+    private bool CanAddPane => !_loading && !_closing && _panes.Count < MaxPanes;
+
     /// <summary>
     /// 指定パスの画像をペインとして追加する。
     /// </summary>
@@ -59,12 +71,13 @@ public partial class CompareView : UserControl
     /// <returns>追加できたらtrue。</returns>
     public async Task<bool> AddPaneFromPathAsync(string path)
     {
-        if (PaneLoader is null || _panes.Count >= MaxPanes || _loading)
+        if (PaneLoader is null || !CanAddPane)
         {
             return false;
         }
 
         _loading = true;
+        UpdateAddControls();
         int generation = _generation;
         CancellationToken token = Lifetime.Token;
         try
@@ -90,7 +103,11 @@ public partial class CompareView : UserControl
         }
         finally
         {
-            _loading = false;
+            if (generation == _generation)
+            {
+                _loading = false;
+                UpdateAddControls();
+            }
         }
     }
 
@@ -98,6 +115,14 @@ public partial class CompareView : UserControl
     /// <returns>破棄完了を表すタスク。</returns>
     public async Task CloseAllAsync()
     {
+        if (_closing)
+        {
+            return;
+        }
+
+        _closing = true;
+        _loading = false;
+        UpdateAddControls();
         // 進行中の読み込みを打ち切り、完了しても追加されないようにする
         _generation++;
         CancellationTokenSource? lifetime = _lifetime;
@@ -108,35 +133,42 @@ public partial class CompareView : UserControl
             lifetime.Dispose();
         }
 
-        foreach (ComparePaneView pane in _panes.ToList())
+        try
         {
-            await pane.DetachAndDisposeAsync();
+            foreach (ComparePaneView pane in _panes.ToList())
+            {
+                await pane.DetachAndDisposeAsync();
+            }
         }
-
-        _panes.Clear();
-        _active = null;
-        Relayout();
+        finally
+        {
+            _panes.Clear();
+            _active = null;
+            _closing = false;
+            Relayout();
+        }
     }
 
     /// <summary>
-    /// 要素数(ペイン+追加タイル)に応じたグリッド列数。
-    /// 3枚までは横一列、4枚(以上)は2×2にする。
+    /// 開いている画像数に応じたグリッド列数。
+    /// 1〜3枚は横一列、4枚は2×2。追加用の空き枠は数えない。
     /// </summary>
-    /// <param name="elements">並べる要素数。</param>
+    /// <param name="paneCount">表示する画像数。</param>
     /// <returns>UniformGridの列数。</returns>
-    internal static int ColumnsFor(int elements)
+    internal static int ColumnsFor(int paneCount)
     {
-        return elements <= 3 ? Math.Max(1, elements) : 2;
+        return paneCount <= 3 ? Math.Max(1, paneCount) : 2;
     }
 
-    private async void OnAddTileClick(object sender, RoutedEventArgs e)
+    private async void OnAddImageClick(object sender, RoutedEventArgs e)
     {
-        if (PanePicker is null || _panes.Count >= MaxPanes || _loading)
+        if (PanePicker is null || !CanAddPane)
         {
             return;
         }
 
         _loading = true;
+        UpdateAddControls();
         int generation = _generation;
         CancellationToken token = Lifetime.Token;
         try
@@ -161,7 +193,11 @@ public partial class CompareView : UserControl
         }
         finally
         {
-            _loading = false;
+            if (generation == _generation)
+            {
+                _loading = false;
+                UpdateAddControls();
+            }
         }
     }
 
@@ -384,7 +420,10 @@ public partial class CompareView : UserControl
 
     private async void OnPaneCloseRequested(ComparePaneView view)
     {
-        _panes.Remove(view);
+        if (_closing || !_panes.Remove(view))
+        {
+            return;
+        }
         if (ReferenceEquals(_active, view))
         {
             SetActive(_panes.LastOrDefault());
@@ -404,7 +443,7 @@ public partial class CompareView : UserControl
         }
     }
 
-    /// <summary>ペインとプレースホルダをグリッドへ並べ直し、ラベルを振り直す。</summary>
+    /// <summary>開いているペインだけをグリッドへ並べ直し、ラベルを振り直す。</summary>
     private void Relayout()
     {
         PaneGrid.Children.Clear();
@@ -414,37 +453,28 @@ public partial class CompareView : UserControl
             PaneGrid.Children.Add(_panes[i]);
         }
 
-        bool hasRoom = _panes.Count < MaxPanes;
-        if (hasRoom)
-        {
-            _addTile ??= CreateAddTile();
-            PaneGrid.Children.Add(_addTile);
-        }
-
-        int elements = _panes.Count + (hasRoom ? 1 : 0);
-        PaneGrid.Columns = ColumnsFor(elements);
-        HintText.Visibility = _panes.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        PaneGrid.Columns = ColumnsFor(_panes.Count);
+        PaneGrid.Rows = _panes.Count <= 3 ? 1 : 2;
+        EmptyAddButton.Visibility = _panes.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        UpdateAddControls();
     }
 
-    private Button CreateAddTile()
+    private void UpdateAddControls()
     {
-        var button = new Button
-        {
-            Content = "＋ 画像を追加\n(ここへドロップも可)",
-            FontSize = 13,
-            Foreground = (Brush)FindResource("TextDim"),
-            Background = Brushes.Transparent,
-            BorderBrush = (Brush)FindResource("BorderBrushDark"),
-            BorderThickness = new Thickness(1),
-            Margin = new Thickness(8),
-        };
-        button.Click += OnAddTileClick;
-        return button;
+        PaneCountText.Text = $"{_panes.Count} / {MaxPanes}枚";
+        AddImageButton.IsEnabled = CanAddPane;
+        EmptyAddButton.IsEnabled = CanAddPane;
+        AddImageButton.Content = _loading ? "読込中…" : "＋ 画像を追加";
+        AddImageButton.ToolTip = _panes.Count >= MaxPanes
+            ? "4枚表示中です。追加するにはいずれかの画像を閉じてください。"
+            : _loading || _closing ? "処理が完了するまでお待ちください。"
+            : "画像を選んで比較に追加。比較領域のどこへドロップしても追加できます (最大4枚)。";
+        ToolTipService.SetShowOnDisabled(AddImageButton, true);
     }
 
     private void OnDragOver(object sender, DragEventArgs e)
     {
-        e.Effects = e.Data.GetDataPresent(DataFormats.FileDrop) && _panes.Count < MaxPanes
+        e.Effects = e.Data.GetDataPresent(DataFormats.FileDrop) && CanAddPane
             ? DragDropEffects.Copy
             : DragDropEffects.None;
         e.Handled = true; // MainWindowのドロップ処理(通常オープン)に流さない
@@ -458,9 +488,11 @@ public partial class CompareView : UserControl
             return;
         }
 
+        int generation = _generation;
         foreach (string file in files)
         {
-            if (_panes.Count >= MaxPanes)
+            // 複数ファイルの途中で比較を終了したら、残りを新しい比較へ追加しない。
+            if (generation != _generation || !CanAddPane)
             {
                 break;
             }

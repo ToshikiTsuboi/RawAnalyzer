@@ -438,11 +438,13 @@ public sealed class ImageViewport : FrameworkElement
     /// 表示画像をズーム/位置を維持したまま差し替える(シーケンス再生用)。
     /// 新しい描画が確定するまで旧ビットマップを表示し続けるためチラつかない。
     /// </summary>
-    /// <param name="image">新しい画像(同一サイズであること)。</param>
+    /// <param name="image">新しい画像。寸法が変わる場合は全体表示に戻す。</param>
     /// <param name="format">フォーマット。</param>
     /// <param name="frame">フレーム番号。</param>
+    /// <param name="color">新しい画像のRGBデータ。</param>
     /// <returns>差し替え前の画像。呼び出し側でDisposeすること。</returns>
-    public async Task<RawImage?> ReplaceImageAsync(RawImage image, RawFormat format, int frame = 0)
+    public async Task<RawImage?> ReplaceImageAsync(
+        RawImage image, RawFormat format, int frame = 0, ColorImage? color = null)
     {
         RawImage? old = _image;
         _renderCts?.Cancel();
@@ -450,11 +452,21 @@ public sealed class ImageViewport : FrameworkElement
         _image = image;
         _format = format;
         _frame = frame;
+        _colorImage = color;
         _pyramid = null;
         _bayerPyramid = null;
         _overlay = null;
         _demosaicCache.Clear();
-        RequestRender(fast: false);
+        if (old?.Width != image.Width || old?.Height != image.Height)
+        {
+            _profileMarkerVisible = false;
+            ClearRoi();
+            FitToView();
+        }
+        else
+        {
+            RequestRender(fast: false);
+        }
         try
         {
             await pending;

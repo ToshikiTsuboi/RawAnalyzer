@@ -632,6 +632,25 @@ public partial class MainWindow
                 Execute = () => OnImageCalculatorClick(this, empty),
             },
 
+            new()
+            {
+                Id = "binning",
+                Category = "処理",
+                Title = "デジタルビニング (2×2 / 4×4)…",
+                Description = "平均 / 加算。モノクロ・Bayer CFA・RGBに対応",
+                CanExecute = () => _vm.HasImage && !_compareMode && _busyDepth == 0,
+                Execute = () => OnBinningClick(this, empty),
+            },
+            new()
+            {
+                Id = "image-filter",
+                Category = "処理",
+                Title = "画像フィルタ (平滑化 / シャープ / エッジ)…",
+                Description = "平均・ガウシアン・メディアン・アンシャープ・Sobel・最小値・最大値",
+                CanExecute = () => _vm.HasImage && !_compareMode && _busyDepth == 0,
+                Execute = () => OnFilterClick(this, empty),
+            },
+
             // ---- クリップボード ----
             new()
             {

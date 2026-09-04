@@ -115,15 +115,22 @@ public sealed class ColorImage
     /// 輝度(BT.601のY)画像を生成する。ヒストグラム等の解析に使う。
     /// </summary>
     /// <returns>輝度のRawImage(Bayerなし)。</returns>
-    public RawImage ToLuminance()
+    /// <param name="cancellationToken">キャンセルトークン。</param>
+    public RawImage ToLuminance(CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var luminance = new ushort[(long)Width * Height];
-        Parallel.For(0, Height, y =>
+        Parallel.For(0, Height, new ParallelOptions { CancellationToken = cancellationToken }, y =>
         {
             long source = (long)y * Width * 3;
             long dest = (long)y * Width;
             for (int x = 0; x < Width; x++)
             {
+                if ((x & 4095) == 0)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                }
+
                 luminance[dest + x] = ColorConvert.Luma(
                     _pixels[source + x * 3],
                     _pixels[source + x * 3 + 1],
@@ -131,6 +138,7 @@ public sealed class ColorImage
             }
         });
 
+        cancellationToken.ThrowIfCancellationRequested();
         var format = new RawFormat { Width = Width, Height = Height, BitDepth = BitDepth };
         return RawImage.FromPixels(format, luminance);
     }

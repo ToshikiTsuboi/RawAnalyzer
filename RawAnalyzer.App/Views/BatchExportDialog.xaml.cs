@@ -133,17 +133,21 @@ public partial class BatchExportDialog : Window
     /// <param name="rawTargets">対象がrawか(falseならTIFF等の連番画像)。</param>
     /// <param name="frameWidth">1フレームの幅(ビットレート目安の表示用。0なら表示しない)。</param>
     /// <param name="frameHeight">1フレームの高さ。</param>
+    /// <param name="tiffPageCount">単一TIFFスタック内のページ数。通常は1。</param>
     public BatchExportDialog(
         int targetCount,
         string defaultOutputFolder,
         bool rawTargets = true,
         int frameWidth = 0,
-        int frameHeight = 0)
+        int frameHeight = 0,
+        int tiffPageCount = 1)
     {
         InitializeComponent();
         _frameWidth = frameWidth;
         _frameHeight = frameHeight;
-        TargetInfoText.Text = rawTargets
+        TargetInfoText.Text = tiffPageCount > 1
+            ? $"対象: TIFFスタック 1 件・全 {tiffPageCount} ページ"
+            : rawTargets
             ? $"対象: フォーマットが一致するrawファイル {targetCount} 件"
             : $"対象: 連番の画像ファイル {targetCount} 件";
         if (!rawTargets)
@@ -151,7 +155,8 @@ public partial class BatchExportDialog : Window
             // カラー画像は既にRGBなので、現像段(WB/マトリクス/デモザイク)は適用されない
             ProcessingNoteText.Text =
                 "※ カラー画像は表示LUT(黒/白点・ゲイン・ガンマ・コントラスト)のみ焼き込みます。" +
-                "TIFF 16bitグレーはカラーの場合、輝度(BT.601)を出力します。";
+                "TIFF 16bitグレーはカラーの場合、輝度(BT.601)を出力します。" +
+                "複数ページTIFFは全ページを連番の静止画、または1本の動画へ書き出します。";
             ProcessingNoteText.Visibility = Visibility.Visible;
         }
 

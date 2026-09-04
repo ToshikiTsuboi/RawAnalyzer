@@ -2,6 +2,8 @@ using System.Globalization;
 using System.IO;
 using System.Text;
 using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Shapes;
 using Microsoft.Win32;
@@ -29,11 +31,82 @@ public partial class LineProfileWindow : Window
     private int _pointX;
     private int _pointY;
     private int _maxCode = 65535;
+    private ProfileAxisRange _axisRange = ProfileAxisRange.Full(65535);
+    private ProfileAxisRange? _manualRange;
+    private bool _ready;
+    private bool _updatingScaleControls;
 
     /// <summary>ウィンドウを生成する。</summary>
     public LineProfileWindow()
     {
         InitializeComponent();
+        _ready = true;
+        Redraw();
+        Closed += (_, _) =>
+        {
+            EndPan();
+            YScalePopup.IsOpen = false;
+        };
+    }
+
+    internal ProfileAxisRange AxisRange => _axisRange;
+
+    private bool ManualScale => YScaleCombo.SelectedIndex == 2;
+
+    private void OnYScaleChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (!_ready || _updatingScaleControls) return;
+        // 初回の手動切替は現在の表示範囲を固定。その後は最後に適用した値を復元する。
+        if (ManualScale) _manualRange ??= _axisRange;
+        YMinimumBox.IsEnabled = ManualScale;
+        YMaximumBox.IsEnabled = ManualScale;
+        Redraw();
+        UpdateScaleInputs();
+    }
+
+    private void UpdateScaleInputs()
+    {
+        _updatingScaleControls = true;
+        // 自動表示は読みやすく、手動入力へ移すときは丸めず値を引き継ぐ。
+        string format = ManualScale ? "G17" : "G8";
+        YMinimumBox.Text = _axisRange.Minimum.ToString(format, CultureInfo.CurrentCulture);
+        YMaximumBox.Text = _axisRange.Maximum.ToString(format, CultureInfo.CurrentCulture);
+        YMinimumBox.IsEnabled = ManualScale;
+        YMaximumBox.IsEnabled = ManualScale;
+        _updatingScaleControls = false;
+        ValidateScaleInputs();
+    }
+
+    private bool ValidateScaleInputs()
+    {
+        bool valid = ProfileAxisRange.TryParse(YMinimumBox.Text, YMaximumBox.Text,
+            CultureInfo.CurrentCulture, out _);
+        ApplyYScaleButton.IsEnabled = ManualScale && valid;
+        YScaleErrorText.Visibility = ManualScale && !valid ? Visibility.Visible : Visibility.Collapsed;
+        return valid;
+    }
+
+    private void OnYLimitsTextChanged(object sender, TextChangedEventArgs e)
+    {
+        if (_ready && !_updatingScaleControls) ValidateScaleInputs();
+    }
+
+    private void OnYLimitsKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Enter) return;
+        ApplyManualScale();
+        e.Handled = true;
+    }
+
+    private void OnApplyYScaleClick(object sender, RoutedEventArgs e) => ApplyManualScale();
+
+    private void ApplyManualScale()
+    {
+        if (!ManualScale || !ValidateScaleInputs()
+            || !ProfileAxisRange.TryParse(YMinimumBox.Text, YMaximumBox.Text,
+                CultureInfo.CurrentCulture, out ProfileAxisRange range)) return;
+        _manualRange = range;
+        Redraw();
     }
 
     /// <summary>水平/垂直・射影の切替時に発火する(true=水平)。</summary>
@@ -66,6 +139,9 @@ public partial class LineProfileWindow : Window
         int pointY,
         int maxCode)
     {
+        int previousCount = CurrentData.Length;
+        int previousOffset = CoordinateOffset;
+        EndPan();
         _rowProfile = rowProfile;
         _columnProfile = columnProfile;
         _horizontalProjection = horizontalProjection;
@@ -82,6 +158,7 @@ public partial class LineProfileWindow : Window
             ProjectionCheck.IsChecked = false;
         }
 
+        if (previousCount != CurrentData.Length || previousOffset != CoordinateOffset) _horizontalRange = null;
         Redraw();
     }
 
@@ -118,6 +195,8 @@ public partial class LineProfileWindow : Window
 
     private void OnDirectionChanged(object sender, RoutedEventArgs e)
     {
+        EndPan();
+        _horizontalRange = null;
         Redraw();
         DirectionChanged?.Invoke(IsHorizontal);
     }
@@ -129,7 +208,7 @@ public partial class LineProfileWindow : Window
 
     private void Redraw()
     {
-        if (PlotCanvas is null)
+        if (!_ready || PlotCanvas is null)
         {
             return;
         }
@@ -142,6 +221,27 @@ public partial class LineProfileWindow : Window
         double height = PlotCanvas.ActualHeight;
 
         ProfileStatistics stats = CurrentStatistics;
+        _axisRange = YScaleCombo.SelectedIndex switch
+        {
+            1 => ProfileAxisRange.Auto(stats, _maxCode),
+            2 => _manualRange ?? ProfileAxisRange.Full(_maxCode),
+            _ => ProfileAxisRange.Full(_maxCode),
+        };
+        MaxLabel.Text = _axisRange.Maximum.ToString("G8", CultureInfo.CurrentCulture);
+        MinLabel.Text = _axisRange.Minimum.ToString("G8", CultureInfo.CurrentCulture);
+        if (MaxLabel.Text == MinLabel.Text)
+        {
+            MaxLabel.Text = _axisRange.Maximum.ToString("G17", CultureInfo.CurrentCulture);
+            MinLabel.Text = _axisRange.Minimum.ToString("G17", CultureInfo.CurrentCulture);
+        }
+
+        const string axisHint = "\n右クリックで縦軸スケールを設定";
+        MaxLabel.ToolTip = _axisRange.Maximum.ToString("G17", CultureInfo.CurrentCulture) + axisHint;
+        MinLabel.ToolTip = _axisRange.Minimum.ToString("G17", CultureInfo.CurrentCulture) + axisHint;
+        double middle = _axisRange.Minimum + (_axisRange.Maximum - _axisRange.Minimum) / 2;
+        MiddleLabel.Text = middle.ToString("G8", CultureInfo.CurrentCulture);
+        MiddleLabel.ToolTip = middle.ToString("G17", CultureInfo.CurrentCulture) + axisHint;
+        if (_ready && !ManualScale) UpdateScaleInputs();
         StatsText.Text = stats.Count == 0
             ? "—"
             : $"N={stats.Count}   平均 {stats.Mean:F2}   最小 {stats.Min:F0}   " +
@@ -158,68 +258,44 @@ public partial class LineProfileWindow : Window
                 ? $"ラインプロファイル — 行 y={_pointY}"
                 : $"ラインプロファイル — 列 x={_pointX}";
 
-        if (data.Length < 2 || width < 4 || height < 4)
+        DrawHorizontalAxis(width, height);
+        if (data.Length == 0 || width < 4 || height < 4)
         {
             return;
         }
 
-        MaxLabel.Text = _maxCode.ToString(CultureInfo.InvariantCulture);
-        MinLabel.Text = "0";
-
         // 平均・±σのガイド線
-        double scaleY = (height - 2) / _maxCode;
-        AddGuideLine(stats.Mean * scaleY, height, width, Color.FromArgb(0x70, 0x7E, 0xCB, 0x72));
-        AddGuideLine((stats.Mean + stats.Sigma) * scaleY, height, width,
+        AddGuideLine(stats.Mean, height, width, Color.FromArgb(0x70, 0x7E, 0xCB, 0x72));
+        AddGuideLine(stats.Mean + stats.Sigma, height, width,
             Color.FromArgb(0x40, 0x9A, 0x9A, 0x95));
-        AddGuideLine((stats.Mean - stats.Sigma) * scaleY, height, width,
+        AddGuideLine(stats.Mean - stats.Sigma, height, width,
             Color.FromArgb(0x40, 0x9A, 0x9A, 0x95));
 
-        // 折れ線(キャンバス幅より点数が多い場合は列ごとにmin/maxを束ねる)
-        var points = new PointCollection();
-        if (data.Length <= (int)width)
-        {
-            double stepX = width / (data.Length - 1);
-            for (int i = 0; i < data.Length; i++)
-            {
-                points.Add(new Point(i * stepX, height - 1 - data[i] * scaleY));
-            }
-        }
-        else
-        {
-            int columns = (int)width;
-            for (int c = 0; c < columns; c++)
-            {
-                long start = (long)c * data.Length / columns;
-                long end = Math.Max(start + 1, (long)(c + 1) * data.Length / columns);
-                double cmin = double.MaxValue;
-                double cmax = double.MinValue;
-                for (long i = start; i < end; i++)
-                {
-                    cmin = Math.Min(cmin, data[i]);
-                    cmax = Math.Max(cmax, data[i]);
-                }
+        // 拡大中は表示区間と隣接点だけを読む。間引きでも鋭いピークは残す。
+        IReadOnlyList<Point> points = ProfilePlotNavigation.SampleVisible(data, HorizontalRange, width);
 
-                points.Add(new Point(c, height - 1 - cmax * scaleY));
-                points.Add(new Point(c, height - 1 - cmin * scaleY));
-            }
-        }
-
-        PlotCanvas.Children.Add(new Polyline
+        PlotCanvas.Children.Add(new System.Windows.Shapes.Path
         {
-            Points = points,
+            Data = _axisRange.BuildGeometry(points, height),
             Stroke = new SolidColorBrush(Color.FromRgb(0x5B, 0x9D, 0xD9)),
             StrokeThickness = 1,
         });
+
+        if (data.Length == 1 && _axisRange.Contains(data[0]))
+        {
+            var dot = new Ellipse { Width = 4, Height = 4, Fill = new SolidColorBrush(Color.FromRgb(0x5B, 0x9D, 0xD9)) };
+            Canvas.SetLeft(dot, ProfilePlotNavigation.ToCanvasX(0, HorizontalRange, width) - 2);
+            Canvas.SetTop(dot, _axisRange.ToCanvasY(data[0], height) - 2);
+            PlotCanvas.Children.Add(dot);
+        }
 
         // クリック位置マーカー(単一ライン表示時のみ)
         if (!projection)
         {
             int index = horizontal ? _pointX : _pointY;
-            if (index >= 0 && index < data.Length)
+            if (index >= 0 && index < data.Length && HorizontalRange.Contains(index))
             {
-                double markerX = data.Length <= (int)width
-                    ? index * (width / (data.Length - 1))
-                    : (double)index / data.Length * width;
+                double markerX = ProfilePlotNavigation.ToCanvasX(index, HorizontalRange, width);
                 PlotCanvas.Children.Add(new Line
                 {
                     X1 = markerX,
@@ -233,10 +309,9 @@ public partial class LineProfileWindow : Window
         }
     }
 
-    private void AddGuideLine(double valueHeight, double canvasHeight, double width, Color color)
+    private void AddGuideLine(double value, double canvasHeight, double width, Color color)
     {
-        double y = canvasHeight - 1 - valueHeight;
-        if (y < 0 || y > canvasHeight)
+        if (!_axisRange.Contains(value))
         {
             return;
         }
@@ -245,15 +320,15 @@ public partial class LineProfileWindow : Window
         {
             X1 = 0,
             X2 = width,
-            Y1 = y,
-            Y2 = y,
+            Y1 = _axisRange.ToCanvasY(value, canvasHeight),
+            Y2 = _axisRange.ToCanvasY(value, canvasHeight),
             Stroke = new SolidColorBrush(color),
             StrokeThickness = 1,
             StrokeDashArray = new DoubleCollection { 4, 4 },
         });
     }
 
-    private string? BuildTable(char separator)
+    internal string? BuildTable(char separator)
     {
         double[] data = CurrentData;
         if (data.Length == 0)
@@ -265,7 +340,7 @@ public partial class LineProfileWindow : Window
         sb.Append(IsHorizontal ? "x" : "y").Append(separator).Append("value").AppendLine();
         for (int i = 0; i < data.Length; i++)
         {
-            sb.Append(i).Append(separator)
+            sb.Append((long)i + CoordinateOffset).Append(separator)
                 .Append(data[i].ToString("G6", CultureInfo.InvariantCulture)).AppendLine();
         }
 

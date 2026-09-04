@@ -109,6 +109,7 @@ public partial class MainWindow : Window
         None,
         Frames,
         Files,
+        TiffPages,
     }
 
     /// <summary>再生フレームレートの既定値(コンボの初期選択と同じ)。</summary>
@@ -479,7 +480,10 @@ public partial class MainWindow : Window
     {
         if (_currentPath is not null && IsRawFile(_currentPath))
         {
-            OpenPath(_currentPath, _currentFormat);
+            // ビニング後の縮小寸法を元ファイルの寸法として提案しない。
+            RawFormat? initial = _correctionLabel is null ? _currentFormat
+                : TryGetRememberedFormat(_currentPath, SafeFileSize(_currentPath));
+            OpenPath(_currentPath, initial);
         }
     }
 
@@ -535,6 +539,7 @@ public partial class MainWindow : Window
 
         RawImage image;
         ColorImage? color = null;
+        int pageCount = 1;
         try
         {
             if (IsRawFile(path))
@@ -548,6 +553,7 @@ public partial class MainWindow : Window
                     () => ImageFileLoader.Load(path, cts.Token, loadProgress), cts.Token);
                 image = decoded.Luminance;
                 color = decoded.Color;
+                pageCount = decoded.PageCount;
             }
         }
         catch (OperationCanceledException)
@@ -600,12 +606,15 @@ public partial class MainWindow : Window
         ClearDefectSource();
         _currentFormat = image.Format;
         _currentPath = path;
+        _tiffStack = pageCount > 1
+            ? new TiffStackSource(path, pageCount) { BayerOverride = image.Format.Bayer } : null;
+        _tiffPageIndex = 0;
         _histogram = null;
         _vm.HasRoi = false;
         _vm.BlackLevelMax = (1 << image.Format.BitDepth) - 1;
         ResetDisplayParameters();
 
-        Title = $"RawAnalyzer — {Path.GetFileName(path)}";
+        Title = $"RawAnalyzer — {Path.GetFileName(path)}{TiffPageNote}";
         Viewport.SetDefectMarkers(null);
         _defectWindow?.Close();
         UpdateNoiseWindowSource();
@@ -622,7 +631,7 @@ public partial class MainWindow : Window
             $"{image.Width}×{image.Height} · {image.Format.BitDepth}bit"
             + (color is not null ? " · RGB" : "")
             + (fileSize >= 0 ? $" · {fileSize / (1024.0 * 1024.0):F1} MB" : "")
-            + (image.FrameCount > 1 ? $" · {image.FrameCount}fr" : "");
+            + (image.FrameCount > 1 ? $" · {image.FrameCount}fr" : "") + TiffPageNote;
         _vm.HasImage = true;
 
         DisplayModeCombo.SelectedIndex = 0;
@@ -645,7 +654,7 @@ public partial class MainWindow : Window
         {
             pyramid = await TilePyramid.CreateAsync(image, frame, cancellationToken: ct);
         }
-        catch (OperationCanceledException)
+        catch (Exception ex) when (TaskRaceGuard.IsAbandoned(ex))
         {
             return;
         }
@@ -1535,6 +1544,7 @@ public partial class MainWindow : Window
             return;
         }
 
+        CancelTiffPageLoad();
         StopPlayback();
         _compareMode = true;
         _vm.IsCompareMode = true;
@@ -1705,7 +1715,8 @@ public partial class MainWindow : Window
         var fileDialog = new SaveFileDialog
         {
             Filter = filter,
-            FileName = Path.GetFileNameWithoutExtension(_currentPath ?? "image") + extension,
+            FileName = Path.GetFileNameWithoutExtension(_currentPath ?? "image")
+                + (_tiffStack?.PageSuffix(_tiffPageIndex) ?? "") + extension,
         };
         if (fileDialog.ShowDialog(this) != true)
         {
@@ -1717,6 +1728,14 @@ public partial class MainWindow : Window
 
     private void ExecuteSave(SaveChoice choice, string path)
     {
+        if (_tiffStack?.IsSourcePath(path) == true)
+        {
+            MessageBox.Show(this, "これは現在の1ページだけの保存です。スタック全体を失わないよう、" +
+                "元TIFFとは別の名前で保存してください。", "TIFFスタックの保存",
+                MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
         RawImage image = ActiveImage!;
         HdrImage? hdrFloat = _hdrFloatImage;
 
@@ -1822,7 +1841,7 @@ public partial class MainWindow : Window
             }
 
             // マルチフレームでは「どのフレームを出したか」を明示する
-            string frameNote = image.FrameCount > 1
+            string frameNote = _tiffStack is not null ? TiffPageNote : image.FrameCount > 1
                 ? choice.Format == SaveFormat.Raw
                     ? $" (全{image.FrameCount}フレーム)"
                     : $" (フレーム {frame + 1}/{image.FrameCount})"
@@ -1847,6 +1866,10 @@ public partial class MainWindow : Window
                 DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture));
             sb.Append("出力ファイル: ").AppendLine(Path.GetFileName(imagePath));
             sb.Append("元ファイル: ").AppendLine(_currentPath ?? "(不明)");
+            if (_tiffStack is not null)
+            {
+                sb.Append("元TIFFのページ: ").AppendLine($"{_tiffPageIndex + 1}/{_tiffStack.PageCount}");
+            }
             if (_correctionLabel is not null)
             {
                 sb.Append("適用済み補正: ").AppendLine(_correctionLabel);
@@ -1955,71 +1978,71 @@ public partial class MainWindow : Window
         {
             case SaveFormat.Tiff16:
             case SaveFormat.Png16:
-            {
-                // 読み込んだRGB画像は輝度化せずチャネルを保って書き出す
-                if (trueColor is not null)
                 {
-                    ushort[] rgb48 = ImageExport.RenderColorRgb48(trueColor, ct);
-                    progress.Report(0.7);
-                    source = BitmapSource.Create(
-                        trueColor.Width, trueColor.Height, 96, 96, PixelFormats.Rgb48, null,
-                        rgb48, trueColor.Width * 6);
-                    break;
-                }
-
-                {
-                    var pixels = new ushort[(long)width * height];
-                    for (int y = 0; y < height; y++)
+                    // 読み込んだRGB画像は輝度化せずチャネルを保って書き出す
+                    if (trueColor is not null)
                     {
-                        ct.ThrowIfCancellationRequested();
-                        image.CopyRegion(frame, 0, y, width, 1, pixels.AsSpan(y * width, width));
-                        if ((y & 511) == 0)
-                        {
-                            progress.Report(0.5 * y / height);
-                        }
+                        ushort[] rgb48 = ImageExport.RenderColorRgb48(trueColor, ct);
+                        progress.Report(0.7);
+                        source = BitmapSource.Create(
+                            trueColor.Width, trueColor.Height, 96, 96, PixelFormats.Rgb48, null,
+                            rgb48, trueColor.Width * 6);
+                        break;
                     }
 
-                    source = BitmapSource.Create(
-                        width, height, 96, 96, PixelFormats.Gray16, null, pixels, width * 2);
-                }
+                    {
+                        var pixels = new ushort[(long)width * height];
+                        for (int y = 0; y < height; y++)
+                        {
+                            ct.ThrowIfCancellationRequested();
+                            image.CopyRegion(frame, 0, y, width, 1, pixels.AsSpan(y * width, width));
+                            if ((y & 511) == 0)
+                            {
+                                progress.Report(0.5 * y / height);
+                            }
+                        }
 
-                break;
-            }
+                        source = BitmapSource.Create(
+                            width, height, 96, 96, PixelFormats.Gray16, null, pixels, width * 2);
+                    }
 
-            default:
-            {
-                // 8bit系は選択された処理を焼き込む
-                if (trueColor is not null)
-                {
-                    // 読み込んだRGB画像はデモザイクせずLUTだけ適用する
-                    byte[] rgb = ImageExport.RenderColorRgb24(trueColor, lut, ct);
-                    progress.Report(0.7);
-                    source = BitmapSource.Create(
-                        trueColor.Width, trueColor.Height, 96, 96, PixelFormats.Rgb24, null,
-                        rgb, trueColor.Width * 3);
                     break;
                 }
 
-                bool color = mode == ViewportDisplayMode.ColorDevelop
-                    && pattern != BayerPattern.None;
-                if (color)
+            default:
                 {
-                    byte[] rgb = ImageExport.DevelopRgb24(
-                        image, frame, pattern, devLuts,
-                        new Progress<double>(p => progress.Report(p * 0.7)), ct);
-                    source = BitmapSource.Create(
-                        width, height, 96, 96, PixelFormats.Rgb24, null, rgb, width * 3);
-                }
-                else
-                {
-                    byte[] gray = ImageExport.RenderGray8(image, frame, lut, ct);
-                    progress.Report(0.7);
-                    source = BitmapSource.Create(
-                        width, height, 96, 96, PixelFormats.Gray8, null, gray, width);
-                }
+                    // 8bit系は選択された処理を焼き込む
+                    if (trueColor is not null)
+                    {
+                        // 読み込んだRGB画像はデモザイクせずLUTだけ適用する
+                        byte[] rgb = ImageExport.RenderColorRgb24(trueColor, lut, ct);
+                        progress.Report(0.7);
+                        source = BitmapSource.Create(
+                            trueColor.Width, trueColor.Height, 96, 96, PixelFormats.Rgb24, null,
+                            rgb, trueColor.Width * 3);
+                        break;
+                    }
 
-                break;
-            }
+                    bool color = mode == ViewportDisplayMode.ColorDevelop
+                        && pattern != BayerPattern.None;
+                    if (color)
+                    {
+                        byte[] rgb = ImageExport.DevelopRgb24(
+                            image, frame, pattern, devLuts,
+                            new Progress<double>(p => progress.Report(p * 0.7)), ct);
+                        source = BitmapSource.Create(
+                            width, height, 96, 96, PixelFormats.Rgb24, null, rgb, width * 3);
+                    }
+                    else
+                    {
+                        byte[] gray = ImageExport.RenderGray8(image, frame, lut, ct);
+                        progress.Report(0.7);
+                        source = BitmapSource.Create(
+                            width, height, 96, 96, PixelFormats.Gray8, null, gray, width);
+                    }
+
+                    break;
+                }
         }
 
         ct.ThrowIfCancellationRequested();
@@ -2133,12 +2156,21 @@ public partial class MainWindow : Window
     /// <param name="processed">差し替える画像。</param>
     /// <param name="label">タイトル等に表示する処理ラベル。</param>
     /// <param name="closeDefectWindow">欠陥画素ウィンドウを閉じるか。</param>
+    /// <param name="color">RGBの処理結果。processedは同じ画像の輝度であること。</param>
     private async Task ApplyProcessedImageAsync(
-        RawImage processed, string label, bool closeDefectWindow)
+        RawImage processed, string label, bool closeDefectWindow, ColorImage? color = null)
     {
+        RawImage? expectedSource = _currentImage;
+        int displayIndex = color is null && processed.Format.Bayer != BayerPattern.None
+            ? Math.Clamp(DisplayModeCombo.SelectedIndex, 0, 3) : 0;
         // 旧画像を読んでいる解析タスクを止めてから破棄する
         CancelAnalysis();
         await Viewport.ClearImageAsync();
+        if (!ReferenceEquals(expectedSource, _currentImage))
+        {
+            processed.Dispose();
+            return;
+        }
 
         // 旧画像から作られたBayerピラミッドを残すと、EnsureBayerPyramidAsyncの
         // 早期returnで補正後画像のピラミッドが作られず、縮小カラー表示が
@@ -2151,9 +2183,21 @@ public partial class MainWindow : Window
         _currentImage = processed;
         ClearDefectSource();
         _currentFormat = processed.Format;
+        _colorImage = color;
+        _vm.IsColorImage = color is not null;
         _histogram = null;
         _channelHistograms = null;
         _vm.HasRoi = false;
+        _lastCursorInside = false;
+        _profileWindow?.Close();
+        // 演算結果の16bit化や寸法変更に合わせてUIを更新する。
+        // 表示LUTの内部値は維持し、コード値だけ新しいビット深度へ換算する。
+        _updatingSliders = true;
+        _vm.BlackLevelMax = (1 << processed.Format.BitDepth) - 1;
+        _vm.BlackLevel = _blackPoint >> CurrentShift;
+        _vm.WhiteLevel = _whitePoint >> CurrentShift;
+        _updatingSliders = false;
+        UpdateFormatPanel(processed.Format);
         Viewport.SetDefectMarkers(null);
         if (closeDefectWindow)
         {
@@ -2165,16 +2209,23 @@ public partial class MainWindow : Window
         UpdateProcessingBadge();
         Title = $"RawAnalyzer — {Path.GetFileName(_currentPath!)} [{_correctionLabel}]";
         _vm.ImageInfoText =
-            $"{processed.Width}×{processed.Height} · {processed.Format.BitDepth}bit · " +
+            $"{processed.Width}×{processed.Height} · {processed.Format.BitDepth}bit" +
+            (color is null ? " · " : " · RGB · ") +
             $"補正: {_correctionLabel}(再読込で元に戻せます)";
 
         Viewport.SetImage(processed, processed.Format);
-        Viewport.SetColorImage(null);
+        Viewport.SetColorImage(color);
+        DisplayModeCombo.SelectedIndex = displayIndex;
+        Viewport.SetDisplayMode(displayIndex switch
+        {
+            1 => ViewportDisplayMode.BayerColor,
+            2 => ViewportDisplayMode.ColorDevelop,
+            3 => ViewportDisplayMode.ChannelSplit,
+            _ => ViewportDisplayMode.Raw,
+        });
         Viewport.SetLut(BuildLut());
         UpdateDevelopLuts();
-        _colorImage = null;
-        _vm.IsColorImage = false;
-        DisplayModeCombo.IsEnabled = true;
+        DisplayModeCombo.IsEnabled = color is null;
 
         // 加工結果はディスク上のファイルと一致しないためシーケンス再生は無効化
         StopPlayback();
@@ -2184,6 +2235,10 @@ public partial class MainWindow : Window
         RefreshHistogram(roi: null);
         _mainPyramid = null;
         await BuildPyramidAsync(processed, _loadCts?.Token ?? CancellationToken.None);
+        if (displayIndex != 0 && ReferenceEquals(processed, _currentImage))
+        {
+            await EnsureBayerPyramidAsync();
+        }
     }
 
     // ---- バッチ現像 / 動画書き出し ----
@@ -2221,6 +2276,10 @@ public partial class MainWindow : Window
 
             targets = SequenceScanner.FindStack(_currentPath, size, CandidateFiles());
         }
+        else if (_tiffStack is { PageNavigationEnabled: true })
+        {
+            targets = new[] { _currentPath };
+        }
         else
         {
             // TIFF等は連番の命名で対象を決める(再生パネルと同じ規則)。
@@ -2240,7 +2299,8 @@ public partial class MainWindow : Window
         string folder = Path.GetDirectoryName(_currentPath)!;
         var dialog = new BatchExportDialog(
             targets.Count, Path.Combine(folder, "export"), rawTargets,
-            _currentFormat?.Width ?? 0, _currentFormat?.Height ?? 0)
+            _currentFormat?.Width ?? 0, _currentFormat?.Height ?? 0,
+            _tiffStack is { PageNavigationEnabled: true } stack ? stack.PageCount : 1)
         {
             Owner = this,
         };
@@ -2329,35 +2389,22 @@ public partial class MainWindow : Window
                         ct.ThrowIfCancellationRequested();
                         string file = targets[i];
                         string baseName = Path.GetFileNameWithoutExtension(file);
-                        ColorImage? trueColor = null;
-                        RawImage image;
-                        if (IsRawFile(file))
+                        // RAWの全フレーム／TIFFの全ページを1枚ずつ処理する。
+                        // 列挙子が画像を所有するので、中断・例外でも確実に解放される。
+                        foreach (FileFrame entry in FileFrameReader.Read(file, format, ct))
                         {
-                            image = RawLoader.Load(file, format);
-                        }
-                        else
-                        {
-                            // TIFF等はファイル自身のフォーマットで読む。
-                            // カラーは既にRGBなので現像でなくLUTのみ焼き込む
-                            DecodedImage decoded = ImageFileLoader.Load(file, ct);
-                            image = decoded.Luminance;
-                            trueColor = decoded.Color;
-                        }
+                            RawImage image = entry.Image;
+                            ColorImage? trueColor = entry.Color;
+                            int frame = entry.Frame;
+                            if (video && (image.Width != width || image.Height != height))
+                            {
+                                throw new NotSupportedException(
+                                    $"{Path.GetFileName(file)} の{entry.Index + 1}枚目のサイズ " +
+                                    $"({image.Width}×{image.Height}) が動画のサイズ " +
+                                    $"({width}×{height}) と異なるため動画にできません。");
+                            }
 
-                        using RawImage owned = image;
-                        if (video && (image.Width != width || image.Height != height))
-                        {
-                            // 動画は全フレーム同一サイズが前提。黙って混ぜると壊れる
-                            throw new NotSupportedException(
-                                $"{Path.GetFileName(file)} のサイズ " +
-                                $"({image.Width}×{image.Height}) が先頭のフレーム " +
-                                $"({width}×{height}) と異なるため動画にできません。");
-                        }
-
-                        if (video)
-                        {
-                            // マルチフレームファイルは全フレームを動画化する
-                            for (int frame = 0; frame < image.FrameCount; frame++)
+                            if (video)
                             {
                                 ct.ThrowIfCancellationRequested();
                                 if (avi is not null)
@@ -2372,22 +2419,12 @@ public partial class MainWindow : Window
                                         image, frame, color, pattern, devLuts, lut,
                                         trueColor, ct, frameBuffers));
                                 }
-
-                                // 1ファイル内の多数フレームを動画化する場合、
-                                // ファイル単位の報告だと完了まで0%のままになる
-                                progress.Report(
-                                    (i + ((frame + 1) / (double)image.FrameCount))
-                                    / targets.Count);
                             }
-                        }
-                        else
-                        {
-                            // 静止画形式もマルチフレームなら全フレームを連番で出力する
-                            for (int frame = 0; frame < image.FrameCount; frame++)
+                            else
                             {
                                 ct.ThrowIfCancellationRequested();
-                                string stem = image.FrameCount > 1
-                                    ? $"{baseName}_f{frame:D3}"
+                                string stem = entry.IsTiffPage ? $"{baseName}_p{entry.Index + 1:D4}"
+                                    : entry.Count > 1 ? $"{baseName}_f{entry.Index:D3}"
                                     : baseName;
                                 if (choice.Format == BatchFormat.Tiff16)
                                 {
@@ -2406,6 +2443,8 @@ public partial class MainWindow : Window
                                         jpeg, trueColor, ct);
                                 }
                             }
+
+                            progress.Report((i + ((entry.Index + 1) / (double)entry.Count)) / targets.Count);
                         }
 
                         progress.Report((double)(i + 1) / targets.Count);
@@ -3210,6 +3249,7 @@ public partial class MainWindow : Window
     {
         SequenceMode.Frames => _currentImage?.FrameCount ?? 0,
         SequenceMode.Files => _sequenceFiles.Count,
+        SequenceMode.TiffPages => _tiffStack?.PageCount ?? 0,
         _ => 0,
     };
 
@@ -3220,9 +3260,14 @@ public partial class MainWindow : Window
         _sequenceFiles = new List<string>();
         _sequenceIndex = 0;
 
-        if (_currentImage is not null && _derivedImage is null)
+        if (_currentImage is not null && _derivedImage is null && _correctionLabel is null)
         {
-            if (_currentImage.FrameCount > 1)
+            if (_tiffStack is { PageNavigationEnabled: true })
+            {
+                _sequenceMode = SequenceMode.TiffPages;
+                _sequenceIndex = _tiffPageIndex;
+            }
+            else if (_currentImage.FrameCount > 1)
             {
                 _sequenceMode = SequenceMode.Frames;
                 _sequenceIndex = Viewport.Frame;
@@ -3290,12 +3335,19 @@ public partial class MainWindow : Window
         _vm.HasSequence = count > 1;
         _vm.SequenceMax = Math.Max(0, count - 1);
         _vm.SequenceIndex = _sequenceIndex;
-        _vm.SequenceLabel = count > 1 ? $"{_sequenceIndex + 1} / {count}" : "";
+        _vm.SequenceLabel = count > 1 ? $"{_sequenceIndex + 1} / {count}"
+            + (_sequenceMode == SequenceMode.TiffPages ? " (TIFF)" : "") : "";
         _updatingSequenceUi = false;
     }
 
     private async Task ShowSequenceIndexAsync(int index, bool refreshAnalysis)
     {
+        if (_sequenceMode == SequenceMode.TiffPages)
+        {
+            await ShowTiffPageAsync(index, refreshAnalysis);
+            return;
+        }
+
         int count = SequenceCount;
 
         // 重い処理の実行中は画像を差し替えない(処理対象が背後で破棄されるため)。
@@ -3350,6 +3402,7 @@ public partial class MainWindow : Window
                 RawFormat expectedFormat = _currentFormat!;
                 RawImage image;
                 ColorImage? color = null;
+                int pageCount = 1;
                 try
                 {
                     if (isRaw)
@@ -3362,6 +3415,7 @@ public partial class MainWindow : Window
                         DecodedImage decoded = await Task.Run(() => ImageFileLoader.Load(path));
                         image = decoded.Luminance;
                         color = decoded.Color;
+                        pageCount = decoded.PageCount;
                     }
                 }
                 catch (Exception)
@@ -3378,7 +3432,7 @@ public partial class MainWindow : Window
                     return;
                 }
 
-                // ReplaceImageAsyncは同一サイズが前提。連番に別サイズが混ざっていたら送らない
+                // 通常のファイル連番では既存どおり同一サイズだけを送る。
                 if (_currentImage is not null
                     && (image.Width != _currentImage.Width
                         || image.Height != _currentImage.Height))
@@ -3400,10 +3454,14 @@ public partial class MainWindow : Window
                 _vm.IsColorImage = color is not null;
                 Viewport.SetColorImage(color);
 
-                RawImage? old = await Viewport.ReplaceImageAsync(image, format);
+                RawImage? old = await Viewport.ReplaceImageAsync(image, format, color: color);
                 _currentImage = image;
                 _currentFormat = format;
                 _currentPath = path;
+                _tiffStack = pageCount > 1
+                    ? new TiffStackSource(path, pageCount, pageNavigationEnabled: false)
+                    { BayerOverride = format.Bayer } : null;
+                _tiffPageIndex = 0;
                 _mainPyramid = null;
                 _mainBayerPyramid?.Dispose();
                 _mainBayerPyramid = null;
@@ -3413,7 +3471,7 @@ public partial class MainWindow : Window
                 // (走行中だとParallel.For内でObjectDisposedExceptionになる)
                 CancelAnalysis();
                 old?.Dispose();
-                Title = $"RawAnalyzer — {Path.GetFileName(path)}";
+                Title = $"RawAnalyzer — {Path.GetFileName(path)}{TiffPageNote}";
                 if (layoutChanged)
                 {
                     _vm.BlackLevelMax = (1 << format.BitDepth) - 1;
@@ -3428,9 +3486,10 @@ public partial class MainWindow : Window
                     + (color is not null ? " · RGB" : "")
                     + (frameFileSize >= 0
                         ? $" · {frameFileSize / (1024.0 * 1024.0):F1} MB"
-                        : "");
+                        : "") + TiffPageNote;
                 _vm.SelectedFile = _vm.Files.FirstOrDefault(f => string.Equals(
                     f.FullPath, path, StringComparison.OrdinalIgnoreCase));
+                // Filesのリスト・位置・再生状態を維持する。TIFFのページ送りへは切り替えない。
             }
 
         }
@@ -3531,6 +3590,7 @@ public partial class MainWindow : Window
     /// </summary>
     private BusyScope EnterBusy()
     {
+        CancelTiffPageLoad();
         StopPlayback();
         _busyDepth++;
         return new BusyScope(this);
@@ -4019,7 +4079,7 @@ public partial class MainWindow : Window
 
     private string NoiseSourceName()
     {
-        string name = Path.GetFileName(_currentPath ?? "(画像)");
+        string name = Path.GetFileName(_currentPath ?? "(画像)") + TiffPageNote;
         return _correctionLabel is null ? name : $"{name} [{_correctionLabel}]";
     }
 
@@ -4204,6 +4264,11 @@ public partial class MainWindow : Window
             3 => BayerPattern.Gbrg,
             _ => BayerPattern.None,
         };
+        if (_tiffStack is not null)
+        {
+            _tiffStack.BayerOverride = pattern;
+        }
+
         if (pattern == _currentFormat.Bayer)
         {
             return;
@@ -4215,7 +4280,7 @@ public partial class MainWindow : Window
             Viewport.UpdateFormat(_currentFormat);
         }
 
-        if (_currentPath is not null && IsRawFile(_currentPath))
+        if (_correctionLabel is null && _currentPath is not null && IsRawFile(_currentPath))
         {
             RememberFileFormat(_currentPath, _currentFormat);
         }

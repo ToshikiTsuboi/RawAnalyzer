@@ -114,6 +114,10 @@
                 <Separator />
                 <MenuItem Header="画像演算 (ダーク減算/フラット補正)…" Click="OnImageCalculatorClick"
                           IsEnabled="{Binding HasImage}" />
+                <MenuItem Header="デジタルビニング (2×2 / 4×4…)…" Click="OnBinningClick"
+                          IsEnabled="{Binding HasImage}" />
+                <MenuItem Header="画像フィルタ (平滑化 / シャープ / エッジ…)…" Click="OnFilterClick"
+                          IsEnabled="{Binding HasImage}" />
                 <MenuItem Header="バッチ現像 / 動画書き出し…" Click="OnBatchExportClick"
                           IsEnabled="{Binding HasImage}" />
             </MenuItem>
@@ -423,7 +427,8 @@
                 </Border>
 
                 <!-- 比較モード(表示中は通常ビューを覆う) -->
-                <compare:CompareView x:Name="CompareArea" Visibility="Collapsed" />
+                <compare:CompareView x:Name="CompareArea" Visibility="Collapsed"
+                                     IsFullscreen="{Binding IsFullscreen, Mode=TwoWay}" />
             </Grid>
 
             <GridSplitter x:Name="RightSplitter" Grid.Column="4" Width="5"

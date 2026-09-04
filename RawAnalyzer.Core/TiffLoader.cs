@@ -12,7 +12,14 @@ namespace RawAnalyzer.Core;
 /// <param name="Endianness">画素値のバイト順。</param>
 /// <param name="DataOffset">画素データ先頭のファイル内オフセット。</param>
 public sealed record TiffPixelLayout(
-    int Width, int Height, int BitDepth, Endianness Endianness, long DataOffset);
+    int Width, int Height, int BitDepth, Endianness Endianness, long DataOffset)
+{
+    /// <summary>TIFF内のページ数(メインIFDチェーン)。</summary>
+    public int PageCount { get; init; } = 1;
+
+    /// <summary>この配置が表すページ(0起点)。</summary>
+    public int PageIndex { get; init; }
+}
 
 /// <summary>
 /// 8/16bit 非圧縮グレースケールTIFF(ストリップ形式)の最小パーサ。
@@ -39,6 +46,9 @@ public static unsafe class TiffLoader
     /// <summary>読み込みを許可する最大画素数。ヘッダの不正値でOOMにしないための上限。</summary>
     public const long MaxPixels = 2_000_000_000;
 
+    /// <summary>ディレクトリ列挙の上限。壊れたファイルによる過大確保を防ぐ。</summary>
+    public const int MaxPages = 100_000;
+
     /// <summary>
     /// TIFFファイルを読み込み、16bitフルスケールへ正規化したRawImageを返す。
     /// </summary>
@@ -61,10 +71,15 @@ public static unsafe class TiffLoader
     /// <param name="path">TIFFファイルのパス。</param>
     /// <param name="layout">画素データの配置。判定できない場合はnull。</param>
     /// <param name="reason">扱えない場合の理由(表示用)。</param>
+    /// <param name="pageIndex">調べるページ(0起点)。</param>
+    /// <param name="cancellationToken">キャンセルトークン。</param>
     /// <returns>連続配置として扱えるならtrue。</returns>
     public static bool TryProbePixelLayout(
-        string path, out TiffPixelLayout? layout, out string reason)
+        string path, out TiffPixelLayout? layout, out string reason,
+        int pageIndex = 0, CancellationToken cancellationToken = default)
     {
+        ArgumentOutOfRangeException.ThrowIfNegative(pageIndex);
+        cancellationToken.ThrowIfCancellationRequested();
         layout = null;
         reason = "";
         long fileLength;
@@ -107,7 +122,7 @@ public static unsafe class TiffLoader
                 // ファイル後方に置かれることがある。Spanのint長へ切り詰めず
                 // longオフセットのままアクセスする
                 var data = new TiffBytes(pointer + accessor.PointerOffset, fileLength);
-                return TryProbeCore(data, out layout, out reason);
+                return TryProbeCore(data, pageIndex, cancellationToken, out layout, out reason);
             }
             finally
             {
@@ -145,7 +160,7 @@ public static unsafe class TiffLoader
     }
 
     private static bool TryProbeCore(
-        TiffBytes data, out TiffPixelLayout? layout, out string reason)
+        TiffBytes data, int pageIndex, CancellationToken ct, out TiffPixelLayout? layout, out string reason)
     {
         layout = null;
         bool bigEndian = data[0] == (byte)'M' && data[1] == (byte)'M';
@@ -162,7 +177,13 @@ public static unsafe class TiffLoader
             return false;
         }
 
-        List<IfdEntry> entries = ReadIfd(data, data.ReadU32(4, bigEndian), bigEndian);
+        List<long> directories = ReadPageOffsets(data, bigEndian, ct);
+        if ((uint)pageIndex >= (uint)directories.Count)
+        {
+            throw new ArgumentOutOfRangeException(nameof(pageIndex), "TIFFのページ範囲外です。");
+        }
+
+        List<IfdEntry> entries = ReadIfd(data, directories[pageIndex], bigEndian);
         uint width = GetScalar(entries, data, TagImageWidth, bigEndian) ?? 0;
         uint height = GetScalar(entries, data, TagImageLength, bigEndian) ?? 0;
         uint bits = GetScalar(entries, data, TagBitsPerSample, bigEndian) ?? 0;
@@ -248,7 +269,11 @@ public static unsafe class TiffLoader
 
         layout = new TiffPixelLayout(
             (int)width, (int)height, (int)bits,
-            bigEndian ? Endianness.Big : Endianness.Little, offsets[0]);
+            bigEndian ? Endianness.Big : Endianness.Little, offsets[0])
+        {
+            PageCount = directories.Count,
+            PageIndex = pageIndex,
+        };
         reason = "";
         return true;
     }
@@ -420,6 +445,38 @@ public static unsafe class TiffLoader
     }
 
     private readonly record struct IfdEntry(ushort Tag, ushort Type, uint Count, long ValueFieldOffset);
+
+    private static List<long> ReadPageOffsets(TiffBytes data, bool bigEndian, CancellationToken ct)
+    {
+        var offsets = new List<long>();
+        var visited = new HashSet<long>();
+        long offset = data.ReadU32(4, bigEndian);
+        while (offset != 0)
+        {
+            ct.ThrowIfCancellationRequested();
+            if (offset < 8 || !visited.Add(offset))
+            {
+                throw new InvalidDataException("TIFFのページ参照が不正、または循環しています。");
+            }
+
+            if (offsets.Count >= MaxPages)
+            {
+                throw new NotSupportedException($"TIFFは最大{MaxPages:N0}ページまで対応します。");
+            }
+
+            int entries = data.ReadU16(offset, bigEndian);
+            long nextField = offset + 2 + entries * 12L;
+            offsets.Add(offset);
+            offset = data.ReadU32(nextField, bigEndian);
+        }
+
+        if (offsets.Count == 0)
+        {
+            throw new InvalidDataException("TIFFに画像ページがありません。");
+        }
+
+        return offsets;
+    }
 
     /// <summary>
     /// ファイル全体へのlongオフセットアクセス。クラシックTIFFのオフセット上限は

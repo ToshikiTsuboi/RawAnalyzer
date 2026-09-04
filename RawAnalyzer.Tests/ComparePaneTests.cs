@@ -58,10 +58,11 @@ public class DisplaySettingsTests
 public class CompareViewLayoutTests
 {
     [Theory]
-    [InlineData(1, 1)]  // ペイン0 + 追加タイル
-    [InlineData(2, 2)]  // ペイン1 + タイル
-    [InlineData(3, 3)]  // ペイン2 + タイル(横一列)
-    [InlineData(4, 2)]  // ペイン3 + タイル → 2×2
+    [InlineData(0, 1)]  // 画像なし: 中央の追加案内のみ
+    [InlineData(1, 1)]  // 1枚は領域全体
+    [InlineData(2, 2)]  // 2枚は左右半分ずつ
+    [InlineData(3, 3)]  // 3枚は横一列
+    [InlineData(4, 2)]  // 4枚は2×2
     [InlineData(5, 2)]  // 上限超えは来ないが2列のまま
     public void ColumnsFor_ThreeAcrossThenGrid(int elements, int expected)
     {
