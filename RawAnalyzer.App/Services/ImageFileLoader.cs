@@ -18,6 +18,11 @@ public sealed record DecodedImage(RawImage Luminance, ColorImage? Color)
 
     /// <summary>読み込んだページ(0起点)。Luminance内のフレーム番号は常に0。</summary>
     public int PageIndex { get; init; }
+
+    /// <summary>
+    /// 32bit実数などを16bitへ写した際の対応関係(表示用)。等倍で読めた場合はnull。
+    /// </summary>
+    public string? ValueNote { get; init; }
 }
 
 /// <summary>
@@ -93,6 +98,17 @@ internal static class ImageFileLoader
         }
 
         // その他はBgra32へ変換して取り出す: byte[px*4] + ushort[px*3] + 輝度
+        if (format == PixelFormats.Gray32Float)
+        {
+            return 4 + 2; // int[](32bitサンプル) + 16bitコード
+        }
+
+        if (format.BitsPerPixel is 96 or 128)
+        {
+            // 32bit×3/4サンプル + RGBコード + 輝度
+            return (format.BitsPerPixel / 8) + 6 + 2;
+        }
+
         return 4 + 6 + 2;
     }
 
@@ -180,17 +196,22 @@ internal static class ImageFileLoader
             throw new ArgumentOutOfRangeException(nameof(pageIndex), $"ページは0〜{count - 1}です。");
         }
 
+        // WICは32bit整数のページもGray32Floatとして返し、16bit実数はGray16として返す。
+        // どちらもビット列がそのまま整数/実数に化けるため、実際の形式はファイル自身から読む
+        TiffSampleInfo? sampleInfo = null;
+        if (IsTiff(path))
+        {
+            TiffLoader.TryReadSampleInfo(path, out sampleInfo, pageIndex, cancellationToken);
+        }
+
         return DecodeWithWicErrorHandling(() =>
         {
             BitmapFrame frame = decoder.Frames[pageIndex];
             cancellationToken.ThrowIfCancellationRequested();
             EnsureDecodable(frame.PixelWidth, frame.PixelHeight, frame.Format);
-            if (frame.Format == PixelFormats.Gray32Float)
-            {
-                throw new NotSupportedException("32bit浮動小数点TIFFは未対応です。8/16bit TIFFを使用してください。");
-            }
-
-            DecodedImage decoded = DecodeFrame(frame, cancellationToken, progress);
+            DecodedImage decoded =
+                TryDecodeWideSamples(frame, sampleInfo, cancellationToken, progress)
+                ?? DecodeFrame(frame, cancellationToken, progress);
             return decoded with { PageCount = count, PageIndex = pageIndex };
         });
     }
@@ -206,6 +227,173 @@ internal static class ImageFileLoader
         {
             throw new InvalidDataException($"画像をデコードできません: {ex.Message}", ex);
         }
+    }
+
+    /// <summary>
+    /// WICがサンプル形式を無視して返すページを読み、16bitコードへ写す。
+    /// </summary>
+    /// <remarks>
+    /// WICは32bitのページをサンプル形式によらずGray32Floatとして、16bitのページを
+    /// Gray16として返し、いずれもビット列をそのまま渡してくる。整数を実数として
+    /// 読むと1,000,000が1.4e-39になり、半精度の1.0は15360という別の整数になる。
+    /// TIFFのSampleFormatで解釈を決め、値域から16bitへの対応関係を作る。
+    /// </remarks>
+    /// <param name="frame">対象ページ。</param>
+    /// <param name="info">TIFFのサンプル形式。非TIFFではnull。</param>
+    /// <param name="ct">キャンセルトークン。</param>
+    /// <param name="progress">進捗(0〜1)。</param>
+    /// <returns>読み込んだ画像。通常経路で読むべき形式ならnull。</returns>
+    private static DecodedImage? TryDecodeWideSamples(
+        BitmapSource frame, TiffSampleInfo? info, CancellationToken ct, IProgress<double>? progress)
+    {
+        PixelFormat format = frame.Format;
+
+        // 非TIFFでWICが実数と明示した場合だけ、メタデータなしでも実数として扱う
+        info ??= format == PixelFormats.Gray32Float
+            ? new TiffSampleInfo(32, 1, 3, 1)
+            : null;
+        if (info is null)
+        {
+            return null;
+        }
+
+        // 32bitの全形式と、16bitの実数・符号あり整数が対象。
+        // 16bitの符号なし整数だけがWICの返す値をそのまま使える
+        bool wide = info.BitsPerSample == 32
+            || (info.BitsPerSample == 16 && info.SampleFormat != 1);
+        if (!wide)
+        {
+            return null;
+        }
+
+        int channels = info.SamplesPerPixel;
+        if (channels is < 1 or > 4)
+        {
+            throw new NotSupportedException(
+                $"1画素あたり{channels}サンプルのTIFFには対応していません。");
+        }
+
+        if (format.BitsPerPixel != channels * info.BitsPerSample)
+        {
+            throw new NotSupportedException(
+                $"{info.BitsPerSample}bit×{channels}サンプルのTIFFですが、" +
+                $"デコード結果は{format.BitsPerPixel}bit/画素でした。");
+        }
+
+        int width = frame.PixelWidth;
+        int height = frame.PixelHeight;
+        long pixels = (long)width * height;
+        int outputChannels = channels == 1 ? 1 : 3;
+
+        // 32bitサンプルは中間のint[]を持つぶん、通常経路より1画素あたりの所要が大きい
+        long bytes = pixels * ((4L * channels) + (2L * outputChannels)
+            + (outputChannels == 1 ? 0 : 2));
+        if (bytes > MaxDecodedBytes)
+        {
+            throw new NotSupportedException(
+                $"{width}×{height} の{info.BitsPerSample}bitサンプル画像は展開に約 " +
+                $"{bytes / (1024.0 * 1024 * 1024):F1} GB 必要で、上限 " +
+                $"{MaxDecodedBytes / (1024.0 * 1024 * 1024):F1} GB を超えています。");
+        }
+
+        if (pixels * channels > int.MaxValue)
+        {
+            throw new NotSupportedException("サンプル数が多すぎます。");
+        }
+
+        SampleInterpretation interpretation = info.Interpretation;
+        int[] bits = ReadWideSamples(
+            frame, width, height, channels, info.BitsPerSample / 8,
+            interpretation == SampleInterpretation.SignedInteger, ct, progress);
+        long samples = pixels * channels;
+        if (channels == 4)
+        {
+            // アルファは値域にも出力にも入れない
+            for (long i = 0; i < pixels; i++)
+            {
+                if ((i & 0xFFFFF) == 0)
+                {
+                    ct.ThrowIfCancellationRequested();
+                }
+
+                bits[(i * 3) + 0] = bits[i * 4];
+                bits[(i * 3) + 1] = bits[(i * 4) + 1];
+                bits[(i * 3) + 2] = bits[(i * 4) + 2];
+            }
+
+            channels = 3;
+            samples = pixels * 3;
+        }
+
+        SampleRange range = SampleScaling.Scan(bits, samples, interpretation, ct);
+        SampleScaling scaling = SampleScaling.FromRange(range);
+        progress?.Report(0.85);
+
+        var codes = new ushort[samples];
+        scaling.Convert(bits, samples, interpretation, codes, ct);
+        progress?.Report(1);
+        ct.ThrowIfCancellationRequested();
+
+        string note = scaling.Describe();
+        if (channels == 1)
+        {
+            var rawFormat = new RawFormat { Width = width, Height = height, BitDepth = 16 };
+            return new DecodedImage(RawImage.FromPixels(rawFormat, codes), null)
+            {
+                ValueNote = note,
+            };
+        }
+
+        ColorImage color = ColorImage.FromInterleaved(width, height, 16, codes);
+        RawImage luminance = color.ToLuminance(ct);
+        try
+        {
+            ct.ThrowIfCancellationRequested();
+            return new DecodedImage(luminance, color) { ValueNote = note };
+        }
+        catch
+        {
+            luminance.Dispose();
+            throw;
+        }
+    }
+
+    /// <summary>サンプルのビット列を32bit語の配列として読み出す。</summary>
+    private static int[] ReadWideSamples(
+        BitmapSource frame, int width, int height, int channels, int bytesPerSample,
+        bool signExtend, CancellationToken ct, IProgress<double>? progress)
+    {
+        int stride = checked(width * channels * bytesPerSample);
+        int bandRows = Math.Min(height, Math.Max(1, (1 << 20) / stride));
+        var bits = new int[checked((long)width * height * channels)];
+        ushort[]? narrow = bytesPerSample == 2
+            ? new ushort[checked(bandRows * width * channels)]
+            : null;
+        for (int y = 0; y < height; y += bandRows)
+        {
+            ct.ThrowIfCancellationRequested();
+            int rows = Math.Min(bandRows, height - y);
+            int offset = y * width * channels;
+            var rect = new Int32Rect(0, y, width, rows);
+            if (narrow is null)
+            {
+                frame.CopyPixels(rect, bits, stride, offset);
+            }
+            else
+            {
+                frame.CopyPixels(rect, narrow, stride, 0);
+                int count = rows * width * channels;
+                for (int i = 0; i < count; i++)
+                {
+                    bits[offset + i] = signExtend ? (short)narrow[i] : narrow[i];
+                }
+            }
+
+            progress?.Report(0.7 * (y + rows) / height);
+        }
+
+        ct.ThrowIfCancellationRequested();
+        return bits;
     }
 
     private static DecodedImage DecodeFrame(BitmapSource frame, CancellationToken ct, IProgress<double>? progress)

@@ -22,6 +22,27 @@ public sealed record TiffPixelLayout(
 }
 
 /// <summary>
+/// TIFFページのサンプル形式。画素データを読まずにヘッダだけで分かる情報。
+/// </summary>
+/// <param name="BitsPerSample">1サンプルのビット数。</param>
+/// <param name="SamplesPerPixel">1画素のサンプル数(1=グレー、3=RGB)。</param>
+/// <param name="SampleFormat">
+/// TIFFのSampleFormat(1=符号なし整数、2=符号あり整数、3=IEEE実数)。
+/// </param>
+/// <param name="PageCount">TIFF内のページ数。</param>
+public sealed record TiffSampleInfo(
+    int BitsPerSample, int SamplesPerPixel, int SampleFormat, int PageCount)
+{
+    /// <summary>32bitサンプルとしての解釈方法。</summary>
+    public SampleInterpretation Interpretation => SampleFormat switch
+    {
+        2 => SampleInterpretation.SignedInteger,
+        3 => BitsPerSample == 16 ? SampleInterpretation.HalfFloat : SampleInterpretation.Float,
+        _ => SampleInterpretation.UnsignedInteger,
+    };
+}
+
+/// <summary>
 /// 8/16bit 非圧縮グレースケールTIFF(ストリップ形式)の最小パーサ。
 /// リトル/ビッグエンディアン両対応。CoreはWICを参照できないため自前実装。
 /// クラシックTIFFのオフセットはuint32(最大4GB-1)なので、
@@ -157,6 +178,94 @@ public static unsafe class TiffLoader
             Endianness = layout.Endianness,
             HeaderOffset = layout.DataOffset,
         };
+    }
+
+    /// <summary>
+    /// ヘッダだけを読み、ページのサンプル形式を調べる。
+    /// </summary>
+    /// <remarks>
+    /// WICのTIFFデコーダは32bit整数のページも Gray32Float として返し、
+    /// 実数として読むとビット列がそのまま実数に化ける(整数の1,000,000が
+    /// 1.4e-39、符号ありではNaNになる)。整数と実数の区別はファイル自身の
+    /// SampleFormatでしか付かないため、ここで読み取る。
+    /// 圧縮ページでもタグは読めるので、画素の連続配置は要求しない。
+    /// </remarks>
+    /// <param name="path">TIFFファイルのパス。</param>
+    /// <param name="info">サンプル形式。読めない場合はnull。</param>
+    /// <param name="pageIndex">調べるページ(0起点)。</param>
+    /// <param name="cancellationToken">キャンセルトークン。</param>
+    /// <returns>読み取れたらtrue。</returns>
+    public static bool TryReadSampleInfo(
+        string path, out TiffSampleInfo? info, int pageIndex = 0,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(pageIndex);
+        cancellationToken.ThrowIfCancellationRequested();
+        info = null;
+        long fileLength;
+        try
+        {
+            var file = new FileInfo(path);
+            if (!file.Exists || file.Length < 8)
+            {
+                return false;
+            }
+
+            fileLength = file.Length;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+
+        try
+        {
+            using MemoryMappedFile mmf = MemoryMappedFile.CreateFromFile(
+                path, FileMode.Open, mapName: null, capacity: 0, MemoryMappedFileAccess.Read);
+            using MemoryMappedViewAccessor accessor =
+                mmf.CreateViewAccessor(0, 0, MemoryMappedFileAccess.Read);
+            byte* pointer = null;
+            accessor.SafeMemoryMappedViewHandle.AcquirePointer(ref pointer);
+            try
+            {
+                var data = new TiffBytes(pointer + accessor.PointerOffset, fileLength);
+                bool bigEndian = data[0] == (byte)'M' && data[1] == (byte)'M';
+                bool littleEndian = data[0] == (byte)'I' && data[1] == (byte)'I';
+                if ((!bigEndian && !littleEndian) || data.ReadU16(2, bigEndian) != 42)
+                {
+                    return false;
+                }
+
+                List<long> directories = ReadPageOffsets(data, bigEndian, cancellationToken);
+                if ((uint)pageIndex >= (uint)directories.Count)
+                {
+                    return false;
+                }
+
+                List<IfdEntry> entries = ReadIfd(data, directories[pageIndex], bigEndian);
+                uint bits = GetScalar(entries, data, TagBitsPerSample, bigEndian) ?? 0;
+                uint samples = GetScalar(entries, data, TagSamplesPerPixel, bigEndian) ?? 1;
+                uint format = GetScalar(entries, data, TagSampleFormat, bigEndian) ?? 1;
+                if (bits == 0 || bits > 64 || samples == 0 || samples > 8)
+                {
+                    return false;
+                }
+
+                info = new TiffSampleInfo(
+                    (int)bits, (int)samples, (int)format, directories.Count);
+                return true;
+            }
+            finally
+            {
+                accessor.SafeMemoryMappedViewHandle.ReleasePointer();
+            }
+        }
+        catch (Exception ex) when (
+            ex is IOException or UnauthorizedAccessException or InvalidDataException
+                or ArgumentException or NotSupportedException)
+        {
+            return false;
+        }
     }
 
     private static bool TryProbeCore(

@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Windows;
 using RawAnalyzer.App.Rendering;
 using RawAnalyzer.App.Services;
@@ -124,6 +124,7 @@ public partial class MainWindow
         _currentFormat = format;
         _colorImage = decoded.Color;
         _vm.IsColorImage = decoded.Color is not null;
+        _valueNote = decoded.ValueNote;
         _tiffPageIndex = index;
         _sequenceIndex = index;
         _histogram = null;
@@ -160,7 +161,7 @@ public partial class MainWindow
         UpdateDevelopLuts();
         Title = $"RawAnalyzer — {Path.GetFileName(_currentPath)}{TiffPageNote}";
         _vm.ImageInfoText = $"{image.Width}×{image.Height} · {format.BitDepth}bit"
-            + (decoded.Color is null ? "" : " · RGB") + TiffPageNote;
+            + (decoded.Color is null ? "" : " · RGB") + TiffPageNote + ValueNoteSuffix;
         UpdateNoiseWindowSource();
         try
         {

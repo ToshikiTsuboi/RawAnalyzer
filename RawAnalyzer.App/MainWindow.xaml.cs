@@ -90,6 +90,12 @@ public partial class MainWindow : Window
     private HistogramResult? _histogram;
     private IReadOnlyList<ChannelHistogram>? _channelHistograms;
     private string? _correctionLabel;
+
+    // 32bit実数などを16bitへ写したときの対応関係。画像情報欄へ添える
+    private string? _valueNote;
+
+    /// <summary>画像情報欄へ添える、値の対応関係の説明。</summary>
+    private string ValueNoteSuffix => _valueNote is null ? "" : $" · {_valueNote}";
     private ColorImage? _colorImage;
     private WindowState _preFullscreenState = WindowState.Normal;
     private WindowStyle _preFullscreenStyle = WindowStyle.SingleBorderWindow;
@@ -540,6 +546,7 @@ public partial class MainWindow : Window
         RawImage image;
         ColorImage? color = null;
         int pageCount = 1;
+        string? valueNote = null;
         try
         {
             if (IsRawFile(path))
@@ -554,6 +561,7 @@ public partial class MainWindow : Window
                 image = decoded.Luminance;
                 color = decoded.Color;
                 pageCount = decoded.PageCount;
+                valueNote = decoded.ValueNote;
             }
         }
         catch (OperationCanceledException)
@@ -609,6 +617,7 @@ public partial class MainWindow : Window
         _tiffStack = pageCount > 1
             ? new TiffStackSource(path, pageCount) { BayerOverride = image.Format.Bayer } : null;
         _tiffPageIndex = 0;
+        _valueNote = valueNote;
         _histogram = null;
         _vm.HasRoi = false;
         _vm.BlackLevelMax = (1 << image.Format.BitDepth) - 1;
@@ -631,7 +640,7 @@ public partial class MainWindow : Window
             $"{image.Width}×{image.Height} · {image.Format.BitDepth}bit"
             + (color is not null ? " · RGB" : "")
             + (fileSize >= 0 ? $" · {fileSize / (1024.0 * 1024.0):F1} MB" : "")
-            + (image.FrameCount > 1 ? $" · {image.FrameCount}fr" : "") + TiffPageNote;
+            + (image.FrameCount > 1 ? $" · {image.FrameCount}fr" : "") + TiffPageNote + ValueNoteSuffix;
         _vm.HasImage = true;
 
         DisplayModeCombo.SelectedIndex = 0;
@@ -2185,6 +2194,7 @@ public partial class MainWindow : Window
         _currentFormat = processed.Format;
         _colorImage = color;
         _vm.IsColorImage = color is not null;
+        _valueNote = null;
         _histogram = null;
         _channelHistograms = null;
         _vm.HasRoi = false;
@@ -3416,6 +3426,7 @@ public partial class MainWindow : Window
                         image = decoded.Luminance;
                         color = decoded.Color;
                         pageCount = decoded.PageCount;
+                        _valueNote = decoded.ValueNote;
                     }
                 }
                 catch (Exception)
@@ -3486,7 +3497,7 @@ public partial class MainWindow : Window
                     + (color is not null ? " · RGB" : "")
                     + (frameFileSize >= 0
                         ? $" · {frameFileSize / (1024.0 * 1024.0):F1} MB"
-                        : "") + TiffPageNote;
+                        : "") + TiffPageNote + ValueNoteSuffix;
                 _vm.SelectedFile = _vm.Files.FirstOrDefault(f => string.Equals(
                     f.FullPath, path, StringComparison.OrdinalIgnoreCase));
                 // Filesのリスト・位置・再生状態を維持する。TIFFのページ送りへは切り替えない。
