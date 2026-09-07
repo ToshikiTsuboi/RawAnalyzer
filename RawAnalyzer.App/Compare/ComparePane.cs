@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using RawAnalyzer.App.Services;
 using RawAnalyzer.Core;
 
@@ -24,22 +24,29 @@ internal sealed class ComparePane : IDisposable
 
     private bool _disposed;
 
-    private ComparePane(string path, RawImage image, RawFormat format, ColorImage? color, int pageCount = 1)
+    private ComparePane(
+        string path, RawImage image, RawFormat format, ColorImage? color, int pageCount = 1,
+        string? valueNote = null)
     {
         Path = path;
         Image = image;
         Format = format;
         Color = color;
         PageCount = pageCount;
+        ValueNote = valueNote;
         Display = DisplaySettings.CreateDefault(format.BitDepth);
     }
 
     /// <summary>読み込み元のファイルパス。</summary>
     public string Path { get; }
 
-    /// <summary>表示用のファイル名。</summary>
+    /// <summary>表示用のファイル名。TIFFのページ数と、32bit等の値域換算があればその説明を添える。</summary>
     public string FileName => System.IO.Path.GetFileName(Path)
-        + (PageCount > 1 ? $" [TIFFページ 1/{PageCount}]" : "");
+        + (PageCount > 1 ? $" [TIFFページ 1/{PageCount}]" : "")
+        + (ValueNote is null ? "" : $" · {ValueNote}");
+
+    /// <summary>元データを16bitへ写した対応関係の説明(該当しなければnull)。</summary>
+    public string? ValueNote { get; }
 
     /// <summary>画像ファイル内のページ数。比較ペインは先頭ページを表示する。</summary>
     public int PageCount { get; }
@@ -108,7 +115,9 @@ internal sealed class ComparePane : IDisposable
 
         DecodedImage decoded = await Task.Run(
             () => ImageFileLoader.Load(path, cancellationToken), cancellationToken);
-        return new ComparePane(path, decoded.Luminance, decoded.Luminance.Format, decoded.Color, decoded.PageCount);
+        return new ComparePane(
+            path, decoded.Luminance, decoded.Luminance.Format, decoded.Color, decoded.PageCount,
+            decoded.ValueNote);
     }
 
     /// <summary>

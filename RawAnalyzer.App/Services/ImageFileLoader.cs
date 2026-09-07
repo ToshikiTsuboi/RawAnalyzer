@@ -326,6 +326,16 @@ internal static class ImageFileLoader
             throw new InvalidDataException($"複素数(SampleFormat={info.SampleFormat})のTIFFは未対応です。");
         }
 
+        if (info.Photometric == 6 && info.Compression != 7)
+        {
+            throw new InvalidDataException("非圧縮のYCbCr TIFFは未対応です(JPEG圧縮のYCbCrは読めます)。");
+        }
+
+        if (info.Predictor == 2 && info.BitsPerSample == 32)
+        {
+            throw new InvalidDataException("32bitサンプルの水平差分予測(Predictor=2)は未対応です。");
+        }
+
         bool bitsOk = info.SampleFormat switch
         {
             2 => info.BitsPerSample is 8 or 16 or 32,
@@ -555,6 +565,18 @@ internal static class ImageFileLoader
             return new DecodedImage(RawImage.FromPixels(
                 new RawFormat { Width = width, Height = height, BitDepth = bitDepth },
                 pixels), null);
+        }
+
+        // 1/2/4bitのグレーはBgra32へ広げるとカラー画像扱いになる。Gray8へ変換してグレーのまま取り込む
+        if (format == PixelFormats.BlackWhite || format == PixelFormats.Gray2 || format == PixelFormats.Gray4)
+        {
+            var gray8 = new FormatConvertedBitmap(frame, PixelFormats.Gray8, null, 0);
+            ushort[] pixels = ReadBands(gray8, 1, 1, false, false, ct, progress);
+            ct.ThrowIfCancellationRequested();
+            progress?.Report(1);
+            ct.ThrowIfCancellationRequested();
+            return new DecodedImage(RawImage.FromPixels(
+                new RawFormat { Width = width, Height = height, BitDepth = 8 }, pixels), null);
         }
 
         bool sixteenBit = format == PixelFormats.Rgb48 || format == PixelFormats.Rgba64;

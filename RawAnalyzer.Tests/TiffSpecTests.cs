@@ -386,6 +386,70 @@ public class TiffSpecTests
         AssertRamp16(image);
     }
 
+    // ------------------------------------------------------------------ P3: 表示・明記
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(4)]
+    public void LowBitGray_IsGrayNotColor(int bits)
+    {
+        int max = (1 << bits) - 1;
+        int[] values = Enumerable.Range(0, W * H).Select(i => i % (max + 1)).ToArray();
+        var page = TiffBuilder.GrayPage(W, H, bits, TiffBuilder.PackRows(values, W, bits));
+        if (bits == 1)
+        {
+            page.Tags.Remove(258); // 2値画像はBitsPerSampleを省略することが多い
+        }
+
+        using var file = TempTiff.Write(new TiffBuilder().Build(page));
+
+        DecodedImage decoded = ImageFileLoader.Load(file.Path);
+        using RawImage image = decoded.Luminance;
+        Assert.Null(decoded.Color);
+        Assert.Equal(8, image.Format.BitDepth);
+        Assert.Equal(0, image.GetPixel(0, 0));
+        Assert.Equal(65535, image.GetPixel(max % W, max / W));
+    }
+
+    [Fact]
+    public void UncompressedYCbCr_IsRejectedWithReason()
+    {
+        var page = TiffBuilder.GrayPage(W, H, 8, new byte[W * H * 3], photometric: 6, samplesPerPixel: 3);
+        using var file = TempTiff.Write(new TiffBuilder().Build(page));
+
+        var ex = Assert.Throws<InvalidDataException>(() => ImageFileLoader.Load(file.Path));
+        Assert.Contains("YCbCr", ex.Message);
+    }
+
+    [Fact]
+    public void Predictor2With32Bit_IsRejectedWithReason()
+    {
+        var page = TiffBuilder.GrayPage(W, H, 32, new byte[W * H * 4], compression: 8);
+        page.Tags[317] = (3, new long[] { 2 });
+        using var file = TempTiff.Write(new TiffBuilder().Build(page));
+
+        var ex = Assert.Throws<InvalidDataException>(() => ImageFileLoader.Load(file.Path));
+        Assert.Contains("Predictor=2", ex.Message);
+    }
+
+    [Fact]
+    public async Task ComparePane_ShowsValueNoteInFileName()
+    {
+        var bytes = new byte[W * H * 4];
+        for (int i = 0; i < W * H; i++)
+        {
+            BinaryPrimitives.WriteSingleLittleEndian(bytes.AsSpan(i * 4), i / (float)(W * H - 1));
+        }
+
+        var page = TiffBuilder.GrayPage(W, H, 32, bytes, sampleFormat: 3);
+        using var file = TempTiff.Write(new TiffBuilder().Build(page));
+
+        using RawAnalyzer.App.Compare.ComparePane pane =
+            await RawAnalyzer.App.Compare.ComparePane.LoadAsync(file.Path, rawFormat: null);
+        Assert.Equal("32bit実数 0〜1 → 16bit", pane.ValueNote);
+        Assert.EndsWith(" · 32bit実数 0〜1 → 16bit", pane.FileName);
+    }
+
     // ------------------------------------------------------------------ 補助
 
     private static byte[] Ramp16(bool bigEndian = false)

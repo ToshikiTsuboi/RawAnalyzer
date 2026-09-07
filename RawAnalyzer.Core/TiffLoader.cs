@@ -1,4 +1,4 @@
-using System.Buffers.Binary;
+﻿using System.Buffers.Binary;
 using System.IO.MemoryMappedFiles;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -65,6 +65,9 @@ public sealed record TiffSampleInfo(
     /// <summary>ImageJの単一IFD+連続画素スタックの仮想ページか。</summary>
     public bool IsVirtualPage { get; init; }
 
+    /// <summary>Predictorタグ(1=なし、2=水平差分、3=実数差分)。</summary>
+    public int Predictor { get; init; } = 1;
+
     /// <summary>CFA(32803)またはLinearRaw(34892)か。</summary>
     public bool IsRawPhotometric => Photometric is TiffLoader.PhotometricCfa or TiffLoader.PhotometricLinearRaw;
 
@@ -102,6 +105,7 @@ public static unsafe class TiffLoader
     private const ushort TagRowsPerStrip = 278;
     private const ushort TagStripByteCounts = 279;
     private const ushort TagPlanarConfiguration = 284;
+    private const ushort TagPredictor = 317;
     private const ushort TagTileWidth = 322;
     private const ushort TagTileLength = 323;
     private const ushort TagTileOffsets = 324;
@@ -328,6 +332,7 @@ public static unsafe class TiffLoader
                 Height = page.Height,
                 Bayer = page.Bayer,
                 IsVirtualPage = pages[pageIndex].Virtual,
+                Predictor = page.Predictor,
             };
             return true;
         });
@@ -944,19 +949,20 @@ public static unsafe class TiffLoader
     private sealed record PageLayout(
         int Width, int Height, int Bits, int Spp, int Format, int Compression, int Photometric,
         int Planar, int FillOrder, bool Tiled, int TileWidth, int TileHeight, long RowsPerStrip,
-        long[] Offsets, long[] Counts, BayerPattern Bayer, bool Virtual);
+        long[] Offsets, long[] Counts, BayerPattern Bayer, bool Virtual, int Predictor);
 
     private static PageLayout ReadPageLayout(TiffBytes data, TiffHeader header, PageRef page)
     {
         List<IfdEntry> entries = ReadIfd(data, page.IfdOffset, header);
         long width = GetScalar(entries, data, TagImageWidth, header) ?? 0;
         long height = GetScalar(entries, data, TagImageLength, header) ?? 0;
-        long bits = GetScalar(entries, data, TagBitsPerSample, header) ?? 0;
+        long bits = GetScalar(entries, data, TagBitsPerSample, header) ?? 1; // 欠落時は1bit(2値画像の慣習)
         long compression = GetScalar(entries, data, TagCompression, header) ?? 1;
         long spp = GetScalar(entries, data, TagSamplesPerPixel, header) ?? 1;
         long photometric = GetScalar(entries, data, TagPhotometric, header) ?? 1;
         long format = GetScalar(entries, data, TagSampleFormat, header) ?? 1;
         long planar = GetScalar(entries, data, TagPlanarConfiguration, header) ?? 1;
+        long predictor = GetScalar(entries, data, TagPredictor, header) ?? 1;
         long fillOrder = GetScalar(entries, data, TagFillOrder, header) ?? 1;
         long rowsPerStrip = GetScalar(entries, data, TagRowsPerStrip, header) ?? height;
         long tileWidth = GetScalar(entries, data, TagTileWidth, header) ?? 0;
@@ -994,7 +1000,7 @@ public static unsafe class TiffLoader
             (int)format, (int)Math.Clamp(compression, 0, int.MaxValue), (int)Math.Clamp(photometric, 0, int.MaxValue),
             (int)planar, (int)fillOrder, tiled,
             (int)Math.Clamp(tileWidth, 0, int.MaxValue), (int)Math.Clamp(tileLength, 0, int.MaxValue),
-            rowsPerStrip, offsets, counts, bayer, page.Virtual);
+            rowsPerStrip, offsets, counts, bayer, page.Virtual, (int)Math.Clamp(predictor, 0, int.MaxValue));
     }
 
     /// <summary>CFARepeatPatternDim=2×2 の CFAPattern(0=R,1=G,2=B) を Bayer 配列へ写す。</summary>
