@@ -51,7 +51,7 @@ internal static class ImageFileLoader
     /// <summary>WICで読み込む拡張子。</summary>
     public static readonly string[] SupportedExtensions =
     {
-        ".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp",
+        ".jpg", ".jpeg", ".png", ".tif", ".tiff", ".dng", ".bmp",
     };
 
     /// <summary>指定拡張子がWIC読込対象か判定する。</summary>
@@ -67,7 +67,8 @@ internal static class ImageFileLoader
     {
         string extension = Path.GetExtension(path);
         return string.Equals(extension, ".tif", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(extension, ".tiff", StringComparison.OrdinalIgnoreCase);
+            || string.Equals(extension, ".tiff", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(extension, ".dng", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>
@@ -153,6 +154,17 @@ internal static class ImageFileLoader
         ArgumentOutOfRangeException.ThrowIfNegative(pageIndex);
         cancellationToken.ThrowIfCancellationRequested();
         progress?.Report(0);
+
+        // TIFFはまずヘッダを自前で読む。WICは32bit整数をGray32Floatとして返す、
+        // 未知の圧縮を全画素0で返す、CFAを勝手に現像するなど「黙って壊れる」ため、
+        // 形式が分かってから経路を決める
+        TiffSampleInfo? sampleInfo = null;
+        string infoReason = "";
+        if (IsTiff(path))
+        {
+            TiffLoader.TryReadSampleInfo(path, out sampleInfo, out infoReason, pageIndex, cancellationToken);
+        }
+
         // IFDごとに独立したオフセットを使い、ページ間の隙間を画素と誤解釈しない。
         if (TiffLoader.TryProbePixelLayout(path, out TiffPixelLayout? layout, out string reason,
                 pageIndex, cancellationToken) && layout!.BitDepth == 16)
@@ -170,9 +182,44 @@ internal static class ImageFileLoader
             }
         }
 
+        if (sampleInfo is not null && NeedsNativeDecode(sampleInfo))
+        {
+            EnsureDecodable(sampleInfo.Width, sampleInfo.Height, PixelFormats.Gray16);
+            if (TiffLoader.TryDecodeUncompressed(path, pageIndex, out RawImage? native,
+                    out SampleScaling? scaling, out string nativeReason, cancellationToken, progress))
+            {
+                try
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    return new DecodedImage(native!, null)
+                    {
+                        PageCount = sampleInfo.PageCount,
+                        PageIndex = pageIndex,
+                        ValueNote = scaling?.Describe(sampleInfo.BitsPerSample),
+                    };
+                }
+                catch
+                {
+                    native!.Dispose();
+                    throw;
+                }
+            }
+
+            AppLog.Info($"TIFFの自前復号は不可のためWICで開きます: {nativeReason}");
+        }
+
         if (IsTiff(path) && reason.Length > 0)
         {
             AppLog.Info($"TIFFの直接読み出しは不可のためWICで開きます: {reason}");
+        }
+
+        if (sampleInfo is not null)
+        {
+            EnsureWicCapable(sampleInfo);
+        }
+        else if (IsTiff(path) && infoReason.Length > 0)
+        {
+            AppLog.Info($"TIFFヘッダを解釈できないためWICに任せます: {infoReason}");
         }
 
         // ストリームは選択ページのCopyPixels完了まで保持する。戻り値にWIC資源は含めない。
@@ -191,29 +238,107 @@ internal static class ImageFileLoader
         }
 
         // 呼び出し側の引数エラーはWICのデコード失敗へ変換しない。
-        if ((uint)pageIndex >= (uint)count)
+        if (sampleInfo is null && (uint)pageIndex >= (uint)count)
         {
             throw new ArgumentOutOfRangeException(nameof(pageIndex), $"ページは0〜{count - 1}です。");
         }
 
-        // WICは32bit整数のページもGray32Floatとして返し、16bit実数はGray16として返す。
-        // どちらもビット列がそのまま整数/実数に化けるため、実際の形式はファイル自身から読む
-        TiffSampleInfo? sampleInfo = null;
-        if (IsTiff(path))
+        // ページ数はTIFFのページ表を正とする。WICは縮小IFDをフレームに数えないので、
+        // ページ表が持つWICフレーム番号で引く
+        int frameIndex = sampleInfo?.WicFrameIndex ?? pageIndex;
+        int pageCount = sampleInfo?.PageCount ?? count;
+        if ((uint)frameIndex >= (uint)count)
         {
-            TiffLoader.TryReadSampleInfo(path, out sampleInfo, pageIndex, cancellationToken);
+            throw new InvalidDataException(
+                $"WICが認識したページ数({count})がTIFFのページ構成と一致しません。");
         }
 
         return DecodeWithWicErrorHandling(() =>
         {
-            BitmapFrame frame = decoder.Frames[pageIndex];
+            BitmapFrame frame = decoder.Frames[frameIndex];
             cancellationToken.ThrowIfCancellationRequested();
             EnsureDecodable(frame.PixelWidth, frame.PixelHeight, frame.Format);
             DecodedImage decoded =
                 TryDecodeWideSamples(frame, sampleInfo, cancellationToken, progress)
-                ?? DecodeFrame(frame, cancellationToken, progress);
-            return decoded with { PageCount = count, PageIndex = pageIndex };
+                ?? DecodeFrame(frame, sampleInfo, cancellationToken, progress);
+            return decoded with { PageCount = pageCount, PageIndex = pageIndex };
         });
+    }
+
+    /// <summary>
+    /// WICでは正しく読めない非圧縮ページか。該当すれば <see cref="TiffLoader.TryDecodeUncompressed"/> で読む。
+    /// </summary>
+    /// <param name="info">ページのサンプル形式。</param>
+    /// <returns>自前で復号すべきならtrue。</returns>
+    internal static bool NeedsNativeDecode(TiffSampleInfo info)
+    {
+        if (info.Compression != 1 || info.SamplesPerPixel != 1)
+        {
+            return false;
+        }
+
+        return info.IsBigTiff                       // WICはBigTIFFを開けない
+            || info.IsVirtualPage                   // ImageJの仮想ページはWICに存在しない
+            || info.WicFrameIndex < 0               // SubIFD(DNG本体など)
+            || info.IsRawPhotometric                // CFAはWICが現像してしまう
+            || info.BitsPerSample is 10 or 12 or 14 or 24 or 64
+            || (info.SampleFormat == 2 && info.BitsPerSample == 8)
+            || (info.SampleFormat == 3 && info.BitsPerSample == 64);
+    }
+
+    /// <summary>
+    /// WICに渡して安全な形式かを検査し、そうでなければ理由付きで拒否する。
+    /// </summary>
+    /// <remarks>
+    /// WICは未知の圧縮方式をエラーにせず全画素0の画像として返す。センサ評価では
+    /// 「真っ黒な正常画像」が最も危険なので、ヘッダで分かる範囲は先に弾く。
+    /// </remarks>
+    /// <param name="info">ページのサンプル形式。</param>
+    /// <exception cref="InvalidDataException">WICでは正しく読めない形式の場合。</exception>
+    internal static void EnsureWicCapable(TiffSampleInfo info)
+    {
+        if (info.IsBigTiff)
+        {
+            throw new InvalidDataException(
+                "BigTIFFは非圧縮のグレースケール/CFAページのみ対応しています。");
+        }
+
+        if (!TiffLoader.IsWicCompression(info.Compression))
+        {
+            throw new InvalidDataException(
+                $"圧縮方式 {TiffLoader.DescribeCompression(info.Compression)} は未対応です。");
+        }
+
+        if (info.IsRawPhotometric)
+        {
+            throw new InvalidDataException(
+                "CFA/LinearRaw(DNG)は非圧縮のみ対応しています(可逆JPEG圧縮のDNGは未対応)。");
+        }
+
+        if (info.WicFrameIndex < 0)
+        {
+            throw new InvalidDataException(
+                "このページ(SubIFD、またはImageJの連続スタック)は非圧縮の1サンプル/画素のみ対応しています。");
+        }
+
+        if (info.SampleFormat is 5 or 6)
+        {
+            throw new InvalidDataException($"複素数(SampleFormat={info.SampleFormat})のTIFFは未対応です。");
+        }
+
+        bool bitsOk = info.SampleFormat switch
+        {
+            2 => info.BitsPerSample is 8 or 16 or 32,
+            3 => info.BitsPerSample is 16 or 32,
+            _ => info.BitsPerSample is 1 or 2 or 4 or 8 or 12 or 16 or 32,
+        };
+        if (!bitsOk)
+        {
+            string kind = info.SampleFormat switch { 2 => "符号あり整数", 3 => "実数", _ => "整数" };
+            throw new InvalidDataException(
+                $"{info.BitsPerSample}bit {kind}の{TiffLoader.DescribeCompression(info.Compression)}TIFFは未対応です" +
+                "(非圧縮であれば読めます)。");
+        }
     }
 
     internal static T DecodeWithWicErrorHandling<T>(Func<T> decode)
@@ -260,7 +385,8 @@ internal static class ImageFileLoader
         // 32bitの全形式と、16bitの実数・符号あり整数が対象。
         // 16bitの符号なし整数だけがWICの返す値をそのまま使える
         bool wide = info.BitsPerSample == 32
-            || (info.BitsPerSample == 16 && info.SampleFormat != 1);
+            || (info.BitsPerSample == 16 && info.SampleFormat != 1)
+            || (info.BitsPerSample == 8 && info.SampleFormat == 2);
         if (!wide)
         {
             return null;
@@ -334,7 +460,7 @@ internal static class ImageFileLoader
         progress?.Report(1);
         ct.ThrowIfCancellationRequested();
 
-        string note = scaling.Describe();
+        string note = scaling.Describe(info.BitsPerSample);
         if (channels == 1)
         {
             var rawFormat = new RawFormat { Width = width, Height = height, BitDepth = 16 };
@@ -366,9 +492,12 @@ internal static class ImageFileLoader
         int stride = checked(width * channels * bytesPerSample);
         int bandRows = Math.Min(height, Math.Max(1, (1 << 20) / stride));
         var bits = new int[checked((long)width * height * channels)];
-        ushort[]? narrow = bytesPerSample == 2
-            ? new ushort[checked(bandRows * width * channels)]
-            : null;
+        Array? narrow = bytesPerSample switch
+        {
+            1 => new byte[checked(bandRows * width * channels)],
+            2 => new ushort[checked(bandRows * width * channels)],
+            _ => null,
+        };
         for (int y = 0; y < height; y += bandRows)
         {
             ct.ThrowIfCancellationRequested();
@@ -383,9 +512,20 @@ internal static class ImageFileLoader
             {
                 frame.CopyPixels(rect, narrow, stride, 0);
                 int count = rows * width * channels;
-                for (int i = 0; i < count; i++)
+                if (narrow is ushort[] words)
                 {
-                    bits[offset + i] = signExtend ? (short)narrow[i] : narrow[i];
+                    for (int i = 0; i < count; i++)
+                    {
+                        bits[offset + i] = signExtend ? (short)words[i] : words[i];
+                    }
+                }
+                else
+                {
+                    var bytes8 = (byte[])narrow;
+                    for (int i = 0; i < count; i++)
+                    {
+                        bits[offset + i] = signExtend ? (sbyte)bytes8[i] : bytes8[i];
+                    }
                 }
             }
 
@@ -396,7 +536,8 @@ internal static class ImageFileLoader
         return bits;
     }
 
-    private static DecodedImage DecodeFrame(BitmapSource frame, CancellationToken ct, IProgress<double>? progress)
+    private static DecodedImage DecodeFrame(
+        BitmapSource frame, TiffSampleInfo? info, CancellationToken ct, IProgress<double>? progress)
     {
         int width = frame.PixelWidth;
         int height = frame.PixelHeight;
@@ -407,8 +548,12 @@ internal static class ImageFileLoader
             ct.ThrowIfCancellationRequested();
             progress?.Report(1);
             ct.ThrowIfCancellationRequested();
+
+            // WICは12bit詰め込みを v<<4 のGray16で返す。内部表現と同じなので深度だけ12bitにする
+            int bitDepth = format == PixelFormats.Gray8 ? 8
+                : info is { BitsPerSample: 12, SampleFormat: 1 } ? 12 : 16;
             return new DecodedImage(RawImage.FromPixels(
-                new RawFormat { Width = width, Height = height, BitDepth = format == PixelFormats.Gray16 ? 16 : 8 },
+                new RawFormat { Width = width, Height = height, BitDepth = bitDepth },
                 pixels), null);
         }
 
@@ -416,6 +561,20 @@ internal static class ImageFileLoader
         BitmapSource source = sixteenBit || format == PixelFormats.Bgra32 ? frame
             : new FormatConvertedBitmap(frame, PixelFormats.Bgra32, null, 0);
         int inputChannels = format == PixelFormats.Rgb48 ? 3 : 4;
+
+        // グレー+アルファや多チャネルのグレーページをWICはRGBAで返す。
+        // 先頭チャネルだけをグレーとして取り込み、カラー画像扱いにしない
+        if (info is { Photometric: 0 or 1, SamplesPerPixel: >= 2 })
+        {
+            ushort[] gray = ReadBands(source, inputChannels, 1, sixteenBit, !sixteenBit, ct, progress);
+            ct.ThrowIfCancellationRequested();
+            progress?.Report(1);
+            ct.ThrowIfCancellationRequested();
+            return new DecodedImage(RawImage.FromPixels(
+                new RawFormat { Width = width, Height = height, BitDepth = sixteenBit ? 16 : 8 },
+                gray), null);
+        }
+
         ushort[] rgb = ReadBands(source, inputChannels, 3, sixteenBit, !sixteenBit, ct, progress);
         ColorImage color = ColorImage.FromInterleaved(width, height, sixteenBit ? 16 : 8, rgb);
         RawImage luminance = color.ToLuminance(ct);

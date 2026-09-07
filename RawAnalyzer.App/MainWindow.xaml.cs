@@ -340,10 +340,10 @@ public partial class MainWindow : Window
     // ---- ファイル読込 ----
 
     private const string OpenImageFilter =
-        "対応画像 (*.raw;*.bin;*.tif;*.tiff;*.jpg;*.jpeg;*.png;*.bmp)"
-        + "|*.raw;*.bin;*.tif;*.tiff;*.jpg;*.jpeg;*.png;*.bmp"
+        "対応画像 (*.raw;*.bin;*.tif;*.tiff;*.dng;*.jpg;*.jpeg;*.png;*.bmp)"
+        + "|*.raw;*.bin;*.tif;*.tiff;*.dng;*.jpg;*.jpeg;*.png;*.bmp"
         + "|Raw (*.raw;*.bin)|*.raw;*.bin"
-        + "|画像 (*.tif;*.tiff;*.jpg;*.jpeg;*.png;*.bmp)|*.tif;*.tiff;*.jpg;*.jpeg;*.png;*.bmp"
+        + "|画像 (*.tif;*.tiff;*.dng;*.jpg;*.jpeg;*.png;*.bmp)|*.tif;*.tiff;*.dng;*.jpg;*.jpeg;*.png;*.bmp"
         + "|すべてのファイル (*.*)|*.*";
 
     private async void OnOpenFileClick(object sender, RoutedEventArgs e)

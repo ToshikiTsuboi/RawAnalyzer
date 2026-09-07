@@ -1,5 +1,7 @@
-﻿using System.Buffers.Binary;
+using System.Buffers.Binary;
 using System.IO.MemoryMappedFiles;
+using System.Text;
+using System.Text.RegularExpressions;
 
 namespace RawAnalyzer.Core;
 
@@ -14,11 +16,14 @@ namespace RawAnalyzer.Core;
 public sealed record TiffPixelLayout(
     int Width, int Height, int BitDepth, Endianness Endianness, long DataOffset)
 {
-    /// <summary>TIFF内のページ数(メインIFDチェーン)。</summary>
+    /// <summary>TIFF内のページ数。</summary>
     public int PageCount { get; init; } = 1;
 
     /// <summary>この配置が表すページ(0起点)。</summary>
     public int PageIndex { get; init; }
+
+    /// <summary>CFA(DNG)ページのBayer配列。グレーならNone。</summary>
+    public BayerPattern Bayer { get; init; } = BayerPattern.None;
 }
 
 /// <summary>
@@ -33,6 +38,36 @@ public sealed record TiffPixelLayout(
 public sealed record TiffSampleInfo(
     int BitsPerSample, int SamplesPerPixel, int SampleFormat, int PageCount)
 {
+    /// <summary>Compressionタグ(1=非圧縮)。</summary>
+    public int Compression { get; init; } = 1;
+
+    /// <summary>PhotometricInterpretationタグ(1=BlackIsZero)。</summary>
+    public int Photometric { get; init; } = 1;
+
+    /// <summary>BigTIFF(マジック43)か。</summary>
+    public bool IsBigTiff { get; init; }
+
+    /// <summary>
+    /// WICのフレーム番号。WICは縮小IFD(NewSubfileType bit0)を数えず、
+    /// SubIFDやImageJの仮想ページには到達できない(その場合は-1)。
+    /// </summary>
+    public int WicFrameIndex { get; init; }
+
+    /// <summary>幅。</summary>
+    public int Width { get; init; }
+
+    /// <summary>高さ。</summary>
+    public int Height { get; init; }
+
+    /// <summary>CFAページのBayer配列。</summary>
+    public BayerPattern Bayer { get; init; } = BayerPattern.None;
+
+    /// <summary>ImageJの単一IFD+連続画素スタックの仮想ページか。</summary>
+    public bool IsVirtualPage { get; init; }
+
+    /// <summary>CFA(32803)またはLinearRaw(34892)か。</summary>
+    public bool IsRawPhotometric => Photometric is TiffLoader.PhotometricCfa or TiffLoader.PhotometricLinearRaw;
+
     /// <summary>32bitサンプルとしての解釈方法。</summary>
     public SampleInterpretation Interpretation => SampleFormat switch
     {
@@ -43,32 +78,92 @@ public sealed record TiffSampleInfo(
 }
 
 /// <summary>
-/// 8/16bit 非圧縮グレースケールTIFF(ストリップ形式)の最小パーサ。
-/// リトル/ビッグエンディアン両対応。CoreはWICを参照できないため自前実装。
-/// クラシックTIFFのオフセットはuint32(最大4GB-1)なので、
-/// 2GB超のファイル後方にあるIFDも読めるようlongオフセットでアクセスする。
+/// TIFFの最小パーサ。クラシック/BigTIFF、リトル/ビッグエンディアン両対応。
+/// CoreはWICを参照できないため自前実装。
 /// </summary>
+/// <remarks>
+/// 役割は3つ。(1) 非圧縮16bitグレーの連続配置を見つけて <see cref="RawLoader"/> に渡す、
+/// (2) WICが正しく扱えない非圧縮ページ(CFA、10/12/14/24/64bit、符号あり、BigTIFF、
+/// ImageJ仮想スタック)を自前で復号する、(3) WICへ渡す前にヘッダを検査して
+/// 「黙って壊れる」形式(未知の圧縮など)を弾く材料を返す。
+/// </remarks>
 public static unsafe class TiffLoader
 {
+    private const ushort TagNewSubfileType = 254;
     private const ushort TagImageWidth = 256;
     private const ushort TagImageLength = 257;
     private const ushort TagBitsPerSample = 258;
     private const ushort TagCompression = 259;
     private const ushort TagPhotometric = 262;
+    private const ushort TagFillOrder = 266;
+    private const ushort TagImageDescription = 270;
     private const ushort TagStripOffsets = 273;
     private const ushort TagSamplesPerPixel = 277;
     private const ushort TagRowsPerStrip = 278;
     private const ushort TagStripByteCounts = 279;
+    private const ushort TagPlanarConfiguration = 284;
+    private const ushort TagTileWidth = 322;
+    private const ushort TagTileLength = 323;
+    private const ushort TagTileOffsets = 324;
+    private const ushort TagTileByteCounts = 325;
+    private const ushort TagSubIfds = 330;
     private const ushort TagSampleFormat = 339;
+    private const ushort TagCfaRepeatPatternDim = 33421;
+    private const ushort TagCfaPattern = 33422;
 
-    private const ushort TypeShort = 3;
-    private const ushort TypeLong = 4;
+    /// <summary>PhotometricInterpretation = CFA(DNG/TIFF-EP)。</summary>
+    public const int PhotometricCfa = 32803;
+
+    /// <summary>PhotometricInterpretation = LinearRaw(DNG)。</summary>
+    public const int PhotometricLinearRaw = 34892;
 
     /// <summary>読み込みを許可する最大画素数。ヘッダの不正値でOOMにしないための上限。</summary>
     public const long MaxPixels = 2_000_000_000;
 
     /// <summary>ディレクトリ列挙の上限。壊れたファイルによる過大確保を防ぐ。</summary>
     public const int MaxPages = 100_000;
+
+    /// <summary>1つのIFDから辿るSubIFDの上限。</summary>
+    private const int MaxSubIfds = 16;
+
+    /// <summary>
+    /// WICのTIFFデコーダが扱える圧縮方式。これ以外を渡すと、WICはエラーにせず
+    /// 全画素0の画像を返す(LZMA/Zstd/WebP/JPEG2000/JPEG XL/LERCで確認)。
+    /// </summary>
+    private static readonly HashSet<int> WicCompressions = new() { 1, 2, 3, 4, 5, 6, 7, 8, 32773, 32946 };
+
+    /// <summary>WICのTIFFデコーダで正しく読める圧縮方式か。</summary>
+    /// <param name="compression">Compressionタグの値。</param>
+    /// <returns>WICへ渡してよければtrue。</returns>
+    public static bool IsWicCompression(int compression) => WicCompressions.Contains(compression);
+
+    /// <summary>Compressionタグの値を表示名にする。</summary>
+    /// <param name="compression">Compressionタグの値。</param>
+    /// <returns>表示名。</returns>
+    public static string DescribeCompression(int compression)
+    {
+        string name = compression switch
+        {
+            1 => "非圧縮",
+            2 => "CCITT RLE",
+            3 => "CCITT G3",
+            4 => "CCITT G4",
+            5 => "LZW",
+            6 => "旧JPEG",
+            7 => "JPEG",
+            8 or 32946 => "Deflate",
+            32773 => "PackBits",
+            32809 => "ThunderScan",
+            33003 or 33005 or 34712 or 34713 => "JPEG 2000",
+            34887 => "LERC",
+            34925 => "LZMA",
+            50000 => "Zstd",
+            50001 => "WebP",
+            50002 => "JPEG XL",
+            _ => "不明",
+        };
+        return $"{name}({compression})";
+    }
 
     /// <summary>
     /// TIFFファイルを読み込み、16bitフルスケールへ正規化したRawImageを返す。
@@ -82,12 +177,32 @@ public static unsafe class TiffLoader
     }
 
     /// <summary>
+    /// メモリ上のTIFFデータ(先頭ページ)を読み込み、16bitフルスケールへ正規化したRawImageを返す。
+    /// </summary>
+    /// <param name="data">TIFFファイル全体のバイト列。</param>
+    /// <returns>読み込まれた画像。</returns>
+    /// <exception cref="InvalidDataException">TIFFとして不正、またはサポート外の形式の場合。</exception>
+    public static RawImage Load(ReadOnlySpan<byte> data)
+    {
+        if (data.Length < 8)
+        {
+            throw new InvalidDataException("TIFFヘッダが不足しています。");
+        }
+
+        fixed (byte* pointer = data)
+        {
+            return LoadCore(new TiffBytes(pointer, data.Length));
+        }
+    }
+
+    /// <summary>
     /// ヘッダだけを読み、画素データが連続配置されているかを調べる。
     /// </summary>
     /// <remarks>
     /// 成立すれば <see cref="ToRawFormat"/> 経由で <see cref="RawLoader"/> に渡せる。
     /// 全画素をデコードして持つ必要がなくなり、10億画素級のTIFFでも
-    /// MemoryMappedFile のオンデマンド読み出しで扱える。
+    /// MemoryMappedFile のオンデマンド読み出しで扱える。CFA(DNG)ページも対象で、
+    /// その場合は <see cref="TiffPixelLayout.Bayer"/> にCFAPatternから求めた配列が入る。
     /// </remarks>
     /// <param name="path">TIFFファイルのパス。</param>
     /// <param name="layout">画素データの配置。判定できない場合はnull。</param>
@@ -103,6 +218,215 @@ public static unsafe class TiffLoader
         cancellationToken.ThrowIfCancellationRequested();
         layout = null;
         reason = "";
+        TiffPixelLayout? result = null;
+        string why = "";
+        bool ok = WithMappedFile(path, ref why, data =>
+        {
+            if (!TryParseHeader(data, out TiffHeader header, out string headerReason))
+            {
+                why = headerReason;
+                return false;
+            }
+
+            List<PageRef> pages = ReadPageTable(data, header, cancellationToken);
+            if ((uint)pageIndex >= (uint)pages.Count)
+            {
+                throw new ArgumentOutOfRangeException(nameof(pageIndex), "TIFFのページ範囲外です。");
+            }
+
+            PageLayout page = ReadPageLayout(data, header, pages[pageIndex]);
+            if (!TryProbeCore(page, header, data.Length, out result, out why))
+            {
+                return false;
+            }
+
+            result = result! with { PageCount = pages.Count, PageIndex = pageIndex };
+            return true;
+        });
+        layout = result;
+        reason = why;
+        return ok;
+    }
+
+    /// <summary>
+    /// <see cref="TryProbePixelLayout"/> の結果をRaw読み込み用のフォーマットへ変換する。
+    /// </summary>
+    /// <param name="layout">画素データの配置。</param>
+    /// <returns>フォーマット記述子。</returns>
+    public static RawFormat ToRawFormat(TiffPixelLayout layout)
+    {
+        return new RawFormat
+        {
+            Width = layout.Width,
+            Height = layout.Height,
+            BitDepth = layout.BitDepth,
+
+            // TIFFのサンプル値はそのビット深度でのフルスケール。
+            // 内部表現(16bit)へは value << (16-N) で合わせるため下詰め扱いになる
+            Packing = BitPacking.Lsb,
+            Endianness = layout.Endianness,
+            HeaderOffset = layout.DataOffset,
+            Bayer = layout.Bayer,
+        };
+    }
+
+    /// <summary>
+    /// ヘッダだけを読み、ページのサンプル形式を調べる。
+    /// </summary>
+    /// <remarks>
+    /// WICのTIFFデコーダは32bit整数のページも Gray32Float として返し、
+    /// 実数として読むとビット列がそのまま実数に化ける。整数と実数の区別は
+    /// ファイル自身のSampleFormatでしか付かないため、ここで読み取る。
+    /// 圧縮ページでもタグは読めるので、画素の連続配置は要求しない。
+    /// 併せて圧縮方式・Photometric・BigTIFFか・WICのフレーム番号も返し、
+    /// 呼び出し側がWICへ渡す前に安全性を判断できるようにする。
+    /// </remarks>
+    /// <param name="path">TIFFファイルのパス。</param>
+    /// <param name="info">サンプル形式。読めない場合はnull。</param>
+    /// <param name="reason">読めない場合の理由。</param>
+    /// <param name="pageIndex">調べるページ(0起点)。</param>
+    /// <param name="cancellationToken">キャンセルトークン。</param>
+    /// <returns>読み取れたらtrue。</returns>
+    public static bool TryReadSampleInfo(
+        string path, out TiffSampleInfo? info, out string reason, int pageIndex = 0,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(pageIndex);
+        cancellationToken.ThrowIfCancellationRequested();
+        info = null;
+        TiffSampleInfo? result = null;
+        string why = "";
+        bool ok = WithMappedFile(path, ref why, data =>
+        {
+            if (!TryParseHeader(data, out TiffHeader header, out string headerReason))
+            {
+                why = headerReason;
+                return false;
+            }
+
+            List<PageRef> pages = ReadPageTable(data, header, cancellationToken);
+            if ((uint)pageIndex >= (uint)pages.Count)
+            {
+                why = $"ページ{pageIndex}はありません(全{pages.Count}ページ)。";
+                return false;
+            }
+
+            PageLayout page = ReadPageLayout(data, header, pages[pageIndex]);
+            if (page.Bits == 0 || page.Bits > 64 || page.Spp == 0 || page.Spp > 8)
+            {
+                why = $"BitsPerSample={page.Bits}、SamplesPerPixel={page.Spp} は扱えません。";
+                return false;
+            }
+
+            result = new TiffSampleInfo(page.Bits, page.Spp, page.Format, pages.Count)
+            {
+                Compression = page.Compression,
+                Photometric = page.Photometric,
+                IsBigTiff = header.BigTiff,
+                WicFrameIndex = pages[pageIndex].WicFrame,
+                Width = page.Width,
+                Height = page.Height,
+                Bayer = page.Bayer,
+                IsVirtualPage = pages[pageIndex].Virtual,
+            };
+            return true;
+        });
+        info = result;
+        reason = why;
+        return ok;
+    }
+
+    /// <summary>
+    /// ヘッダだけを読み、ページのサンプル形式を調べる(理由なし)。
+    /// </summary>
+    /// <param name="path">TIFFファイルのパス。</param>
+    /// <param name="info">サンプル形式。読めない場合はnull。</param>
+    /// <param name="pageIndex">調べるページ(0起点)。</param>
+    /// <param name="cancellationToken">キャンセルトークン。</param>
+    /// <returns>読み取れたらtrue。</returns>
+    public static bool TryReadSampleInfo(
+        string path, out TiffSampleInfo? info, int pageIndex = 0,
+        CancellationToken cancellationToken = default)
+    {
+        return TryReadSampleInfo(path, out info, out _, pageIndex, cancellationToken);
+    }
+
+    /// <summary>
+    /// 非圧縮の1サンプル/画素ページを自前で復号する。
+    /// </summary>
+    /// <remarks>
+    /// 対象は BitsPerSample 8/10/12/14/16/24/32/64、SampleFormat 1〜3、
+    /// Photometric 0/1/CFA/LinearRaw、ストリップ(順不同可)またはタイル、BigTIFF、
+    /// ImageJの仮想ページ。16bit以下の符号なし整数はそのビット深度のまま
+    /// (value &lt;&lt; (16-N))、それ以外は値域を調べて16bitコードへ写し、
+    /// 対応関係を <paramref name="scaling"/> で返す。
+    /// 非対応の形式は false と理由を返す。データ自体が壊れている場合は例外。
+    /// </remarks>
+    /// <param name="path">TIFFファイルのパス。</param>
+    /// <param name="pageIndex">ページ(0起点)。</param>
+    /// <param name="image">復号した画像。</param>
+    /// <param name="scaling">16bitへ写した場合の対応関係。そのままの場合はnull。</param>
+    /// <param name="reason">復号しなかった理由。</param>
+    /// <param name="cancellationToken">キャンセルトークン。</param>
+    /// <param name="progress">進捗(0〜1)。</param>
+    /// <returns>復号したらtrue。</returns>
+    /// <exception cref="InvalidDataException">ファイルが壊れている場合。</exception>
+    public static bool TryDecodeUncompressed(
+        string path, int pageIndex, out RawImage? image, out SampleScaling? scaling,
+        out string reason, CancellationToken cancellationToken = default,
+        IProgress<double>? progress = null)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(pageIndex);
+        cancellationToken.ThrowIfCancellationRequested();
+        image = null;
+        scaling = null;
+        RawImage? decoded = null;
+        SampleScaling? decodedScaling = null;
+        string why = "";
+        bool ok;
+        try
+        {
+            ok = WithMappedFile(path, ref why, data =>
+            {
+                if (!TryParseHeader(data, out TiffHeader header, out string headerReason))
+                {
+                    why = headerReason;
+                    return false;
+                }
+
+                List<PageRef> pages = ReadPageTable(data, header, cancellationToken);
+                if ((uint)pageIndex >= (uint)pages.Count)
+                {
+                    throw new ArgumentOutOfRangeException(nameof(pageIndex), "TIFFのページ範囲外です。");
+                }
+
+                PageLayout page = ReadPageLayout(data, header, pages[pageIndex]);
+                if (!IsNativelyDecodable(page, out why))
+                {
+                    return false;
+                }
+
+                decoded = DecodePage(data, header, page, cancellationToken, progress, out decodedScaling);
+                return true;
+            }, rethrowInvalidData: true);
+        }
+        catch
+        {
+            decoded?.Dispose();
+            throw;
+        }
+
+        image = decoded;
+        scaling = decodedScaling;
+        reason = why;
+        return ok;
+    }
+
+    // ------------------------------------------------------------------ ファイルアクセス
+
+    private static bool WithMappedFile(
+        string path, ref string reason, Func<TiffBytes, bool> action, bool rethrowInvalidData = false)
+    {
         long fileLength;
         try
         {
@@ -139,16 +463,18 @@ public static unsafe class TiffLoader
             accessor.SafeMemoryMappedViewHandle.AcquirePointer(ref pointer);
             try
             {
-                // 2GB超のTIFF(まさに直接読み出しの主目的)はIFDやストリップ配列が
-                // ファイル後方に置かれることがある。Spanのint長へ切り詰めず
-                // longオフセットのままアクセスする
-                var data = new TiffBytes(pointer + accessor.PointerOffset, fileLength);
-                return TryProbeCore(data, pageIndex, cancellationToken, out layout, out reason);
+                // 2GB超のTIFFはIFDやストリップ配列がファイル後方に置かれることがある。
+                // Spanのint長へ切り詰めず longオフセットのままアクセスする
+                return action(new TiffBytes(pointer + accessor.PointerOffset, fileLength));
             }
             finally
             {
                 accessor.SafeMemoryMappedViewHandle.ReleasePointer();
             }
+        }
+        catch (InvalidDataException) when (rethrowInvalidData)
+        {
+            throw;
         }
         catch (Exception ex) when (
             ex is IOException or UnauthorizedAccessException or InvalidDataException
@@ -159,119 +485,23 @@ public static unsafe class TiffLoader
         }
     }
 
-    /// <summary>
-    /// <see cref="TryProbePixelLayout"/> の結果をRaw読み込み用のフォーマットへ変換する。
-    /// </summary>
-    /// <param name="layout">画素データの配置。</param>
-    /// <returns>フォーマット記述子。</returns>
-    public static RawFormat ToRawFormat(TiffPixelLayout layout)
-    {
-        return new RawFormat
-        {
-            Width = layout.Width,
-            Height = layout.Height,
-            BitDepth = layout.BitDepth,
+    // ------------------------------------------------------------------ ヘッダ・IFD
 
-            // TIFFのサンプル値はそのビット深度でのフルスケール。
-            // 内部表現(16bit)へは value << (16-N) で合わせるため下詰め扱いになる
-            Packing = BitPacking.Lsb,
-            Endianness = layout.Endianness,
-            HeaderOffset = layout.DataOffset,
-        };
+    /// <summary>ファイル全体の書式(バイト順、クラシック/BigTIFF)。</summary>
+    private readonly record struct TiffHeader(bool BigEndian, bool BigTiff)
+    {
+        public int EntrySize => BigTiff ? 20 : 12;
+
+        public int EntryCountSize => BigTiff ? 8 : 2;
+
+        public int OffsetSize => BigTiff ? 8 : 4;
+
+        public int InlineValueSize => BigTiff ? 8 : 4;
     }
 
-    /// <summary>
-    /// ヘッダだけを読み、ページのサンプル形式を調べる。
-    /// </summary>
-    /// <remarks>
-    /// WICのTIFFデコーダは32bit整数のページも Gray32Float として返し、
-    /// 実数として読むとビット列がそのまま実数に化ける(整数の1,000,000が
-    /// 1.4e-39、符号ありではNaNになる)。整数と実数の区別はファイル自身の
-    /// SampleFormatでしか付かないため、ここで読み取る。
-    /// 圧縮ページでもタグは読めるので、画素の連続配置は要求しない。
-    /// </remarks>
-    /// <param name="path">TIFFファイルのパス。</param>
-    /// <param name="info">サンプル形式。読めない場合はnull。</param>
-    /// <param name="pageIndex">調べるページ(0起点)。</param>
-    /// <param name="cancellationToken">キャンセルトークン。</param>
-    /// <returns>読み取れたらtrue。</returns>
-    public static bool TryReadSampleInfo(
-        string path, out TiffSampleInfo? info, int pageIndex = 0,
-        CancellationToken cancellationToken = default)
+    private static bool TryParseHeader(TiffBytes data, out TiffHeader header, out string reason)
     {
-        ArgumentOutOfRangeException.ThrowIfNegative(pageIndex);
-        cancellationToken.ThrowIfCancellationRequested();
-        info = null;
-        long fileLength;
-        try
-        {
-            var file = new FileInfo(path);
-            if (!file.Exists || file.Length < 8)
-            {
-                return false;
-            }
-
-            fileLength = file.Length;
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            return false;
-        }
-
-        try
-        {
-            using MemoryMappedFile mmf = MemoryMappedFile.CreateFromFile(
-                path, FileMode.Open, mapName: null, capacity: 0, MemoryMappedFileAccess.Read);
-            using MemoryMappedViewAccessor accessor =
-                mmf.CreateViewAccessor(0, 0, MemoryMappedFileAccess.Read);
-            byte* pointer = null;
-            accessor.SafeMemoryMappedViewHandle.AcquirePointer(ref pointer);
-            try
-            {
-                var data = new TiffBytes(pointer + accessor.PointerOffset, fileLength);
-                bool bigEndian = data[0] == (byte)'M' && data[1] == (byte)'M';
-                bool littleEndian = data[0] == (byte)'I' && data[1] == (byte)'I';
-                if ((!bigEndian && !littleEndian) || data.ReadU16(2, bigEndian) != 42)
-                {
-                    return false;
-                }
-
-                List<long> directories = ReadPageOffsets(data, bigEndian, cancellationToken);
-                if ((uint)pageIndex >= (uint)directories.Count)
-                {
-                    return false;
-                }
-
-                List<IfdEntry> entries = ReadIfd(data, directories[pageIndex], bigEndian);
-                uint bits = GetScalar(entries, data, TagBitsPerSample, bigEndian) ?? 0;
-                uint samples = GetScalar(entries, data, TagSamplesPerPixel, bigEndian) ?? 1;
-                uint format = GetScalar(entries, data, TagSampleFormat, bigEndian) ?? 1;
-                if (bits == 0 || bits > 64 || samples == 0 || samples > 8)
-                {
-                    return false;
-                }
-
-                info = new TiffSampleInfo(
-                    (int)bits, (int)samples, (int)format, directories.Count);
-                return true;
-            }
-            finally
-            {
-                accessor.SafeMemoryMappedViewHandle.ReleasePointer();
-            }
-        }
-        catch (Exception ex) when (
-            ex is IOException or UnauthorizedAccessException or InvalidDataException
-                or ArgumentException or NotSupportedException)
-        {
-            return false;
-        }
-    }
-
-    private static bool TryProbeCore(
-        TiffBytes data, int pageIndex, CancellationToken ct, out TiffPixelLayout? layout, out string reason)
-    {
-        layout = null;
+        header = default;
         bool bigEndian = data[0] == (byte)'M' && data[1] == (byte)'M';
         bool littleEndian = data[0] == (byte)'I' && data[1] == (byte)'I';
         if (!bigEndian && !littleEndian)
@@ -280,78 +510,586 @@ public static unsafe class TiffLoader
             return false;
         }
 
-        if (data.ReadU16(2, bigEndian) != 42)
+        ushort magic = data.ReadU16(2, bigEndian);
+        if (magic == 42)
         {
-            reason = "TIFFのマジックナンバーが不正です(BigTIFFは未対応)。";
+            header = new TiffHeader(bigEndian, false);
+            reason = "";
+            return true;
+        }
+
+        if (magic == 43)
+        {
+            if (data.Length < 16 || data.ReadU16(4, bigEndian) != 8 || data.ReadU16(6, bigEndian) != 0)
+            {
+                reason = "BigTIFFのヘッダが不正です。";
+                return false;
+            }
+
+            header = new TiffHeader(bigEndian, true);
+            reason = "";
+            return true;
+        }
+
+        reason = "TIFFのマジックナンバーが不正です。";
+        return false;
+    }
+
+    private static long ReadOffset(TiffBytes data, long position, TiffHeader header)
+    {
+        if (!header.BigTiff)
+        {
+            return data.ReadU32(position, header.BigEndian);
+        }
+
+        ulong value = data.ReadU64(position, header.BigEndian);
+        if (value > long.MaxValue)
+        {
+            throw new InvalidDataException("BigTIFFのオフセットが大きすぎます。");
+        }
+
+        return (long)value;
+    }
+
+    private static long FirstIfdOffset(TiffBytes data, TiffHeader header)
+    {
+        return ReadOffset(data, header.BigTiff ? 8 : 4, header);
+    }
+
+    private readonly record struct IfdEntry(ushort Tag, ushort Type, long Count, long ValueFieldOffset);
+
+    private static long ReadEntryCount(TiffBytes data, long ifdOffset, TiffHeader header)
+    {
+        if (!header.BigTiff)
+        {
+            return data.ReadU16(ifdOffset, header.BigEndian);
+        }
+
+        ulong count = data.ReadU64(ifdOffset, header.BigEndian);
+        if (count > 1 << 20)
+        {
+            throw new InvalidDataException("IFDのエントリ数が大きすぎます。");
+        }
+
+        return (long)count;
+    }
+
+    private static List<IfdEntry> ReadIfd(TiffBytes data, long ifdOffset, TiffHeader header)
+    {
+        if (ifdOffset < 8 || ifdOffset + header.EntryCountSize > data.Length)
+        {
+            throw new InvalidDataException("IFDオフセットが不正です。");
+        }
+
+        long entryCount = ReadEntryCount(data, ifdOffset, header);
+        long first = ifdOffset + header.EntryCountSize;
+        long end = first + (entryCount * header.EntrySize) + header.OffsetSize;
+        if (end > data.Length)
+        {
+            throw new InvalidDataException("IFDがファイル範囲外を指しています。");
+        }
+
+        var entries = new List<IfdEntry>((int)entryCount);
+        for (long i = 0; i < entryCount; i++)
+        {
+            long entryOffset = first + (i * header.EntrySize);
+            long count = header.BigTiff
+                ? (long)data.ReadU64(entryOffset + 4, header.BigEndian)
+                : data.ReadU32(entryOffset + 4, header.BigEndian);
+            entries.Add(new IfdEntry(
+                data.ReadU16(entryOffset, header.BigEndian),
+                data.ReadU16(entryOffset + 2, header.BigEndian),
+                count,
+                entryOffset + 4 + (header.BigTiff ? 8 : 4)));
+        }
+
+        return entries;
+    }
+
+    private static long NextIfdOffset(TiffBytes data, long ifdOffset, TiffHeader header)
+    {
+        long entryCount = ReadEntryCount(data, ifdOffset, header);
+        return ReadOffset(data, ifdOffset + header.EntryCountSize + (entryCount * header.EntrySize), header);
+    }
+
+    /// <summary>メインIFDチェーンを辿る。</summary>
+    private static List<long> ReadChain(TiffBytes data, TiffHeader header, CancellationToken ct)
+    {
+        var offsets = new List<long>();
+        var visited = new HashSet<long>();
+        long offset = FirstIfdOffset(data, header);
+        while (offset != 0)
+        {
+            ct.ThrowIfCancellationRequested();
+            if (offset < 8 || !visited.Add(offset))
+            {
+                throw new InvalidDataException("TIFFのページ参照が不正、または循環しています。");
+            }
+
+            if (offsets.Count >= MaxPages)
+            {
+                throw new NotSupportedException($"TIFFは最大{MaxPages:N0}ページまで対応します。");
+            }
+
+            offsets.Add(offset);
+            offset = NextIfdOffset(data, offset, header);
+        }
+
+        if (offsets.Count == 0)
+        {
+            throw new InvalidDataException("TIFFに画像ページがありません。");
+        }
+
+        return offsets;
+    }
+
+    // ------------------------------------------------------------------ タグ値
+
+    /// <summary>
+    /// タグ値の所在。<see cref="Count"/> は検証済みだが、確保はまだ行っていない。
+    /// </summary>
+    private readonly record struct TagValues(long Offset, int ValueSize, long Count, ushort Type);
+
+    /// <summary>
+    /// 配列として読み出すタグの要素数上限。
+    /// </summary>
+    /// <remarks>
+    /// 破損・悪意あるIFDが巨大な Count を宣言してもファイル長の範囲チェックだけでは
+    /// 数GBの確保が通ってしまうため、確保前に妥当な上限で弾く。
+    /// </remarks>
+    private const long MaxTagArrayCount = 1 << 24;
+
+    private static int TypeSize(ushort type)
+    {
+        return type switch
+        {
+            1 or 2 or 6 or 7 => 1,
+            3 or 8 => 2,
+            4 or 9 or 13 => 4,
+            16 or 17 or 18 => 8,
+            _ => 0,
+        };
+    }
+
+    private static TagValues? FindTagValues(
+        List<IfdEntry> entries, TiffBytes data, ushort tag, TiffHeader header)
+    {
+        foreach (IfdEntry entry in entries)
+        {
+            if (entry.Tag != tag)
+            {
+                continue;
+            }
+
+            int valueSize = TypeSize(entry.Type);
+            if (valueSize == 0)
+            {
+                throw new InvalidDataException($"タグ{tag}の型{entry.Type}はサポートされません。");
+            }
+
+            if (entry.Count < 0 || entry.Count > long.MaxValue / 8)
+            {
+                throw new InvalidDataException($"タグ{tag}の要素数が不正です。");
+            }
+
+            long totalSize = valueSize * entry.Count;
+
+            // インライン格納(クラシック4byte、BigTIFF 8byte以下)か、オフセット参照か
+            long valueOffset = totalSize <= header.InlineValueSize
+                ? entry.ValueFieldOffset
+                : ReadOffset(data, entry.ValueFieldOffset, header);
+            if (valueOffset < 0 || valueOffset + totalSize > data.Length)
+            {
+                throw new InvalidDataException($"タグ{tag}の値がファイル範囲外を指しています。");
+            }
+
+            return new TagValues(valueOffset, valueSize, entry.Count, entry.Type);
+        }
+
+        return null;
+    }
+
+    private static long ReadValue(TiffBytes data, long offset, int size, bool bigEndian)
+    {
+        return size switch
+        {
+            1 => data[offset],
+            2 => data.ReadU16(offset, bigEndian),
+            4 => data.ReadU32(offset, bigEndian),
+            _ => (long)data.ReadU64(offset, bigEndian),
+        };
+    }
+
+    private static long? GetScalar(
+        List<IfdEntry> entries, TiffBytes data, ushort tag, TiffHeader header)
+    {
+        // 先頭の1値しか使わないので、宣言された要素数がいくら大きくても確保しない
+        if (FindTagValues(entries, data, tag, header) is not { Count: > 0 } found)
+        {
+            return null;
+        }
+
+        return ReadValue(data, found.Offset, found.ValueSize, header.BigEndian);
+    }
+
+    private static long[]? GetArray(
+        List<IfdEntry> entries, TiffBytes data, ushort tag, TiffHeader header)
+    {
+        if (FindTagValues(entries, data, tag, header) is not { } found)
+        {
+            return null;
+        }
+
+        if (found.Count > MaxTagArrayCount)
+        {
+            throw new InvalidDataException(
+                $"タグ{tag}の要素数({found.Count})が上限({MaxTagArrayCount})を超えています。");
+        }
+
+        var values = new long[found.Count];
+        for (int i = 0; i < values.Length; i++)
+        {
+            values[i] = ReadValue(data, found.Offset + ((long)i * found.ValueSize), found.ValueSize, header.BigEndian);
+        }
+
+        return values;
+    }
+
+    private static string? GetAscii(
+        List<IfdEntry> entries, TiffBytes data, ushort tag, TiffHeader header, int maxLength)
+    {
+        if (FindTagValues(entries, data, tag, header) is not { Count: > 0, ValueSize: 1 } found)
+        {
+            return null;
+        }
+
+        int length = (int)Math.Min(found.Count, maxLength);
+        ReadOnlySpan<byte> bytes = data.Slice(found.Offset, length);
+        int terminator = bytes.IndexOf((byte)0);
+        if (terminator >= 0)
+        {
+            bytes = bytes[..terminator];
+        }
+
+        return Encoding.ASCII.GetString(bytes);
+    }
+
+    // ------------------------------------------------------------------ ページ表
+
+    /// <summary>
+    /// アプリから見た1ページ。WicFrameはWICのフレーム番号(到達不能なら-1)。
+    /// </summary>
+    private readonly record struct PageRef(long IfdOffset, int WicFrame, long VirtualIndex, bool Virtual);
+
+    /// <summary>
+    /// ページ表を作る。主チェーンの各IFDと、その全解像度SubIFD(DNGの本体はここにある)を
+    /// ページにし、縮小画像(NewSubfileType bit0)は除く。
+    /// </summary>
+    /// <remarks>
+    /// WICも縮小IFDをフレームに数えないため、こう数えるとWICのフレーム番号と一致する。
+    /// 主チェーンが1ページだけでImageJの「images=N」がある場合は、画素データが
+    /// 連続していることを確かめたうえでN個の仮想ページに展開する
+    /// (ImageJが4GB超のスタックを書くときの形式)。
+    /// </remarks>
+    private static List<PageRef> ReadPageTable(TiffBytes data, TiffHeader header, CancellationToken ct)
+    {
+        List<long> chain = ReadChain(data, header, ct);
+        var pages = new List<PageRef>();
+        int wicFrame = 0;
+        List<IfdEntry>? firstEntries = null;
+        foreach (long ifd in chain)
+        {
+            ct.ThrowIfCancellationRequested();
+            List<IfdEntry> entries = ReadIfd(data, ifd, header);
+            firstEntries ??= entries;
+            long subfileType = GetScalar(entries, data, TagNewSubfileType, header) ?? 0;
+            bool reduced = (subfileType & 1) != 0;
+            if (!reduced)
+            {
+                pages.Add(new PageRef(ifd, wicFrame, 0, false));
+                wicFrame++;
+            }
+
+            long[]? subIfds = TryGetSubIfds(entries, data, header);
+            if (subIfds is null)
+            {
+                continue;
+            }
+
+            foreach (long sub in subIfds.Take(MaxSubIfds))
+            {
+                if (sub < 8 || sub + header.EntryCountSize > data.Length || sub == ifd)
+                {
+                    continue;
+                }
+
+                try
+                {
+                    List<IfdEntry> subEntries = ReadIfd(data, sub, header);
+                    long subType = GetScalar(subEntries, data, TagNewSubfileType, header) ?? 0;
+                    if ((subType & 1) == 0)
+                    {
+                        pages.Add(new PageRef(sub, -1, 0, false));
+                    }
+                }
+                catch (InvalidDataException)
+                {
+                    // 壊れたSubIFDは無視して主チェーンだけを使う
+                }
+            }
+
+            if (pages.Count > MaxPages)
+            {
+                throw new NotSupportedException($"TIFFは最大{MaxPages:N0}ページまで対応します。");
+            }
+        }
+
+        if (pages.Count == 0)
+        {
+            // 全IFDが縮小画像を名乗る不自然なファイル。従来どおり主チェーンをそのままページにする
+            for (int i = 0; i < chain.Count; i++)
+            {
+                pages.Add(new PageRef(chain[i], i, 0, false));
+            }
+        }
+
+        if (pages.Count == 1 && chain.Count == 1 && pages[0].IfdOffset == chain[0])
+        {
+            int frames = ReadImageJVirtualFrames(data, header, firstEntries!);
+            if (frames > 1)
+            {
+                pages.Clear();
+                for (int k = 0; k < frames; k++)
+                {
+                    pages.Add(new PageRef(chain[0], k == 0 ? 0 : -1, k, true));
+                }
+            }
+        }
+
+        return pages;
+    }
+
+    private static long[]? TryGetSubIfds(List<IfdEntry> entries, TiffBytes data, TiffHeader header)
+    {
+        try
+        {
+            return GetArray(entries, data, TagSubIfds, header);
+        }
+        catch (InvalidDataException)
+        {
+            return null;
+        }
+    }
+
+    private static readonly Regex ImageJImagesPattern = new(@"(?m)^images=(\d+)\s*$", RegexOptions.CultureInvariant);
+
+    /// <summary>ImageJの単一IFD+連続画素スタックなら、そのフレーム数(2以上)を返す。</summary>
+    private static int ReadImageJVirtualFrames(TiffBytes data, TiffHeader header, List<IfdEntry> entries)
+    {
+        string? description = GetAscii(entries, data, TagImageDescription, header, 4096);
+        if (description is null || !description.StartsWith("ImageJ=", StringComparison.Ordinal))
+        {
+            return 1;
+        }
+
+        Match match = ImageJImagesPattern.Match(description);
+        if (!match.Success || !int.TryParse(match.Groups[1].Value, out int frames) || frames <= 1)
+        {
+            return 1;
+        }
+
+        // 連続配置の非圧縮1サンプルでなければ仮想ページにできない
+        long compression = GetScalar(entries, data, TagCompression, header) ?? 1;
+        long spp = GetScalar(entries, data, TagSamplesPerPixel, header) ?? 1;
+        long width = GetScalar(entries, data, TagImageWidth, header) ?? 0;
+        long height = GetScalar(entries, data, TagImageLength, header) ?? 0;
+        long bits = GetScalar(entries, data, TagBitsPerSample, header) ?? 0;
+        if (compression != 1 || spp != 1 || width <= 0 || height <= 0 || bits is <= 0 or > 64)
+        {
+            return 1;
+        }
+
+        long[]? offsets = GetArray(entries, data, TagStripOffsets, header);
+        long[]? counts = GetArray(entries, data, TagStripByteCounts, header);
+        if (offsets is null || offsets.Length == 0 || counts is null || counts.Length != offsets.Length)
+        {
+            return 1;
+        }
+
+        long frameBytes = height * ((width * bits + 7) / 8);
+        long expected = offsets[0];
+        for (int i = 0; i < offsets.Length; i++)
+        {
+            if (offsets[i] != expected)
+            {
+                return 1;
+            }
+
+            expected += counts[i];
+        }
+
+        if (expected - offsets[0] != frameBytes || frameBytes <= 0)
+        {
+            return 1;
+        }
+
+        long available = (data.Length - offsets[0]) / frameBytes;
+        int usable = (int)Math.Min(frames, Math.Min(available, MaxPages));
+        return Math.Max(usable, 1);
+    }
+
+    // ------------------------------------------------------------------ ページ構造
+
+    /// <summary>1ページのタグを解釈した結果。</summary>
+    private sealed record PageLayout(
+        int Width, int Height, int Bits, int Spp, int Format, int Compression, int Photometric,
+        int Planar, int FillOrder, bool Tiled, int TileWidth, int TileHeight, long RowsPerStrip,
+        long[] Offsets, long[] Counts, BayerPattern Bayer, bool Virtual);
+
+    private static PageLayout ReadPageLayout(TiffBytes data, TiffHeader header, PageRef page)
+    {
+        List<IfdEntry> entries = ReadIfd(data, page.IfdOffset, header);
+        long width = GetScalar(entries, data, TagImageWidth, header) ?? 0;
+        long height = GetScalar(entries, data, TagImageLength, header) ?? 0;
+        long bits = GetScalar(entries, data, TagBitsPerSample, header) ?? 0;
+        long compression = GetScalar(entries, data, TagCompression, header) ?? 1;
+        long spp = GetScalar(entries, data, TagSamplesPerPixel, header) ?? 1;
+        long photometric = GetScalar(entries, data, TagPhotometric, header) ?? 1;
+        long format = GetScalar(entries, data, TagSampleFormat, header) ?? 1;
+        long planar = GetScalar(entries, data, TagPlanarConfiguration, header) ?? 1;
+        long fillOrder = GetScalar(entries, data, TagFillOrder, header) ?? 1;
+        long rowsPerStrip = GetScalar(entries, data, TagRowsPerStrip, header) ?? height;
+        long tileWidth = GetScalar(entries, data, TagTileWidth, header) ?? 0;
+        long tileLength = GetScalar(entries, data, TagTileLength, header) ?? 0;
+        if (width < 0 || width > int.MaxValue || height < 0 || height > int.MaxValue)
+        {
+            throw new InvalidDataException("画像サイズが不正です。");
+        }
+
+        bool tiled = tileWidth > 0 && tileLength > 0
+            && FindTagValues(entries, data, TagTileOffsets, header) is not null;
+        long[] offsets = (tiled
+            ? GetArray(entries, data, TagTileOffsets, header)
+            : GetArray(entries, data, TagStripOffsets, header)) ?? Array.Empty<long>();
+        long[] counts = (tiled
+            ? GetArray(entries, data, TagTileByteCounts, header)
+            : GetArray(entries, data, TagStripByteCounts, header)) ?? Array.Empty<long>();
+
+        if (page.Virtual)
+        {
+            // ImageJ仮想ページ: 先頭フレームからの等間隔配置を1ストリップとして表す
+            long frameBytes = height * ((width * bits + 7) / 8);
+            offsets = new[] { offsets[0] + (page.VirtualIndex * frameBytes) };
+            counts = new[] { frameBytes };
+            rowsPerStrip = height;
+            tiled = false;
+        }
+
+        BayerPattern bayer = photometric == PhotometricCfa
+            ? ReadCfaPattern(entries, data, header)
+            : BayerPattern.None;
+
+        return new PageLayout(
+            (int)width, (int)height, (int)Math.Clamp(bits, 0, int.MaxValue), (int)Math.Clamp(spp, 0, int.MaxValue),
+            (int)format, (int)Math.Clamp(compression, 0, int.MaxValue), (int)Math.Clamp(photometric, 0, int.MaxValue),
+            (int)planar, (int)fillOrder, tiled,
+            (int)Math.Clamp(tileWidth, 0, int.MaxValue), (int)Math.Clamp(tileLength, 0, int.MaxValue),
+            rowsPerStrip, offsets, counts, bayer, page.Virtual);
+    }
+
+    /// <summary>CFARepeatPatternDim=2×2 の CFAPattern(0=R,1=G,2=B) を Bayer 配列へ写す。</summary>
+    private static BayerPattern ReadCfaPattern(List<IfdEntry> entries, TiffBytes data, TiffHeader header)
+    {
+        try
+        {
+            long[]? dim = GetArray(entries, data, TagCfaRepeatPatternDim, header);
+            long[]? pattern = GetArray(entries, data, TagCfaPattern, header);
+            if (pattern is null || pattern.Length < 4 || (dim is not null && (dim.Length < 2 || dim[0] != 2 || dim[1] != 2)))
+            {
+                return BayerPattern.None;
+            }
+
+            return (pattern[0], pattern[1], pattern[2], pattern[3]) switch
+            {
+                (0, 1, 1, 2) => BayerPattern.Rggb,
+                (2, 1, 1, 0) => BayerPattern.Bggr,
+                (1, 0, 2, 1) => BayerPattern.Grbg,
+                (1, 2, 0, 1) => BayerPattern.Gbrg,
+                _ => BayerPattern.None,
+            };
+        }
+        catch (InvalidDataException)
+        {
+            return BayerPattern.None;
+        }
+    }
+
+    // ------------------------------------------------------------------ 直接読み出し判定
+
+    private static bool TryProbeCore(
+        PageLayout page, TiffHeader header, long fileLength, out TiffPixelLayout? layout, out string reason)
+    {
+        layout = null;
+        if (page.Compression != 1)
+        {
+            reason = $"非圧縮TIFFのみ直接読み出せます(Compression={page.Compression})。";
             return false;
         }
 
-        List<long> directories = ReadPageOffsets(data, bigEndian, ct);
-        if ((uint)pageIndex >= (uint)directories.Count)
+        if (page.Spp != 1)
         {
-            throw new ArgumentOutOfRangeException(nameof(pageIndex), "TIFFのページ範囲外です。");
-        }
-
-        List<IfdEntry> entries = ReadIfd(data, directories[pageIndex], bigEndian);
-        uint width = GetScalar(entries, data, TagImageWidth, bigEndian) ?? 0;
-        uint height = GetScalar(entries, data, TagImageLength, bigEndian) ?? 0;
-        uint bits = GetScalar(entries, data, TagBitsPerSample, bigEndian) ?? 0;
-        uint compression = GetScalar(entries, data, TagCompression, bigEndian) ?? 1;
-        uint samples = GetScalar(entries, data, TagSamplesPerPixel, bigEndian) ?? 1;
-        uint rowsPerStrip = GetScalar(entries, data, TagRowsPerStrip, bigEndian) ?? height;
-        uint photometric = GetScalar(entries, data, TagPhotometric, bigEndian) ?? 1;
-        uint sampleFormat = GetScalar(entries, data, TagSampleFormat, bigEndian) ?? 1;
-
-        if (compression != 1)
-        {
-            reason = $"非圧縮TIFFのみ直接読み出せます(Compression={compression})。";
+            reason = $"グレースケールTIFFのみ直接読み出せます(SamplesPerPixel={page.Spp})。";
             return false;
         }
 
-        if (samples != 1)
+        if (page.Bits is not (8 or 16))
         {
-            reason = $"グレースケールTIFFのみ直接読み出せます(SamplesPerPixel={samples})。";
+            reason = $"8/16bit TIFFのみ直接読み出せます(BitsPerSample={page.Bits})。";
             return false;
         }
 
-        if (bits is not (8 or 16))
-        {
-            reason = $"8/16bit TIFFのみ直接読み出せます(BitsPerSample={bits})。";
-            return false;
-        }
-
-        if (photometric != 1)
+        if (page.Photometric is not (1 or PhotometricCfa or PhotometricLinearRaw))
         {
             // 0 = WhiteIsZero は値が反転しているので、そのまま画素として扱えない
-            reason = $"BlackIsZeroのTIFFのみ直接読み出せます(Photometric={photometric})。";
+            reason = $"BlackIsZeroのTIFFのみ直接読み出せます(Photometric={page.Photometric})。";
             return false;
         }
 
-        if (sampleFormat != 1)
+        if (page.Format != 1)
         {
-            reason = $"符号なし整数のTIFFのみ直接読み出せます(SampleFormat={sampleFormat})。";
+            reason = $"符号なし整数のTIFFのみ直接読み出せます(SampleFormat={page.Format})。";
             return false;
         }
 
-        if (width == 0 || height == 0 || width > int.MaxValue || height > int.MaxValue
-            || rowsPerStrip == 0)
+        if (page.FillOrder != 1)
+        {
+            reason = $"FillOrder={page.FillOrder} は直接読み出せません。";
+            return false;
+        }
+
+        if (page.Width == 0 || page.Height == 0 || page.RowsPerStrip == 0)
         {
             reason = "画像サイズが不正です。";
             return false;
         }
 
-        uint[]? offsets = GetArray(entries, data, TagStripOffsets, bigEndian);
-        uint[]? counts = GetArray(entries, data, TagStripByteCounts, bigEndian);
-        if (offsets is null || counts is null || offsets.Length == 0
-            || offsets.Length != counts.Length)
+        if (page.Tiled)
+        {
+            reason = "タイル形式のため直接読み出せません。";
+            return false;
+        }
+
+        long[] offsets = page.Offsets;
+        long[] counts = page.Counts;
+        if (offsets.Length == 0 || offsets.Length != counts.Length)
         {
             reason = "ストリップ情報が不正です。";
             return false;
         }
 
         // ストリップが昇順かつ隙間なく並んでいれば、raw と同じ連続データとして扱える
-        int bytesPerSample = bits == 8 ? 1 : 2;
-        long total = (long)width * height * bytesPerSample;
+        int bytesPerSample = page.Bits == 8 ? 1 : 2;
+        long total = (long)page.Width * page.Height * bytesPerSample;
         long expected = offsets[0];
         for (int i = 0; i < offsets.Length; i++)
         {
@@ -370,70 +1108,367 @@ public static unsafe class TiffLoader
             return false;
         }
 
-        if (offsets[0] + total > data.Length)
+        if (offsets[0] < 0 || offsets[0] + total > fileLength)
         {
             reason = "画素データがファイル範囲外を指しています。";
             return false;
         }
 
         layout = new TiffPixelLayout(
-            (int)width, (int)height, (int)bits,
-            bigEndian ? Endianness.Big : Endianness.Little, offsets[0])
+            page.Width, page.Height, page.Bits,
+            header.BigEndian ? Endianness.Big : Endianness.Little, offsets[0])
         {
-            PageCount = directories.Count,
-            PageIndex = pageIndex,
+            Bayer = page.Bayer,
         };
         reason = "";
         return true;
     }
 
-    /// <summary>
-    /// メモリ上のTIFFデータを読み込み、16bitフルスケールへ正規化したRawImageを返す。
-    /// </summary>
-    /// <param name="data">TIFFファイル全体のバイト列。</param>
-    /// <returns>読み込まれた画像。</returns>
-    /// <exception cref="InvalidDataException">TIFFとして不正、またはサポート外の形式の場合。</exception>
-    public static RawImage Load(ReadOnlySpan<byte> data)
+    // ------------------------------------------------------------------ 自前復号
+
+    private static readonly int[] NativeBits = { 8, 10, 12, 14, 16, 24, 32, 64 };
+
+    private static bool IsNativelyDecodable(PageLayout page, out string reason)
     {
-        if (data.Length < 8)
+        if (page.Compression != 1)
         {
-            throw new InvalidDataException("TIFFヘッダが不足しています。");
+            reason = $"圧縮ページ({DescribeCompression(page.Compression)})は自前では復号しません。";
+            return false;
         }
 
-        fixed (byte* pointer = data)
+        if (page.Spp != 1)
         {
-            return LoadCore(new TiffBytes(pointer, data.Length));
+            reason = $"1サンプル/画素のページのみ自前で復号します(SamplesPerPixel={page.Spp})。";
+            return false;
+        }
+
+        if (page.FillOrder != 1)
+        {
+            reason = $"FillOrder={page.FillOrder} は未対応です。";
+            return false;
+        }
+
+        if (page.Photometric is not (0 or 1 or PhotometricCfa or PhotometricLinearRaw))
+        {
+            reason = $"Photometric={page.Photometric} は自前では復号しません。";
+            return false;
+        }
+
+        if (Array.IndexOf(NativeBits, page.Bits) < 0)
+        {
+            reason = $"BitsPerSample={page.Bits} は未対応です。";
+            return false;
+        }
+
+        bool formatOk = page.Format switch
+        {
+            1 => true,
+            2 => page.Bits is 8 or 16 or 32 or 64,
+            3 => page.Bits is 16 or 32 or 64,
+            _ => false,
+        };
+        if (!formatOk)
+        {
+            reason = $"SampleFormat={page.Format} × {page.Bits}bit は未対応です。";
+            return false;
+        }
+
+        if (page.Width == 0 || page.Height == 0)
+        {
+            reason = "画像サイズが不正です。";
+            return false;
+        }
+
+        if ((long)page.Width * page.Height > MaxPixels)
+        {
+            reason = $"画像が大きすぎます({page.Width}×{page.Height})。上限は {MaxPixels / 1_000_000} M画素です。";
+            return false;
+        }
+
+        reason = "";
+        return true;
+    }
+
+    /// <summary>1行分のサンプルを処理するコールバック。</summary>
+    private delegate void RowHandler(int y, int x0, int count, ReadOnlySpan<byte> bytes);
+
+    /// <summary>ストリップ/タイルを順に辿り、行ごとにバイト列を渡す。</summary>
+    private static void ForEachRow(
+        TiffBytes data, PageLayout page, RowHandler handler, CancellationToken ct,
+        IProgress<double>? progress, double progressStart, double progressSpan)
+    {
+        long[] offsets = page.Offsets;
+        long[] counts = page.Counts;
+        if (offsets.Length == 0 || counts.Length != offsets.Length)
+        {
+            throw new InvalidDataException("ストリップ/タイル情報が不正です。");
+        }
+
+        if (page.Tiled)
+        {
+            int tileWidth = page.TileWidth;
+            int tileHeight = page.TileHeight;
+            if (tileWidth <= 0 || tileHeight <= 0)
+            {
+                throw new InvalidDataException("タイルサイズが不正です。");
+            }
+
+            long tilesAcross = (page.Width + tileWidth - 1) / tileWidth;
+            long tilesDown = (page.Height + tileHeight - 1) / tileHeight;
+            long tileCount = tilesAcross * tilesDown;
+            if (offsets.Length < tileCount)
+            {
+                throw new InvalidDataException("タイル数がタグと一致しません。");
+            }
+
+            long tileRowBytes = ((long)tileWidth * page.Bits + 7) / 8;
+            if (tileRowBytes > int.MaxValue)
+            {
+                throw new InvalidDataException("タイル幅が大きすぎます。");
+            }
+
+            for (long t = 0; t < tileCount; t++)
+            {
+                ct.ThrowIfCancellationRequested();
+                int x0 = (int)((t % tilesAcross) * tileWidth);
+                int y0 = (int)((t / tilesAcross) * tileHeight);
+                int rows = Math.Min(tileHeight, page.Height - y0);
+                int columns = Math.Min(tileWidth, page.Width - x0);
+                if (counts[t] < rows * tileRowBytes || offsets[t] < 0 || offsets[t] + (rows * tileRowBytes) > data.Length)
+                {
+                    throw new InvalidDataException($"タイル{t}がファイル範囲外、または短すぎます。");
+                }
+
+                for (int r = 0; r < rows; r++)
+                {
+                    handler(y0 + r, x0, columns, data.Slice(offsets[t] + (r * tileRowBytes), (int)tileRowBytes));
+                }
+
+                progress?.Report(progressStart + (progressSpan * (t + 1) / tileCount));
+            }
+
+            return;
+        }
+
+        long rowBytes = ((long)page.Width * page.Bits + 7) / 8;
+        if (rowBytes > int.MaxValue)
+        {
+            throw new InvalidDataException("画像幅が大きすぎます。");
+        }
+
+        long rowsPerStrip = page.RowsPerStrip <= 0 ? page.Height : page.RowsPerStrip;
+        long y = 0;
+        for (int s = 0; s < offsets.Length && y < page.Height; s++)
+        {
+            ct.ThrowIfCancellationRequested();
+            long rows = Math.Min(rowsPerStrip, page.Height - y);
+            long needed = rows * rowBytes;
+            if (counts[s] < needed || offsets[s] < 0 || offsets[s] + needed > data.Length)
+            {
+                throw new InvalidDataException($"ストリップ{s}がファイル範囲外、または短すぎます。");
+            }
+
+            for (long r = 0; r < rows; r++)
+            {
+                if ((r & 63) == 0)
+                {
+                    ct.ThrowIfCancellationRequested();
+                }
+
+                handler((int)(y + r), 0, page.Width, data.Slice(offsets[s] + (r * rowBytes), (int)rowBytes));
+            }
+
+            y += rows;
+            progress?.Report(progressStart + (progressSpan * y / page.Height));
+        }
+
+        if (y < page.Height)
+        {
+            throw new InvalidDataException("ストリップが画像の全行をカバーしていません。");
         }
     }
 
+    /// <summary>1行のビット列をサンプル値(ビット列のまま)に展開する。</summary>
+    private static void UnpackRow(ReadOnlySpan<byte> bytes, int count, int bits, bool bigEndian, Span<ulong> values)
+    {
+        switch (bits)
+        {
+            case 8:
+                for (int i = 0; i < count; i++)
+                {
+                    values[i] = bytes[i];
+                }
+
+                return;
+            case 16:
+                for (int i = 0; i < count; i++)
+                {
+                    values[i] = bigEndian
+                        ? BinaryPrimitives.ReadUInt16BigEndian(bytes.Slice(i * 2, 2))
+                        : BinaryPrimitives.ReadUInt16LittleEndian(bytes.Slice(i * 2, 2));
+                }
+
+                return;
+            case 24:
+                for (int i = 0; i < count; i++)
+                {
+                    ReadOnlySpan<byte> b = bytes.Slice(i * 3, 3);
+                    values[i] = bigEndian
+                        ? ((ulong)b[0] << 16) | ((ulong)b[1] << 8) | b[2]
+                        : ((ulong)b[2] << 16) | ((ulong)b[1] << 8) | b[0];
+                }
+
+                return;
+            case 32:
+                for (int i = 0; i < count; i++)
+                {
+                    values[i] = bigEndian
+                        ? BinaryPrimitives.ReadUInt32BigEndian(bytes.Slice(i * 4, 4))
+                        : BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(i * 4, 4));
+                }
+
+                return;
+            case 64:
+                for (int i = 0; i < count; i++)
+                {
+                    values[i] = bigEndian
+                        ? BinaryPrimitives.ReadUInt64BigEndian(bytes.Slice(i * 8, 8))
+                        : BinaryPrimitives.ReadUInt64LittleEndian(bytes.Slice(i * 8, 8));
+                }
+
+                return;
+            default:
+                {
+                    // 詰め込み(10/12/14bit)。TIFFは行頭がバイト境界で、ビットはMSBから詰める
+                    ulong accumulator = 0;
+                    int available = 0;
+                    int position = 0;
+                    ulong mask = (1UL << bits) - 1;
+                    for (int i = 0; i < count; i++)
+                    {
+                        while (available < bits)
+                        {
+                            accumulator = (accumulator << 8) | bytes[position++];
+                            available += 8;
+                        }
+
+                        values[i] = (accumulator >> (available - bits)) & mask;
+                        available -= bits;
+                    }
+
+                    return;
+                }
+        }
+    }
+
+    private static double ToValue(ulong raw, int bits, int format)
+    {
+        return format switch
+        {
+            2 => bits switch
+            {
+                8 => (sbyte)raw,
+                16 => (short)raw,
+                32 => (int)raw,
+                _ => (long)raw,
+            },
+            3 => bits switch
+            {
+                16 => (double)BitConverter.UInt16BitsToHalf((ushort)raw),
+                32 => BitConverter.UInt32BitsToSingle((uint)raw),
+                _ => BitConverter.UInt64BitsToDouble(raw),
+            },
+            _ => raw,
+        };
+    }
+
+    private static RawImage DecodePage(
+        TiffBytes data, TiffHeader header, PageLayout page, CancellationToken ct,
+        IProgress<double>? progress, out SampleScaling? scaling)
+    {
+        int width = page.Width;
+        int height = page.Height;
+        bool bigEndian = header.BigEndian;
+        bool invert = page.Photometric == 0 && page.Format == 1;
+        var codes = new ushort[(long)width * height];
+        var values = new ulong[width];
+
+        // 16bit以下の符号なし整数はビット深度を保ったまま内部表現へ
+        if (page.Format == 1 && page.Bits <= 16)
+        {
+            int shift = 16 - page.Bits;
+            ulong max = (1UL << page.Bits) - 1;
+            ForEachRow(data, page, (y, x0, count, bytes) =>
+            {
+                UnpackRow(bytes, count, page.Bits, bigEndian, values);
+                long index = ((long)y * width) + x0;
+                for (int i = 0; i < count; i++)
+                {
+                    ulong v = invert ? max - values[i] : values[i];
+                    codes[index + i] = (ushort)(v << shift);
+                }
+            }, ct, progress, 0, 1);
+
+            scaling = null;
+            return RawImage.FromPixels(
+                new RawFormat { Width = width, Height = height, BitDepth = page.Bits, Bayer = page.Bayer },
+                codes);
+        }
+
+        // それ以外は値域を調べてから16bitへ写す(2パス。MMFなので再読は安価)
+        var accumulator = new SampleRangeAccumulator();
+        ulong maxUnsigned = page.Bits == 64 ? ulong.MaxValue : (1UL << page.Bits) - 1;
+        ForEachRow(data, page, (y, x0, count, bytes) =>
+        {
+            UnpackRow(bytes, count, page.Bits, bigEndian, values);
+            for (int i = 0; i < count; i++)
+            {
+                ulong raw = invert ? maxUnsigned - values[i] : values[i];
+                accumulator.Add(ToValue(raw, page.Bits, page.Format));
+            }
+        }, ct, progress, 0, 0.5);
+
+        SampleScaling result = SampleScaling.FromRange(accumulator.ToRange());
+        ForEachRow(data, page, (y, x0, count, bytes) =>
+        {
+            UnpackRow(bytes, count, page.Bits, bigEndian, values);
+            long index = ((long)y * width) + x0;
+            for (int i = 0; i < count; i++)
+            {
+                ulong raw = invert ? maxUnsigned - values[i] : values[i];
+                codes[index + i] = result.ToCode(ToValue(raw, page.Bits, page.Format));
+            }
+        }, ct, progress, 0.5, 0.5);
+
+        scaling = result;
+        return RawImage.FromPixels(
+            new RawFormat { Width = width, Height = height, BitDepth = 16, Bayer = page.Bayer },
+            codes);
+    }
+
+    // ------------------------------------------------------------------ メモリ上の読み込み(先頭ページ)
+
     private static RawImage LoadCore(TiffBytes data)
     {
-        bool bigEndian = data[0] == (byte)'M' && data[1] == (byte)'M';
-        bool littleEndian = data[0] == (byte)'I' && data[1] == (byte)'I';
-        if (!bigEndian && !littleEndian)
+        if (!TryParseHeader(data, out TiffHeader header, out string reason))
         {
-            throw new InvalidDataException("TIFFのバイトオーダーマークが不正です。");
+            throw new InvalidDataException(reason);
         }
 
-        if (data.ReadU16(2, bigEndian) != 42)
-        {
-            throw new InvalidDataException("TIFFのマジックナンバーが不正です。");
-        }
+        long ifdOffset = FirstIfdOffset(data, header);
+        var entries = ReadIfd(data, ifdOffset, header);
 
-        long ifdOffset = data.ReadU32(4, bigEndian);
-        var entries = ReadIfd(data, ifdOffset, bigEndian);
-
-        uint width = GetScalar(entries, data, TagImageWidth, bigEndian)
+        long width = GetScalar(entries, data, TagImageWidth, header)
             ?? throw new InvalidDataException("ImageWidthタグがありません。");
-        uint height = GetScalar(entries, data, TagImageLength, bigEndian)
+        long height = GetScalar(entries, data, TagImageLength, header)
             ?? throw new InvalidDataException("ImageLengthタグがありません。");
-        uint bits = GetScalar(entries, data, TagBitsPerSample, bigEndian)
+        long bits = GetScalar(entries, data, TagBitsPerSample, header)
             ?? throw new InvalidDataException("BitsPerSampleタグがありません。");
-        uint compression = GetScalar(entries, data, TagCompression, bigEndian) ?? 1;
-        uint samplesPerPixel = GetScalar(entries, data, TagSamplesPerPixel, bigEndian) ?? 1;
-        uint rowsPerStrip = GetScalar(entries, data, TagRowsPerStrip, bigEndian) ?? height;
-        uint photometric = GetScalar(entries, data, TagPhotometric, bigEndian) ?? 1;
-        uint sampleFormat = GetScalar(entries, data, TagSampleFormat, bigEndian) ?? 1;
+        long compression = GetScalar(entries, data, TagCompression, header) ?? 1;
+        long samplesPerPixel = GetScalar(entries, data, TagSamplesPerPixel, header) ?? 1;
+        long rowsPerStrip = GetScalar(entries, data, TagRowsPerStrip, header) ?? height;
+        long photometric = GetScalar(entries, data, TagPhotometric, header) ?? 1;
+        long sampleFormat = GetScalar(entries, data, TagSampleFormat, header) ?? 1;
 
         if (compression != 1)
         {
@@ -465,23 +1500,23 @@ public static unsafe class TiffLoader
                 $"符号なし整数のTIFFのみサポートします(SampleFormat={sampleFormat})。");
         }
 
-        if (width == 0 || height == 0 || width > int.MaxValue || height > int.MaxValue)
+        if (width <= 0 || height <= 0 || width > int.MaxValue || height > int.MaxValue)
         {
             throw new InvalidDataException("画像サイズが不正です。");
         }
 
         // 配列を確保する前に総画素数を検証する。ヘッダが巨大値を主張していると
         // OutOfMemoryException になり、不正データの報告として役に立たない
-        long declaredPixels = (long)width * height;
+        long declaredPixels = width * height;
         if (declaredPixels > MaxPixels)
         {
             throw new InvalidDataException(
                 $"画像が大きすぎます({width}×{height})。上限は {MaxPixels / 1_000_000} M画素です。");
         }
 
-        uint[] stripOffsets = GetArray(entries, data, TagStripOffsets, bigEndian)
+        long[] stripOffsets = GetArray(entries, data, TagStripOffsets, header)
             ?? throw new InvalidDataException("StripOffsetsタグがありません。");
-        uint[] stripByteCounts = GetArray(entries, data, TagStripByteCounts, bigEndian)
+        long[] stripByteCounts = GetArray(entries, data, TagStripByteCounts, header)
             ?? throw new InvalidDataException("StripByteCountsタグがありません。");
         if (stripOffsets.Length != stripByteCounts.Length)
         {
@@ -489,9 +1524,13 @@ public static unsafe class TiffLoader
         }
 
         int bytesPerSample = bits == 8 ? 1 : 2;
-        var pixels = new ushort[(long)width * height];
+        var pixels = new ushort[width * height];
         long pixelIndex = 0;
         long remainingRows = height;
+        if (rowsPerStrip <= 0)
+        {
+            rowsPerStrip = height;
+        }
 
         for (int strip = 0; strip < stripOffsets.Length; strip++)
         {
@@ -509,7 +1548,7 @@ public static unsafe class TiffLoader
             }
 
             long offset = stripOffsets[strip];
-            if (offset + expectedBytes > data.Length)
+            if (offset < 0 || offset + expectedBytes > data.Length)
             {
                 throw new InvalidDataException($"ストリップ{strip}がファイル範囲外を指しています。");
             }
@@ -527,7 +1566,7 @@ public static unsafe class TiffLoader
             {
                 for (int i = 0; i < stripPixels; i++)
                 {
-                    pixels[pixelIndex + i] = bigEndian
+                    pixels[pixelIndex + i] = header.BigEndian
                         ? BinaryPrimitives.ReadUInt16BigEndian(stripData.Slice(i * 2, 2))
                         : BinaryPrimitives.ReadUInt16LittleEndian(stripData.Slice(i * 2, 2));
                 }
@@ -548,44 +1587,12 @@ public static unsafe class TiffLoader
             Height = (int)height,
             BitDepth = (int)bits,
             Packing = BitPacking.Lsb,
-            Endianness = bigEndian ? Endianness.Big : Endianness.Little,
+            Endianness = header.BigEndian ? Endianness.Big : Endianness.Little,
         };
         return new RawImage(format, pixels);
     }
 
-    private readonly record struct IfdEntry(ushort Tag, ushort Type, uint Count, long ValueFieldOffset);
-
-    private static List<long> ReadPageOffsets(TiffBytes data, bool bigEndian, CancellationToken ct)
-    {
-        var offsets = new List<long>();
-        var visited = new HashSet<long>();
-        long offset = data.ReadU32(4, bigEndian);
-        while (offset != 0)
-        {
-            ct.ThrowIfCancellationRequested();
-            if (offset < 8 || !visited.Add(offset))
-            {
-                throw new InvalidDataException("TIFFのページ参照が不正、または循環しています。");
-            }
-
-            if (offsets.Count >= MaxPages)
-            {
-                throw new NotSupportedException($"TIFFは最大{MaxPages:N0}ページまで対応します。");
-            }
-
-            int entries = data.ReadU16(offset, bigEndian);
-            long nextField = offset + 2 + entries * 12L;
-            offsets.Add(offset);
-            offset = data.ReadU32(nextField, bigEndian);
-        }
-
-        if (offsets.Count == 0)
-        {
-            throw new InvalidDataException("TIFFに画像ページがありません。");
-        }
-
-        return offsets;
-    }
+    // ------------------------------------------------------------------ バイト列アクセス
 
     /// <summary>
     /// ファイル全体へのlongオフセットアクセス。クラシックTIFFのオフセット上限は
@@ -627,6 +1634,13 @@ public static unsafe class TiffLoader
                 : BinaryPrimitives.ReadUInt32LittleEndian(Slice(offset, 4));
         }
 
+        public ulong ReadU64(long offset, bool bigEndian)
+        {
+            return bigEndian
+                ? BinaryPrimitives.ReadUInt64BigEndian(Slice(offset, 8))
+                : BinaryPrimitives.ReadUInt64LittleEndian(Slice(offset, 8));
+        }
+
         public ReadOnlySpan<byte> Slice(long offset, int length)
         {
             CheckRange(offset, length);
@@ -635,126 +1649,10 @@ public static unsafe class TiffLoader
 
         private void CheckRange(long offset, int length)
         {
-            if (offset < 0 || offset + length > Length)
+            if (offset < 0 || length < 0 || offset + length > Length)
             {
                 throw new InvalidDataException("参照がファイル範囲外を指しています。");
             }
         }
-    }
-
-    private static List<IfdEntry> ReadIfd(TiffBytes data, long ifdOffset, bool bigEndian)
-    {
-        if (ifdOffset < 8 || ifdOffset + 2 > data.Length)
-        {
-            throw new InvalidDataException("IFDオフセットが不正です。");
-        }
-
-        int entryCount = data.ReadU16(ifdOffset, bigEndian);
-        long end = ifdOffset + 2 + entryCount * 12L + 4;
-        if (end > data.Length)
-        {
-            throw new InvalidDataException("IFDがファイル範囲外を指しています。");
-        }
-
-        var entries = new List<IfdEntry>(entryCount);
-        for (int i = 0; i < entryCount; i++)
-        {
-            long entryOffset = ifdOffset + 2 + i * 12L;
-            entries.Add(new IfdEntry(
-                data.ReadU16(entryOffset, bigEndian),
-                data.ReadU16(entryOffset + 2, bigEndian),
-                data.ReadU32(entryOffset + 4, bigEndian),
-                entryOffset + 8));
-        }
-
-        return entries;
-    }
-
-    /// <summary>
-    /// タグ値の所在。<see cref="Count"/> は検証済みだが、確保はまだ行っていない。
-    /// </summary>
-    private readonly record struct TagValues(long Offset, int ValueSize, uint Count);
-
-    /// <summary>
-    /// 配列として読み出すタグの要素数上限。
-    /// </summary>
-    /// <remarks>
-    /// このパーサが配列で読むのは strip 単位のタグ(要素数は高々画像の行数)だけ。
-    /// 破損・悪意あるIFDが巨大な Count を宣言してもファイル長の範囲チェックだけでは
-    /// 数GBの確保が通ってしまうため、確保前に妥当な上限で弾く。
-    /// </remarks>
-    private const uint MaxTagArrayCount = 1 << 24;
-
-    private static TagValues? FindTagValues(
-        List<IfdEntry> entries, TiffBytes data, ushort tag, bool bigEndian)
-    {
-        foreach (IfdEntry entry in entries)
-        {
-            if (entry.Tag != tag)
-            {
-                continue;
-            }
-
-            int valueSize = entry.Type switch
-            {
-                TypeShort => 2,
-                TypeLong => 4,
-                _ => throw new InvalidDataException($"タグ{tag}の型{entry.Type}はサポートされません。"),
-            };
-
-            long totalSize = (long)valueSize * entry.Count;
-
-            // 4byte以下はエントリ内にインライン格納、超える場合はオフセット参照
-            long valueOffset = totalSize <= 4
-                ? entry.ValueFieldOffset
-                : data.ReadU32(entry.ValueFieldOffset, bigEndian);
-            if (valueOffset < 0 || valueOffset + totalSize > data.Length)
-            {
-                throw new InvalidDataException($"タグ{tag}の値がファイル範囲外を指しています。");
-            }
-
-            return new TagValues(valueOffset, valueSize, entry.Count);
-        }
-
-        return null;
-    }
-
-    private static uint? GetScalar(
-        List<IfdEntry> entries, TiffBytes data, ushort tag, bool bigEndian)
-    {
-        // 先頭の1値しか使わないので、宣言された要素数がいくら大きくても確保しない
-        if (FindTagValues(entries, data, tag, bigEndian) is not { Count: > 0 } found)
-        {
-            return null;
-        }
-
-        return found.ValueSize == 2
-            ? data.ReadU16(found.Offset, bigEndian)
-            : data.ReadU32(found.Offset, bigEndian);
-    }
-
-    private static uint[]? GetArray(
-        List<IfdEntry> entries, TiffBytes data, ushort tag, bool bigEndian)
-    {
-        if (FindTagValues(entries, data, tag, bigEndian) is not { } found)
-        {
-            return null;
-        }
-
-        if (found.Count > MaxTagArrayCount)
-        {
-            throw new InvalidDataException(
-                $"タグ{tag}の要素数({found.Count})が上限({MaxTagArrayCount})を超えています。");
-        }
-
-        var values = new uint[found.Count];
-        for (int i = 0; i < values.Length; i++)
-        {
-            values[i] = found.ValueSize == 2
-                ? data.ReadU16(found.Offset + (i * 2), bigEndian)
-                : data.ReadU32(found.Offset + (i * 4), bigEndian);
-        }
-
-        return values;
     }
 }

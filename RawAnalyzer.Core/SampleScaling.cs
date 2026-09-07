@@ -25,6 +25,53 @@ public enum SampleInterpretation
 public readonly record struct SampleRange(double Minimum, double Maximum, long NonFiniteCount);
 
 /// <summary>
+/// 値域を1サンプルずつ集計する(ストリーミング版の <see cref="SampleScaling.Scan"/>)。
+/// </summary>
+public struct SampleRangeAccumulator
+{
+    private double _min;
+    private double _max;
+    private long _nonFinite;
+    private bool _any;
+
+    /// <summary>1値を加える。非有限値は個数だけ数える。</summary>
+    /// <param name="value">サンプル値。</param>
+    public void Add(double value)
+    {
+        if (!double.IsFinite(value))
+        {
+            _nonFinite++;
+            return;
+        }
+
+        if (!_any)
+        {
+            _min = value;
+            _max = value;
+            _any = true;
+            return;
+        }
+
+        if (value < _min)
+        {
+            _min = value;
+        }
+
+        if (value > _max)
+        {
+            _max = value;
+        }
+    }
+
+    /// <summary>集計結果。有限値が1つもなければ 0〜0。</summary>
+    /// <returns>値域。</returns>
+    public readonly SampleRange ToRange()
+    {
+        return _any ? new SampleRange(_min, _max, _nonFinite) : new SampleRange(0, 0, _nonFinite);
+    }
+}
+
+/// <summary>
 /// 32bit(浮動小数点・整数)のサンプルを、内部表現の16bitコードへ写す係数。
 /// </summary>
 /// <remarks>
@@ -235,13 +282,14 @@ public sealed record SampleScaling(double Offset, double Span, SampleRange Range
     /// <summary>
     /// 適用した対応関係の説明(画像情報欄への表示用)。
     /// </summary>
+    /// <param name="bitsPerSample">元データの1サンプルのビット数(表示用)。</param>
     /// <returns>表示用テキスト。</returns>
-    public string Describe()
+    public string Describe(int bitsPerSample = 32)
     {
         CultureInfo culture = CultureInfo.CurrentCulture;
         string body = IsNormalized
-            ? "32bit実数 0〜1 → 16bit"
-            : $"32bit値 {Offset.ToString("G6", culture)}〜" +
+            ? $"{bitsPerSample}bit実数 0〜1 → 16bit"
+            : $"{bitsPerSample}bit値 {Offset.ToString("G6", culture)}〜" +
               $"{(Offset + Span).ToString("G6", culture)} → 16bit " +
               $"(1code≈{ValuePerCode.ToString("G3", culture)})";
         return Range.NonFiniteCount > 0
