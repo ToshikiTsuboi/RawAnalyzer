@@ -27,6 +27,19 @@ public class SaveTests
         return Path.Combine(dir, Guid.NewGuid().ToString("N") + extension);
     }
 
+    private static ColorImage MakeColorImage(int width, int height)
+    {
+        var interleaved = new ushort[width * height * 3];
+        for (int i = 0; i < width * height; i++)
+        {
+            interleaved[i * 3] = (ushort)(1000 + i);       // R
+            interleaved[(i * 3) + 1] = (ushort)(20000 + i); // G
+            interleaved[(i * 3) + 2] = (ushort)(60000 - i); // B
+        }
+
+        return ColorImage.FromInterleaved(width, height, 16, interleaved);
+    }
+
     [Theory]
     [InlineData(BitPacking.Lsb, Endianness.Little)]
     [InlineData(BitPacking.Lsb, Endianness.Big)]
@@ -254,6 +267,65 @@ public class SaveTests
             Assert.Equal(expectedG, rgb[i * 3 + 1]);
             Assert.Equal(expectedB, rgb[i * 3 + 2]);
         }
+    }
+
+    [Fact]
+    public void ImageExport_RenderColorRgb48_KeepsPerChannelValues()
+    {
+        // 16bit保存でチャネルを潰さないこと(輝度化すると色が失われる)。
+        // Codexレビュー(2026-08-23)#1: カラー画像を輝度化して保存していた回帰
+        ColorImage color = MakeColorImage(4, 3);
+
+        ushort[] rgb48 = ImageExport.RenderColorRgb48(color);
+
+        Assert.Equal(4 * 3 * 3, rgb48.Length);
+        color.GetPixel(2, 1, out ushort r, out ushort g, out ushort b);
+        int index = ((1 * 4) + 2) * 3;
+        Assert.Equal(r, rgb48[index]);
+        Assert.Equal(g, rgb48[index + 1]);
+        Assert.Equal(b, rgb48[index + 2]);
+        Assert.NotEqual(rgb48[index], rgb48[index + 1]);
+    }
+
+    [Fact]
+    public void ImageExport_RenderColorRgb24_WritesIntoProvidedBuffer()
+    {
+        // 動画書き出しでフレームごとに確保しないための経路(Codexレビュー 2026-08-23 #1)
+        ColorImage color = MakeColorImage(4, 3);
+        var lut = DisplayLut.Create(new DisplayParameters());
+
+        byte[] allocated = ImageExport.RenderColorRgb24(color, lut);
+        var reused = new byte[allocated.Length];
+        ImageExport.RenderColorRgb24(color, lut, reused);
+
+        Assert.Equal(allocated, reused);
+    }
+
+    [Fact]
+    public void ImageExport_DevelopRgb24_WritesIntoProvidedBuffer()
+    {
+        // 現像経路のバッファ再利用オーバーロードも、確保版と同じ結果になること
+        var format = new RawFormat
+        {
+            Width = 8,
+            Height = 6,
+            BitDepth = 16,
+            Bayer = BayerPattern.Rggb,
+        };
+        var codes = new ushort[format.Width * format.Height];
+        for (int i = 0; i < codes.Length; i++)
+        {
+            codes[i] = (ushort)((i * 5003) % 65536);
+        }
+
+        using RawImage image = RawImage.FromPixels(format, codes);
+        var luts = DevelopLuts.Create(new DevelopParameters(Gamma: 1.0));
+
+        byte[] allocated = ImageExport.DevelopRgb24(image, 0, BayerPattern.Rggb, luts);
+        var reused = new byte[allocated.Length];
+        ImageExport.DevelopRgb24(image, 0, BayerPattern.Rggb, luts, null, default, reused);
+
+        Assert.Equal(allocated, reused);
     }
 
     /// <summary>テスト用: コールバックを同期実行するIProgress。</summary>

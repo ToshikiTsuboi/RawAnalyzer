@@ -60,6 +60,20 @@ public class HistogramToolsTests
         Assert.Equal(new AutoLevels(10, 240), levels);
     }
 
+    [Fact]
+    public void ComputeAutoLevels_CountsBeyondUintRange_DoNotWrap()
+    {
+        // ギガピクセルのフラット画像では単一ビンが uint の範囲(約4.29e9)を超える。
+        // ビンがuintのままだと巻き戻って黒/白点が別の位置に飛ぶ(全体レビュー 2026-08-23 の回帰)
+        long[] bins = MakeBins(256, (100, 5_000_000_000L), (200, 5_000_000_000L));
+
+        AutoLevels? levels = HistogramTools.ComputeAutoLevels(bins, clipRatio: 0.01);
+
+        Assert.NotNull(levels);
+        Assert.Equal(100, levels!.Value.BlackCode);
+        Assert.Equal(200, levels.Value.WhiteCode);
+    }
+
     [Theory]
     [InlineData(-0.1)]
     [InlineData(0.5)]
@@ -131,6 +145,19 @@ public class HistogramToolsTests
         }
 
         Assert.Equal(10, columns[^1]);
+    }
+
+    [Fact]
+    public void Aggregate_KeepsCountsBeyondUintRange()
+    {
+        // 単一ビンが uint の範囲を超えても列の値が巻き戻らないこと(全体レビュー 2026-08-23 の回帰)
+        long[] bins = MakeBins(4, (0, 6_000_000_000L), (3, 3_000_000_000L));
+
+        double[] columns = HistogramTools.Aggregate(bins, 4);
+
+        Assert.Equal(4, columns.Length);
+        Assert.Equal(6_000_000_000d, columns[0], 0);
+        Assert.Equal(3_000_000_000d, columns[3], 0);
     }
 
     [Fact]

@@ -261,4 +261,22 @@ public class RawLoaderTests
         var format = new RawFormat { Width = 1, Height = 1, BitDepth = 16, HeaderOffset = header };
         Assert.Empty(RawLoader.GuessDimensions(fileSize, format));
     }
+
+    [Theory]
+    [InlineData(@"\\nas\share\dark.raw", true)]
+    [InlineData(@"C:\Temp\dark.raw", false)]
+    public void IsNetworkPath_DetectsUncPaths(string path, bool expected)
+    {
+        // ネットワーク上のファイルをMMFで開くと、転送中の切断が
+        // EXCEPTION_IN_PAGE_ERROR となり.NETでは捕捉できずプロセスごと落ちる。
+        // 判定できたものはヒープ展開へ振り分ける(全体レビュー 2026-08-23 の回帰)
+        Assert.Equal(expected, RawLoader.IsNetworkPath(path));
+    }
+
+    [Fact]
+    public void IsNetworkPath_InvalidPath_TreatedAsLocal()
+    {
+        // 判定できない場合は従来動作(ローカル扱い)へ倒す
+        Assert.False(RawLoader.IsNetworkPath("|<>invalid"));
+    }
 }
