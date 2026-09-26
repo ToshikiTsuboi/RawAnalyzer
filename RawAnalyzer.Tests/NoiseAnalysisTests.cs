@@ -5,20 +5,6 @@ namespace RawAnalyzer.Tests;
 
 public class NoiseAnalysisTests
 {
-    private static RawImage LoadImage(ushort[] codes, int width, int height, int bitDepth = 12)
-    {
-        var format = new RawFormat { Width = width, Height = height, BitDepth = bitDepth };
-        string path = TestData.WriteTempFile(TestData.EncodeRawFile(codes, format));
-        try
-        {
-            return RawLoader.Load(path, format);
-        }
-        finally
-        {
-            File.Delete(path);
-        }
-    }
-
     [Fact]
     public void MeasurePair_SeparatesFpnAndTemporalNoise()
     {
@@ -39,8 +25,8 @@ public class NoiseAnalysisTests
             }
         }
 
-        using RawImage imageA = LoadImage(a, width, height);
-        using RawImage imageB = LoadImage(b, width, height);
+        using RawImage imageA = TestImages.FromCodes(a, width, height, bitDepth: 12);
+        using RawImage imageB = TestImages.FromCodes(b, width, height, bitDepth: 12);
 
         NoiseMeasurement result = NoiseAnalysis.MeasurePair(imageA, imageB);
 
@@ -66,8 +52,8 @@ public class NoiseAnalysisTests
             b[i] = (ushort)(i % 2 == 0 ? 990 : 1010);
         }
 
-        using RawImage imageA = LoadImage(a, size, size);
-        using RawImage imageB = LoadImage(b, size, size);
+        using RawImage imageA = TestImages.FromCodes(a, size, size, bitDepth: 12);
+        using RawImage imageB = TestImages.FromCodes(b, size, size, bitDepth: 12);
 
         NoiseMeasurement result = NoiseAnalysis.MeasurePair(imageA, imageB);
 
@@ -93,8 +79,8 @@ public class NoiseAnalysisTests
             b[i] = (ushort)(i % 2 == 0 ? 496 : 504);
         }
 
-        using RawImage imageA = LoadImage(a, size, size);
-        using RawImage imageB = LoadImage(b, size, size);
+        using RawImage imageA = TestImages.FromCodes(a, size, size, bitDepth: 12);
+        using RawImage imageB = TestImages.FromCodes(b, size, size, bitDepth: 12);
 
         NoiseMeasurement result = NoiseAnalysis.MeasurePair(
             imageA, imageB, saturationCode: 3600);
@@ -119,8 +105,8 @@ public class NoiseAnalysisTests
             a[0 * size + x] = 4000;
         }
 
-        using RawImage imageA = LoadImage(a, size, size);
-        using RawImage imageB = LoadImage(b, size, size);
+        using RawImage imageA = TestImages.FromCodes(a, size, size, bitDepth: 12);
+        using RawImage imageB = TestImages.FromCodes(b, size, size, bitDepth: 12);
 
         NoiseMeasurement result = NoiseAnalysis.MeasurePair(
             imageA, imageB, region: new RegionOfInterest(0, 1, size, size - 1));
@@ -139,7 +125,7 @@ public class NoiseAnalysisTests
             codes[i] = (ushort)(1000 + (i % 2) * 20);
         }
 
-        using RawImage image = LoadImage(codes, size, size);
+        using RawImage image = TestImages.FromCodes(codes, size, size, bitDepth: 12);
         NoiseMeasurement result = NoiseAnalysis.MeasureSingle(image);
 
         Assert.Equal(10, result.SigmaTotal, 6);
@@ -166,8 +152,8 @@ public class NoiseAnalysisTests
             }
         }
 
-        using RawImage a = LoadImage(codes, size, size);
-        using RawImage b = LoadImage(codes, size, size);
+        using RawImage a = TestImages.FromCodes(codes, size, size, bitDepth: 12);
+        using RawImage b = TestImages.FromCodes(codes, size, size, bitDepth: 12);
 
         NoiseMeasurement mixed = NoiseAnalysis.MeasurePair(a, b);
         NoiseMeasurement perChannel = NoiseAnalysis.MeasurePair(
@@ -200,7 +186,7 @@ public class NoiseAnalysisTests
             }
         }
 
-        using RawImage image = LoadImage(codes, size, size);
+        using RawImage image = TestImages.FromCodes(codes, size, size, bitDepth: 12);
 
         NoiseMeasurement result = NoiseAnalysis.MeasureSingle(
             image, pattern: BayerPattern.Rggb);
@@ -211,8 +197,8 @@ public class NoiseAnalysisTests
     [Fact]
     public void MeasurePair_SizeMismatch_Throws()
     {
-        using RawImage a = LoadImage(new ushort[16], 4, 4);
-        using RawImage b = LoadImage(new ushort[8], 4, 2);
+        using RawImage a = TestImages.FromCodes(new ushort[16], 4, 4, bitDepth: 12);
+        using RawImage b = TestImages.FromCodes(new ushort[8], 4, 2, bitDepth: 12);
         Assert.Throws<ArgumentException>(() => NoiseAnalysis.MeasurePair(a, b));
     }
 
@@ -221,8 +207,8 @@ public class NoiseAnalysisTests
     {
         // 12bit rawから保存した16bit TIFFを2枚目に指定するだけで成立する組み合わせ。
         // 従来は無警告で通り、σ_temporalが約11倍・σ_FPN=0・DRが約21dB低下していた。
-        using RawImage a = LoadImage(new ushort[16], 4, 4, bitDepth: 12);
-        using RawImage b = LoadImage(new ushort[16], 4, 4, bitDepth: 16);
+        using RawImage a = TestImages.FromCodes(new ushort[16], 4, 4, bitDepth: 12);
+        using RawImage b = TestImages.FromCodes(new ushort[16], 4, 4, bitDepth: 16);
 
         ArgumentException ex = Assert.Throws<ArgumentException>(
             () => NoiseAnalysis.MeasurePair(a, b));
@@ -241,7 +227,7 @@ public class NoiseAnalysisTests
             codes[i] = (ushort)(500 + (i % 2) * 20); // σ=10
         }
 
-        using RawImage image = LoadImage(codes, size, size, bitDepth: 10);
+        using RawImage image = TestImages.FromCodes(codes, size, size, bitDepth: 10);
         NoiseMeasurement result = NoiseAnalysis.MeasureSingle(image, saturationCode: 4095);
 
         Assert.Equal(1023, result.SaturationCode, 6);

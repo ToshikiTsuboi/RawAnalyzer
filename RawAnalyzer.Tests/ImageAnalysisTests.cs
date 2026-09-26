@@ -5,27 +5,13 @@ namespace RawAnalyzer.Tests;
 
 public class ImageAnalysisTests
 {
-    private static RawImage LoadImage(ushort[] codes, int width, int height, int bitDepth = 16)
-    {
-        var format = new RawFormat { Width = width, Height = height, BitDepth = bitDepth };
-        string path = TestData.WriteTempFile(TestData.EncodeRawFile(codes, format));
-        try
-        {
-            return RawLoader.Load(path, format);
-        }
-        finally
-        {
-            File.Delete(path);
-        }
-    }
-
     [Fact]
     public void ComputeStatistics_KnownData_MatchesExpected()
     {
         // 0..15 の4x4: mean=7.5, σ=sqrt(1240/16 - 56.25)=sqrt(21.25)
         // 12bit入力でも統計は raw code 域(16bit正規化値 <<4 ではない)で返ること
         ushort[] codes = Enumerable.Range(0, 16).Select(i => (ushort)i).ToArray();
-        using RawImage image = LoadImage(codes, 4, 4, bitDepth: 12);
+        using RawImage image = TestImages.FromCodes(codes, 4, 4, bitDepth: 12);
 
         RegionStatistics stats = ImageAnalysis.ComputeStatistics(
             image, 0, new RegionOfInterest(0, 0, 4, 4));
@@ -41,7 +27,7 @@ public class ImageAnalysisTests
     public void ComputeStatistics_SubRegion_OnlyCountsRoi()
     {
         ushort[] codes = Enumerable.Range(0, 16).Select(i => (ushort)i).ToArray();
-        using RawImage image = LoadImage(codes, 4, 4);
+        using RawImage image = TestImages.FromCodes(codes, 4, 4);
 
         // 右下2x2 = {10,11,14,15}: mean=12.5
         RegionStatistics stats = ImageAnalysis.ComputeStatistics(
@@ -57,7 +43,7 @@ public class ImageAnalysisTests
     public void ComputeHistogram_BinsInRawCodeDomain()
     {
         ushort[] codes = { 0, 0, 100, 4095 };
-        using RawImage image = LoadImage(codes, 2, 2, bitDepth: 12);
+        using RawImage image = TestImages.FromCodes(codes, 2, 2, bitDepth: 12);
 
         HistogramResult result = ImageAnalysis.ComputeHistogram(image, 0);
 
@@ -73,7 +59,7 @@ public class ImageAnalysisTests
     public void ComputeHistogram_RoiRestrictsSamples()
     {
         ushort[] codes = Enumerable.Range(0, 16).Select(i => (ushort)i).ToArray();
-        using RawImage image = LoadImage(codes, 4, 4);
+        using RawImage image = TestImages.FromCodes(codes, 4, 4);
 
         HistogramResult result = ImageAnalysis.ComputeHistogram(
             image, 0, new RegionOfInterest(2, 2, 2, 2));
@@ -102,7 +88,7 @@ public class ImageAnalysisTests
             }
         }
 
-        using RawImage image = LoadImage(codes, size, size, bitDepth: 12);
+        using RawImage image = TestImages.FromCodes(codes, size, size, bitDepth: 12);
 
         HistogramResult result = ImageAnalysis.ComputeHistogram(image, 0, maxSamples: 400);
 
@@ -125,7 +111,7 @@ public class ImageAnalysisTests
         // ParallelOptions.CancellationToken を渡していないと
         // AggregateException に包まれ catch(OperationCanceledException) をすり抜ける
         ushort[] codes = new ushort[64 * 64];
-        using RawImage image = LoadImage(codes, 64, 64, bitDepth: 12);
+        using RawImage image = TestImages.FromCodes(codes, 64, 64, bitDepth: 12);
         using var cts = new CancellationTokenSource();
         cts.Cancel();
 
@@ -138,7 +124,7 @@ public class ImageAnalysisTests
     public void ExtractRowProfile_MatchesPixels()
     {
         ushort[] codes = TestData.MakePattern(8 * 4, 12);
-        using RawImage image = LoadImage(codes, 8, 4, bitDepth: 12);
+        using RawImage image = TestImages.FromCodes(codes, 8, 4, bitDepth: 12);
 
         ushort[] profile = ImageAnalysis.ExtractRowProfile(image, 0, 2);
 
@@ -153,7 +139,7 @@ public class ImageAnalysisTests
     public void ExtractColumnProfile_MatchesPixels()
     {
         ushort[] codes = TestData.MakePattern(8 * 4, 12);
-        using RawImage image = LoadImage(codes, 8, 4, bitDepth: 12);
+        using RawImage image = TestImages.FromCodes(codes, 8, 4, bitDepth: 12);
 
         ushort[] profile = ImageAnalysis.ExtractColumnProfile(image, 0, 3);
 

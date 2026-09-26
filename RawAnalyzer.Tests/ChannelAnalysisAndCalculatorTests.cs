@@ -5,20 +5,6 @@ namespace RawAnalyzer.Tests;
 
 public class ChannelAnalysisTests
 {
-    private static RawImage LoadImage(ushort[] codes, int width, int height, int bitDepth = 16)
-    {
-        var format = new RawFormat { Width = width, Height = height, BitDepth = bitDepth };
-        string path = TestData.WriteTempFile(TestData.EncodeRawFile(codes, format));
-        try
-        {
-            return RawLoader.Load(path, format);
-        }
-        finally
-        {
-            File.Delete(path);
-        }
-    }
-
     [Theory]
     [InlineData(5, 5)]
     [InlineData(5, 4)]
@@ -37,7 +23,7 @@ public class ChannelAnalysisTests
             expectedSum += 100 + i;
         }
 
-        using RawImage image = LoadImage(codes, width, height);
+        using RawImage image = TestImages.FromCodes(codes, width, height);
         ChannelAnalysisResult result = ImageAnalysis.ComputeChannelAnalysis(
             image, 0, BayerPattern.Rggb);
 
@@ -69,7 +55,7 @@ public class ChannelAnalysisTests
             }
         }
 
-        using RawImage image = LoadImage(mosaic, size, size);
+        using RawImage image = TestImages.FromCodes(mosaic, size, size);
         ChannelAnalysisResult result = ImageAnalysis.ComputeChannelAnalysis(image, 0, pattern);
 
         Assert.Equal(4, result.Channels.Count);
@@ -97,7 +83,7 @@ public class ChannelAnalysisTests
         const int size = 8;
         ushort[] mosaic = ColorPipelineTests.BuildConstantMosaic(
             size, size, BayerPattern.Rggb, 100, 200, 300);
-        using RawImage image = LoadImage(mosaic, size, size);
+        using RawImage image = TestImages.FromCodes(mosaic, size, size);
 
         ChannelAnalysisResult result = ImageAnalysis.ComputeChannelAnalysis(
             image, 0, BayerPattern.Rggb, new RegionOfInterest(2, 2, 4, 4));
@@ -116,7 +102,7 @@ public class ChannelAnalysisTests
         const int size = 8;
         ushort[] mosaic = ColorPipelineTests.BuildConstantMosaic(
             size, size, BayerPattern.Rggb, 100, 200, 300);
-        using RawImage image = LoadImage(mosaic, size, size);
+        using RawImage image = TestImages.FromCodes(mosaic, size, size);
 
         ChannelAnalysisResult result = ImageAnalysis.ComputeChannelAnalysis(
             image, 0, BayerPattern.Rggb, new RegionOfInterest(1, 1, 4, 4));
@@ -135,7 +121,7 @@ public class ChannelAnalysisTests
         const int size = 64;
         ushort[] mosaic = ColorPipelineTests.BuildConstantMosaic(
             size, size, BayerPattern.Rggb, 100, 200, 300);
-        using RawImage image = LoadImage(mosaic, size, size);
+        using RawImage image = TestImages.FromCodes(mosaic, size, size);
 
         ChannelAnalysisResult result = ImageAnalysis.ComputeChannelAnalysis(
             image, 0, BayerPattern.Rggb, maxSamples: 400);
@@ -152,7 +138,7 @@ public class ChannelAnalysisTests
     public void ComputeChannelAnalysis_NoBayer_ReturnsTotalOnly()
     {
         ushort[] codes = TestData.MakePattern(16 * 16, 12);
-        using RawImage image = LoadImage(codes, 16, 16, bitDepth: 12);
+        using RawImage image = TestImages.FromCodes(codes, 16, 16, bitDepth: 12);
 
         ChannelAnalysisResult result = ImageAnalysis.ComputeChannelAnalysis(
             image, 0, BayerPattern.None);
@@ -164,32 +150,14 @@ public class ChannelAnalysisTests
 
 public class ImageCalculatorTests
 {
-    private static RawImage LoadImage(
-        ushort[] codes, int width, int height, int bitDepth = 12,
-        BayerPattern bayer = BayerPattern.None)
-    {
-        var format = new RawFormat
-        {
-            Width = width, Height = height, BitDepth = bitDepth, Bayer = bayer,
-        };
-        string path = TestData.WriteTempFile(TestData.EncodeRawFile(codes, format));
-        try
-        {
-            return RawLoader.Load(path, format);
-        }
-        finally
-        {
-            File.Delete(path);
-        }
-    }
-
     [Fact]
     public void Subtract_ClampsAtZero()
     {
         ushort[] a = { 1000, 500, 100, 4095 };
         ushort[] b = { 300, 500, 200, 95 };
-        using RawImage imageA = LoadImage(a, 2, 2, bayer: BayerPattern.Rggb);
-        using RawImage imageB = LoadImage(b, 2, 2);
+        using RawImage imageA = TestImages.FromCodes(
+            a, 2, 2, bitDepth: 12, bayer: BayerPattern.Rggb);
+        using RawImage imageB = TestImages.FromCodes(b, 2, 2, bitDepth: 12);
 
         using RawImage result = ImageCalculator.Apply(imageA, imageB, ImageOperation.Subtract);
 
@@ -209,8 +177,8 @@ public class ImageCalculatorTests
     {
         ushort[] a = { 1000, 100 };
         ushort[] b = { 300, 500 };
-        using RawImage imageA = LoadImage(a, 2, 1);
-        using RawImage imageB = LoadImage(b, 2, 1);
+        using RawImage imageA = TestImages.FromCodes(a, 2, 1, bitDepth: 12);
+        using RawImage imageB = TestImages.FromCodes(b, 2, 1, bitDepth: 12);
 
         using RawImage result = ImageCalculator.Apply(
             imageA, imageB, ImageOperation.AbsoluteDifference);
@@ -224,8 +192,8 @@ public class ImageCalculatorTests
     {
         // A = B(同一シェーディング)なら結果は全画素 ≈ mean(B)
         ushort[] shading = { 1000, 2000, 3000, 4000 };
-        using RawImage imageA = LoadImage(shading, 2, 2);
-        using RawImage imageB = LoadImage(shading, 2, 2);
+        using RawImage imageA = TestImages.FromCodes(shading, 2, 2, bitDepth: 12);
+        using RawImage imageB = TestImages.FromCodes(shading, 2, 2, bitDepth: 12);
 
         using RawImage result = ImageCalculator.Apply(imageA, imageB, ImageOperation.DivideGain);
 
@@ -242,8 +210,8 @@ public class ImageCalculatorTests
     [Fact]
     public void Apply_SizeMismatch_Throws()
     {
-        using RawImage imageA = LoadImage(new ushort[4], 2, 2);
-        using RawImage imageB = LoadImage(new ushort[2], 2, 1);
+        using RawImage imageA = TestImages.FromCodes(new ushort[4], 2, 2, bitDepth: 12);
+        using RawImage imageB = TestImages.FromCodes(new ushort[2], 2, 1, bitDepth: 12);
         Assert.Throws<ArgumentException>(() =>
             ImageCalculator.Apply(imageA, imageB, ImageOperation.Subtract));
     }

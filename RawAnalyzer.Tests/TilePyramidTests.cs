@@ -5,20 +5,6 @@ namespace RawAnalyzer.Tests;
 
 public class TilePyramidTests
 {
-    private static RawImage LoadImage(ushort[] values16, int width, int height)
-    {
-        var format = new RawFormat { Width = width, Height = height, BitDepth = 16 };
-        string path = TestData.WriteTempFile(TestData.EncodeRawFile(values16, format));
-        try
-        {
-            return RawLoader.Load(path, format);
-        }
-        finally
-        {
-            File.Delete(path);
-        }
-    }
-
     [Fact]
     public void Create_4x4_Level2IsBlockAverage()
     {
@@ -29,7 +15,7 @@ public class TilePyramidTests
             80, 90, 100, 110,
             120, 130, 140, 150,
         };
-        using RawImage image = LoadImage(values, 4, 4);
+        using RawImage image = TestImages.FromCodes(values, 4, 4);
         TilePyramid pyramid = TilePyramid.Create(image);
 
         PyramidLevel? level2 = pyramid.GetLevel(2);
@@ -46,7 +32,7 @@ public class TilePyramidTests
     public void Create_MaxLevelPixels_SkipsOversizedLevelsButKeepsCoarser()
     {
         ushort[] values = TestData.MakePattern(16 * 16, 16);
-        using RawImage image = LoadImage(values, 16, 16);
+        using RawImage image = TestImages.FromCodes(values, 16, 16);
 
         // L2=8x8=64px は上限16を超えるのでスキップ、L4=4x4=16pxから生成
         // (f=32,64 は1x1に縮退するが上限内なので生成される)
@@ -71,7 +57,7 @@ public class TilePyramidTests
     public void SelectFactor_PicksLargestFactorNotExceedingInverseZoom()
     {
         ushort[] values = TestData.MakePattern(128 * 128, 16);
-        using RawImage image = LoadImage(values, 128, 128);
+        using RawImage image = TestImages.FromCodes(values, 128, 128);
         TilePyramid pyramid = TilePyramid.Create(image);
 
         // 128x128 では 1/64(2x2)まで全レベルが生成される
@@ -89,7 +75,7 @@ public class TilePyramidTests
     public void Create_CanceledToken_Throws()
     {
         ushort[] values = TestData.MakePattern(8 * 8, 16);
-        using RawImage image = LoadImage(values, 8, 8);
+        using RawImage image = TestImages.FromCodes(values, 8, 8);
         using var cts = new CancellationTokenSource();
         cts.Cancel();
         Assert.ThrowsAny<OperationCanceledException>(

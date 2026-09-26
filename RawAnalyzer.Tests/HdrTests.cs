@@ -5,19 +5,6 @@ namespace RawAnalyzer.Tests;
 
 public class HdrSplitterTests
 {
-    private static RawImage LoadImage(ushort[] values, RawFormat format)
-    {
-        string path = TestData.WriteTempFile(TestData.EncodeRawFile(values, format));
-        try
-        {
-            return RawLoader.Load(path, format);
-        }
-        finally
-        {
-            File.Delete(path);
-        }
-    }
-
     [Theory]
     [InlineData(2)]
     [InlineData(3)]
@@ -41,7 +28,7 @@ public class HdrSplitterTests
             Width = width, Height = height, BitDepth = 16,
             Hdr = HdrMode.Auto, HdrStages = stages,
         };
-        using RawImage image = LoadImage(values, format);
+        using RawImage image = TestImages.FromCodes(values, format);
 
         IReadOnlyList<RawImage> frames = HdrSplitter.Split(image);
 
@@ -84,7 +71,7 @@ public class HdrSplitterTests
             Width = width, Height = height, BitDepth = 16,
             Hdr = HdrMode.Auto, HdrStages = 2,
         };
-        using RawImage image = LoadImage(values, loadedFormat);
+        using RawImage image = TestImages.FromCodes(values, loadedFormat);
 
         // パネルで RGGB を指定した状態を渡す
         RawFormat panelFormat = loadedFormat with { Bayer = BayerPattern.Rggb };
@@ -136,7 +123,7 @@ public class HdrSplitterTests
             Hdr = HdrMode.Auto, HdrStages = 2, Bayer = BayerPattern.Rggb,
             HdrLineBlock = 1,
         };
-        using RawImage image = LoadImage(values, format);
+        using RawImage image = TestImages.FromCodes(values, format);
 
         IReadOnlyList<RawImage> frames = HdrSplitter.Split(image, format);
         try
@@ -186,7 +173,7 @@ public class HdrSplitterTests
             Hdr = HdrMode.Auto, HdrStages = 2,
             HdrLineBlock = 1, HdrRowOffset = 2,
         };
-        using RawImage image = LoadImage(values, format);
+        using RawImage image = TestImages.FromCodes(values, format);
 
         IReadOnlyList<RawImage> frames = HdrSplitter.Split(image, format);
         try
@@ -224,7 +211,7 @@ public class HdrSplitterTests
             Hdr = HdrMode.Auto, HdrStages = 2, Bayer = BayerPattern.Rggb,
             HdrLineBlock = 1, HdrRowOffset = 1,
         };
-        using RawImage image = LoadImage(new ushort[width * height], format);
+        using RawImage image = TestImages.FromCodes(new ushort[width * height], format);
 
         IReadOnlyList<RawImage> frames = HdrSplitter.Split(image, format);
         try
@@ -254,7 +241,7 @@ public class HdrSplitterTests
             Hdr = HdrMode.Auto, HdrStages = 2, Bayer = BayerPattern.Rggb,
             HdrLineBlock = 1, HdrRowOffset = -1,
         };
-        using RawImage image = LoadImage(new ushort[width * height], format);
+        using RawImage image = TestImages.FromCodes(new ushort[width * height], format);
 
         IReadOnlyList<RawImage> frames = HdrSplitter.Split(image, format);
         try
@@ -279,7 +266,7 @@ public class HdrSplitterTests
             Width = 2, Height = 8, BitDepth = 16,
             Hdr = HdrMode.Auto, HdrStages = 2, HdrLineBlock = 1, HdrRowOffset = 100,
         };
-        using RawImage image = LoadImage(new ushort[16], format);
+        using RawImage image = TestImages.FromCodes(new ushort[16], format);
 
         Assert.Throws<InvalidOperationException>(() => HdrSplitter.Split(image, format));
     }
@@ -320,7 +307,7 @@ public class HdrSplitterTests
             Width = width, Height = height, BitDepth = 16, FrameCount = frames,
             Hdr = HdrMode.LineInterleaved, HdrStages = 2,
         };
-        using RawImage image = LoadImage(values, format);
+        using RawImage image = TestImages.FromCodes(values, format);
 
         IReadOnlyList<RawImage> split = HdrSplitter.Split(image, format);
         try
@@ -348,7 +335,7 @@ public class HdrSplitterTests
             Width = 2, Height = 4, BitDepth = 16, FrameCount = 1,
             Hdr = HdrMode.FrameSequential, HdrStages = 2,
         };
-        using RawImage image = LoadImage(new ushort[8], format);
+        using RawImage image = TestImages.FromCodes(new ushort[8], format);
 
         Assert.Throws<InvalidOperationException>(() => HdrSplitter.Split(image, format));
     }
@@ -362,7 +349,7 @@ public class HdrSplitterTests
         {
             Width = width, Height = height, BitDepth = 16, Hdr = HdrMode.Auto, HdrStages = 2,
         };
-        using RawImage image = LoadImage(new ushort[width * height], format);
+        using RawImage image = TestImages.FromCodes(new ushort[width * height], format);
 
         Assert.Throws<ArgumentException>(
             () => HdrSplitter.Split(image, format with { Width = width * 2 }));
@@ -381,7 +368,7 @@ public class HdrSplitterTests
             Width = width, Height = height, BitDepth = 16,
             FrameCount = 2, Hdr = HdrMode.Auto, HdrStages = 2,
         };
-        using RawImage image = LoadImage(values, format);
+        using RawImage image = TestImages.FromCodes(values, format);
 
         IReadOnlyList<RawImage> frames = HdrSplitter.Split(image);
 
@@ -404,31 +391,13 @@ public class HdrSplitterTests
     {
         ushort[] values = TestData.MakePattern(4, 16);
         var format = new RawFormat { Width = 2, Height = 2, BitDepth = 16 };
-        using RawImage image = LoadImage(values, format);
+        using RawImage image = TestImages.FromCodes(values, format);
         Assert.Throws<InvalidOperationException>(() => HdrSplitter.Split(image));
     }
 }
 
 public class HdrMergerTests
 {
-    private static RawImage MakeFrame(
-        ushort[] values, int width, int height, BayerPattern bayer = BayerPattern.None)
-    {
-        var format = new RawFormat
-        {
-            Width = width, Height = height, BitDepth = 16, Bayer = bayer,
-        };
-        string path = TestData.WriteTempFile(TestData.EncodeRawFile(values, format));
-        try
-        {
-            return RawLoader.Load(path, format);
-        }
-        finally
-        {
-            File.Delete(path);
-        }
-    }
-
     /// <summary>整合するシーン(S)から長秒/短秒フレームを合成用に生成する。</summary>
     private static (RawImage Longer, RawImage Shorter, double[] Scene) MakeConsistentPair(
         int width, int height, int ratio, int step, int black = 0,
@@ -447,8 +416,8 @@ public class HdrMergerTests
         }
 
         return (
-            MakeFrame(longer, width, height, bayer),
-            MakeFrame(shorter, width, height, bayer),
+            TestImages.FromCodes(longer, width, height, bayer: bayer),
+            TestImages.FromCodes(shorter, width, height, bayer: bayer),
             scene);
     }
 
@@ -525,9 +494,9 @@ public class HdrMergerTests
             shortFrame[i] = (ushort)Math.Min(65535, s / 64);
         }
 
-        using RawImage f0 = MakeFrame(longFrame, width, height);
-        using RawImage f1 = MakeFrame(midFrame, width, height);
-        using RawImage f2 = MakeFrame(shortFrame, width, height);
+        using RawImage f0 = TestImages.FromCodes(longFrame, width, height);
+        using RawImage f1 = TestImages.FromCodes(midFrame, width, height);
+        using RawImage f2 = TestImages.FromCodes(shortFrame, width, height);
 
         HdrImage merged = HdrMerger.Merge(
             new[] { f0, f1, f2 }, new HdrMergeParameters(ExposureRatio: 8));
@@ -553,16 +522,7 @@ public class HdrMergerTests
         {
             for (int i = 0; i < stages; i++)
             {
-                string path = TestData.WriteTempFile(
-                    TestData.EncodeRawFile(new ushort[16], format));
-                try
-                {
-                    frames[i] = RawLoader.Load(path, format);
-                }
-                finally
-                {
-                    File.Delete(path);
-                }
+                frames[i] = TestImages.FromCodes(new ushort[16], format);
             }
 
             HdrImage merged = HdrMerger.Merge(
@@ -648,8 +608,8 @@ public class HdrMergerTests
     [Fact]
     public void Merge_MismatchedSizes_Throws()
     {
-        using RawImage a = MakeFrame(TestData.MakePattern(4, 16), 2, 2);
-        using RawImage b = MakeFrame(TestData.MakePattern(8, 16), 4, 2);
+        using RawImage a = TestImages.FromCodes(TestData.MakePattern(4, 16), 2, 2);
+        using RawImage b = TestImages.FromCodes(TestData.MakePattern(8, 16), 4, 2);
         Assert.Throws<ArgumentException>(() =>
             HdrMerger.Merge(new[] { a, b }, new HdrMergeParameters()));
     }

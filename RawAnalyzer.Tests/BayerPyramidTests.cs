@@ -5,19 +5,6 @@ namespace RawAnalyzer.Tests;
 
 public class BayerPyramidTests
 {
-    private static RawImage LoadImage(ushort[] codes, RawFormat format)
-    {
-        string path = TestData.WriteTempFile(TestData.EncodeRawFile(codes, format));
-        try
-        {
-            return RawLoader.Load(path, format);
-        }
-        finally
-        {
-            File.Delete(path);
-        }
-    }
-
     private static RawFormat MakeFormat(int width, int height) => new()
     {
         Width = width,
@@ -30,7 +17,7 @@ public class BayerPyramidTests
     public void Create_NoBayer_ProducesNoLevels()
     {
         var format = new RawFormat { Width = 32, Height = 32, BitDepth = 16 };
-        using RawImage image = LoadImage(new ushort[32 * 32], format);
+        using RawImage image = TestImages.FromCodes(new ushort[32 * 32], format);
 
         using var pyramid = BayerPyramid.Create(image, format);
 
@@ -58,7 +45,7 @@ public class BayerPyramidTests
         }
 
         RawFormat format = MakeFormat(size, size);
-        using RawImage image = LoadImage(codes, format);
+        using RawImage image = TestImages.FromCodes(codes, format);
 
         using var pyramid = BayerPyramid.Create(image, format);
         RawImage? level = pyramid.GetLevel(factor);
@@ -99,7 +86,7 @@ public class BayerPyramidTests
     {
         const int size = 64;
         RawFormat format = MakeFormat(size, size);
-        using RawImage image = LoadImage(new ushort[size * size], format);
+        using RawImage image = TestImages.FromCodes(new ushort[size * size], format);
 
         using var pyramid = BayerPyramid.Create(image, format);
 
@@ -114,7 +101,7 @@ public class BayerPyramidTests
         const int width = 11;
         const int height = 9;
         RawFormat format = MakeFormat(width, height);
-        using RawImage image = LoadImage(new ushort[width * height], format);
+        using RawImage image = TestImages.FromCodes(new ushort[width * height], format);
 
         using var pyramid = BayerPyramid.Create(image, format);
         RawImage? level = pyramid.GetLevel(2);
@@ -133,7 +120,7 @@ public class BayerPyramidTests
     {
         const int size = 64;
         RawFormat format = MakeFormat(size, size);
-        using RawImage image = LoadImage(new ushort[size * size], format);
+        using RawImage image = TestImages.FromCodes(new ushort[size * size], format);
         using var cts = new CancellationTokenSource();
         cts.Cancel();
 

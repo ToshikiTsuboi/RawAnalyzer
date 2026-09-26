@@ -123,25 +123,11 @@ public class ColorImageTests
 
 public class ProfileAndMetricsTests
 {
-    private static RawImage LoadImage(ushort[] codes, int width, int height, int bitDepth = 12)
-    {
-        var format = new RawFormat { Width = width, Height = height, BitDepth = bitDepth };
-        string path = TestData.WriteTempFile(TestData.EncodeRawFile(codes, format));
-        try
-        {
-            return RawLoader.Load(path, format);
-        }
-        finally
-        {
-            File.Delete(path);
-        }
-    }
-
     /// <summary>
     /// 番兵値(4095)で埋めた画像の ROI 内側だけに roiValues[row, col] を置く。
     /// ROI が1画素でもはみ出せば番兵値が平均に混ざって落ちる。
     /// </summary>
-    private static RawImage LoadWithRoiValues(
+    private static RawImage MakeWithRoiValues(
         int width, int height, RegionOfInterest roi, ushort[,] roiValues)
     {
         var codes = new ushort[width * height];
@@ -154,7 +140,7 @@ public class ProfileAndMetricsTests
             }
         }
 
-        return LoadImage(codes, width, height);
+        return TestImages.FromCodes(codes, width, height, bitDepth: 12);
     }
 
     [Fact]
@@ -203,7 +189,7 @@ public class ProfileAndMetricsTests
             { 100, 200, 300, 400 },
             { 110, 210, 310, 410 },
         };
-        using RawImage image = LoadWithRoiValues(8, 5, roi, roiValues);
+        using RawImage image = MakeWithRoiValues(8, 5, roi, roiValues);
 
         (double[] horizontal, double[] vertical) = ImageAnalysis.ComputeProjections(image, 0, roi);
 
@@ -229,7 +215,7 @@ public class ProfileAndMetricsTests
             { 100, 200, 300, 400 },
             { 1000, 1100, 1200, 1300 },
         };
-        using RawImage image = LoadWithRoiValues(6, 8, roi, roiValues);
+        using RawImage image = MakeWithRoiValues(6, 8, roi, roiValues);
 
         (double[] horizontal, double[] vertical) = ImageAnalysis.ComputeProjections(image, 0, roi);
 
@@ -260,7 +246,7 @@ public class ProfileAndMetricsTests
             codes.Add(0);
         }
 
-        using RawImage image = LoadImage(codes.ToArray(), 10, 10);
+        using RawImage image = TestImages.FromCodes(codes.ToArray(), 10, 10, bitDepth: 12);
         HistogramResult histogram = ImageAnalysis.ComputeHistogram(image, 0);
         HistogramMetrics metrics = ImageAnalysis.ComputeHistogramMetrics(histogram);
 

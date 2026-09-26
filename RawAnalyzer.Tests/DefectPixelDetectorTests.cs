@@ -5,20 +5,6 @@ namespace RawAnalyzer.Tests;
 
 public class DefectPixelDetectorTests
 {
-    private static RawImage LoadImage(ushort[] codes, int width, int height, int bitDepth = 12)
-    {
-        var format = new RawFormat { Width = width, Height = height, BitDepth = bitDepth };
-        string path = TestData.WriteTempFile(TestData.EncodeRawFile(codes, format));
-        try
-        {
-            return RawLoader.Load(path, format);
-        }
-        finally
-        {
-            File.Delete(path);
-        }
-    }
-
     /// <summary>ほぼフラット(±1のディザ)な画面に欠陥を埋め込む。</summary>
     private static ushort[] MakeFlatWithDefects(
         int width, int height, ushort baseCode, params (int X, int Y, ushort Code)[] defects)
@@ -72,7 +58,7 @@ public class DefectPixelDetectorTests
             (10, 10, 4095),   // R位置の白点
             (21, 20, 0),      // Gr位置の黒点
             (33, 33, 0));     // B位置の黒点
-        using RawImage image = LoadImage(codes, 64, 64);
+        using RawImage image = TestImages.FromCodes(codes, 64, 64, bitDepth: 12);
 
         DefectDetectionResult result = DefectPixelDetector.Detect(
             image, pattern: BayerPattern.Rggb);
@@ -94,7 +80,7 @@ public class DefectPixelDetectorTests
     public void Detect_HotAndDeadPixels_FindsBoth()
     {
         ushort[] codes = MakeFlatWithDefects(32, 32, 1000, (5, 7, 4000), (20, 15, 10));
-        using RawImage image = LoadImage(codes, 32, 32);
+        using RawImage image = TestImages.FromCodes(codes, 32, 32, bitDepth: 12);
 
         DefectDetectionResult result = DefectPixelDetector.Detect(image, sigmaFactor: 6.0);
 
@@ -110,7 +96,7 @@ public class DefectPixelDetectorTests
     public void Detect_HotOnly_IgnoresDeadPixels()
     {
         ushort[] codes = MakeFlatWithDefects(16, 16, 1000, (3, 3, 4000), (8, 8, 10));
-        using RawImage image = LoadImage(codes, 16, 16);
+        using RawImage image = TestImages.FromCodes(codes, 16, 16, bitDepth: 12);
 
         DefectDetectionResult result = DefectPixelDetector.Detect(
             image, detectHot: true, detectDead: false);
@@ -133,7 +119,7 @@ public class DefectPixelDetectorTests
             codes[i] = (ushort)((i & 1) == 0 ? 100 : 4000);
         }
 
-        using RawImage image = LoadImage(codes, size, size);
+        using RawImage image = TestImages.FromCodes(codes, size, size, bitDepth: 12);
 
         DefectDetectionResult result = DefectPixelDetector.Detect(
             image, sigmaFactor: 0.5, maxResults: 1000);
@@ -156,7 +142,7 @@ public class DefectPixelDetectorTests
     public void Detect_CancelledToken_ThrowsOperationCanceled()
     {
         ushort[] codes = MakeFlatWithDefects(64, 64, 1000, (5, 5, 4000));
-        using RawImage image = LoadImage(codes, 64, 64);
+        using RawImage image = TestImages.FromCodes(codes, 64, 64, bitDepth: 12);
         using var cts = new CancellationTokenSource();
         cts.Cancel();
 
@@ -170,7 +156,7 @@ public class DefectPixelDetectorTests
     public void Detect_InvalidSigma_Throws(double sigmaFactor)
     {
         ushort[] codes = MakeFlatWithDefects(4, 4, 100);
-        using RawImage image = LoadImage(codes, 4, 4);
+        using RawImage image = TestImages.FromCodes(codes, 4, 4, bitDepth: 12);
         Assert.Throws<ArgumentOutOfRangeException>(
             () => DefectPixelDetector.Detect(image, sigmaFactor: sigmaFactor));
     }

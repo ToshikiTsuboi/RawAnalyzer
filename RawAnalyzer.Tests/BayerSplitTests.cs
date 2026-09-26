@@ -5,20 +5,6 @@ namespace RawAnalyzer.Tests;
 
 public class BayerSplitTests
 {
-    private static RawImage LoadImage(ushort[] values, int width, int height)
-    {
-        var format = new RawFormat { Width = width, Height = height, BitDepth = 16 };
-        string path = TestData.WriteTempFile(TestData.EncodeRawFile(values, format));
-        try
-        {
-            return RawLoader.Load(path, format);
-        }
-        finally
-        {
-            File.Delete(path);
-        }
-    }
-
     [Theory]
     [InlineData(1, 0, 2, 0)]   // 象限内オフセット → 元画像では2画素刻み
     [InlineData(2, 0, 1, 0)]   // 右上象限 → パリティ(1,0)
@@ -34,7 +20,7 @@ public class BayerSplitTests
     {
         // 値 = y*4+x で座標を識別
         ushort[] values = Enumerable.Range(0, 16).Select(i => (ushort)i).ToArray();
-        using RawImage image = LoadImage(values, 4, 4);
+        using RawImage image = TestImages.FromCodes(values, 4, 4);
 
         ushort[] tiled = BayerSplit.CreateTiled(image);
 
@@ -65,7 +51,7 @@ public class BayerSplitTests
     public void CreateTiled_OddSize_TruncatesToEven()
     {
         ushort[] values = Enumerable.Range(0, 5 * 3).Select(i => (ushort)i).ToArray();
-        using RawImage image = LoadImage(values, 5, 3);
+        using RawImage image = TestImages.FromCodes(values, 5, 3);
 
         ushort[] tiled = BayerSplit.CreateTiled(image);
 

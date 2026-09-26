@@ -5,24 +5,10 @@ namespace RawAnalyzer.Tests;
 
 public class ProjectionAndOverflowTests
 {
-    private static RawImage LoadImage(ushort[] codes, int width, int height, int bitDepth = 16)
-    {
-        var format = new RawFormat { Width = width, Height = height, BitDepth = bitDepth };
-        string path = TestData.WriteTempFile(TestData.EncodeRawFile(codes, format));
-        try
-        {
-            return RawLoader.Load(path, format);
-        }
-        finally
-        {
-            File.Delete(path);
-        }
-    }
-
     [Fact]
     public void ComputeProjections_Canceled_Throws()
     {
-        using RawImage image = LoadImage(new ushort[64 * 64], 64, 64);
+        using RawImage image = TestImages.FromCodes(new ushort[64 * 64], 64, 64);
         using var cts = new CancellationTokenSource();
         cts.Cancel();
 

@@ -5,24 +5,6 @@ namespace RawAnalyzer.Tests;
 
 public class DefectCorrectorTests
 {
-    private static RawImage LoadImage(
-        ushort[] codes, int width, int height, BayerPattern pattern = BayerPattern.None)
-    {
-        var format = new RawFormat
-        {
-            Width = width, Height = height, BitDepth = 16, Bayer = pattern,
-        };
-        string path = TestData.WriteTempFile(TestData.EncodeRawFile(codes, format));
-        try
-        {
-            return RawLoader.Load(path, format);
-        }
-        finally
-        {
-            File.Delete(path);
-        }
-    }
-
     [Fact]
     public void Correct_MonoHotPixel_ReplacedByNeighborMedian()
     {
@@ -32,7 +14,7 @@ public class DefectCorrectorTests
         codes[2 * size + 2] = 60000; // 中央に白点
         codes[0] = 60000; // 左上隅にも白点(範囲内の近傍3画素だけで補間する)
 
-        using RawImage image = LoadImage(codes, size, size);
+        using RawImage image = TestImages.FromCodes(codes, size, size);
         var defects = new[]
         {
             new DefectPixel(0, 0, 60000, DefectType.Hot),
@@ -55,7 +37,7 @@ public class DefectCorrectorTests
             size, size, BayerPattern.Rggb, r: 1000, g: 8000, b: 3000);
         codes[2 * size + 2] = 60000; // (2,2) はR画素
 
-        using RawImage image = LoadImage(codes, size, size, BayerPattern.Rggb);
+        using RawImage image = TestImages.FromCodes(codes, size, size, bayer: BayerPattern.Rggb);
         var defects = new[] { new DefectPixel(2, 2, 60000, DefectType.Hot) };
 
         using RawImage result = DefectCorrector.Correct(image, defects, BayerPattern.Rggb);
@@ -74,7 +56,7 @@ public class DefectCorrectorTests
         codes[3 * size + 3] = 60000;
         codes[3 * size + 4] = 60000;
 
-        using RawImage image = LoadImage(codes, size, size);
+        using RawImage image = TestImages.FromCodes(codes, size, size);
         var defects = new[]
         {
             new DefectPixel(3, 3, 60000, DefectType.Hot),
@@ -103,7 +85,7 @@ public class DefectCorrectorTests
         }
 
         codes[2 * size + 2] = 60000;
-        using RawImage image = LoadImage(codes, size, size);
+        using RawImage image = TestImages.FromCodes(codes, size, size);
         var defects = new[] { new DefectPixel(2, 2, 60000, DefectType.Hot) };
 
         using RawImage result = DefectCorrector.Correct(
@@ -117,7 +99,7 @@ public class DefectCorrectorTests
     public void Correct_EmptyDefects_ReturnsCopy()
     {
         ushort[] codes = TestData.MakePattern(4 * 4, 16);
-        using RawImage image = LoadImage(codes, 4, 4, BayerPattern.Gbrg);
+        using RawImage image = TestImages.FromCodes(codes, 4, 4, bayer: BayerPattern.Gbrg);
 
         using RawImage result = DefectCorrector.Correct(
             image, Array.Empty<DefectPixel>(), BayerPattern.Gbrg);

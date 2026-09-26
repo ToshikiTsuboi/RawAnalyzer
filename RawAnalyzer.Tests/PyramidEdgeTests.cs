@@ -5,20 +5,6 @@ namespace RawAnalyzer.Tests;
 
 public class PyramidEdgeTests
 {
-    private static RawImage LoadImage(ushort[] codes, int width, int height)
-    {
-        var format = new RawFormat { Width = width, Height = height, BitDepth = 16 };
-        string path = TestData.WriteTempFile(TestData.EncodeRawFile(codes, format));
-        try
-        {
-            return RawLoader.Load(path, format);
-        }
-        finally
-        {
-            File.Delete(path);
-        }
-    }
-
     /// <summary>元画像の指定ブロックの平均(切り捨て)。</summary>
     private static ushort BlockAverage(
         ushort[] codes, int width, int height, int blockX, int blockY, int factor)
@@ -58,7 +44,7 @@ public class PyramidEdgeTests
             codes[i] = (ushort)((i * 7919) % 65536);
         }
 
-        using RawImage image = LoadImage(codes, width, height);
+        using RawImage image = TestImages.FromCodes(codes, width, height);
         TilePyramid pyramid = TilePyramid.Create(image, maxLevelPixels: long.MaxValue);
 
         Assert.NotEmpty(pyramid.Levels);
