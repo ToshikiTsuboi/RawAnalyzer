@@ -204,6 +204,7 @@ public partial class MainWindow : Window
             _ = Commands;
             _vm.LeftPanelVisible = _session.LeftPanelVisible;
             _vm.RightPanelVisible = _session.RightPanelVisible;
+            _vm.FileFilterText = _session.FileFilter ?? "";
             UpdatePanelLayout();
 
             if (App.StartupPath is { } startup)
@@ -301,6 +302,7 @@ public partial class MainWindow : Window
         _session.RightPanelWidth = _rightPanelWidth;
         _session.LeftPanelVisible = _vm.LeftPanelVisible;
         _session.RightPanelVisible = _vm.RightPanelVisible;
+        _session.FileFilter = _vm.FileFilterText;
         _session.WindowMaximized = WindowState == WindowState.Maximized;
         if (WindowState == WindowState.Normal)
         {
@@ -416,19 +418,17 @@ public partial class MainWindow : Window
 
         _currentFolder = folder;
         _vm.FolderPath = $"📂 {folder}";
-        _vm.Files.Clear();
-        foreach (FileEntry entry in entries)
-        {
-            _vm.Files.Add(entry);
-        }
+        _vm.ReplaceFiles(entries);
 
         ExpandTreeToFolder(folder);
         _session.LastFolder = folder;
+        _session.FileFilter = _vm.FileFilterText;
         _sessionStore.Save(_session);
 
         if (selectPath is not null)
         {
-            _vm.SelectedFile = _vm.Files.FirstOrDefault(
+            // 絞り込みで隠れているファイルは選択しない(リストに無い項目は選択できない)
+            _vm.SelectedFile = _vm.FilteredFiles.FirstOrDefault(
                 f => string.Equals(f.FullPath, selectPath, StringComparison.OrdinalIgnoreCase));
         }
     }
@@ -3498,7 +3498,7 @@ public partial class MainWindow : Window
                     + (frameFileSize >= 0
                         ? $" · {frameFileSize / (1024.0 * 1024.0):F1} MB"
                         : "") + TiffPageNote + ValueNoteSuffix;
-                _vm.SelectedFile = _vm.Files.FirstOrDefault(f => string.Equals(
+                _vm.SelectedFile = _vm.FilteredFiles.FirstOrDefault(f => string.Equals(
                     f.FullPath, path, StringComparison.OrdinalIgnoreCase));
                 // Filesのリスト・位置・再生状態を維持する。TIFFのページ送りへは切り替えない。
             }
@@ -4446,6 +4446,60 @@ public partial class MainWindow : Window
         {
             LoadFolder(_currentFolder, _vm.SelectedFile?.FullPath);
         }
+    }
+
+    private void OnFileFilterClearClick(object sender, RoutedEventArgs e)
+    {
+        _vm.ClearFileFilter();
+        FileFilterCombo.Focus();
+    }
+
+    /// <summary>絞り込み欄のキー操作。Esc で消去、Enter で一覧へ移動する。</summary>
+    private void OnFileFilterKeyDown(object sender, KeyEventArgs e)
+    {
+        if (FileFilterCombo.IsDropDownOpen)
+        {
+            return; // ドロップダウン操作中は ComboBox 既定の Esc / Enter に任せる
+        }
+
+        if (e.Key == Key.Escape && _vm.FileFilterText.Length > 0)
+        {
+            _vm.ClearFileFilter();
+            e.Handled = true;
+        }
+        else if (e.Key == Key.Enter)
+        {
+            FocusFileList();
+            e.Handled = true;
+        }
+    }
+
+    /// <summary>ファイル一覧へフォーカスを移す。選択が無い(または隠れた)場合は先頭を選ぶ。</summary>
+    private void FocusFileList()
+    {
+        if (_vm.SelectedFile is null || !_vm.FilteredFiles.Contains(_vm.SelectedFile))
+        {
+            _vm.SelectedFile = _vm.FilteredFiles.FirstOrDefault();
+        }
+
+        FileListBox.Focus();
+        if (_vm.SelectedFile is { } selected)
+        {
+            FileListBox.ScrollIntoView(selected);
+            (FileListBox.ItemContainerGenerator.ContainerFromItem(selected)
+                as System.Windows.Controls.ListBoxItem)?.Focus();
+        }
+    }
+
+    /// <summary>絞り込み欄へフォーカスを移す(Ctrl+F)。左パネルが隠れていれば表示する。</summary>
+    private void FocusFileFilter()
+    {
+        if (!_vm.LeftPanelVisible)
+        {
+            _vm.LeftPanelVisible = true;
+        }
+
+        FileFilterCombo.Focus();
     }
 
     private void OnTreePreviewRightClick(object sender, MouseButtonEventArgs e)

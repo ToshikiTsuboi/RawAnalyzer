@@ -1,6 +1,8 @@
 ﻿using System.Collections.ObjectModel;
+using System.IO;
 using System.Windows.Media;
 using RawAnalyzer.App.Mvvm;
+using RawAnalyzer.App.Services;
 
 namespace RawAnalyzer.App.ViewModels;
 
@@ -22,6 +24,12 @@ public sealed class MainViewModel : ObservableObject
 {
     private string _folderPath = "";
     private FileEntry? _selectedFile;
+    private string _fileFilterText = "";
+    private FileNameFilter _fileFilter = FileNameFilter.Empty;
+    private IReadOnlyList<FileEntry> _filteredFiles = Array.Empty<FileEntry>();
+    private IReadOnlyList<string> _fileExtensionPatterns = Array.Empty<string>();
+    private string _fileFilterSummary = "0 件";
+    private bool _suspendFileFilter;
     private bool _hasImage;
     private string _imageInfoText = "画像未読込";
     private bool _isLoading;
@@ -76,6 +84,18 @@ public sealed class MainViewModel : ObservableObject
     private string _fmtEndianText = "—";
     private string _fmtHdrText = "—";
 
+    /// <summary>ViewModel を生成し、ファイル一覧の変更に絞り込みを追従させる。</summary>
+    public MainViewModel()
+    {
+        Files.CollectionChanged += (_, _) =>
+        {
+            if (!_suspendFileFilter)
+            {
+                ApplyFileFilter();
+            }
+        };
+    }
+
     /// <summary>左パネルに表示中のフォルダパス。</summary>
     public string FolderPath
     {
@@ -91,6 +111,114 @@ public sealed class MainViewModel : ObservableObject
     {
         get => _selectedFile;
         set => SetProperty(ref _selectedFile, value);
+    }
+
+    /// <summary>
+    /// <see cref="Files"/> のうち絞り込み条件に一致するもの。リストはこちらを表示する。
+    /// ディレクトリ項目は常に残す。
+    /// </summary>
+    public IReadOnlyList<FileEntry> FilteredFiles
+    {
+        get => _filteredFiles;
+        private set => SetProperty(ref _filteredFiles, value);
+    }
+
+    /// <summary>
+    /// ファイル一覧の絞り込み条件。書式は <see cref="FileNameFilter"/> を参照
+    /// (拡張子・ワイルドカードの OR、または <c>/.../</c> で正規表現)。
+    /// </summary>
+    public string FileFilterText
+    {
+        get => _fileFilterText;
+        set
+        {
+            value ??= "";
+            if (SetProperty(ref _fileFilterText, value))
+            {
+                _fileFilter = FileNameFilter.Parse(value);
+                OnPropertyChanged(nameof(FileFilterError));
+                OnPropertyChanged(nameof(FileFilterHasError));
+                ApplyFileFilter();
+            }
+        }
+    }
+
+    /// <summary>絞り込み条件が不正な場合の説明(ツールチップ用)。正常なら null。</summary>
+    public string? FileFilterError => _fileFilter.Error;
+
+    /// <summary>絞り込み条件が不正か(入力欄の強調表示に使う)。</summary>
+    public bool FileFilterHasError => _fileFilter.Error is not null;
+
+    /// <summary>「12 / 240 件」形式の件数表示。絞り込みがないときは総数のみ。</summary>
+    public string FileFilterSummary
+    {
+        get => _fileFilterSummary;
+        private set => SetProperty(ref _fileFilterSummary, value);
+    }
+
+    /// <summary>
+    /// 現在のフォルダに含まれる拡張子のワイルドカード(<c>*.raw</c> など)。
+    /// 多い順に並び、入力欄のドロップダウン候補になる。
+    /// </summary>
+    public IReadOnlyList<string> FileExtensionPatterns
+    {
+        get => _fileExtensionPatterns;
+        private set => SetProperty(ref _fileExtensionPatterns, value);
+    }
+
+    /// <summary>
+    /// ファイル一覧を丸ごと差し替える。1 件ずつ Add すると件数ぶん絞り込みが走るため、
+    /// フォルダの読み込みはこちらを使う。
+    /// </summary>
+    /// <param name="entries">新しい一覧(表示順)。</param>
+    public void ReplaceFiles(IEnumerable<FileEntry> entries)
+    {
+        _suspendFileFilter = true;
+        try
+        {
+            Files.Clear();
+            foreach (FileEntry entry in entries)
+            {
+                Files.Add(entry);
+            }
+        }
+        finally
+        {
+            _suspendFileFilter = false;
+        }
+
+        FileExtensionPatterns = BuildExtensionPatterns(Files);
+        ApplyFileFilter();
+    }
+
+    /// <summary>絞り込みを解除する。</summary>
+    public void ClearFileFilter()
+    {
+        FileFilterText = "";
+    }
+
+    private void ApplyFileFilter()
+    {
+        FileEntry[] filtered = _fileFilter.IsEmpty
+            ? Files.ToArray()
+            : Files.Where(f => f.IsDirectory || _fileFilter.IsMatch(f.Name)).ToArray();
+        FilteredFiles = filtered;
+        FileFilterSummary = _fileFilter.IsEmpty
+            ? $"{Files.Count} 件"
+            : $"{filtered.Length} / {Files.Count} 件";
+    }
+
+    private static IReadOnlyList<string> BuildExtensionPatterns(IEnumerable<FileEntry> files)
+    {
+        return files
+            .Where(f => !f.IsDirectory)
+            .Select(f => Path.GetExtension(f.Name).ToLowerInvariant())
+            .Where(extension => extension.Length > 1)
+            .GroupBy(extension => extension, StringComparer.Ordinal)
+            .OrderByDescending(group => group.Count())
+            .ThenBy(group => group.Key, StringComparer.Ordinal)
+            .Select(group => "*" + group.Key)
+            .ToArray();
     }
 
     /// <summary>画像が読み込まれているか。</summary>

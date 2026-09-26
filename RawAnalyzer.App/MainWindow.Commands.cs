@@ -311,6 +311,16 @@ public partial class MainWindow
             },
             new()
             {
+                Id = "file-filter",
+                Category = "ファイル",
+                Title = "ファイル一覧を絞り込む",
+                Key = Key.F,
+                Modifiers = ModifierKeys.Control,
+                Description = "拡張子・ワイルドカード・/正規表現/ で左パネルの一覧を絞り込む欄へ移動",
+                Execute = FocusFileFilter,
+            },
+            new()
+            {
                 Id = "right-panel",
                 Category = "表示",
                 Title = "調整パネルの表示切替",

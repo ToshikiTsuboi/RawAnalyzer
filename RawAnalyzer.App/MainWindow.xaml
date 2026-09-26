@@ -286,6 +286,7 @@
                         <Grid.RowDefinitions>
                             <RowDefinition Height="*" MinHeight="80" />
                             <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
                             <RowDefinition Height="1.4*" MinHeight="80" />
                         </Grid.RowDefinitions>
                         <TreeView x:Name="FolderTree" Grid.Row="0"
@@ -304,7 +305,56 @@
                         </TreeView>
                         <GridSplitter Grid.Row="1" Height="3" HorizontalAlignment="Stretch"
                                       Margin="4,3" />
-                        <ListBox x:Name="FileListBox" Grid.Row="2" ItemsSource="{Binding Files}"
+                        <!-- ファイル一覧の絞り込み。拡張子の候補はドロップダウンから、
+                             ワイルドカードや /正規表現/ は直接入力する -->
+                        <DockPanel Grid.Row="2" Margin="0,0,0,4">
+                            <Button DockPanel.Dock="Right" Style="{StaticResource PinToggle}"
+                                    Content="✕" Click="OnFileFilterClearClick"
+                                    AutomationProperties.Name="フィルタを消去"
+                                    ToolTip="フィルタを消去 (Esc)" />
+                            <TextBlock DockPanel.Dock="Right" Text="{Binding FileFilterSummary}"
+                                       FontSize="11" Foreground="{StaticResource TextFaint}"
+                                       VerticalAlignment="Center" Margin="6,0,2,0"
+                                       ToolTip="表示中 / フォルダ内のファイル数" />
+                            <Grid>
+                                <ComboBox x:Name="FileFilterCombo" IsEditable="True"
+                                          IsTextSearchEnabled="False" FontSize="11"
+                                          ItemsSource="{Binding FileExtensionPatterns}"
+                                          Text="{Binding FileFilterText, UpdateSourceTrigger=PropertyChanged}"
+                                          PreviewKeyDown="OnFileFilterKeyDown"
+                                          AutomationProperties.Name="ファイル一覧の絞り込み">
+                                    <ComboBox.Style>
+                                        <Style TargetType="ComboBox" BasedOn="{StaticResource {x:Type ComboBox}}">
+                                            <Setter Property="ToolTip"
+                                                    Value="拡張子・ワイルドカード・正規表現で一覧を絞り込みます (Ctrl+F)&#x0a;例: *.raw   .tif .tiff   dark*   img_00?.raw&#x0a;空白・; ・, で区切ると、いずれかに一致するものを表示&#x0a;/.../ で囲むと正規表現 (例: /^img_\d{3}\.raw$/)&#x0a;大文字小文字は区別しません。Esc で消去、Enter で一覧へ" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding FileFilterHasError}" Value="True">
+                                                    <Setter Property="BorderBrush" Value="#FFD9605B" />
+                                                    <Setter Property="ToolTip" Value="{Binding FileFilterError}" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </ComboBox.Style>
+                                </ComboBox>
+                                <TextBlock IsHitTestVisible="False" Margin="8,0,24,0"
+                                           VerticalAlignment="Center" FontSize="11"
+                                           Foreground="{StaticResource TextFaint}"
+                                           TextTrimming="CharacterEllipsis"
+                                           Text="絞り込み (*.raw、dark*、/正規表現/)">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding FileFilterText}" Value="">
+                                                    <Setter Property="Visibility" Value="Visible" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                            </Grid>
+                        </DockPanel>
+                        <ListBox x:Name="FileListBox" Grid.Row="3" ItemsSource="{Binding FilteredFiles}"
                                  SelectedItem="{Binding SelectedFile}"
                                  DisplayMemberPath="Name"
                                  ScrollViewer.VerticalScrollBarVisibility="Auto"

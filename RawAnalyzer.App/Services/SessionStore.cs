@@ -28,6 +28,9 @@ internal sealed class SessionState
     /// <summary>最後に表示していたフォルダ。</summary>
     public string? LastFolder { get; set; }
 
+    /// <summary>ファイル一覧の絞り込み条件(空なら絞り込みなし)。</summary>
+    public string? FileFilter { get; set; }
+
     /// <summary>左パネルの幅。</summary>
     public double? LeftPanelWidth { get; set; }
 
