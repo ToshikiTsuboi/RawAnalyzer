@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   RawAnalyzerのHDR機能確認用の合成DOL 2段(ライン交互)rawを生成する。
 

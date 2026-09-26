@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   RawAnalyzerのアプリケーションアイコン(.ico)を生成する。
   Bayer配列(RGGB)の2x2モザイクをモチーフにしたデザイン。

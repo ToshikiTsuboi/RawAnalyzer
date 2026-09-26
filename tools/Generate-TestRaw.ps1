@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   RawAnalyzer動作確認用の合成Rawファイルを生成する。
 
