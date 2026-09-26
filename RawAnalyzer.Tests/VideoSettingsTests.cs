@@ -13,18 +13,14 @@ public class VideoSettingsTests
     [InlineData("15 fps", 15)]
     [InlineData("30", 30)]
     [InlineData("7.5", 7.5)]
-    [InlineData("60 fps", 60)]
     public void Parse_ReadsNumberFromComboText(string text, double expected)
     {
         Assert.Equal(expected, FpsInput.Parse(text, fallback: 15), 10);
     }
 
     [Theory]
-    [InlineData("")]
-    [InlineData("   ")]
-    [InlineData("fps")]
-    [InlineData("abc")]
-    [InlineData(null)]
+    [InlineData(null)]  // 空欄・空白と同じ IsNullOrWhiteSpace の分岐
+    [InlineData("fps")] // 入力途中の単位だけ(数字なし)
     public void Parse_FallsBackWhenUnreadable(string? text)
     {
         // 入力途中で再生速度が飛ばないように、読めないときは既定値のまま

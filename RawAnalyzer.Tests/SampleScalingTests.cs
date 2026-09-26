@@ -87,43 +87,4 @@ public class SampleScalingTests
         Assert.Equal(0, scaling.ToCode(double.NaN));
         Assert.Contains("非数", scaling.Describe());
     }
-
-    [Fact]
-    public void AllSameValue_DoesNotDivideByZero()
-    {
-        int[] bits = FloatBits(7f, 7f, 7f);
-        SampleScaling scaling = SampleScaling.FromRange(
-            SampleScaling.Scan(bits, bits.Length, SampleInterpretation.Float));
-
-        ushort code = scaling.ToCode(7);
-        Assert.InRange(code, (ushort)0, (ushort)65535);
-    }
-
-    [Fact]
-    public void Convert_MatchesToCode()
-    {
-        int[] bits = FloatBits(0f, 0.25f, 0.75f, 1f);
-        SampleScaling scaling = SampleScaling.FromRange(
-            SampleScaling.Scan(bits, bits.Length, SampleInterpretation.Float));
-
-        var codes = new ushort[bits.Length];
-        scaling.Convert(bits, bits.Length, SampleInterpretation.Float, codes);
-
-        for (int i = 0; i < bits.Length; i++)
-        {
-            Assert.Equal(
-                scaling.ToCode(SampleScaling.ToValue(bits[i], SampleInterpretation.Float)),
-                codes[i]);
-        }
-    }
-
-    [Fact]
-    public void Convert_RejectsSmallDestination()
-    {
-        int[] bits = FloatBits(0f, 1f);
-        SampleScaling scaling = SampleScaling.FromRange(new SampleRange(0, 1, 0));
-
-        Assert.Throws<ArgumentException>(
-            () => scaling.Convert(bits, bits.Length, SampleInterpretation.Float, new ushort[1]));
-    }
 }

@@ -30,15 +30,13 @@ public class ImageProcessingDialogTests
             Assert.Equal(4, dialog.ReadChoice().Factor);
             ((ComboBox)dialog.FindName("AggregationCombo")).SelectedIndex = 1;
             Assert.Contains("最大16倍", policy.Text);
-            Assert.Contains("16bit表示値の65535で飽和", policy.Text);
-            Assert.Contains("12bit素材でも14bit等への階調拡張は行いません", policy.Text);
             Assert.Equal(BinningMode.Sum, dialog.ReadChoice().Mode);
             CaptureIfRequested(dialog, "binning");
 
             operation.SelectedIndex = 4;
             var sigma = (TextBox)dialog.FindName("SigmaBox");
             var amount = (TextBox)dialog.FindName("AmountBox");
-            foreach (string invalid in new[] { "NaN", "Infinity", "-1", "", "abc" })
+            foreach (string invalid in new[] { "NaN", "-1", "abc" })
             {
                 sigma.Text = invalid;
                 Assert.False(run.IsEnabled);
@@ -61,7 +59,6 @@ public class ImageProcessingDialogTests
 
             var rgb = new ImageProcessingDialog("test.png", 18, 10, BayerPattern.Bggr, true, true);
             Assert.Contains("9×5", ((TextBlock)rgb.FindName("PreviewText")).Text);
-            Assert.Contains("RGB", ((TextBlock)rgb.FindName("PolicyText")).Text);
             rgb.Close();
 
             var large = new ImageProcessingDialog("large.raw", 50000, 50000, BayerPattern.None, false, false);

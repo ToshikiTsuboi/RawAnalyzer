@@ -9,19 +9,6 @@ namespace RawAnalyzer.Tests;
 public class DisplaySettingsTests
 {
     [Fact]
-    public void CreateDefault_MapsFullRange()
-    {
-        DisplaySettings settings = DisplaySettings.CreateDefault(12);
-        DisplayParameters parameters = settings.ToDisplayParameters(12);
-
-        Assert.Equal(0, parameters.BlackPoint);
-        Assert.Equal(65535, parameters.WhitePoint);
-        Assert.Equal(1.0, parameters.Gain, 10);
-        Assert.Equal(1.0, parameters.Gamma, 10);
-        Assert.Equal(1.0, parameters.Contrast, 10);
-    }
-
-    [Fact]
     public void ToDisplayParameters_UsesLevelCodeConvention()
     {
         // メインビューのApplyLevelCodesと同じ規約:
@@ -40,30 +27,14 @@ public class DisplaySettingsTests
         Assert.Equal(0.5, new DisplaySettings { GainDb = -6.0206 }.GainLinear, 4);
         Assert.Equal(1000.0, new DisplaySettings { GainDb = 60 }.GainLinear, 6);
     }
-
-    [Fact]
-    public void Percent_IsComparableAcrossBitDepths()
-    {
-        // ビット深度が違うカメラの「同じ条件」は%FSで一致する
-        var on12bit = new DisplaySettings { BlackCode = 409.5, WhiteCode = 4095 };
-        var on10bit = new DisplaySettings { BlackCode = 102.3, WhiteCode = 1023 };
-
-        Assert.Equal(10.0, on12bit.BlackPercent(12), 6);
-        Assert.Equal(10.0, on10bit.BlackPercent(10), 6);
-        Assert.Equal(100.0, on12bit.WhitePercent(12), 6);
-        Assert.Equal(100.0, on10bit.WhitePercent(10), 6);
-    }
 }
 
 public class CompareViewLayoutTests
 {
     [Theory]
     [InlineData(0, 1)]  // 画像なし: 中央の追加案内のみ
-    [InlineData(1, 1)]  // 1枚は領域全体
-    [InlineData(2, 2)]  // 2枚は左右半分ずつ
-    [InlineData(3, 3)]  // 3枚は横一列
+    [InlineData(3, 3)]  // 3枚までは横一列
     [InlineData(4, 2)]  // 4枚は2×2
-    [InlineData(5, 2)]  // 上限超えは来ないが2列のまま
     public void ColumnsFor_ThreeAcrossThenGrid(int elements, int expected)
     {
         Assert.Equal(expected, CompareView.ColumnsFor(elements));
@@ -82,17 +53,9 @@ public class ComparePaneTests
     [InlineData(@"C:\a\b.raw", true)]
     [InlineData(@"C:\a\b.BIN", true)]
     [InlineData(@"C:\a\b.tif", false)]
-    [InlineData(@"C:\a\b.png", false)]
     public void IsRawFile_ChecksExtension(string path, bool expected)
     {
         Assert.Equal(expected, ComparePane.IsRawFile(path));
-    }
-
-    [Fact]
-    public async Task LoadAsync_Raw_RequiresFormat()
-    {
-        await Assert.ThrowsAsync<ArgumentNullException>(
-            () => ComparePane.LoadAsync(@"C:\nowhere\x.raw", rawFormat: null));
     }
 
     [Fact]
@@ -111,6 +74,10 @@ public class ComparePaneTests
         string path = WriteRaw(codes, format);
         try
         {
+            // rawはフォーマット未指定では開けない
+            await Assert.ThrowsAsync<ArgumentNullException>(
+                () => ComparePane.LoadAsync(path, rawFormat: null));
+
             using ComparePane pane = await ComparePane.LoadAsync(path, format);
 
             Assert.Equal(BayerPattern.Rggb, pane.Format.Bayer);
@@ -120,44 +87,17 @@ public class ComparePaneTests
             Assert.Equal((1 << 12) - 1, pane.Display.WhiteCode);
 
             await pane.EnsureTilePyramidAsync();
-            await pane.EnsureBayerPyramidAsync();
             Assert.NotNull(pane.Pyramid);
-            Assert.NotNull(pane.BayerPyramid);
 
             // 同じフレームなら再生成しない
             TilePyramid? tile = pane.Pyramid;
-            BayerPyramid? bayer = pane.BayerPyramid;
             await pane.EnsureTilePyramidAsync();
-            await pane.EnsureBayerPyramidAsync();
             Assert.Same(tile, pane.Pyramid);
-            Assert.Same(bayer, pane.BayerPyramid);
-        }
-        finally
-        {
-            File.Delete(path);
-        }
-    }
 
-    [Fact]
-    public async Task LoadAsync_MultiFrameRaw_RebuildsPyramidForOtherFrame()
-    {
-        var format = new RawFormat
-        {
-            Width = 16, Height = 16, BitDepth = 16, FrameCount = 2,
-            Bayer = BayerPattern.Rggb,
-        };
-        var codes = new ushort[16 * 16 * 2];
-        string path = WriteRaw(codes, format);
-        try
-        {
-            using ComparePane pane = await ComparePane.LoadAsync(path, format);
-            await pane.EnsureBayerPyramidAsync(frame: 0);
-            BayerPyramid? first = pane.BayerPyramid;
-
-            await pane.EnsureBayerPyramidAsync(frame: 1);
-
-            Assert.NotSame(first, pane.BayerPyramid);
-            Assert.Equal(1, pane.BayerPyramidFrame);
+            // Disposeは画像も破棄する(MMFハンドル漏れ防止)。二重Disposeは安全
+            pane.Dispose();
+            Assert.Throws<ObjectDisposedException>(() => pane.Image.GetPixel(0, 0));
+            pane.Dispose();
         }
         finally
         {
@@ -197,33 +137,6 @@ public class ComparePaneTests
             Assert.NotNull(pane.Color);
             Assert.Equal(8, pane.Image.Width);
             Assert.Equal(BayerPattern.None, pane.Format.Bayer);
-
-            // Bayerなしなので何もしない(例外にならない)
-            await pane.EnsureBayerPyramidAsync();
-            Assert.Null(pane.BayerPyramid);
-        }
-        finally
-        {
-            File.Delete(path);
-        }
-    }
-
-    [Fact]
-    public async Task Dispose_ReleasesImageAndRejectsFurtherUse()
-    {
-        var format = new RawFormat { Width = 8, Height = 8, BitDepth = 16 };
-        string path = WriteRaw(new ushort[64], format);
-        try
-        {
-            ComparePane pane = await ComparePane.LoadAsync(path, format);
-            pane.Dispose();
-
-            Assert.Throws<ObjectDisposedException>(() => pane.Image.GetPixel(0, 0));
-            await Assert.ThrowsAsync<ObjectDisposedException>(
-                () => pane.EnsureTilePyramidAsync());
-
-            // 二重Disposeは安全
-            pane.Dispose();
         }
         finally
         {

@@ -23,12 +23,11 @@ public class TiffSpecTests
 
     [Theory]
     [InlineData(34925, "LZMA")]
-    [InlineData(50000, "Zstd")]
-    [InlineData(50002, "JPEG XL")]
     [InlineData(9999, "不明")]
     public void UnknownCompression_IsRejectedBeforeWic(int compression, string name)
     {
-        // WICはこれらをエラーにせず全画素0の画像として返す
+        // WICはこれらをエラーにせず全画素0の画像として返す。未知の圧縮は EnsureWicCapable の同じ throw で
+        // 弾かれ、差は表示名の表だけなので、表にある値と無い値を1つずつ見る
         var page = TiffBuilder.GrayPage(W, H, 16, Ramp16(), compression: compression);
         using var file = TempTiff.Write(new TiffBuilder().Build(page));
 
@@ -57,13 +56,12 @@ public class TiffSpecTests
     }
 
     [Theory]
-    [InlineData(new byte[] { 0, 1, 1, 2 }, BayerPattern.Rggb)]
-    [InlineData(new byte[] { 2, 1, 1, 0 }, BayerPattern.Bggr)]
     [InlineData(new byte[] { 1, 0, 2, 1 }, BayerPattern.Grbg)]
     [InlineData(new byte[] { 1, 2, 0, 1 }, BayerPattern.Gbrg)]
     public void Cfa_IsReadAsBayerRaw(byte[] cfaPattern, BayerPattern expected)
     {
         // Photometric=CFA(32803) をWICは勝手に現像してRGBにする。生値のままBayerとして読む
+        // (Rggb は Dng_MainImageInSubIfd、Bggr は Cfa8Bit_IsDecodedNativelyWithBayer が同じ表を通す)
         var page = TiffBuilder.GrayPage(W, H, 16, Ramp16(), photometric: TiffLoader.PhotometricCfa);
         page.Tags[33421] = (3, new long[] { 2, 2 });
         page.Tags[33422] = (1, cfaPattern);
@@ -285,47 +283,29 @@ public class TiffSpecTests
 
         // ファイル末尾までに収まるフレーム数に切り詰める(このビルダはIFDを画素の後ろに置くので
         // その分も1フレームに数え得る。宣言の50より小さく、2以上であればよい)
-        Assert.True(TiffLoader.TryProbePixelLayout(file.Path, out TiffPixelLayout? layout, out _));
-        long expected = (new FileInfo(file.Path).Length - layout!.DataOffset) / (W * H * 2);
         Assert.True(TiffLoader.TryReadSampleInfo(file.Path, out TiffSampleInfo? info));
-        Assert.Equal(expected, info!.PageCount);
-        Assert.InRange(info.PageCount, 2, 49);
+        Assert.InRange(info!.PageCount, 2, 49);
         Assert.False(TiffLoader.TryReadSampleInfo(file.Path, out _, pageIndex: info.PageCount));
     }
 
-    [Theory]
-    [InlineData(1)]
-    [InlineData(8)]
-    public void ReducedResolutionPages_AreNotCountedOnAnyRoute(int compression)
+    [Fact]
+    public void ReducedResolutionPages_AreNotCountedOnAnyRoute()
     {
-        // WICは NewSubfileType bit0 のIFDをフレームに数えない。直接経路も同じ数え方にする
-        var full = TiffBuilder.GrayPage(W, H, 16, Ramp16(), compression: compression);
-        var reduced = TiffBuilder.GrayPage(3, 2, 16, new byte[12], compression: compression);
+        // WICは NewSubfileType bit0 のIFDをフレームに数えない。ページ表(TryReadSampleInfo)も
+        // 直接経路の読込結果も同じ数え方にする(以前はページ数が経路で食い違い、ページ送りが例外になった)
+        var full = TiffBuilder.GrayPage(W, H, 16, Ramp16());
+        var reduced = TiffBuilder.GrayPage(3, 2, 16, new byte[12]);
         reduced.Tags[254] = (4, new long[] { 1 });
         using var file = TempTiff.Write(new TiffBuilder().Build(full, reduced));
 
         Assert.True(TiffLoader.TryReadSampleInfo(file.Path, out TiffSampleInfo? info));
         Assert.Equal(1, info!.PageCount);
         Assert.False(TiffLoader.TryReadSampleInfo(file.Path, out _, pageIndex: 1));
-        if (compression == 1)
-        {
-            using RawImage image = ImageFileLoader.Load(file.Path).Luminance;
-            AssertRamp16(image);
-        }
-    }
-
-    [Fact]
-    public void MixedPyramid_PageNavigationDoesNotThrow()
-    {
-        // ページ0=非圧縮(直接)、縮小ページ=圧縮(WIC)。以前はページ数が経路で食い違い例外になった
-        var full = TiffBuilder.GrayPage(W, H, 16, Ramp16());
-        var reduced = TiffBuilder.GrayPage(3, 2, 16, new byte[12], compression: 8);
-        reduced.Tags[254] = (4, new long[] { 1 });
-        using var file = TempTiff.Write(new TiffBuilder().Build(full, reduced));
 
         DecodedImage decoded = ImageFileLoader.Load(file.Path);
         using RawImage image = decoded.Luminance;
         Assert.Equal(1, decoded.PageCount);
+        AssertRamp16(image);
     }
 
     [Theory]
@@ -360,17 +340,6 @@ public class TiffSpecTests
         Assert.Null(decoded.Color);
         Assert.Equal(bits, image.Format.BitDepth);
         Assert.Equal(bits == 8 ? 5 * 257 : 5000, image.GetPixel(5, 0));
-    }
-
-    [Fact]
-    public void TryDecodeUncompressed_DeclinesCompressedPagesWithReason()
-    {
-        var page = TiffBuilder.GrayPage(W, H, 16, Ramp16(), compression: 5);
-        using var file = TempTiff.Write(new TiffBuilder().Build(page));
-
-        Assert.False(TiffLoader.TryDecodeUncompressed(file.Path, 0, out RawImage? image, out _, out string reason));
-        Assert.Null(image);
-        Assert.Contains("LZW", reason);
     }
 
     [Fact]
@@ -433,21 +402,31 @@ public class TiffSpecTests
     }
 
     [Fact]
-    public async Task ComparePane_ShowsValueNoteInFileName()
+    public async Task ComparePane_LabelsFirstPageAndShowsValueNoteInFileName()
     {
-        var bytes = new byte[W * H * 4];
+        // 2ページの32bit実数TIFF。先頭ページは昇順、2ページ目は降順にして、
+        // 表示名(ページ表記と値域換算メモ)と画素が先頭ページのものであることを1本で見る
+        var ascending = new byte[W * H * 4];
+        var descending = new byte[W * H * 4];
         for (int i = 0; i < W * H; i++)
         {
-            BinaryPrimitives.WriteSingleLittleEndian(bytes.AsSpan(i * 4), i / (float)(W * H - 1));
+            float v = i / (float)(W * H - 1);
+            BinaryPrimitives.WriteSingleLittleEndian(ascending.AsSpan(i * 4), v);
+            BinaryPrimitives.WriteSingleLittleEndian(descending.AsSpan(i * 4), 1f - v);
         }
 
-        var page = TiffBuilder.GrayPage(W, H, 32, bytes, sampleFormat: 3);
-        using var file = TempTiff.Write(new TiffBuilder().Build(page));
+        var first = TiffBuilder.GrayPage(W, H, 32, ascending, sampleFormat: 3);
+        var second = TiffBuilder.GrayPage(W, H, 32, descending, sampleFormat: 3);
+        using var file = TempTiff.Write(new TiffBuilder().Build(first, second));
 
         using RawAnalyzer.App.Compare.ComparePane pane =
             await RawAnalyzer.App.Compare.ComparePane.LoadAsync(file.Path, rawFormat: null);
+        Assert.Equal(2, pane.PageCount);
         Assert.Equal("32bit実数 0〜1 → 16bit", pane.ValueNote);
+        Assert.Contains("TIFFページ 1/2", pane.FileName);
         Assert.EndsWith(" · 32bit実数 0〜1 → 16bit", pane.FileName);
+        Assert.Equal(0, pane.Image.GetPixel(0, 0));
+        Assert.Equal(65535, pane.Image.GetPixel(W - 1, H - 1));
     }
 
     // ------------------------------------------------------------------ 補助

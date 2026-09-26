@@ -8,17 +8,6 @@ namespace RawAnalyzer.Tests;
 
 public class ProfileAxisRangeTests
 {
-    [Theory]
-    [InlineData(255)]
-    [InlineData(1023)]
-    [InlineData(4095)]
-    [InlineData(16383)]
-    [InlineData(65535)]
-    public void Full_UsesImageBitDepth(int maxCode)
-    {
-        Assert.Equal(new ProfileAxisRange(0, maxCode), ProfileAxisRange.Full(maxCode));
-    }
-
     [Fact]
     public void Auto_AddsFivePercentPadding()
     {
@@ -52,23 +41,18 @@ public class ProfileAxisRangeTests
     }
 
     [Theory]
-    [InlineData("", "10")]
-    [InlineData("10", "")]
-    [InlineData("10", "10")]
-    [InlineData("11", "10")]
-    [InlineData("NaN", "10")]
-    [InlineData("0", "Infinity")]
-    [InlineData("-Infinity", "10")]
-    [InlineData("0", "1e999")]
-    [InlineData("x", "100")]
-    [InlineData("-1e308", "1e308")]
+    [InlineData("", "10")]           // 最小側が解析できない
+    [InlineData("10", "")]           // 最大側が解析できない
+    [InlineData("10", "10")]         // 等しい
+    [InlineData("11", "10")]         // 逆転
+    [InlineData("NaN", "10")]        // 非有限
+    [InlineData("-1e308", "1e308")]  // 差が桁あふれ
     public void Manual_RejectsInvalidRanges(string minimum, string maximum)
     {
         Assert.False(ProfileAxisRange.TryParse(minimum, maximum, CultureInfo.InvariantCulture, out _));
     }
 
     [Theory]
-    [InlineData("en-US", "-1.25", "2.5")]
     [InlineData("ja-JP", "-1.25", "2.5")]
     [InlineData("de-DE", "-1,25", "2,5")]
     [InlineData("de-DE", "-1.25", "2.5")]

@@ -1,7 +1,6 @@
 using System.Buffers.Binary;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
-using RawAnalyzer.App.Compare;
 using RawAnalyzer.App.Services;
 using RawAnalyzer.Core;
 using Xunit;
@@ -13,18 +12,13 @@ public class TiffStackTests
     [Theory]
     [InlineData(8, false, TiffCompressOption.None)]
     [InlineData(16, false, TiffCompressOption.None)]
-    [InlineData(8, true, TiffCompressOption.None)]
-    [InlineData(16, true, TiffCompressOption.None)]
-    [InlineData(8, false, TiffCompressOption.Lzw)]
     [InlineData(16, false, TiffCompressOption.Lzw)]
     [InlineData(8, true, TiffCompressOption.Lzw)]
     [InlineData(16, true, TiffCompressOption.Lzw)]
-    [InlineData(8, false, TiffCompressOption.Zip)]
-    [InlineData(16, false, TiffCompressOption.Zip)]
-    [InlineData(8, true, TiffCompressOption.Zip)]
-    [InlineData(16, true, TiffCompressOption.Zip)]
     public void Load_RandomAccessPreservesEachPage(int bits, bool color, TiffCompressOption compression)
     {
+        // 非圧縮16bitグレーだけが直接経路(RawLoader)で、残りはWICを通る。圧縮方式は自前コードの
+        // 分岐に関与しないので、圧縮側は LZW を代表にする。
         using var file = new Fixture(compression,
             Page(5, 3, bits, color, 11), Page(5, 3, bits, color, 73), Page(5, 3, bits, color, 201));
         foreach (int index in new[] { 2, 0, 1, 2 })
@@ -33,6 +27,8 @@ public class TiffStackTests
             using RawImage image = decoded.Luminance;
             Assert.Equal(3, decoded.PageCount);
             Assert.Equal(index, decoded.PageIndex);
+            // 整数の8/16bitはどの経路でも値域換算メモを付けない。
+            Assert.Null(decoded.ValueNote);
             Assert.Equal(1, image.FrameCount);
             Assert.Equal(bits, image.Format.BitDepth);
             Assert.Equal(5, image.Width);
@@ -75,22 +71,17 @@ public class TiffStackTests
             Assert.Equal(rgb, decoded.Color is not null);
         }
 
-        Assert.Equal("_p0001", source.PageSuffix(0));
-        Assert.Equal("_p0003", source.PageSuffix(2));
         Assert.True(source.IsSourcePath(file.Path.ToUpperInvariant()));
         Assert.False(source.IsSourcePath(file.Path + ".new.tif"));
         Assert.True(source.IsSourcePath(System.IO.Path.Combine(
             System.IO.Path.GetDirectoryName(file.Path)!, ".", System.IO.Path.GetFileName(file.Path))));
     }
 
-    [Theory]
-    [InlineData(BayerPattern.Rggb)]
-    [InlineData(BayerPattern.Bggr)]
-    [InlineData(BayerPattern.Grbg)]
-    [InlineData(BayerPattern.Gbrg)]
-    [InlineData(BayerPattern.None)]
-    public async Task Source_BayerOverrideSurvivesRgbPagesAndCanBeChanged(BayerPattern pattern)
+    [Fact]
+    public async Task Source_BayerOverrideSurvivesRgbPagesAndCanBeChanged()
     {
+        // GetPageFormat は「RGBページなら None、それ以外は BayerOverride」の素通しなので、パターンは1種で足りる。
+        const BayerPattern pattern = BayerPattern.Rggb;
         using var file = new Fixture(TiffCompressOption.Lzw,
             Page(4, 4, 8, false, 12), Page(4, 4, 16, true, 1234), Page(4, 4, 16, false, 60000));
         var source = new TiffStackSource(file.Path, 3) { BayerOverride = pattern };
@@ -112,23 +103,6 @@ public class TiffStackTests
         Assert.Equal(BayerPattern.None, source.GetPageFormat(gray).Bayer);
         // 別ファイルを開いたときは前スタックの設定を引き継がない。
         Assert.Equal(BayerPattern.None, new TiffStackSource(file.Path, 3).GetPageFormat(gray).Bayer);
-    }
-
-    [Fact]
-    public async Task Source_FileSequenceDisablesPageNavigationButKeepsSaveProtection()
-    {
-        using var file = new Fixture(TiffCompressOption.Lzw,
-            Page(4, 4, 16, false, 10), Page(4, 4, 16, false, 20));
-        var source = new TiffStackSource(file.Path, 2, pageNavigationEnabled: false);
-        Assert.False(source.PageNavigationEnabled);
-        Assert.True(source.IsSourcePath(file.Path));
-        Assert.Equal("_p0001", source.PageSuffix(0));
-        DecodedImage decoded = await source.LoadPageAsync(0, CancellationToken.None);
-        using RawImage image = decoded.Luminance;
-        Assert.Equal(0, decoded.PageIndex);
-        Assert.Equal(10, image.GetPixel(0, 0));
-        // 明示的に開き直した場合にだけ、TIFF内のページ送りを有効にする。
-        Assert.True(new TiffStackSource(file.Path, 2).PageNavigationEnabled);
     }
 
     [Theory]
@@ -188,13 +162,12 @@ public class TiffStackTests
         using var exclusive = new FileStream(file.Path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
     }
 
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public void Load_CanCancelBetweenPixelBands(bool rgb)
+    [Fact]
+    public void Load_CanCancelBetweenPixelBands()
     {
+        // グレーもRGBも ReadBands の同じ ThrowIfCancellationRequested で止まるので、軽いグレーだけを使う。
         using var file = new Fixture(TiffCompressOption.Lzw,
-            Page(8, 8, 8, rgb, 10), Page(1024, 1025, 16, rgb, 30000));
+            Page(8, 8, 8, false, 10), Page(1024, 1025, 16, false, 30000));
         using var cts = new CancellationTokenSource();
         bool reported = false;
         var progress = new CallbackProgress(value =>
@@ -328,36 +301,6 @@ public class TiffStackTests
     }
 
     [Fact]
-    public void ProcessingAndSave_UseSelectedPageOnlyAndLeaveStackIntact()
-    {
-        using var file = new Fixture(TiffCompressOption.Lzw, Page(8, 8, 16, false, 10), Page(8, 8, 16, false, 4321));
-        byte[] original = File.ReadAllBytes(file.Path);
-        DecodedImage decoded = ImageFileLoader.Load(file.Path, pageIndex: 1);
-        using RawImage image = decoded.Luminance;
-        using RawImage binned = ImageBinning.Apply(image, 2);
-        using RawImage filtered = ImageFilters.Apply(binned, new ImageFilterOptions(ImageFilterKind.Gaussian));
-        using var output = new Fixture(Array.Empty<byte>());
-        TiffWriter.SaveGray16(filtered, 0, output.Path);
-        DecodedImage saved = ImageFileLoader.Load(output.Path);
-        using RawImage roundtrip = saved.Luminance;
-        Assert.Equal(1, saved.PageCount);
-        Assert.Equal(4, roundtrip.Width);
-        Assert.Equal(4, roundtrip.Height);
-        Assert.Equal(4321, roundtrip.GetPixel(2, 2));
-        Assert.Equal(original, File.ReadAllBytes(file.Path));
-    }
-
-    [Fact]
-    public async Task Compare_LabelsFirstPageExplicitly()
-    {
-        using var file = new Fixture(TiffCompressOption.Lzw, Page(4, 4, 16, false, 10), Page(4, 4, 16, false, 20));
-        using ComparePane pane = await ComparePane.LoadAsync(file.Path, null);
-        Assert.Equal(2, pane.PageCount);
-        Assert.Contains("TIFFページ 1/2", pane.FileName);
-        Assert.Equal(10, pane.Image.GetPixel(0, 0));
-    }
-
-    [Fact]
     public void Load_DoesNotDecodeUnselectedPagePixels()
     {
         byte[] bytes = BuildGappedStack(false);
@@ -373,37 +316,6 @@ public class TiffStackTests
         Assert.Equal(8, image.Format.BitDepth);
         Assert.Equal(232 * 257, image.GetPixel(0, 0));
         Assert.ThrowsAny<Exception>(() => ImageFileLoader.Load(file.Path, pageIndex: 1));
-    }
-
-    [Fact]
-    public void Viewport_PageReplacementResetsRoiWhenDimensionsChange()
-    {
-        Exception? failure = null;
-        var thread = new Thread(() =>
-        {
-            try
-            {
-                using RawImage first = RawImage.FromPixels(new RawFormat { Width = 8, Height = 8 }, new ushort[64]);
-                using RawImage second = RawImage.FromPixels(new RawFormat { Width = 2, Height = 3 }, new ushort[6]);
-                var viewport = new RawAnalyzer.App.Controls.ImageViewport();
-                viewport.SetImage(first, first.Format);
-                viewport.SetRoi(new RegionOfInterest(4, 4, 3, 3));
-                Assert.Same(first, viewport.ReplaceImageAsync(second, second.Format).GetAwaiter().GetResult());
-                Assert.Same(second, viewport.Image);
-                Assert.Null(viewport.Roi);
-                Assert.Equal(0, viewport.Frame);
-                viewport.ClearImageAsync().GetAwaiter().GetResult();
-            }
-            catch (Exception ex)
-            {
-                failure = ex;
-            }
-        })
-        { IsBackground = true };
-        thread.SetApartmentState(ApartmentState.STA);
-        thread.Start();
-        Assert.True(thread.Join(TimeSpan.FromSeconds(10)));
-        if (failure is not null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
     }
 
     private sealed class CallbackProgress(Action<double> callback) : IProgress<double>
@@ -477,6 +389,30 @@ public class TiffStackTests
 
         public void Dispose() => File.Delete(Path);
     }
+}
+
+/// <summary>
+/// ページ差し替え時のビューポートの状態遷移。WPF要素を作るため、他のUIテストと同じ
+/// 共有STAスレッド("WPF UI" コレクション)で直列に実行する。
+/// </summary>
+[Collection("WPF UI")]
+public class TiffStackViewportTests
+{
+    [Fact]
+    public Task Viewport_PageReplacementResetsRoiWhenDimensionsChange() => WpfTestHost.Run(async () =>
+    {
+        using RawImage first = RawImage.FromPixels(new RawFormat { Width = 8, Height = 8 }, new ushort[64]);
+        using RawImage second = RawImage.FromPixels(new RawFormat { Width = 2, Height = 3 }, new ushort[6]);
+        var viewport = new RawAnalyzer.App.Controls.ImageViewport();
+        viewport.SetImage(first, first.Format);
+        viewport.SetRoi(new RegionOfInterest(4, 4, 3, 3));
+        Assert.NotNull(viewport.Roi);
+        Assert.Same(first, await viewport.ReplaceImageAsync(second, second.Format));
+        Assert.Same(second, viewport.Image);
+        Assert.Null(viewport.Roi);
+        Assert.Equal(0, viewport.Frame);
+        await viewport.ClearImageAsync();
+    });
 }
 
 internal static class TiffTestEncoderExtensions

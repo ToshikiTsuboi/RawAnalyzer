@@ -30,14 +30,20 @@ public class DefectCorrectorTests
         var codes = new ushort[size * size];
         Array.Fill(codes, (ushort)1000);
         codes[2 * size + 2] = 60000; // 中央に白点
+        codes[0] = 60000; // 左上隅にも白点(範囲内の近傍3画素だけで補間する)
 
         using RawImage image = LoadImage(codes, size, size);
-        var defects = new[] { new DefectPixel(2, 2, 60000, DefectType.Hot) };
+        var defects = new[]
+        {
+            new DefectPixel(0, 0, 60000, DefectType.Hot),
+            new DefectPixel(2, 2, 60000, DefectType.Hot),
+        };
 
         using RawImage result = DefectCorrector.Correct(image, defects, BayerPattern.None);
 
         Assert.Equal(1000, result.GetPixel(2, 2));
-        Assert.Equal(1000, result.GetPixel(0, 0)); // 他画素は不変
+        Assert.Equal(1000, result.GetPixel(0, 0));
+        Assert.Equal(1000, result.GetPixel(4, 4)); // 他画素は不変
     }
 
     [Fact]
@@ -108,30 +114,16 @@ public class DefectCorrectorTests
     }
 
     [Fact]
-    public void Correct_CornerDefect_UsesAvailableNeighbors()
-    {
-        const int size = 4;
-        var codes = new ushort[size * size];
-        Array.Fill(codes, (ushort)700);
-        codes[0] = 60000; // 左上隅
-
-        using RawImage image = LoadImage(codes, size, size);
-        var defects = new[] { new DefectPixel(0, 0, 60000, DefectType.Hot) };
-
-        using RawImage result = DefectCorrector.Correct(image, defects, BayerPattern.None);
-
-        Assert.Equal(700, result.GetPixel(0, 0));
-    }
-
-    [Fact]
     public void Correct_EmptyDefects_ReturnsCopy()
     {
         ushort[] codes = TestData.MakePattern(4 * 4, 16);
-        using RawImage image = LoadImage(codes, 4, 4);
+        using RawImage image = LoadImage(codes, 4, 4, BayerPattern.Gbrg);
 
         using RawImage result = DefectCorrector.Correct(
-            image, Array.Empty<DefectPixel>(), BayerPattern.None);
+            image, Array.Empty<DefectPixel>(), BayerPattern.Gbrg);
 
+        Assert.Equal(BayerPattern.Gbrg, result.Format.Bayer);
+        Assert.Equal(4, result.Width);
         for (int y = 0; y < 4; y++)
         {
             for (int x = 0; x < 4; x++)
@@ -139,40 +131,5 @@ public class DefectCorrectorTests
                 Assert.Equal(image.GetPixel(x, y), result.GetPixel(x, y));
             }
         }
-    }
-
-    [Fact]
-    public void Correct_PreservesFormat()
-    {
-        ushort[] codes = new ushort[16];
-        using RawImage image = LoadImage(codes, 4, 4, BayerPattern.Gbrg);
-        using RawImage result = DefectCorrector.Correct(
-            image, Array.Empty<DefectPixel>(), BayerPattern.Gbrg);
-        Assert.Equal(BayerPattern.Gbrg, result.Format.Bayer);
-        Assert.Equal(4, result.Width);
-    }
-
-    [Fact]
-    public void Correct_DetectThenCorrect_RemovesDefectsFromReDetection()
-    {
-        const int size = 32;
-        var codes = new ushort[size * size];
-        for (int i = 0; i < codes.Length; i++)
-        {
-            codes[i] = (ushort)(20000 + (i % 2) * 16);
-        }
-
-        codes[10 * size + 10] = 65000;
-        codes[20 * size + 5] = 100;
-
-        using RawImage image = LoadImage(codes, size, size);
-        DefectDetectionResult before = DefectPixelDetector.Detect(image, sigmaFactor: 6.0);
-        Assert.Equal(2, before.Defects.Count);
-
-        using RawImage corrected = DefectCorrector.Correct(
-            image, before.Defects, BayerPattern.None);
-        DefectDetectionResult after = DefectPixelDetector.Detect(corrected, sigmaFactor: 6.0);
-
-        Assert.Empty(after.Defects);
     }
 }

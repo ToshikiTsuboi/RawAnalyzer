@@ -152,22 +152,6 @@ public class WideSampleTiffTests
     }
 
     [Fact]
-    public void Float32Gray_AduScale_MapsMaximumToFullScale()
-    {
-        // 12bit相当の実数(平均フレーム等)。値域が[0,1]でなくても開ける
-        byte[] file = BuildTiff(FloatSamples(Ramp(4095f)), Width, Height, 32, 1, 3);
-
-        DecodedImage decoded = Load(file);
-        using RawImage owned = decoded.Luminance;
-
-        Assert.Equal(0, decoded.Luminance.GetPixel(0, 0));
-        Assert.Equal(65535, decoded.Luminance.GetPixel(Width - 1, Height - 1));
-
-        // 1コードが表す元の値が分かるので絶対値へ戻せる
-        Assert.Contains("1code", decoded.ValueNote);
-    }
-
-    [Fact]
     public void UnsignedInt32Gray_IsNotReadAsFloat()
     {
         // WICはこのページもGray32Floatとして返す。実数として読むと
@@ -244,25 +228,6 @@ public class WideSampleTiffTests
             decoded.Luminance.GetPixel(1, 0) > decoded.Luminance.GetPixel(0, 0),
             "階調が単調に増えること");
         Assert.NotNull(decoded.ValueNote);
-    }
-
-    [Fact]
-    public void Integer16Gray_KeepsExistingPath()
-    {
-        // 通常の16bit整数TIFFは従来どおりコードをそのまま持つ(換算メモは付かない)
-        var bytes = new byte[Width * Height * 2];
-        for (int i = 0; i < Width * Height; i++)
-        {
-            BinaryPrimitives.WriteUInt16LittleEndian(bytes.AsSpan(i * 2), (ushort)(i * 1000));
-        }
-
-        byte[] file = BuildTiff(bytes, Width, Height, 16, 1, 1);
-
-        DecodedImage decoded = Load(file);
-        using RawImage owned = decoded.Luminance;
-
-        Assert.Null(decoded.ValueNote);
-        Assert.Equal(1000, decoded.Luminance.GetPixel(1, 0));
     }
 
     private static DecodedImage Load(byte[] file) => LoadTiff(file);

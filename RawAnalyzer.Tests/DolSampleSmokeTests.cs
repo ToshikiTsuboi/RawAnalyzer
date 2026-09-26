@@ -6,10 +6,14 @@ namespace RawAnalyzer.Tests;
 
 /// <summary>
 /// tools/Generate-DolSample.ps1 が生成した実サンプルに対する分割・合成スモークテスト。
-/// 環境変数 RAWANALYZER_DOL_SAMPLE_PATH にファイルパスを設定した場合のみ実行される。
+/// 環境変数 RAWANALYZER_DOL_SAMPLE_PATH にファイルパスを設定した場合のみ実行され、
+/// 未設定ならスキップとして報告される。
 /// </summary>
 public class DolSampleSmokeTests
 {
+    /// <summary>DOLサンプルのパスを保持する環境変数名。</summary>
+    private const string PathVariable = "RAWANALYZER_DOL_SAMPLE_PATH";
+
     private readonly ITestOutputHelper _output;
 
     public DolSampleSmokeTests(ITestOutputHelper output)
@@ -17,15 +21,10 @@ public class DolSampleSmokeTests
         _output = output;
     }
 
-    [Fact]
+    [SampleFileFact(PathVariable)]
     public void DolSample_SplitAndMerge_RecoverHdrScene()
     {
-        string? path = Environment.GetEnvironmentVariable("RAWANALYZER_DOL_SAMPLE_PATH");
-        if (string.IsNullOrEmpty(path) || !File.Exists(path))
-        {
-            _output.WriteLine("RAWANALYZER_DOL_SAMPLE_PATH 未設定のためスキップ");
-            return;
-        }
+        string path = SampleFileFactAttribute.GetPath(PathVariable)!;
 
         var format = new RawFormat
         {
@@ -40,27 +39,34 @@ public class DolSampleSmokeTests
 
         // 分割: 長秒/短秒 各1920×1080
         IReadOnlyList<RawImage> frames = HdrSplitter.Split(image);
-        Assert.Equal(2, frames.Count);
-        Assert.All(frames, f => Assert.Equal(1080, f.Height));
-
-        // 中央スポット: 長秒は飽和、短秒は非飽和
-        ushort longCenter = frames[0].GetPixel(960, 540);
-        ushort shortCenter = frames[1].GetPixel(960, 540);
-        Assert.Equal(4095, longCenter >> 4);
-        Assert.Equal(4095 << 4, shortCenter);
-
-        // 合成: スポットが短秒×露光比で復元される
-        HdrImage merged = HdrMerger.Merge(frames, new HdrMergeParameters(ExposureRatio: 16));
-        float center = merged.Pixels[540 * 1920 + 960];
-        _output.WriteLine($"merged center = {center}, FullScale = {merged.FullScale}");
-        Assert.True(center > 1_000_000, $"中央スポットがHDR復元されていること: {center}");
-
-        // 左端(暗部)は長秒データがそのまま使われ低輝度
-        Assert.True(merged.Pixels[540 * 1920] < 65535);
-
-        foreach (RawImage frame in frames)
+        try
         {
-            frame.Dispose();
+            Assert.Equal(2, frames.Count);
+            Assert.All(frames, f => Assert.Equal(1080, f.Height));
+
+            // 中央スポット(半径60)はシーン輝度 = 露光比×4095。生成器は
+            // 長秒 = clip(シーン, 4095) = 4095、短秒 = シーン/16 = 4095 と書くので、
+            // 短秒もちょうど上限に達する(12bit → 16bit 正規化で 4095<<4)
+            ushort longCenter = frames[0].GetPixel(960, 540);
+            ushort shortCenter = frames[1].GetPixel(960, 540);
+            Assert.Equal(4095 << 4, longCenter);
+            Assert.Equal(4095 << 4, shortCenter);
+
+            // 合成: 長秒が飽和しているので短秒×露光比 = (4095<<4)×16 で復元される
+            HdrImage merged = HdrMerger.Merge(frames, new HdrMergeParameters(ExposureRatio: 16));
+            float center = merged.Pixels[540 * 1920 + 960];
+            _output.WriteLine($"merged center = {center}, FullScale = {merged.FullScale}");
+            Assert.Equal((4095 << 4) * 16f, center);
+
+            // 左端(暗部)はウェッジが0で、長秒データがそのまま使われ低輝度
+            Assert.True(merged.Pixels[540 * 1920] < 65535);
+        }
+        finally
+        {
+            foreach (RawImage frame in frames)
+            {
+                frame.Dispose();
+            }
         }
     }
 }

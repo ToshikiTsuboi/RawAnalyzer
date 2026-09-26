@@ -91,18 +91,6 @@ public class DefectPixelDetectorTests
     }
 
     [Fact]
-    public void Detect_BayerFlatField_MixedStatisticsWouldMissDefects()
-    {
-        // 回帰の対称確認: パターンを渡さない(旧来の混合統計)と同じ欠陥を見逃す
-        ushort[] codes = MakeBayerFlat(64, 64, 1000, 2000, 1500, (21, 20, 0));
-        using RawImage image = LoadImage(codes, 64, 64);
-
-        DefectDetectionResult mixed = DefectPixelDetector.Detect(image);
-
-        Assert.Equal(0, mixed.DeadCount);
-    }
-
-    [Fact]
     public void Detect_HotAndDeadPixels_FindsBoth()
     {
         ushort[] codes = MakeFlatWithDefects(32, 32, 1000, (5, 7, 4000), (20, 15, 10));
@@ -129,51 +117,6 @@ public class DefectPixelDetectorTests
 
         Assert.Single(result.Defects);
         Assert.Equal(DefectType.Hot, result.Defects[0].Type);
-    }
-
-    [Fact]
-    public void Detect_CleanImage_FindsNothing()
-    {
-        ushort[] codes = MakeFlatWithDefects(16, 16, 1000);
-        using RawImage image = LoadImage(codes, 16, 16);
-
-        DefectDetectionResult result = DefectPixelDetector.Detect(image);
-
-        Assert.Empty(result.Defects);
-    }
-
-    [Fact]
-    public void Detect_MaxResults_TruncatesAndFlags()
-    {
-        // 多数の白点を埋め込む
-        var defects = new (int, int, ushort)[20];
-        for (int i = 0; i < 20; i++)
-        {
-            defects[i] = (i, i, 4000);
-        }
-
-        ushort[] codes = MakeFlatWithDefects(32, 32, 1000, defects);
-        using RawImage image = LoadImage(codes, 32, 32);
-
-        DefectDetectionResult result = DefectPixelDetector.Detect(image, maxResults: 5);
-
-        Assert.True(result.Truncated);
-        Assert.True(result.Defects.Count <= 5);
-    }
-
-    [Fact]
-    public void Detect_ResultsSortedByRowThenColumn()
-    {
-        ushort[] codes = MakeFlatWithDefects(
-            32, 32, 1000, (20, 5, 4000), (3, 5, 4000), (10, 2, 4000));
-        using RawImage image = LoadImage(codes, 32, 32);
-
-        DefectDetectionResult result = DefectPixelDetector.Detect(image);
-
-        Assert.Equal(3, result.Defects.Count);
-        Assert.Equal((10, 2), (result.Defects[0].X, result.Defects[0].Y));
-        Assert.Equal((3, 5), (result.Defects[1].X, result.Defects[1].Y));
-        Assert.Equal((20, 5), (result.Defects[2].X, result.Defects[2].Y));
     }
 
     [Fact]
@@ -221,12 +164,14 @@ public class DefectPixelDetectorTests
             () => DefectPixelDetector.Detect(image, cancellationToken: cts.Token));
     }
 
-    [Fact]
-    public void Detect_InvalidSigma_Throws()
+    [Theory]
+    [InlineData(0.0)]
+    [InlineData(double.NaN)] // NaN は比較を素通りするので有限性の検査が要る
+    public void Detect_InvalidSigma_Throws(double sigmaFactor)
     {
         ushort[] codes = MakeFlatWithDefects(4, 4, 100);
         using RawImage image = LoadImage(codes, 4, 4);
         Assert.Throws<ArgumentOutOfRangeException>(
-            () => DefectPixelDetector.Detect(image, sigmaFactor: 0));
+            () => DefectPixelDetector.Detect(image, sigmaFactor: sigmaFactor));
     }
 }

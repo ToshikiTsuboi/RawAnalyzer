@@ -6,30 +6,35 @@ namespace RawAnalyzer.Tests;
 
 public class ImageFileLoaderLimitTests
 {
-    [Fact]
-    public void EstimateBytesPerPixel_ColorFormatsCostMoreThanGray()
+    private static PixelFormat ToPixelFormat(string name) => name switch
     {
-        // 画素数だけで制限すると形式差(最大16倍)を見落とす
-        Assert.Equal(2, ImageFileLoader.EstimateBytesPerPixel(PixelFormats.Gray16));
-        Assert.Equal(3, ImageFileLoader.EstimateBytesPerPixel(PixelFormats.Gray8));
-        Assert.Equal(8, ImageFileLoader.EstimateBytesPerPixel(PixelFormats.Rgb48));
-        Assert.Equal(16, ImageFileLoader.EstimateBytesPerPixel(PixelFormats.Rgba64));
-        Assert.Equal(12, ImageFileLoader.EstimateBytesPerPixel(PixelFormats.Bgra32));
-    }
+        nameof(PixelFormats.Gray16) => PixelFormats.Gray16,
+        nameof(PixelFormats.Gray8) => PixelFormats.Gray8,
+        nameof(PixelFormats.Rgb48) => PixelFormats.Rgb48,
+        nameof(PixelFormats.Rgba64) => PixelFormats.Rgba64,
+        nameof(PixelFormats.Bgra32) => PixelFormats.Bgra32,
+        _ => throw new ArgumentOutOfRangeException(nameof(name), name, null),
+    };
 
-    [Fact]
-    public void EnsureDecodable_LargeGrayscale_IsAllowed()
+    [Theory]
+    [InlineData(nameof(PixelFormats.Gray16), true)]  // 約400MB
+    [InlineData(nameof(PixelFormats.Gray8), true)]   // byte[] + ushort[] で約600MB
+    [InlineData(nameof(PixelFormats.Rgb48), false)]  // 約1.6GB
+    [InlineData(nameof(PixelFormats.Rgba64), false)] // 約3.2GB
+    [InlineData(nameof(PixelFormats.Bgra32), false)] // 変換バッファ込みで約2.4GB
+    public void EnsureDecodable_AtPixelLimit_DependsOnBytesPerPixel(string formatName, bool allowed)
     {
-        // 2億画素のGray16は約400MB。画素数上限内かつバイト数上限内
-        ImageFileLoader.EnsureDecodable(20000, 10000, PixelFormats.Gray16);
-    }
+        // 同じ2億画素(画素数上限内)でも、形式ごとの所要バイトで許可/拒否が分かれる。
+        // 画素数だけの判定では RGBA64 が素通りしていた
+        PixelFormat format = ToPixelFormat(formatName);
+        if (allowed)
+        {
+            ImageFileLoader.EnsureDecodable(20000, 10000, format);
+            return;
+        }
 
-    [Fact]
-    public void EnsureDecodable_ColorWithinPixelLimit_IsRejectedByByteLimit()
-    {
-        // 同じ2億画素でもRGBA64は約3.2GB。画素数だけの判定では素通りしていた
         NotSupportedException ex = Assert.Throws<NotSupportedException>(
-            () => ImageFileLoader.EnsureDecodable(20000, 10000, PixelFormats.Rgba64));
+            () => ImageFileLoader.EnsureDecodable(20000, 10000, format));
 
         Assert.Contains("GB", ex.Message);
     }
@@ -41,18 +46,5 @@ public class ImageFileLoaderLimitTests
             () => ImageFileLoader.EnsureDecodable(24800, 16896, PixelFormats.Gray16));
 
         Assert.Contains("M画素", ex.Message);
-    }
-
-    [Fact]
-    public void EnsureDecodable_ByteLimitMatchesEstimate()
-    {
-        // 上限のちょうど内側/外側で判定が切り替わること
-        const int width = 10000;
-        int bytesPerPixel = ImageFileLoader.EstimateBytesPerPixel(PixelFormats.Bgra32);
-        int heightInside = (int)(ImageFileLoader.MaxDecodedBytes / bytesPerPixel / width);
-
-        ImageFileLoader.EnsureDecodable(width, heightInside, PixelFormats.Bgra32);
-        Assert.Throws<NotSupportedException>(
-            () => ImageFileLoader.EnsureDecodable(width, heightInside + 1, PixelFormats.Bgra32));
     }
 }

@@ -56,16 +56,6 @@ public class CodexFixTests
     }
 
     [Fact]
-    public void RenderColorRgb24_RejectsTooSmallBuffer()
-    {
-        ColorImage color = MakeColorImage(4, 3);
-        var lut = DisplayLut.Create(new DisplayParameters());
-
-        Assert.Throws<ArgumentException>(
-            () => ImageExport.RenderColorRgb24(color, lut, new byte[8]));
-    }
-
-    [Fact]
     public void DevelopRgb24_WritesIntoProvidedBuffer()
     {
         var format = new RawFormat
@@ -94,23 +84,18 @@ public class CodexFixTests
     // ---- #9 NaN / Infinity を通さない ----
 
     [Theory]
-    [InlineData("NaN")]
-    [InlineData("Infinity")]
-    [InlineData("-Infinity")]
-    [InlineData("-1")]
-    [InlineData("0")]
-    [InlineData("abc")]
+    [InlineData("NaN")] // 非有限(Infinity / -Infinity も同じ IsFinite 分岐)
+    [InlineData("0")]   // 正でない(> 0 の境界)
+    [InlineData("abc")] // 解析失敗
     public void TryParsePositive_RejectsNonFiniteAndNonPositive(string text)
     {
         Assert.False(NumericInput.TryParsePositive(text, out _));
     }
 
-    [Theory]
-    [InlineData("NaN")]
-    [InlineData("Infinity")]
-    public void TryParseFinite_RejectsNonFinite(string text)
+    [Fact]
+    public void TryParseFinite_RejectsNonFinite()
     {
-        Assert.False(NumericInput.TryParseFinite(text, out _));
+        Assert.False(NumericInput.TryParseFinite("NaN", out _));
     }
 
     [Fact]
@@ -135,39 +120,7 @@ public class CodexFixTests
         Assert.Throws<ArgumentException>(format.Validate);
     }
 
-    [Fact]
-    public void DevelopLuts_Create_RejectsNonFiniteParameters()
-    {
-        Assert.Throws<ArgumentOutOfRangeException>(
-            () => DevelopLuts.Create(new DevelopParameters(Gamma: double.NaN)));
-        Assert.Throws<ArgumentOutOfRangeException>(
-            () => DevelopLuts.Create(new DevelopParameters(Gain: double.PositiveInfinity)));
-    }
-
-    [Fact]
-    public void DevelopLuts_Create_RejectsNonFiniteMatrix()
-    {
-        var matrix = new ColorMatrix(1, 0, 0, 0, double.NaN, 0, 0, 0, 1);
-
-        Assert.Throws<ArgumentException>(
-            () => DevelopLuts.Create(new DevelopParameters(Gamma: 1.0, Matrix: matrix)));
-    }
-
-    [Fact]
-    public void DefectPixelDetector_RejectsNonFiniteSigma()
-    {
-        var format = new RawFormat { Width = 4, Height = 4, BitDepth = 12 };
-        using RawImage image = RawImage.FromPixels(format, new ushort[16]);
-
-        Assert.Throws<ArgumentOutOfRangeException>(
-            () => DefectPixelDetector.Detect(image, sigmaFactor: double.NaN));
-    }
-
-    // ---- #8 ネットワーク判定 ----
-
-    [Fact]
-    public void IsNetworkPath_LocalTempIsNotNetwork()
-    {
-        Assert.False(RawLoader.IsNetworkPath(Path.GetTempPath()));
-    }
+    // DevelopLuts.Create と DefectPixelDetector.Detect の非有限値ガードは、同じ if 文を
+    // 検証する ColorPipelineTests / DefectPixelDetectorTests の Theory に統合した。
+    // ネットワークパス判定は ReviewFixTests.IsNetworkPath_DetectsUncPaths が担う。
 }

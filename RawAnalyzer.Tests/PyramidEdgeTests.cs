@@ -38,45 +38,8 @@ public class PyramidEdgeTests
     }
 
     [Theory]
-    [InlineData(7, 7)]
-    [InlineData(9, 5)]
-    [InlineData(5, 9)]
+    [InlineData(5, 3)]
     [InlineData(8, 8)]
-    public void Levels_EdgeBlocks_MatchDirectBlockAverage(int width, int height)
-    {
-        // 前段から縮小を重ねると、端のブロックが少ない画素数のまま
-        // 同じ重みで平均され、直接ブロック平均とずれていた
-        var codes = new ushort[width * height];
-        for (int i = 0; i < codes.Length; i++)
-        {
-            // 端を目立たせるため右下ほど大きな値にする
-            codes[i] = (ushort)(1000 + i * 613 % 60000);
-        }
-
-        using RawImage image = LoadImage(codes, width, height);
-        TilePyramid pyramid = TilePyramid.Create(image, maxLevelPixels: long.MaxValue);
-
-        Assert.NotEmpty(pyramid.Levels);
-        foreach (PyramidLevel level in pyramid.Levels)
-        {
-            var buffer = new ushort[level.Width];
-            for (int y = 0; y < level.Height; y++)
-            {
-                level.CopyRegion(0, y, level.Width, 1, buffer);
-                for (int x = 0; x < level.Width; x++)
-                {
-                    ushort expected = BlockAverage(codes, width, height, x, y, level.Factor);
-
-                    // 整数除算の丸めぶんだけ許容する
-                    Assert.True(
-                        Math.Abs(buffer[x] - expected) <= 1,
-                        $"factor={level.Factor} ({x},{y}): {buffer[x]} vs {expected}");
-                }
-            }
-        }
-    }
-
-    [Theory]
     [InlineData(13, 11)]
     [InlineData(50, 30)]
     [InlineData(37, 64)]
@@ -84,7 +47,11 @@ public class PyramidEdgeTests
     {
         // 連鎖縮小は平均値ではなくブロック合計から積み上げるので、
         // 端に半端なブロックがあっても直接ブロック平均と完全に一致する
-        // (以前は割り切れないと連鎖を諦め、レベルごとに元画像を読み直していた)
+        // (以前は割り切れないと連鎖を諦め、レベルごとに元画像を読み直していた。
+        // さらにその前は、前段から縮小を重ねると端のブロックが少ない画素数のまま
+        // 同じ重みで平均され、直接ブロック平均とずれていた)。
+        // 5x3 は L2 が右端1列・下端1行・角1画素の部分ブロックになる最小例、
+        // 8x8 は L2〜L8 が割り切れたあと L16 以降で1x1の部分ブロックになる
         var codes = new ushort[width * height];
         for (int i = 0; i < codes.Length; i++)
         {

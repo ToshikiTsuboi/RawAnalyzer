@@ -39,6 +39,25 @@ public class ColorPipelineTests
         }
     }
 
+    public static IEnumerable<object[]> InvalidDevelopParameters()
+    {
+        // 範囲外(Gamma 0・負のゲイン・負のコントラスト)と非有限(NaN・∞)は
+        // Create 冒頭の同じ入口で弾かれる。行列の NaN だけは ColorMatrix.Validate の ArgumentException
+        yield return new object[] { new DevelopParameters(Gamma: 0), typeof(ArgumentOutOfRangeException) };
+        yield return new object[] { new DevelopParameters(Gain: -1), typeof(ArgumentOutOfRangeException) };
+        yield return new object[] { new DevelopParameters(Contrast: -1), typeof(ArgumentOutOfRangeException) };
+        yield return new object[] { new DevelopParameters(Gamma: double.NaN), typeof(ArgumentOutOfRangeException) };
+        yield return new object[]
+        {
+            new DevelopParameters(Gain: double.PositiveInfinity), typeof(ArgumentOutOfRangeException),
+        };
+        yield return new object[]
+        {
+            new DevelopParameters(Gamma: 1.0, Matrix: new ColorMatrix(1, 0, 0, 0, double.NaN, 0, 0, 0, 1)),
+            typeof(ArgumentException),
+        };
+    }
+
     [Theory]
     [MemberData(nameof(Patterns))]
     public void BlockToRgb_ConstantChannels_RecoversValues(BayerPattern pattern)
@@ -53,7 +72,8 @@ public class ColorPipelineTests
     }
 
     [Theory]
-    [MemberData(nameof(Patterns))]
+    [InlineData(BayerPattern.Rggb)]
+    [InlineData(BayerPattern.Bggr)]   // pattern 引数が無視・固定されていないことを見る
     public void DemosaicBilinear_ConstantChannels_ExactEverywhere(BayerPattern pattern)
     {
         const int size = 8;
@@ -70,11 +90,11 @@ public class ColorPipelineTests
         }
     }
 
-    [Theory]
-    [MemberData(nameof(Patterns))]
-    public void DemosaicBilinear_LinearRamp_ExactInInterior(BayerPattern pattern)
+    [Fact]
+    public void DemosaicBilinear_LinearRamp_ExactInInterior()
     {
         // 全チャネル同一の線形ランプ: バイリニア補間は内部で厳密に元値を復元する
+        // (入力・期待値・通る分岐がパターンによらず同じなので Rggb のみ)
         const int size = 10;
         var mosaic = new ushort[size * size];
         for (int y = 0; y < size; y++)
@@ -86,7 +106,7 @@ public class ColorPipelineTests
         }
 
         var rgb = new ushort[size * size * 3];
-        ColorPipeline.DemosaicBilinear(mosaic, size, size, 0, 0, pattern, rgb);
+        ColorPipeline.DemosaicBilinear(mosaic, size, size, 0, 0, BayerPattern.Rggb, rgb);
 
         for (int y = 1; y < size - 1; y++)
         {
@@ -137,30 +157,32 @@ public class ColorPipelineTests
     }
 
     [Fact]
-    public void DevelopLuts_GainR_ScalesRedChannel()
+    public void DevelopLuts_WbGains_ScaleTheirOwnChannels()
     {
-        var luts = DevelopLuts.Create(new DevelopParameters(GainR: 2.0, Gamma: 1.0));
-        Assert.Equal(255, luts.R[32768]);
+        // GainR/GainG/GainB を1回の Create で同時に与え、
+        // 各ゲインが自分のチャネルにだけ配線されていることを見る
+        var luts = DevelopLuts.Create(
+            new DevelopParameters(GainR: 2.0, GainG: 1.0, GainB: 0.5, Gamma: 1.0));
+
+        Assert.Equal(255, luts.R[32768]);                       // ×2: 半分の入力で飽和
         Assert.InRange(luts.R[16384], (byte)127, (byte)128);
-        Assert.InRange(luts.G[32768], (byte)127, (byte)128);
+        Assert.InRange(luts.G[32768], (byte)127, (byte)128);   // ×1: 等倍のまま
+        Assert.Equal(255, luts.G[65535]);
+        Assert.InRange(luts.B[65535], (byte)127, (byte)128);   // ×0.5: 最大入力でも半分
+        Assert.InRange(luts.B[32768], (byte)63, (byte)64);
     }
 
     [Fact]
-    public void DevelopLuts_GainG_ScalesGreenChannel()
+    public void DevelopLuts_BlackAndWhitePoint_ClipBothEnds()
     {
-        var luts = DevelopLuts.Create(new DevelopParameters(GainG: 2.0, Gamma: 1.0));
-        Assert.Equal(255, luts.G[32768]);
-        Assert.InRange(luts.G[16384], (byte)127, (byte)128);
-        Assert.InRange(luts.R[32768], (byte)127, (byte)128);
-        Assert.InRange(luts.B[32768], (byte)127, (byte)128);
-    }
+        // 黒1000・白33768(幅32768): 黒以下は0、白以上は255、中点は半分
+        var luts = DevelopLuts.Create(
+            new DevelopParameters(BlackLevel: 1000, WhitePoint: 33768, Gamma: 1.0));
 
-    [Fact]
-    public void DevelopLuts_BlackLevel_ClipsBelow()
-    {
-        var luts = DevelopLuts.Create(new DevelopParameters(BlackLevel: 1000, Gamma: 1.0));
         Assert.Equal(0, luts.G[0]);
         Assert.Equal(0, luts.G[1000]);
+        Assert.InRange(luts.G[1000 + 16384], (byte)127, (byte)128);
+        Assert.Equal(255, luts.G[33768]);
         Assert.Equal(255, luts.G[65535]);
     }
 
@@ -189,101 +211,41 @@ public class ColorPipelineTests
         Assert.Equal(0, steep.G[16384]);
     }
 
-    [Fact]
-    public void DevelopLuts_WhitePoint_ClipsAbove()
+    [Theory]
+    [MemberData(nameof(InvalidDevelopParameters))]
+    public void DevelopLuts_InvalidParameters_Throw(DevelopParameters parameters, Type expectedException)
     {
-        var luts = DevelopLuts.Create(new DevelopParameters(Gamma: 1.0, WhitePoint: 32768));
-
-        Assert.Equal(0, luts.G[0]);
-        Assert.Equal(255, luts.G[32768]);
-        Assert.Equal(255, luts.G[65535]);
-        Assert.InRange(luts.G[16384], (byte)127, (byte)128);
-    }
-
-    [Fact]
-    public void DevelopLuts_MatrixPath_AppliesGainAndContrast()
-    {
-        var swap = new ColorMatrix(0, 1, 0, 1, 0, 0, 0, 0, 1);
-        var luts = DevelopLuts.Create(
-            new DevelopParameters(Gamma: 1.0, Matrix: swap, Gain: 2.0));
-
-        Assert.True(luts.HasMatrix);
-        luts.Convert(16384, 0, 0, out byte r8, out byte g8, out _);
-
-        // R入力(16384→ゲイン2倍で0.5)がGへ入れ替わる
-        Assert.Equal(0, r8);
-        Assert.InRange(g8, (byte)127, (byte)128);
-    }
-
-    [Fact]
-    public void DevelopLuts_InvalidGain_Throws()
-    {
-        Assert.Throws<ArgumentOutOfRangeException>(
-            () => DevelopLuts.Create(new DevelopParameters(Gain: -1)));
-        Assert.Throws<ArgumentOutOfRangeException>(
-            () => DevelopLuts.Create(new DevelopParameters(Contrast: -1)));
-    }
-
-    [Fact]
-    public void DevelopLuts_InvalidGamma_Throws()
-    {
-        Assert.Throws<ArgumentOutOfRangeException>(
-            () => DevelopLuts.Create(new DevelopParameters(Gamma: 0)));
-    }
-
-    [Fact]
-    public void DevelopLuts_IdentityMatrix_MatchesChannelLuts()
-    {
-        var withMatrix = DevelopLuts.Create(new DevelopParameters(
-            Gamma: 2.2, Matrix: ColorMatrix.Identity));
-        Assert.False(withMatrix.HasMatrix);
-
-        withMatrix.Convert(10000, 20000, 30000, out byte r, out byte g, out byte b);
-        Assert.Equal(withMatrix.R[10000], r);
-        Assert.Equal(withMatrix.G[20000], g);
-        Assert.Equal(withMatrix.B[30000], b);
+        Assert.Throws(expectedException, () => DevelopLuts.Create(parameters));
     }
 
     [Fact]
     public void DevelopLuts_SwapMatrix_ExchangesChannels()
     {
-        // R↔B入替行列
+        // R↔B入替行列 + 全体ゲイン2: ゲインは行列の前(線形段)で掛かる
         var swap = new ColorMatrix(0, 0, 1, 0, 1, 0, 1, 0, 0);
-        var luts = DevelopLuts.Create(new DevelopParameters(Gamma: 1.0, Matrix: swap));
+        var luts = DevelopLuts.Create(
+            new DevelopParameters(Gamma: 1.0, Matrix: swap, Gain: 2.0));
         Assert.True(luts.HasMatrix);
 
-        luts.Convert(40000, 20000, 10000, out byte r, out byte g, out byte b);
+        luts.Convert(20000, 10000, 5000, out byte r, out byte g, out byte b);
 
-        // ガンマ1・ゲイン1なので出力 ≈ 入力/65535*255(R/B入替)
-        Assert.InRange(r, (byte)(10000 * 255 / 65535 - 1), (byte)(10000 * 255 / 65535 + 1));
-        Assert.InRange(g, (byte)(20000 * 255 / 65535 - 1), (byte)(20000 * 255 / 65535 + 1));
-        Assert.InRange(b, (byte)(40000 * 255 / 65535 - 1), (byte)(40000 * 255 / 65535 + 1));
-    }
-
-    [Fact]
-    public void DevelopLuts_ScaleMatrix_HalvesOutput()
-    {
-        var half = new ColorMatrix(0.5, 0, 0, 0, 0.5, 0, 0, 0, 0.5);
-        var luts = DevelopLuts.Create(new DevelopParameters(Gamma: 1.0, Matrix: half));
-
-        luts.Convert(65535, 65535, 65535, out byte r, out byte g, out byte b);
-
-        Assert.InRange(r, (byte)127, (byte)128);
-        Assert.InRange(g, (byte)127, (byte)128);
-        Assert.InRange(b, (byte)127, (byte)128);
+        // ガンマ1なので出力 ≈ 入力×2/65535×255(R/B入替): 5000→39, 10000→78, 20000→156
+        Assert.InRange(r, (byte)38, (byte)40);
+        Assert.InRange(g, (byte)77, (byte)79);
+        Assert.InRange(b, (byte)155, (byte)157);
     }
 
     [Fact]
     public void DevelopLuts_MatrixClampsNegativeAndOverflow()
     {
-        // 大きな係数と負の係数でも0..255にクランプされる
-        var extreme = new ColorMatrix(3, 0, 0, 0, -1, 0, 0, 0, 1);
+        // 大きな係数は255、負の係数は0にクランプされ、0.5倍はそのまま半分になる
+        var extreme = new ColorMatrix(3, 0, 0, 0, -1, 0, 0, 0, 0.5);
         var luts = DevelopLuts.Create(new DevelopParameters(Gamma: 1.0, Matrix: extreme));
 
         luts.Convert(65535, 65535, 65535, out byte r, out byte g, out byte b);
 
         Assert.Equal(255, r);
         Assert.Equal(0, g);
-        Assert.Equal(255, b);
+        Assert.InRange(b, (byte)127, (byte)128);
     }
 }

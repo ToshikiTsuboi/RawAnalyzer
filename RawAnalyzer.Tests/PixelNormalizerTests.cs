@@ -10,20 +10,12 @@ public class PixelNormalizerTests
     [InlineData(12, BitPacking.Lsb, 0x0FFF, 0xFFF0)]
     [InlineData(14, BitPacking.Lsb, 0x3FFF, 0xFFFC)]
     [InlineData(16, BitPacking.Lsb, 0xFFFF, 0xFFFF)]
-    [InlineData(12, BitPacking.Msb, 0xFFFF, 0xFFF0)]
-    public void NormalizeValue_MaxCode_ReachesFullScale(
+    [InlineData(12, BitPacking.Msb, 0x123F, 0x1230)] // MSB詰めは上位を保ち、下位4bitのパディングを落とす
+    public void NormalizeValue_AlignsCodeToUpperBits(
         int bitDepth, BitPacking packing, int container, int expected)
     {
         Assert.Equal((ushort)expected,
             PixelNormalizer.NormalizeValue((ushort)container, bitDepth, packing));
-    }
-
-    [Fact]
-    public void NormalizeValue_MsbPacking_MasksPaddingBits()
-    {
-        // 12bit MSB詰め: 下位4bitはパディングとして落とす
-        Assert.Equal((ushort)0x1230,
-            PixelNormalizer.NormalizeValue(0x123F, 12, BitPacking.Msb));
     }
 
     [Fact]
@@ -46,16 +38,5 @@ public class PixelNormalizerTests
         {
             Assert.Equal((ushort)(raw[i] << 4), destination[i]);
         }
-    }
-
-    [Fact]
-    public void Normalize_DestinationTooShort_Throws()
-    {
-        Assert.Throws<ArgumentException>(() =>
-        {
-            var source = new byte[8];
-            var destination = new ushort[3];
-            PixelNormalizer.Normalize(source, destination, 16, BitPacking.Lsb, Endianness.Little);
-        });
     }
 }

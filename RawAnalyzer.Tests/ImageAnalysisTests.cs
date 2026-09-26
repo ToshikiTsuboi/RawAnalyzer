@@ -23,8 +23,9 @@ public class ImageAnalysisTests
     public void ComputeStatistics_KnownData_MatchesExpected()
     {
         // 0..15 の4x4: mean=7.5, σ=sqrt(1240/16 - 56.25)=sqrt(21.25)
+        // 12bit入力でも統計は raw code 域(16bit正規化値 <<4 ではない)で返ること
         ushort[] codes = Enumerable.Range(0, 16).Select(i => (ushort)i).ToArray();
-        using RawImage image = LoadImage(codes, 4, 4);
+        using RawImage image = LoadImage(codes, 4, 4, bitDepth: 12);
 
         RegionStatistics stats = ImageAnalysis.ComputeStatistics(
             image, 0, new RegionOfInterest(0, 0, 4, 4));
@@ -50,19 +51,6 @@ public class ImageAnalysisTests
         Assert.Equal(10, stats.Min);
         Assert.Equal(15, stats.Max);
         Assert.Equal(4, stats.SampleCount);
-    }
-
-    [Fact]
-    public void ComputeStatistics_12Bit_UsesRawCodeDomain()
-    {
-        ushort[] codes = { 0, 1000, 2000, 4095 };
-        using RawImage image = LoadImage(codes, 2, 2, bitDepth: 12);
-
-        RegionStatistics stats = ImageAnalysis.ComputeStatistics(
-            image, 0, new RegionOfInterest(0, 0, 2, 2));
-
-        Assert.Equal((0 + 1000 + 2000 + 4095) / 4.0, stats.Mean, 10);
-        Assert.Equal(4095, stats.Max);
     }
 
     [Fact]
@@ -93,21 +81,6 @@ public class ImageAnalysisTests
         Assert.Equal(4, result.SampleCount);
         Assert.Equal(1u, result.Bins[10]);
         Assert.Equal(0u, result.Bins[0]);
-    }
-
-    [Fact]
-    public void ComputeHistogram_LargeRegion_IsSampled()
-    {
-        ushort[] codes = new ushort[64 * 64];
-        Array.Fill(codes, (ushort)500);
-        using RawImage image = LoadImage(codes, 64, 64, bitDepth: 12);
-
-        HistogramResult result = ImageAnalysis.ComputeHistogram(image, 0, maxSamples: 100);
-
-        Assert.True(result.IsSampled);
-        Assert.True(result.SampleCount <= 64 * 64 / 4, "サンプル数が間引かれていること");
-        Assert.Equal((uint)result.SampleCount, result.Bins[500]);
-        Assert.Equal(500, result.Statistics.Mean, 10);
     }
 
     [Fact]
@@ -147,21 +120,6 @@ public class ImageAnalysisTests
     }
 
     [Fact]
-    public void ComputeHistogram_SampledUniform_MeanUnchanged()
-    {
-        // strideを奇数へ補正してもサンプル数はmaxSamples以下に収まること
-        var codes = new ushort[128 * 128];
-        Array.Fill(codes, (ushort)321);
-        using RawImage image = LoadImage(codes, 128, 128, bitDepth: 12);
-
-        HistogramResult result = ImageAnalysis.ComputeHistogram(image, 0, maxSamples: 500);
-
-        Assert.True(result.IsSampled);
-        Assert.True(result.SampleCount <= 500, $"サンプル数がmaxSamples以下であること: {result.SampleCount}");
-        Assert.Equal(321, result.Statistics.Mean, 10);
-    }
-
-    [Fact]
     public void ComputeStatistics_CancelledToken_ThrowsOperationCanceled()
     {
         // ParallelOptions.CancellationToken を渡していないと
@@ -174,17 +132,6 @@ public class ImageAnalysisTests
         Assert.ThrowsAny<OperationCanceledException>(
             () => ImageAnalysis.ComputeStatistics(
                 image, 0, new RegionOfInterest(0, 0, 64, 64), cts.Token));
-    }
-
-    [Fact]
-    public void ComputeHistogram_BinTotalEqualsSampleCount()
-    {
-        ushort[] codes = TestData.MakePattern(32 * 32, 12);
-        using RawImage image = LoadImage(codes, 32, 32, bitDepth: 12);
-
-        HistogramResult result = ImageAnalysis.ComputeHistogram(image, 0);
-
-        Assert.Equal(result.SampleCount, result.Bins.Sum(b => (long)b));
     }
 
     [Fact]

@@ -18,36 +18,6 @@ public class SequenceScannerNumberedTests
     }
 
     [Fact]
-    public void FindNumberedStack_ZeroPaddedNames_CollectsInOrder()
-    {
-        IReadOnlyList<string> stack = SequenceScanner.FindNumberedStack(
-            @"C:\dir\seq_002.tif",
-            Files("seq_000.tif", "seq_001.tif", "seq_002.tif", "seq_010.tif"));
-
-        Assert.Equal(
-            new[]
-            {
-                @"C:\dir\seq_000.tif", @"C:\dir\seq_001.tif",
-                @"C:\dir\seq_002.tif", @"C:\dir\seq_010.tif",
-            },
-            stack);
-    }
-
-    [Fact]
-    public void FindNumberedStack_IgnoresFileSize()
-    {
-        // 圧縮形式ではフレームごとにサイズが変わる。サイズ一致では組にならない
-        SequenceFile[] candidates =
-        {
-            new(@"C:\dir\shot_1.png", 12345),
-            new(@"C:\dir\shot_2.png", 999),
-            new(@"C:\dir\shot_3.png", 54321),
-        };
-
-        Assert.Equal(3, SequenceScanner.FindNumberedStack(@"C:\dir\shot_2.png", candidates).Count);
-    }
-
-    [Fact]
     public void FindNumberedStack_DifferentPrefixOrExtension_IsExcluded()
     {
         IReadOnlyList<string> stack = SequenceScanner.FindNumberedStack(

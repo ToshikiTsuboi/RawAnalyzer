@@ -8,8 +8,6 @@ public class ProfilePlotNavigationTests
 {
     [Theory]
     [InlineData(0)]
-    [InlineData(0.25)]
-    [InlineData(0.5)]
     [InlineData(1)]
     public void Zoom_KeepsCursorAnchorFixed(double fraction)
     {
@@ -47,12 +45,10 @@ public class ProfilePlotNavigationTests
         Assert.Equal(original, ProfilePlotNavigation.Pan(original, double.NaN));
     }
 
-    [Theory]
-    [InlineData(0)]
-    [InlineData(1)]
-    public void EmptyOrSinglePoint_UsesNonzeroCenteredHorizontalRange(int count)
+    [Fact]
+    public void SinglePoint_UsesNonzeroCenteredHorizontalRange()
     {
-        Assert.Equal(new ProfileAxisRange(-0.5, 0.5), ProfilePlotNavigation.FullHorizontal(count));
+        Assert.Equal(new ProfileAxisRange(-0.5, 0.5), ProfilePlotNavigation.FullHorizontal(1));
     }
 
     [Theory]

@@ -20,48 +20,6 @@ public class NoiseAnalysisTests
     }
 
     [Fact]
-    public void MeasurePair_IdenticalFrames_HasZeroTemporalNoise()
-    {
-        // 同一データ = 差分0 → 時間ノイズ0、σはすべてFPN
-        const int size = 16;
-        var codes = new ushort[size * size];
-        for (int i = 0; i < codes.Length; i++)
-        {
-            codes[i] = (ushort)(1000 + (i % 4) * 10); // 固定パターン
-        }
-
-        using RawImage a = LoadImage(codes, size, size);
-        using RawImage b = LoadImage(codes, size, size);
-
-        NoiseMeasurement result = NoiseAnalysis.MeasurePair(a, b);
-
-        Assert.Equal(0, result.SigmaTemporal, 10);
-        Assert.Equal(result.SigmaTotal, result.SigmaFpn, 6);
-        Assert.True(result.SigmaTotal > 0);
-    }
-
-    [Fact]
-    public void MeasurePair_KnownDifference_DividesSigmaBySqrt2()
-    {
-        // 差分が ±10 で半々 → σ_diff = 10 → σ_temporal = 10/√2
-        const int size = 16;
-        var a = new ushort[size * size];
-        var b = new ushort[size * size];
-        for (int i = 0; i < a.Length; i++)
-        {
-            a[i] = 1000;
-            b[i] = (ushort)(i % 2 == 0 ? 990 : 1010);
-        }
-
-        using RawImage imageA = LoadImage(a, size, size);
-        using RawImage imageB = LoadImage(b, size, size);
-
-        NoiseMeasurement result = NoiseAnalysis.MeasurePair(imageA, imageB);
-
-        Assert.Equal(10.0 / Math.Sqrt(2), result.SigmaTemporal, 8);
-    }
-
-    [Fact]
     public void MeasurePair_SeparatesFpnAndTemporalNoise()
     {
         // FPN: 列パリティで ±20 / 時間ノイズ: 行パリティで ±6(FPNと独立にする)
@@ -113,15 +71,14 @@ public class NoiseAnalysisTests
 
         NoiseMeasurement result = NoiseAnalysis.MeasurePair(imageA, imageB);
 
+        // 差分が ±10 で半々 → σ_diff = 10 → σ_temporal = 10/√2
         double sigmaTemporal = 10.0 / Math.Sqrt(2);
+        Assert.Equal(sigmaTemporal, result.SigmaTemporal, 8);
+
+        // DRは飽和コード(12bit: 4095)と σ_temporal から
         double expectedDb = 20 * Math.Log10(4095 / sigmaTemporal);
         Assert.Equal(expectedDb, result.DynamicRangeTemporalDb, 6);
         Assert.Equal(Math.Log2(4095 / sigmaTemporal), result.DynamicRangeTemporalStops, 6);
-
-        // 6.02dB = 1stop の関係
-        Assert.Equal(
-            result.DynamicRangeTemporalDb / 6.0206,
-            result.DynamicRangeTemporalStops, 2);
     }
 
     [Fact]

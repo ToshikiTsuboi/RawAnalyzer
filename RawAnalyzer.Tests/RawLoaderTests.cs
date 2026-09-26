@@ -5,21 +5,35 @@ namespace RawAnalyzer.Tests;
 
 public class RawLoaderTests
 {
+    /// <summary>
+    /// 往復テストの組み合わせ。復号経路が分かれるところだけを残す:
+    /// 8bit は 1 バイト経路で packing / endian を参照しない、
+    /// 12bit は shift・packing・endian の全分岐を通す、
+    /// 16bit は shift 0 で Lsb / Msb が恒等なので endian のみ、
+    /// 10 / 14bit は shift 定数が違うだけなので 1 行ずつ。
+    /// </summary>
     public static IEnumerable<object[]> AllCombinations()
     {
-        foreach (int depth in new[] { 8, 10, 12, 14, 16 })
+        foreach (bool memoryMapped in new[] { false, true })
         {
+            yield return new object[] { 8, BitPacking.Lsb, Endianness.Little, memoryMapped };
+
             foreach (BitPacking packing in new[] { BitPacking.Lsb, BitPacking.Msb })
             {
                 foreach (Endianness endian in new[] { Endianness.Little, Endianness.Big })
                 {
-                    foreach (bool memoryMapped in new[] { false, true })
-                    {
-                        yield return new object[] { depth, packing, endian, memoryMapped };
-                    }
+                    yield return new object[] { 12, packing, endian, memoryMapped };
                 }
             }
+
+            foreach (Endianness endian in new[] { Endianness.Little, Endianness.Big })
+            {
+                yield return new object[] { 16, BitPacking.Lsb, endian, memoryMapped };
+            }
         }
+
+        yield return new object[] { 10, BitPacking.Lsb, Endianness.Little, false };
+        yield return new object[] { 14, BitPacking.Lsb, Endianness.Little, false };
     }
 
     [Theory]
@@ -217,57 +231,34 @@ public class RawLoaderTests
         Assert.Throws<ArgumentException>(() => RawLoader.Load("dummy.raw", format));
     }
 
-    [Fact]
-    public void GuessDimensions_FullHd12Bit_FindsCandidate()
-    {
-        var format = new RawFormat { Width = 1, Height = 1, BitDepth = 12, HeaderOffset = 64 };
-        long fileSize = 64 + 1920L * 1080 * 2;
-        var candidates = RawLoader.GuessDimensions(fileSize, format);
-        Assert.Contains(new DimensionCandidate(1920, 1080), candidates);
-    }
-
-    [Fact]
-    public void GuessDimensions_Vga8Bit_FindsCandidate()
-    {
-        var format = new RawFormat { Width = 1, Height = 1, BitDepth = 8 };
-        var candidates = RawLoader.GuessDimensions(640L * 480, format);
-        Assert.Contains(new DimensionCandidate(640, 480), candidates);
-    }
-
-    [Fact]
-    public void GuessDimensions_TwoFrameDol_FindsCandidate()
+    [Theory]
+    [InlineData(64 + 1920L * 1080 * 2, 12, 64L, 1, 1920, 1080)] // ヘッダ付き 12bit フル HD
+    [InlineData(640L * 480, 8, 0L, 1, 640, 480)]                 // 1 バイト画素
+    [InlineData(2L * 4056 * 3040 * 2, 12, 0L, 2, 4056, 3040)]    // 2 フレーム DOL
+    public void GuessDimensions_KnownSize_FindsCandidate(
+        long fileSize, int bitDepth, long header, int frames, int width, int height)
     {
         var format = new RawFormat
         {
             Width = 1,
             Height = 1,
-            BitDepth = 12,
-            FrameCount = 2,
-            Hdr = HdrMode.Auto,
+            BitDepth = bitDepth,
+            HeaderOffset = header,
+            FrameCount = frames,
+            Hdr = frames > 1 ? HdrMode.Auto : HdrMode.None,
         };
-        long fileSize = 2L * 4056 * 3040 * 2;
-        var candidates = RawLoader.GuessDimensions(fileSize, format);
-        Assert.Contains(new DimensionCandidate(4056, 3040), candidates);
+
+        Assert.Contains(
+            new DimensionCandidate(width, height), RawLoader.GuessDimensions(fileSize, format));
     }
 
-    [Fact]
-    public void GuessDimensions_NoMatch_ReturnsEmpty()
+    [Theory]
+    [InlineData(12346L, 0L)]                // 表に無いサイズ
+    [InlineData(1920L * 1080 * 2 + 1, 0L)]  // 画素バイト数で割り切れない
+    [InlineData(512L, 1024L)]               // ヘッダより小さい
+    public void GuessDimensions_NoCandidate_ReturnsEmpty(long fileSize, long header)
     {
-        var format = new RawFormat { Width = 1, Height = 1, BitDepth = 16 };
-        Assert.Empty(RawLoader.GuessDimensions(12346, format));
-    }
-
-    [Fact]
-    public void GuessDimensions_NotDivisible_ReturnsEmpty()
-    {
-        var format = new RawFormat { Width = 1, Height = 1, BitDepth = 16 };
-        Assert.Empty(RawLoader.GuessDimensions(1920L * 1080 * 2 + 1, format));
-    }
-
-    [Fact]
-    public void GuessDimensions_SmallerThanHeader_ReturnsEmpty()
-    {
-        var format = new RawFormat { Width = 1, Height = 1, HeaderOffset = 1024 };
-        Assert.Empty(RawLoader.GuessDimensions(512, format));
+        var format = new RawFormat { Width = 1, Height = 1, BitDepth = 16, HeaderOffset = header };
+        Assert.Empty(RawLoader.GuessDimensions(fileSize, format));
     }
 }

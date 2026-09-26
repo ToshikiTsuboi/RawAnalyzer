@@ -191,12 +191,10 @@ public class AviMjpegWriterTests
 public class NaturalOrderComparerTests
 {
     [Theory]
-    [InlineData("img2.raw", "img10.raw", -1)]
-    [InlineData("img10.raw", "img2.raw", 1)]
-    [InlineData("img002.raw", "img2.raw", 0)]
-    [InlineData("a.raw", "b.raw", -1)]
-    [InlineData("frame1a.raw", "frame1b.raw", -1)]
-    [InlineData("cap_5_2.raw", "cap_5_10.raw", -1)]
+    [InlineData("img2.raw", "img10.raw", -1)]      // 桁数違いの数値ブロック
+    [InlineData("img002.raw", "img2.raw", 0)]      // 先頭の 0 は無視
+    [InlineData("a.raw", "b.raw", -1)]             // 非数字の比較
+    [InlineData("frame1a.raw", "frame1b.raw", -1)] // 数値ブロックが等しければ続きで決まる
     public void Compare_OrdersNaturally(string x, string y, int expectedSign)
     {
         int result = NaturalOrderComparer.Instance.Compare(x, y);

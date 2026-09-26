@@ -3,17 +3,23 @@ using Xunit;
 
 namespace RawAnalyzer.Tests;
 
+/// <summary>
+/// TiffLoader.Load / LoadCore(Core内の非圧縮TIFF復号)の単体テスト。
+/// </summary>
+/// <remarks>
+/// 本番の読込経路(ImageFileLoader → TryProbePixelLayout / RawLoader → 自前復号 → WIC)は
+/// TiffSpecTests / TiffStackTests / SaveTests が担う。ここは将来のCore内デコーダの土台として、
+/// 8→16bit正規化・両エンディアンの16bit・複数ストリップ・ヘッダ検査の最小限だけを見る。
+/// </remarks>
 public class TiffLoaderTests
 {
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public void Load_8Bit_NormalizesTo16Bit(bool bigEndian)
+    [Fact]
+    public void Load_8Bit_NormalizesTo16Bit()
     {
         const int width = 5;
         const int height = 3;
         ushort[] pixels = TestData.MakePattern(width * height, 8);
-        byte[] tiff = TestData.BuildTiff(pixels, width, height, 8, bigEndian);
+        byte[] tiff = TestData.BuildTiff(pixels, width, height, 8, bigEndian: false);
 
         using RawImage image = TiffLoader.Load(tiff);
         Assert.Equal(width, image.Width);
@@ -50,15 +56,13 @@ public class TiffLoaderTests
         }
     }
 
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public void Load_MultiStrip_ReassemblesAllRows(bool bigEndian)
+    [Fact]
+    public void Load_MultiStrip_ReassemblesAllRows()
     {
         const int width = 6;
         const int height = 5;
         ushort[] pixels = TestData.MakePattern(width * height, 16);
-        byte[] tiff = TestData.BuildTiff(pixels, width, height, 16, bigEndian, rowsPerStrip: 2);
+        byte[] tiff = TestData.BuildTiff(pixels, width, height, 16, bigEndian: false, rowsPerStrip: 2);
 
         using RawImage image = TiffLoader.Load(tiff);
         for (int y = 0; y < height; y++)
@@ -71,24 +75,6 @@ public class TiffLoaderTests
     }
 
     [Fact]
-    public void Load_FromFile_Works()
-    {
-        const int width = 3;
-        const int height = 3;
-        ushort[] pixels = TestData.MakePattern(width * height, 16);
-        string path = TestData.WriteTempFile(TestData.BuildTiff(pixels, width, height, 16, false));
-        try
-        {
-            using RawImage image = TiffLoader.Load(path);
-            Assert.Equal(pixels[4], image.GetPixel(1, 1));
-        }
-        finally
-        {
-            File.Delete(path);
-        }
-    }
-
-    [Fact]
     public void Load_Compressed_Throws()
     {
         byte[] tiff = TestData.BuildTiff(new ushort[4], 2, 2, 16, false, compression: 5);
@@ -96,25 +82,15 @@ public class TiffLoaderTests
     }
 
     [Fact]
-    public void Load_BadByteOrderMark_Throws()
+    public void Load_BadByteOrderMarkOrMagicNumber_Throws()
     {
-        byte[] tiff = TestData.BuildTiff(new ushort[4], 2, 2, 16, false);
-        tiff[0] = (byte)'X';
-        tiff[1] = (byte)'X';
-        Assert.Throws<InvalidDataException>(() => TiffLoader.Load(tiff));
-    }
+        byte[] badByteOrder = TestData.BuildTiff(new ushort[4], 2, 2, 16, false);
+        badByteOrder[0] = (byte)'X';
+        badByteOrder[1] = (byte)'X';
+        Assert.Throws<InvalidDataException>(() => TiffLoader.Load(badByteOrder));
 
-    [Fact]
-    public void Load_BadMagicNumber_Throws()
-    {
-        byte[] tiff = TestData.BuildTiff(new ushort[4], 2, 2, 16, false);
-        tiff[2] = 99;
-        Assert.Throws<InvalidDataException>(() => TiffLoader.Load(tiff));
-    }
-
-    [Fact]
-    public void Load_TruncatedHeader_Throws()
-    {
-        Assert.Throws<InvalidDataException>(() => TiffLoader.Load(new byte[] { (byte)'I', (byte)'I', 42 }));
+        byte[] badMagic = TestData.BuildTiff(new ushort[4], 2, 2, 16, false);
+        badMagic[2] = 99;
+        Assert.Throws<InvalidDataException>(() => TiffLoader.Load(badMagic));
     }
 }

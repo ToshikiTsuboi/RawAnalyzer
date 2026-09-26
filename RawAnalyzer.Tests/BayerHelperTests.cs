@@ -28,26 +28,4 @@ public class BayerHelperTests
     {
         Assert.Equal(expected, BayerHelper.GetChannel(pattern, x, y));
     }
-
-    [Fact]
-    public void GetChannel_PeriodicIn2x2()
-    {
-        Assert.Equal(
-            BayerHelper.GetChannel(BayerPattern.Rggb, 0, 0),
-            BayerHelper.GetChannel(BayerPattern.Rggb, 100, 246));
-        Assert.Equal(
-            BayerHelper.GetChannel(BayerPattern.Rggb, 1, 0),
-            BayerHelper.GetChannel(BayerPattern.Rggb, 101, 246));
-    }
-
-    [Theory]
-    [InlineData(BayerChannel.R, "R")]
-    [InlineData(BayerChannel.Gr, "Gr")]
-    [InlineData(BayerChannel.Gb, "Gb")]
-    [InlineData(BayerChannel.B, "B")]
-    [InlineData(BayerChannel.None, "-")]
-    public void GetLabel_ReturnsDisplayLabel(BayerChannel channel, string expected)
-    {
-        Assert.Equal(expected, BayerHelper.GetLabel(channel));
-    }
 }

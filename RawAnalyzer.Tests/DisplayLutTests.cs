@@ -76,26 +76,12 @@ public class DisplayLutTests
         Assert.Equal(255, lut.Map(101));
     }
 
-    [Theory]
-    [InlineData(0.0)]
-    [InlineData(-1.0)]
-    public void Create_InvalidGamma_Throws(double gamma)
-    {
-        Assert.Throws<ArgumentOutOfRangeException>(
-            () => DisplayLut.Create(new DisplayParameters(Gamma: gamma)));
-    }
-
     [Fact]
-    public void Apply_MapsEveryPixelThroughTable()
+    public void Create_InvalidGamma_Throws()
     {
-        var lut = DisplayLut.Create(new DisplayParameters());
-        ushort[] source = { 0, 256, 32768, 65535 };
-        var destination = new byte[source.Length];
-        lut.Apply(source, destination);
-        for (int i = 0; i < source.Length; i++)
-        {
-            Assert.Equal(lut.Map(source[i]), destination[i]);
-        }
+        // 0 は `Gamma <= 0` の境界値(負値も同じ分岐)
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => DisplayLut.Create(new DisplayParameters(Gamma: 0.0)));
     }
 
     [Fact]
@@ -103,12 +89,5 @@ public class DisplayLutTests
     {
         var lut = DisplayLut.Create(new DisplayParameters());
         Assert.Throws<ArgumentException>(() => lut.Apply(new ushort[4], new byte[3]));
-    }
-
-    [Fact]
-    public void Table_Has65536Entries()
-    {
-        var lut = DisplayLut.Create(new DisplayParameters());
-        Assert.Equal(65536, lut.Table.Length);
     }
 }

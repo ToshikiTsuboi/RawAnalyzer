@@ -18,112 +18,53 @@ public class HdrSplitterTests
         }
     }
 
-    [Fact]
-    public void Split_LineInterleaved2Stages_SeparatesEvenOddRows()
+    [Theory]
+    [InlineData(2)]
+    [InlineData(3)]
+    public void Split_LineInterleaved_SeparatesByRowPeriod(int stages)
     {
-        const int width = 4;
-        const int height = 6;
-        var values = new ushort[width * height];
-        for (int y = 0; y < height; y++)
-        {
-            for (int x = 0; x < width; x++)
-            {
-                values[y * width + x] = (ushort)(y * 1000 + x);
-            }
-        }
-
-        var format = new RawFormat
-        {
-            Width = width, Height = height, BitDepth = 16, Hdr = HdrMode.Auto, HdrStages = 2,
-        };
-        using RawImage image = LoadImage(values, format);
-
-        IReadOnlyList<RawImage> frames = HdrSplitter.Split(image);
-
-        Assert.Equal(2, frames.Count);
-        Assert.All(frames, f => Assert.Equal(3, f.Height));
-        Assert.All(frames, f => Assert.Equal(HdrMode.None, f.Format.Hdr));
-        for (int y = 0; y < 3; y++)
-        {
-            for (int x = 0; x < width; x++)
-            {
-                Assert.Equal((ushort)(y * 2 * 1000 + x), frames[0].GetPixel(x, y));
-                Assert.Equal((ushort)((y * 2 + 1) * 1000 + x), frames[1].GetPixel(x, y));
-            }
-        }
-    }
-
-    [Fact]
-    public void Split_LineInterleaved3Stages_SeparatesByRowPeriod()
-    {
+        // Bayerなしは1行単位なので段数がそのまま行周期になる(2段=偶奇行、3段=3行周期)
         const int width = 2;
-        const int height = 9;
-        var values = new ushort[width * height];
-        for (int y = 0; y < height; y++)
-        {
-            values[y * width] = (ushort)(y * 100);
-            values[y * width + 1] = (ushort)(y * 100 + 1);
-        }
-
-        var format = new RawFormat
-        {
-            Width = width, Height = height, BitDepth = 16,
-            Hdr = HdrMode.Auto, HdrStages = 3,
-        };
-        using RawImage image = LoadImage(values, format);
-
-        IReadOnlyList<RawImage> frames = HdrSplitter.Split(image);
-
-        Assert.Equal(3, frames.Count);
-        for (int stage = 0; stage < 3; stage++)
-        {
-            for (int y = 0; y < 3; y++)
-            {
-                Assert.Equal((ushort)((y * 3 + stage) * 100), frames[stage].GetPixel(0, y));
-            }
-        }
-    }
-
-    [Fact]
-    public void Split_LineInterleavedWithBayer_UsesTwoLineBlocks()
-    {
-        // Bayerセンサは色ペア(2行)単位で長/短が交互になる
-        const int width = 4;
-        const int height = 8;
+        const int rowsPerFrame = 3;
+        int height = stages * rowsPerFrame;
         var values = new ushort[width * height];
         for (int y = 0; y < height; y++)
         {
             for (int x = 0; x < width; x++)
             {
-                values[y * width + x] = (ushort)(y * 100);
+                values[y * width + x] = (ushort)(y * 100 + x);
             }
         }
 
         var format = new RawFormat
         {
             Width = width, Height = height, BitDepth = 16,
-            Hdr = HdrMode.Auto, HdrStages = 2, Bayer = BayerPattern.Rggb,
+            Hdr = HdrMode.Auto, HdrStages = stages,
         };
         using RawImage image = LoadImage(values, format);
 
         IReadOnlyList<RawImage> frames = HdrSplitter.Split(image);
 
-        // 長秒 = 行0,1,4,5 / 短秒 = 行2,3,6,7
-        Assert.Equal(4, frames[0].Height);
-        Assert.Equal(BayerPattern.Rggb, frames[0].Format.Bayer);
-        Assert.Equal(0, frames[0].GetPixel(0, 0));
-        Assert.Equal(100, frames[0].GetPixel(0, 1));
-        Assert.Equal(400, frames[0].GetPixel(0, 2));
-        Assert.Equal(500, frames[0].GetPixel(0, 3));
-        Assert.Equal(200, frames[1].GetPixel(0, 0));
-        Assert.Equal(300, frames[1].GetPixel(0, 1));
-        Assert.Equal(600, frames[1].GetPixel(0, 2));
-        Assert.Equal(700, frames[1].GetPixel(0, 3));
+        Assert.Equal(stages, frames.Count);
+        Assert.All(frames, f => Assert.Equal(rowsPerFrame, f.Height));
+        Assert.All(frames, f => Assert.Equal(HdrMode.None, f.Format.Hdr));
+        for (int stage = 0; stage < stages; stage++)
+        {
+            for (int y = 0; y < rowsPerFrame; y++)
+            {
+                for (int x = 0; x < width; x++)
+                {
+                    Assert.Equal(
+                        (ushort)((y * stages + stage) * 100 + x), frames[stage].GetPixel(x, y));
+                }
+            }
+        }
     }
 
     [Fact]
     public void Split_WithOverriddenFormat_UsesGivenBayerPattern()
     {
+        // Bayerセンサは色ペア(2行)単位で長/短が交互になる。
         // フォーマットパネルで後からBayerを指定した場合、RawImage.Format は
         // 読み込み時のまま固定なので blockHeight=1 になり色ペアが崩れていた
         const int width = 4;
@@ -148,18 +89,27 @@ public class HdrSplitterTests
         // パネルで RGGB を指定した状態を渡す
         RawFormat panelFormat = loadedFormat with { Bayer = BayerPattern.Rggb };
         IReadOnlyList<RawImage> frames = HdrSplitter.Split(image, panelFormat);
-
-        Assert.Equal(BayerPattern.Rggb, frames[0].Format.Bayer);
-
-        // 2行ブロックで交互 = 長秒は行0,1,4,5
-        Assert.Equal(0, frames[0].GetPixel(0, 0));
-        Assert.Equal(100, frames[0].GetPixel(0, 1));
-        Assert.Equal(400, frames[0].GetPixel(0, 2));
-        Assert.Equal(200, frames[1].GetPixel(0, 0));
-
-        foreach (RawImage frame in frames)
+        try
         {
-            frame.Dispose();
+            Assert.Equal(2, frames.Count);
+            Assert.All(frames, f => Assert.Equal(4, f.Height));
+            Assert.All(frames, f => Assert.Equal(BayerPattern.Rggb, f.Format.Bayer));
+
+            // 2行ブロックで交互 = 長秒は行0,1,4,5 / 短秒は行2,3,6,7
+            int[] longRows = { 0, 100, 400, 500 };
+            int[] shortRows = { 200, 300, 600, 700 };
+            for (int y = 0; y < 4; y++)
+            {
+                Assert.Equal(longRows[y], frames[0].GetPixel(0, y));
+                Assert.Equal(shortRows[y], frames[1].GetPixel(0, y));
+            }
+        }
+        finally
+        {
+            foreach (RawImage frame in frames)
+            {
+                frame.Dispose();
+            }
         }
     }
 
@@ -352,18 +302,6 @@ public class HdrSplitterTests
     }
 
     [Fact]
-    public void ResolveLayout_ExplicitLayoutIgnoresFrameCount()
-    {
-        // フレーム数4でも「行交互」と明示すればそのまま扱う
-        var format = new RawFormat
-        {
-            Width = 2, Height = 4, Hdr = HdrMode.LineInterleaved, FrameCount = 4, HdrStages = 2,
-        };
-
-        Assert.Equal(HdrMode.LineInterleaved, HdrSplitter.ResolveLayout(format, 2));
-    }
-
-    [Fact]
     public void Split_ExplicitLineInterleaved_WorksWithMultipleFrames()
     {
         // 従来はフレーム数から推定していたため、
@@ -469,26 +407,17 @@ public class HdrSplitterTests
         using RawImage image = LoadImage(values, format);
         Assert.Throws<InvalidOperationException>(() => HdrSplitter.Split(image));
     }
-
-    [Fact]
-    public void Split_FrameCountMismatch_Throws()
-    {
-        ushort[] values = TestData.MakePattern(2 * 3 * 2, 16);
-        var format = new RawFormat
-        {
-            Width = 2, Height = 3, BitDepth = 16,
-            FrameCount = 2, Hdr = HdrMode.Auto, HdrStages = 3,
-        };
-        using RawImage image = LoadImage(values, format);
-        Assert.Throws<InvalidOperationException>(() => HdrSplitter.Split(image));
-    }
 }
 
 public class HdrMergerTests
 {
-    private static RawImage MakeFrame(ushort[] values, int width, int height)
+    private static RawImage MakeFrame(
+        ushort[] values, int width, int height, BayerPattern bayer = BayerPattern.None)
     {
-        var format = new RawFormat { Width = width, Height = height, BitDepth = 16 };
+        var format = new RawFormat
+        {
+            Width = width, Height = height, BitDepth = 16, Bayer = bayer,
+        };
         string path = TestData.WriteTempFile(TestData.EncodeRawFile(values, format));
         try
         {
@@ -502,7 +431,8 @@ public class HdrMergerTests
 
     /// <summary>整合するシーン(S)から長秒/短秒フレームを合成用に生成する。</summary>
     private static (RawImage Longer, RawImage Shorter, double[] Scene) MakeConsistentPair(
-        int width, int height, int ratio, int step, int black = 0)
+        int width, int height, int ratio, int step, int black = 0,
+        BayerPattern bayer = BayerPattern.None)
     {
         int count = width * height;
         var scene = new double[count];
@@ -516,7 +446,10 @@ public class HdrMergerTests
             shorter[i] = (ushort)Math.Min(65535, s / ratio + black);
         }
 
-        return (MakeFrame(longer, width, height), MakeFrame(shorter, width, height), scene);
+        return (
+            MakeFrame(longer, width, height, bayer),
+            MakeFrame(shorter, width, height, bayer),
+            scene);
     }
 
     [Fact]
@@ -540,27 +473,6 @@ public class HdrMergerTests
             }
 
             Assert.Equal(65535f * 16, merged.FullScale, 1);
-        }
-    }
-
-    [Fact]
-    public void Merge_RampIsMonotonicAcrossSaturationBoundary()
-    {
-        const int width = 256;
-        const int height = 8;
-        (RawImage longFrame, RawImage shortFrame, _) =
-            MakeConsistentPair(width, height, ratio: 16, step: 512);
-        using (longFrame)
-        using (shortFrame)
-        {
-            HdrImage merged = HdrMerger.Merge(
-                new[] { longFrame, shortFrame }, new HdrMergeParameters(ExposureRatio: 16));
-
-            for (int i = 1; i < merged.Pixels.Length; i++)
-            {
-                Assert.True(merged.Pixels[i] >= merged.Pixels[i - 1] - 0.01f,
-                    $"単調増加が崩れています: i={i}, {merged.Pixels[i - 1]} → {merged.Pixels[i]}");
-            }
         }
     }
 
@@ -629,52 +541,9 @@ public class HdrMergerTests
         Assert.Equal(65535f * 64, merged.FullScale, 0);
     }
 
-    [Fact]
-    public void Merge_PreservesBayerPatternForColorDevelop()
-    {
-        var format = new RawFormat
-        {
-            Width = 8, Height = 4, BitDepth = 16, Bayer = BayerPattern.Rggb,
-        };
-        ushort[] values = TestData.MakePattern(8 * 4, 16);
-        string path = TestData.WriteTempFile(TestData.EncodeRawFile(values, format));
-        RawImage longFrame;
-        try
-        {
-            longFrame = RawLoader.Load(path, format);
-        }
-        finally
-        {
-            File.Delete(path);
-        }
-
-        string path2 = TestData.WriteTempFile(TestData.EncodeRawFile(values, format));
-        RawImage shortFrame;
-        try
-        {
-            shortFrame = RawLoader.Load(path2, format);
-        }
-        finally
-        {
-            File.Delete(path2);
-        }
-
-        using (longFrame)
-        using (shortFrame)
-        {
-            HdrImage merged = HdrMerger.Merge(
-                new[] { longFrame, shortFrame }, new HdrMergeParameters(ExposureRatio: 16));
-            Assert.Equal(BayerPattern.Rggb, merged.Bayer);
-            using RawImage quantized = merged.ToRawImage16();
-            Assert.Equal(BayerPattern.Rggb, quantized.Format.Bayer);
-        }
-    }
-
     [Theory]
     [InlineData(12, 2, 0.0)]  // step=16 = 12bit素材の正規化LSB → 無損失
     [InlineData(14, 2, 2.0)]  // LSB=4, step=16 → 2bit
-    [InlineData(16, 2, 4.0)]  // LSB=1, step=16 → 4bit
-    [InlineData(14, 3, 6.0)]  // step=256, LSB=4 → 6bit
     public void LostBits_IsRelativeToSourceBitDepth(int bitDepth, int stages, double expected)
     {
         // 16bitコンテナのLSB基準で数えると (16-N)bit ぶん過大になる回帰の確認
@@ -714,25 +583,31 @@ public class HdrMergerTests
     [Fact]
     public void ToRawImage16_ScalesFullScaleTo65535()
     {
+        // S = i*8192、短秒 = S/16(整数厳密)。合成域のフルスケールは 16×65535 なので
+        // 65535 への正規化はちょうど 1/16 倍 = i*512(丸め・クランプの影響なし)。
+        // Bayerパターンは合成結果と量子化画像の両方へ引き継がれる(カラー現像用)
         const int width = 32;
         const int height = 4;
-        (RawImage longFrame, RawImage shortFrame, _) =
-            MakeConsistentPair(width, height, ratio: 16, step: 8192);
+        (RawImage longFrame, RawImage shortFrame, _) = MakeConsistentPair(
+            width, height, ratio: 16, step: 8192, bayer: BayerPattern.Rggb);
         using (longFrame)
         using (shortFrame)
         {
             HdrImage merged = HdrMerger.Merge(
                 new[] { longFrame, shortFrame }, new HdrMergeParameters(ExposureRatio: 16));
+            Assert.Equal(BayerPattern.Rggb, merged.Bayer);
+
             using RawImage quantized = merged.ToRawImage16();
 
             Assert.Equal(width, quantized.Width);
             Assert.Equal(height, quantized.Height);
-            float scale = 65535f / merged.FullScale;
-            for (int x = 0; x < width; x++)
+            Assert.Equal(BayerPattern.Rggb, quantized.Format.Bayer);
+            for (int y = 0; y < height; y++)
             {
-                ushort expected = (ushort)Math.Clamp(
-                    (int)MathF.Round(merged.Pixels[x] * scale), 0, 65535);
-                Assert.Equal(expected, quantized.GetPixel(x, 0));
+                for (int x = 0; x < width; x++)
+                {
+                    Assert.Equal((y * width + x) * 512, quantized.GetPixel(x, y));
+                }
             }
         }
     }

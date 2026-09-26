@@ -18,27 +18,47 @@ public class LineProfileWindowTests
     [Fact]
     public Task ScaleModes_UpdateAxesAndKeepRawStatistics() => WpfTestHost.Run(() =>
     {
+        // 手動入力欄の表示文字列("998.5")を比較するため、このテストだけ文化を固定する。
+        // 共有STAスレッドの CurrentCulture を他の UI テストへ持ち越さないよう finally で戻す。
+        CultureInfo previousCulture = CultureInfo.CurrentCulture;
+        CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo("ja-JP");
         var window = NewWindow();
         try
         {
             var mode = (ComboBox)window.FindName("YScaleCombo");
             var min = (TextBox)window.FindName("YMinimumBox");
             var max = (TextBox)window.FindName("YMaximumBox");
+            var apply = (Button)window.FindName("ApplyYScaleButton");
+            var error = (TextBlock)window.FindName("YScaleErrorText");
             Assert.Equal(new ProfileAxisRange(0, 4095), window.AxisRange);
             Assert.False(min.IsEnabled);
             string statistics = ((TextBlock)window.FindName("StatsText")).Text;
             CaptureIfRequested(window, "profile-full");
 
-            mode.SelectedIndex = 1;
+            // 縦軸の右クリックメニューはコンボボックスと同じモード切替
+            ((MenuItem)window.FindName("YAutoRangeMenu")).RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+            Assert.Equal(1, mode.SelectedIndex);
             Assert.InRange(window.AxisRange.Minimum, 994, 995);
             Assert.InRange(window.AxisRange.Maximum, 1005, 1006);
             CaptureIfRequested(window, "profile-auto");
 
             mode.SelectedIndex = 2;
             Assert.True(min.IsEnabled);
+            ProfileAxisRange frozen = window.AxisRange; // 手動へ切り替えた時点の表示範囲が固定される
+
+            // 不正な入力は適用できず、クリックしても最後の範囲を置き換えない
+            min.Text = "abc";
+            Assert.False(apply.IsEnabled);
+            Assert.Equal(Visibility.Visible, error.Visibility);
+            apply.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Assert.Equal(frozen, window.AxisRange);
+
             min.Text = "998.5";
             max.Text = "1001.5";
-            ((Button)window.FindName("ApplyYScaleButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Assert.True(apply.IsEnabled);
+            Assert.Equal(Visibility.Collapsed, error.Visibility);
+            Assert.Equal(frozen, window.AxisRange); // 入力だけでは未反映
+            apply.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             Assert.Equal(new ProfileAxisRange(998.5, 1001.5), window.AxisRange);
             Assert.Equal(statistics, ((TextBlock)window.FindName("StatsText")).Text);
             CaptureIfRequested(window, "profile-manual");
@@ -58,10 +78,21 @@ public class LineProfileWindowTests
             mode.SelectedIndex = 2;
             Assert.Equal(new ProfileAxisRange(998.5, 1001.5), window.AxisRange);
             Assert.Equal("998.5", min.Text);
+
+            // スケール設定を開くだけでは表示範囲を変えず、表示中の値を丸めずに手動欄へ引き継ぐ
+            mode.SelectedIndex = 1;
+            ProfileAxisRange auto = window.AxisRange;
+            window.PrepareYScaleEditor(); // OSのポップアップを表示せず内容だけ検証
+            Assert.Equal(auto, window.AxisRange);
+            Assert.Equal(2, mode.SelectedIndex);
+            Assert.Equal(auto.Minimum.ToString("G17", CultureInfo.CurrentCulture), min.Text);
+            CaptureElementIfRequested((FrameworkElement)((Popup)window.FindName("YScalePopup")).Child,
+                "profile-axis-editor", 330, 280);
         }
         finally
         {
             window.Close();
+            CultureInfo.CurrentCulture = previousCulture;
         }
     });
 
@@ -71,7 +102,8 @@ public class LineProfileWindowTests
         var window = NewWindow();
         try
         {
-            ((ComboBox)window.FindName("YScaleCombo")).SelectedIndex = 2;
+            var mode = (ComboBox)window.FindName("YScaleCombo");
+            mode.SelectedIndex = 2;
             ((TextBox)window.FindName("YMinimumBox")).Text = "-10.25";
             ((TextBox)window.FindName("YMaximumBox")).Text = "1010.5";
             ((Button)window.FindName("ApplyYScaleButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
@@ -83,58 +115,11 @@ public class LineProfileWindowTests
             window.SetProfiles(new double[] { 1, 2 }, new double[] { 10, 20 }, Array.Empty<double>(),
                 Array.Empty<double>(), null, 0, 0, 255);
             Assert.Equal(expected, window.AxisRange);
-            ((ComboBox)window.FindName("YScaleCombo")).SelectedIndex = 0;
+            mode.SelectedIndex = 0;
             Assert.Equal(new ProfileAxisRange(0, 255), window.AxisRange);
-        }
-        finally
-        {
-            window.Close();
-        }
-    });
 
-    [Fact]
-    public Task InvalidInput_DoesNotReplaceLastAppliedRange() => WpfTestHost.Run(() =>
-    {
-        var window = NewWindow();
-        try
-        {
-            ((ComboBox)window.FindName("YScaleCombo")).SelectedIndex = 2;
-            var min = (TextBox)window.FindName("YMinimumBox");
-            var max = (TextBox)window.FindName("YMaximumBox");
-            var apply = (Button)window.FindName("ApplyYScaleButton");
-            var error = (TextBlock)window.FindName("YScaleErrorText");
-            foreach (string invalid in new[] { "", "NaN", "Infinity", "4095", "5000", "abc" })
-            {
-                min.Text = invalid;
-                Assert.False(apply.IsEnabled);
-                Assert.Equal(Visibility.Visible, error.Visibility);
-                apply.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-                Assert.Equal(new ProfileAxisRange(0, 4095), window.AxisRange);
-            }
-
-            min.Text = "100";
-            max.Text = "200";
-            Assert.True(apply.IsEnabled);
-            Assert.Equal(Visibility.Collapsed, error.Visibility);
-            Assert.Equal(new ProfileAxisRange(0, 4095), window.AxisRange); // 入力だけでは未反映
-            apply.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-            Assert.Equal(new ProfileAxisRange(100, 200), window.AxisRange);
-        }
-        finally
-        {
-            window.Close();
-        }
-    });
-
-    [Fact]
-    public Task AutoScale_TracksProjectionAndHandlesEmptyOrSingleSample() => WpfTestHost.Run(() =>
-    {
-        var window = NewWindow();
-        try
-        {
-            ((ComboBox)window.FindName("YScaleCombo")).SelectedIndex = 1;
-            ((CheckBox)window.FindName("ProjectionCheck")).IsChecked = true;
-            Assert.True(window.AxisRange.Maximum - window.AxisRange.Minimum < 0.01);
+            // 自動スケールは空データでは全範囲、1点では±0.5に落ち、再描画で例外にならない
+            mode.SelectedIndex = 1;
             window.SetProfiles(Array.Empty<double>(), Array.Empty<double>(), Array.Empty<double>(),
                 Array.Empty<double>(), null, 0, 0, 1023);
             Assert.Equal(new ProfileAxisRange(0, 1023), window.AxisRange);
@@ -142,35 +127,6 @@ public class LineProfileWindowTests
             window.SetProfiles(new double[] { 25 }, new double[] { 25 }, Array.Empty<double>(),
                 Array.Empty<double>(), null, 0, 0, 1023);
             Assert.Equal(new ProfileAxisRange(24.5, 25.5), window.AxisRange);
-        }
-        finally
-        {
-            window.Close();
-        }
-    });
-
-    [Fact]
-    public Task AxisContextMenu_OffersFullAutoAndManualWithoutPermanentToolbar() => WpfTestHost.Run(() =>
-    {
-        var window = NewWindow();
-        try
-        {
-            var axis = (Border)window.FindName("YAxisArea");
-            var popup = (Popup)window.FindName("YScalePopup");
-            Assert.NotNull(axis.ContextMenu);
-            Assert.Equal(3, axis.ContextMenu.Items.Count);
-            Assert.False(popup.IsOpen);
-            ((MenuItem)window.FindName("YAutoRangeMenu")).RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
-            Assert.InRange(window.AxisRange.Maximum - window.AxisRange.Minimum, 10.9, 11.1);
-            window.PrepareYScaleEditor(); // OSのポップアップを表示せず内容だけ検証
-            Assert.Equal(2, ((ComboBox)window.FindName("YScaleCombo")).SelectedIndex);
-            Assert.Equal(window.AxisRange.Minimum.ToString("G17", CultureInfo.CurrentCulture),
-                ((TextBox)window.FindName("YMinimumBox")).Text);
-            CaptureElementIfRequested((FrameworkElement)popup.Child, "profile-axis-editor", 330, 280);
-            ((MenuItem)window.FindName("YFullRangeMenu")).RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
-            Assert.Equal(new ProfileAxisRange(0, 4095), window.AxisRange);
-            window.PrepareYScaleEditor();
-            Assert.Equal(new ProfileAxisRange(0, 4095), window.AxisRange); // 開くだけでは表示を変えない
         }
         finally
         {
@@ -241,7 +197,6 @@ public class LineProfileWindowTests
     [Theory]
     [InlineData(255, 0)]
     [InlineData(4095, 0.37)]
-    [InlineData(65535, 1)]
     public Task WheelZoom_StopsAtOneRawCodeAndCanZoomBackOut(int maxCode, double anchor) => WpfTestHost.Run(() =>
     {
         var window = NewWindow();
@@ -266,10 +221,8 @@ public class LineProfileWindowTests
         }
     });
 
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public Task WheelZoom_PreservesSubCodeAutoOrManualRangeButAllowsZoomOut(bool manual) => WpfTestHost.Run(() =>
+    [Fact]
+    public Task WheelZoom_PreservesSubCodeAutoRangeButAllowsZoomOut() => WpfTestHost.Run(() =>
     {
         var window = NewWindow();
         try
@@ -277,7 +230,6 @@ public class LineProfileWindowTests
             ((CheckBox)window.FindName("ProjectionCheck")).IsChecked = true;
             var mode = (ComboBox)window.FindName("YScaleCombo");
             mode.SelectedIndex = 1;
-            if (manual) window.PrepareYScaleEditor();
             ProfileAxisRange original = window.AxisRange;
             double span = original.Maximum - original.Minimum;
             Assert.InRange(span, 0.001, 0.01);
@@ -285,7 +237,7 @@ public class LineProfileWindowTests
             var center = new Point(canvas.ActualWidth / 2, canvas.ActualHeight / 2);
             for (int i = 0; i < 20; i++) window.ZoomAt(center, 1200, false, true);
             Assert.Equal(original, window.AxisRange);
-            Assert.Equal(manual ? 2 : 1, mode.SelectedIndex);
+            Assert.Equal(1, mode.SelectedIndex);
             window.ZoomAt(center, -120, false, true);
             Assert.Equal(span * 1.2, window.AxisRange.Maximum - window.AxisRange.Minimum, 8);
         }
@@ -371,7 +323,6 @@ public class LineProfileWindowTests
 
     private static LineProfileWindow NewWindow()
     {
-        CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo("ja-JP");
         var window = new LineProfileWindow();
         double[] row = Enumerable.Range(0, 2000).Select(i => 1000.0 + 5 * Math.Sin(i / 30.0)).ToArray();
         double[] column = new double[] { 200, 220, 240, 220 };

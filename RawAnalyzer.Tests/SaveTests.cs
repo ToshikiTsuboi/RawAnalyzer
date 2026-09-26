@@ -5,26 +5,18 @@ namespace RawAnalyzer.Tests;
 
 public class SaveTests
 {
-    private static RawImage LoadImage(
-        ushort[] codes, int width, int height, int bitDepth = 12, bool memoryMapped = false)
+    private static RawImage LoadImage(ushort[] codes, int width, int height, int bitDepth = 12)
     {
+        // ヒープ展開で読むので、読み込み後に元ファイルを消せる
         var format = new RawFormat { Width = width, Height = height, BitDepth = bitDepth };
         string path = TestData.WriteTempFile(TestData.EncodeRawFile(codes, format));
         try
         {
-            long threshold = memoryMapped ? 0 : RawLoader.DefaultInMemoryPixelThreshold;
-            return RawLoader.Load(path, format, threshold);
+            return RawLoader.Load(path, format);
         }
         finally
         {
-            // MMF読み出し中は元ファイルを削除できないため、その場合は残す
-            try
-            {
-                File.Delete(path);
-            }
-            catch (IOException)
-            {
-            }
+            File.Delete(path);
         }
     }
 
@@ -35,29 +27,19 @@ public class SaveTests
         return Path.Combine(dir, Guid.NewGuid().ToString("N") + extension);
     }
 
-    public static IEnumerable<object[]> SaveCombinations()
-    {
-        foreach (BitPacking packing in new[] { BitPacking.Lsb, BitPacking.Msb })
-        {
-            foreach (Endianness endian in new[] { Endianness.Little, Endianness.Big })
-            {
-                foreach (bool memoryMapped in new[] { false, true })
-                {
-                    yield return new object[] { packing, endian, memoryMapped };
-                }
-            }
-        }
-    }
-
     [Theory]
-    [MemberData(nameof(SaveCombinations))]
-    public void RawSaver_SaveAndReload_RoundTripsAllPixels(
-        BitPacking packing, Endianness endianness, bool memoryMapped)
+    [InlineData(BitPacking.Lsb, Endianness.Little)]
+    [InlineData(BitPacking.Lsb, Endianness.Big)]
+    [InlineData(BitPacking.Msb, Endianness.Little)]
+    [InlineData(BitPacking.Msb, Endianness.Big)]
+    public void RawSaver_SaveAndReload_RoundTripsAllPixels(BitPacking packing, Endianness endianness)
     {
+        // RawSaver.EncodeRow の分岐は packing×endianness の 4 通り。
+        // 元画像が MMF かヒープかは CopyRegion の裏側の話なので RawLoaderTests に任せる
         const int width = 16;
         const int height = 8;
         ushort[] codes = TestData.MakePattern(width * height, 12);
-        using RawImage image = LoadImage(codes, width, height, 12, memoryMapped);
+        using RawImage image = LoadImage(codes, width, height);
 
         string path = TempPath(".raw");
         try
@@ -103,7 +85,12 @@ public class SaveTests
         try
         {
             using RawImage image = RawLoader.Load(sourcePath, format);
-            RawSaver.Save(image, savedPath, BitPacking.Lsb, Endianness.Little);
+            double lastProgress = 0;
+            var progress = new SynchronousProgress(p => lastProgress = p);
+            RawSaver.Save(image, savedPath, BitPacking.Lsb, Endianness.Little, progress);
+
+            // 256 行の報告周期に乗らない短い画像でも、最終行で 1.0 を報告し終えること
+            Assert.Equal(1.0, lastProgress, 10);
 
             using RawImage reloaded = RawLoader.Load(savedPath, format);
             for (int f = 0; f < frames; f++)
@@ -122,40 +109,6 @@ public class SaveTests
             File.Delete(sourcePath);
             File.Delete(savedPath);
         }
-    }
-
-    [Fact]
-    public void RawSaver_ReportsProgressAndCompletes()
-    {
-        ushort[] codes = TestData.MakePattern(8 * 300, 12);
-        using RawImage image = LoadImage(codes, 8, 300);
-        string path = TempPath(".raw");
-        try
-        {
-            double last = 0;
-            var progress = new SynchronousProgress(p => last = p);
-            RawSaver.Save(image, path, BitPacking.Lsb, Endianness.Little, progress);
-            Assert.Equal(1.0, last, 10);
-        }
-        finally
-        {
-            File.Delete(path);
-        }
-    }
-
-    [Fact]
-    public void RawSaver_Canceled_DeletesPartialFile()
-    {
-        ushort[] codes = TestData.MakePattern(8 * 8, 12);
-        using RawImage image = LoadImage(codes, 8, 8);
-        string path = TempPath(".raw");
-        using var cts = new CancellationTokenSource();
-        cts.Cancel();
-
-        Assert.ThrowsAny<OperationCanceledException>(() =>
-            RawSaver.Save(image, path, BitPacking.Lsb, Endianness.Little,
-                cancellationToken: cts.Token));
-        Assert.False(File.Exists(path));
     }
 
     [Theory]

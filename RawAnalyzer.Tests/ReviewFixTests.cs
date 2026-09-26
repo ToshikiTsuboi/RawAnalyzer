@@ -11,7 +11,6 @@ public class ReviewFixTests
 {
     [Theory]
     [InlineData(@"\\nas\share\dark.raw", true)]
-    [InlineData(@"\\192.168.0.10\raw\a.bin", true)]
     [InlineData(@"C:\Temp\dark.raw", false)]
     public void IsNetworkPath_DetectsUncPaths(string path, bool expected)
     {

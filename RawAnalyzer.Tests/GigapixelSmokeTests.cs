@@ -18,20 +18,13 @@ public class GigapixelSmokeTests
         _output = output;
     }
 
-    /// <summary>環境変数で指定されたギガピクセルRawのパス。未設定ならnull。</summary>
-    internal static string? GigapixelPath
-    {
-        get
-        {
-            string? path = Environment.GetEnvironmentVariable("RAWANALYZER_GIGAPIXEL_PATH");
-            return !string.IsNullOrEmpty(path) && File.Exists(path) ? path : null;
-        }
-    }
+    /// <summary>ギガピクセルRawのパスを保持する環境変数名。</summary>
+    private const string PathVariable = "RAWANALYZER_GIGAPIXEL_PATH";
 
-    [GigapixelFact]
+    [SampleFileFact(PathVariable)]
     public void Gigapixel_LoadPyramidAndRegionReads_CompleteQuickly()
     {
-        string path = GigapixelPath!;
+        string path = SampleFileFactAttribute.GetPath(PathVariable)!;
 
         var format = new RawFormat { Width = 32768, Height = 32768, BitDepth = 12 };
 

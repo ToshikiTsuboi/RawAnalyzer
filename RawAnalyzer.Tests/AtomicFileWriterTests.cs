@@ -38,9 +38,11 @@ public class AtomicFileWriterTests
     [Fact]
     public void Write_Throws_KeepsExistingFileIntact()
     {
-        // 上書き保存が途中で失敗しても、元のファイルを失わないこと
+        // 上書き保存が途中で失敗しても、元のファイルを失わず、一時ファイルも残さないこと
         byte[] original = { 10, 20, 30, 40 };
         string path = PrepareExisting(original);
+        string directory = Path.GetDirectoryName(path)!;
+        string stem = Path.GetFileName(path);
         try
         {
             Assert.Throws<InvalidOperationException>(() =>
@@ -51,47 +53,6 @@ public class AtomicFileWriterTests
                 }));
 
             Assert.Equal(original, File.ReadAllBytes(path));
-        }
-        finally
-        {
-            AtomicFileWriter.TryDelete(path);
-        }
-    }
-
-    [Fact]
-    public void Write_Canceled_KeepsExistingFileIntact()
-    {
-        byte[] original = { 5, 6 };
-        string path = PrepareExisting(original);
-        using var cts = new CancellationTokenSource();
-        try
-        {
-            Assert.Throws<OperationCanceledException>(() =>
-                AtomicFileWriter.Write(path, s =>
-                {
-                    cts.Cancel();
-                    cts.Token.ThrowIfCancellationRequested();
-                }));
-
-            Assert.Equal(original, File.ReadAllBytes(path));
-        }
-        finally
-        {
-            AtomicFileWriter.TryDelete(path);
-        }
-    }
-
-    [Fact]
-    public void Write_Throws_LeavesNoTemporaryFile()
-    {
-        string path = PrepareExisting(new byte[] { 1 });
-        string directory = Path.GetDirectoryName(path)!;
-        string stem = Path.GetFileName(path);
-        try
-        {
-            Assert.Throws<InvalidOperationException>(() =>
-                AtomicFileWriter.Write(path, _ => throw new InvalidOperationException()));
-
             Assert.Empty(Directory.GetFiles(directory, stem + ".part*"));
         }
         finally

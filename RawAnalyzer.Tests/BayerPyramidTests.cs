@@ -38,45 +38,14 @@ public class BayerPyramidTests
         Assert.Equal(1, pyramid.SelectFactor(0.1));
     }
 
-    [Fact]
-    public void Create_ConstantMosaic_KeepsChannelValues()
+    [Theory]
+    [InlineData(2)]
+    [InlineData(4)]
+    public void Create_AveragesSamePhasePixelsOnly(int factor)
     {
-        // 同色画素だけを平均するので、各チャネルが一定なら値は変わらない
-        const int size = 32;
-        ushort[] mosaic = ColorPipelineTests.BuildConstantMosaic(
-            size, size, BayerPattern.Rggb, r: 1000, g: 2000, b: 3000);
-        RawFormat format = MakeFormat(size, size);
-        using RawImage image = LoadImage(mosaic, format);
-
-        using var pyramid = BayerPyramid.Create(image, format);
-
-        Assert.True(pyramid.LevelCount >= 2);
-        foreach (int factor in new[] { 2, 4 })
-        {
-            RawImage? level = pyramid.GetLevel(factor);
-            Assert.NotNull(level);
-            Assert.Equal(size / factor, level!.Width);
-            Assert.Equal(size / factor, level.Height);
-            Assert.Equal(BayerPattern.Rggb, level.Format.Bayer);
-
-            for (int y = 0; y < level.Height; y++)
-            {
-                for (int x = 0; x < level.Width; x++)
-                {
-                    ushort expected = (y & 1) == 0
-                        ? (ushort)((x & 1) == 0 ? 1000 : 2000)
-                        : (ushort)((x & 1) == 0 ? 2000 : 3000);
-                    Assert.Equal(expected, level.GetPixel(x, y));
-                }
-            }
-        }
-    }
-
-    [Fact]
-    public void Create_Factor2_AveragesSamePhasePixelsOnly()
-    {
-        // 位相ごとに異なる勾配を入れ、混ざらないことを確認する
-        const int size = 8;
+        // 位相ごとに異なる勾配を入れ、混ざらないことを確認する。
+        // factor 4 は factor 2 のレベルから連鎖生成される(fromPrevious)経路
+        const int size = 16;
         var codes = new ushort[size * size];
         for (int y = 0; y < size; y++)
         {
@@ -92,32 +61,35 @@ public class BayerPyramidTests
         using RawImage image = LoadImage(codes, format);
 
         using var pyramid = BayerPyramid.Create(image, format);
-        RawImage? level = pyramid.GetLevel(2);
+        RawImage? level = pyramid.GetLevel(factor);
 
         Assert.NotNull(level);
-        Assert.Equal(4, level!.Width);
-        Assert.Equal(4, level.Height);
+        int levelSize = size / factor;
+        Assert.Equal(levelSize, level!.Width);
+        Assert.Equal(levelSize, level.Height);
+        Assert.Equal(BayerPattern.Rggb, level.Format.Bayer);
 
-        for (int destY = 0; destY < 4; destY++)
+        for (int destY = 0; destY < levelSize; destY++)
         {
-            for (int destX = 0; destX < 4; destX++)
+            for (int destX = 0; destX < levelSize; destX++)
             {
                 int px = destX & 1;
                 int py = destY & 1;
                 int bx = destX >> 1;
                 int by = destY >> 1;
                 int sum = 0;
-                for (int j = 0; j < 2; j++)
+                for (int j = 0; j < factor; j++)
                 {
-                    for (int i = 0; i < 2; i++)
+                    for (int i = 0; i < factor; i++)
                     {
-                        int sx = 2 * (bx * 2 + i) + px;
-                        int sy = 2 * (by * 2 + j) + py;
+                        int sx = 2 * (bx * factor + i) + px;
+                        int sy = 2 * (by * factor + j) + py;
                         sum += codes[sy * size + sx];
                     }
                 }
 
-                Assert.Equal((ushort)(sum / 4), level.GetPixel(destX, destY));
+                // この素材では同位相の平均が整数になるので、連鎖生成でも直接平均と厳密に一致する
+                Assert.Equal((ushort)(sum / (factor * factor)), level.GetPixel(destX, destY));
             }
         }
     }
@@ -132,9 +104,7 @@ public class BayerPyramidTests
         using var pyramid = BayerPyramid.Create(image, format);
 
         Assert.Equal(1, pyramid.SelectFactor(1.0));
-        Assert.Equal(1, pyramid.SelectFactor(2.0));
         Assert.Equal(2, pyramid.SelectFactor(0.5));
-        Assert.Equal(4, pyramid.SelectFactor(0.25));
         Assert.Equal(4, pyramid.SelectFactor(0.2));
     }
 

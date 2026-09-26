@@ -6,21 +6,6 @@ namespace RawAnalyzer.Tests;
 public class CompareSyncTests
 {
     [Fact]
-    public void MapView_Fov_SameGeometry_IsIdentity()
-    {
-        var state = new PaneViewState(
-            Zoom: 2.0, OriginX: 120, OriginY: 80,
-            ViewWidth: 800, ViewHeight: 600,
-            ImageWidth: 1600, ImageHeight: 1200);
-
-        ViewTransform mapped = CompareSync.MapView(CompareSyncMode.FieldOfView, state, state);
-
-        Assert.Equal(2.0, mapped.Zoom, 10);
-        Assert.Equal(120, mapped.OriginX, 10);
-        Assert.Equal(80, mapped.OriginY, 10);
-    }
-
-    [Fact]
     public void MapView_Fov_MatchesRelativeWidthAcrossResolutions()
     {
         // ソース: 1600px幅の画像を半分だけ表示(zoom=1, view=800)
@@ -58,6 +43,12 @@ public class CompareSyncTests
         var source = new PaneViewState(3.0, 421.5, 260.25, 812, 597, 1920, 1080);
         var target = new PaneViewState(1.0, 0, 0, 640, 512, 640, 480);
 
+        // 同じ形状へ写せば恒等
+        ViewTransform same = CompareSync.MapView(CompareSyncMode.FieldOfView, source, source);
+        Assert.Equal(source.Zoom, same.Zoom, 10);
+        Assert.Equal(source.OriginX, same.OriginX, 10);
+        Assert.Equal(source.OriginY, same.OriginY, 10);
+
         ViewTransform forward = CompareSync.MapView(CompareSyncMode.FieldOfView, source, target);
         var targetState = target with
         {
@@ -73,16 +64,13 @@ public class CompareSyncTests
     }
 
     [Fact]
-    public void MapCursor_SameSize_IsIdentity()
-    {
-        (double x, double y) = CompareSync.MapCursor(5, 7, (10, 10), (10, 10));
-        Assert.Equal(5.0, x, 10);
-        Assert.Equal(7.0, y, 10);
-    }
-
-    [Fact]
     public void MapCursor_ScalesByRelativePosition()
     {
+        // 同サイズなら恒等
+        (double sameX, double sameY) = CompareSync.MapCursor(5, 7, (10, 10), (10, 10));
+        Assert.Equal(5.0, sameX, 10);
+        Assert.Equal(7.0, sameY, 10);
+
         // 20x20の画素(9,9)の中心 rel=0.475 → 40x40では 0.475*40-0.5 = 18.5
         (double x, double y) = CompareSync.MapCursor(9, 9, (20, 20), (40, 40));
         Assert.Equal(18.5, x, 10);

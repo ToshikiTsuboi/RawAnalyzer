@@ -29,13 +29,6 @@ public class DisplayConditionsTests
     }
 
     [Fact]
-    public void Transfer_SameBitDepth_ReturnsUnchanged()
-    {
-        var source = new DisplaySettings { BlackCode = 100, WhiteCode = 3000 };
-        Assert.Same(source, DisplayConditions.Transfer(source, 12, 12));
-    }
-
-    [Fact]
     public void AreEqual_DefaultsAcrossBitDepths_AllKeysEqual()
     {
         DisplaySettings a = DisplaySettings.CreateDefault(12);
@@ -70,27 +63,13 @@ public class DisplayConditionsTests
         Assert.True(DisplayConditions.AreEqual(ConditionKey.White, a, 12, gain, 12));
     }
 
-    [Fact]
-    public void Format_ProducesCompactChipText()
+    [Theory]
+    [InlineData(6.0, "+6.0dB")]
+    [InlineData(0.0, "0.0dB")]   // 0には符号を付けない("+0.0;-0.0;0.0" の第3区画)
+    [InlineData(-3.5, "-3.5dB")]
+    public void Format_Gain_SignsNonZeroValuesOnly(double gainDb, string expected)
     {
-        var s = new DisplaySettings
-        {
-            GainDb = 6.0,
-            Gamma = 2.2,
-            Contrast = 1.0,
-            BlackCode = 0,
-            WhiteCode = 4095,
-        };
-
-        Assert.Equal("+6.0dB", DisplayConditions.Format(ConditionKey.Gain, s, 12));
-        Assert.Equal("γ2.20", DisplayConditions.Format(ConditionKey.Gamma, s, 12));
-        Assert.Equal("C1.00", DisplayConditions.Format(ConditionKey.Contrast, s, 12));
-        Assert.Equal("黒0.0%", DisplayConditions.Format(ConditionKey.Black, s, 12));
-        Assert.Equal("白100.0%", DisplayConditions.Format(ConditionKey.White, s, 12));
-
-        Assert.Equal("0.0dB", DisplayConditions.Format(
-            ConditionKey.Gain, s with { GainDb = 0 }, 12));
-        Assert.Equal("-3.5dB", DisplayConditions.Format(
-            ConditionKey.Gain, s with { GainDb = -3.5 }, 12));
+        var settings = new DisplaySettings { GainDb = gainDb };
+        Assert.Equal(expected, DisplayConditions.Format(ConditionKey.Gain, settings, 12));
     }
 }

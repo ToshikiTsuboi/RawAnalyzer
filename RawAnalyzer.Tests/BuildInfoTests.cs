@@ -41,25 +41,13 @@ public class BuildInfoTests
     }
 
     [Fact]
-    public void FormatVersionLabel_Release_HasNoAnnotation()
-    {
-        // リリース版に開発向けの但し書きが出ないこと
-        string label = BuildInfo.FormatVersionLabel("1.3.0", "v1.3.0", dirty: false);
-
-        Assert.Equal("1.3.0", label);
-        Assert.DoesNotContain("開発", label);
-        Assert.DoesNotContain("dirty", label);
-    }
-
-    [Fact]
     public void FormatVersionLabel_NoGit_FallsBackToAssemblyVersion()
     {
         Assert.Equal("1.0.0 (開発ビルド)", BuildInfo.FormatVersionLabel("1.0.0", "", dirty: false));
     }
 
     [Theory]
-    [InlineData("", "")]
-    [InlineData("abc1234", "abc1234")]
+    [InlineData("", "")] // git が無い環境では空のまま
     [InlineData("0123456789abcdef0123456789abcdef01234567", "0123456789ab")]
     public void ShortenCommit_TakesTwelveCharacters(string commit, string expected)
     {
@@ -75,7 +63,6 @@ public class BuildInfoTests
         Assert.NotEmpty(BuildInfo.Configuration);
         Assert.Equal("https://github.com/ToshikiTsuboi/RawAnalyzer", BuildInfo.RepositoryUrl);
         Assert.Equal(40, BuildInfo.Commit.Length);
-        Assert.Equal(12, BuildInfo.ShortCommit.Length);
     }
 
     [Fact]

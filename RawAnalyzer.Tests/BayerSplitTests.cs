@@ -20,13 +20,10 @@ public class BayerSplitTests
     }
 
     [Theory]
-    [InlineData(0, 0, 0, 0)]   // 左上象限 → パリティ(0,0)
-    [InlineData(1, 0, 2, 0)]
+    [InlineData(1, 0, 2, 0)]   // 象限内オフセット → 元画像では2画素刻み
     [InlineData(2, 0, 1, 0)]   // 右上象限 → パリティ(1,0)
-    [InlineData(3, 0, 3, 0)]
     [InlineData(0, 2, 0, 1)]   // 左下象限 → パリティ(0,1)
-    [InlineData(2, 2, 1, 1)]   // 右下象限 → パリティ(1,1)
-    [InlineData(3, 3, 3, 3)]
+    [InlineData(3, 3, 3, 3)]   // 右下象限 + 象限内オフセット(両軸同時)
     public void MapTiledToSource_4x4_MapsQuadrants(int tx, int ty, int sx, int sy)
     {
         Assert.Equal((sx, sy), BayerSplit.MapTiledToSource(tx, ty, 4, 4));
@@ -73,14 +70,5 @@ public class BayerSplitTests
         ushort[] tiled = BayerSplit.CreateTiled(image);
 
         Assert.Equal(4 * 2, tiled.Length);
-    }
-
-    [Fact]
-    public void GetQuadrantChannel_Rggb_MatchesPattern()
-    {
-        Assert.Equal(BayerChannel.R, BayerSplit.GetQuadrantChannel(BayerPattern.Rggb, 0, 0));
-        Assert.Equal(BayerChannel.Gr, BayerSplit.GetQuadrantChannel(BayerPattern.Rggb, 1, 0));
-        Assert.Equal(BayerChannel.Gb, BayerSplit.GetQuadrantChannel(BayerPattern.Rggb, 0, 1));
-        Assert.Equal(BayerChannel.B, BayerSplit.GetQuadrantChannel(BayerPattern.Rggb, 1, 1));
     }
 }

@@ -22,16 +22,13 @@ public class FormatPresetStoreTests : IDisposable
     }
 
     [Fact]
-    public void Load_MissingFile_ReturnsEmpty()
-    {
-        var store = new FormatPresetStore(_directory);
-        Assert.Empty(store.Load());
-    }
-
-    [Fact]
     public void SaveAndLoad_RoundTripsPresets()
     {
+        // アプリは Load() を直接呼ばず、LoadOrQuarantine だけを使う
         var store = new FormatPresetStore(_directory);
+        Assert.Empty(store.LoadOrQuarantine(out bool corrupted));
+        Assert.False(corrupted, "ファイル未存在は破損ではないこと");
+
         var presets = new Dictionary<string, RawFormat>
         {
             ["IMX477 12bit"] = new RawFormat
@@ -59,7 +56,11 @@ public class FormatPresetStoreTests : IDisposable
 
         store.Save(presets);
 
-        var loaded = new FormatPresetStore(_directory).Load();
+        IReadOnlyDictionary<string, RawFormat> loaded =
+            new FormatPresetStore(_directory).LoadOrQuarantine(out corrupted);
+        Assert.False(corrupted);
+        Assert.True(File.Exists(store.FilePath));
+        Assert.False(File.Exists(store.BackupPath), "正常なファイルは退避されないこと");
         Assert.Equal(presets.Count, loaded.Count);
         foreach ((string name, RawFormat format) in presets)
         {
@@ -73,30 +74,15 @@ public class FormatPresetStoreTests : IDisposable
         var store = new FormatPresetStore(_directory);
         store.Save(new Dictionary<string, RawFormat>
         {
-            ["p"] = new RawFormat { Width = 1, Height = 1, Bayer = BayerPattern.Rggb },
+            ["p"] = new RawFormat
+            {
+                Width = 1, Height = 1, Bayer = BayerPattern.Rggb, Hdr = HdrMode.LineInterleaved,
+            },
         });
 
         string json = File.ReadAllText(store.FilePath);
         Assert.Contains("\"Rggb\"", json);
-    }
-
-    [Fact]
-    public void Save_ReplacesAtomicallyAndLeavesNoTempFile()
-    {
-        var store = new FormatPresetStore(_directory);
-        store.Save(new Dictionary<string, RawFormat>
-        {
-            ["first"] = new RawFormat { Width = 8, Height = 8 },
-        });
-        store.Save(new Dictionary<string, RawFormat>
-        {
-            ["second"] = new RawFormat { Width = 16, Height = 16 },
-        });
-
-        Assert.False(File.Exists(store.FilePath + ".tmp"), "一時ファイルが残らないこと");
-        IReadOnlyDictionary<string, RawFormat> loaded = store.Load();
-        Assert.True(loaded.ContainsKey("second"));
-        Assert.False(loaded.ContainsKey("first"));
+        Assert.Contains("\"LineInterleaved\"", json);
     }
 
     [Fact]
@@ -142,9 +128,6 @@ public class FormatPresetStoreTests : IDisposable
         Assert.Single(loaded);
         RawFormat format = loaded["旧プリセット"];
         Assert.Equal(HdrMode.Auto, format.Hdr);
-
-        // 旧挙動(フレーム数から推定)が保たれること
-        Assert.Equal(HdrMode.FrameSequential, HdrSplitter.ResolveLayout(format, format.HdrStages));
     }
 
     [Fact]
@@ -158,38 +141,5 @@ public class FormatPresetStoreTests : IDisposable
             """);
 
         Assert.Equal(HdrMode.None, store.Load()["p"].Hdr);
-    }
-
-    [Fact]
-    public void Save_WritesNewHdrModeName()
-    {
-        var store = new FormatPresetStore(_directory);
-        store.Save(new Dictionary<string, RawFormat>
-        {
-            ["p"] = new RawFormat
-            {
-                Width = 8, Height = 8, Hdr = HdrMode.LineInterleaved,
-            },
-        });
-
-        Assert.Contains("\"LineInterleaved\"", File.ReadAllText(store.FilePath));
-    }
-
-    [Fact]
-    public void LoadOrQuarantine_ValidFile_LeavesFileIntact()
-    {
-        var store = new FormatPresetStore(_directory);
-        store.Save(new Dictionary<string, RawFormat>
-        {
-            ["p"] = new RawFormat { Width = 4, Height = 2, BitDepth = 10 },
-        });
-
-        IReadOnlyDictionary<string, RawFormat> loaded =
-            store.LoadOrQuarantine(out bool corrupted);
-
-        Assert.False(corrupted);
-        Assert.Single(loaded);
-        Assert.True(File.Exists(store.FilePath));
-        Assert.False(File.Exists(store.BackupPath));
     }
 }

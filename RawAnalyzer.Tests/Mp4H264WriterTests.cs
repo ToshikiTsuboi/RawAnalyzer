@@ -51,10 +51,17 @@ public class Mp4H264WriterTests
     [Mp4Fact]
     public void Write_Frames_ProducesPlayableMp4Structure()
     {
-        string path = TempPath();
+        // 本番の書き出しと同じく一時パス(OutputPaths.BuildPartialPath)でエンコーダを
+        // 初期化し、Finish 後に最終パスへ置換してから構造を検証する。
+        // 回帰(e60a884): 一時パスを "foo.mp4.part" にすると、Media Foundation の
+        // SinkWriter が URL の拡張子から出力コンテナを判別できず初期化に失敗する
+        // (解像度に関係なく「エンコーダを初期化できませんでした」になる)。
+        // 拡張子を末尾に残した "foo.part.mp4" なら初期化から置換まで通ることを固定する
+        string finalPath = TempPath();
+        string partial = OutputPaths.BuildPartialPath(finalPath);
         try
         {
-            using (var writer = new Mp4H264Writer(path, 64, 48, 15))
+            using (var writer = new Mp4H264Writer(partial, 64, 48, 15))
             {
                 for (int i = 0; i < 15; i++)
                 {
@@ -65,7 +72,8 @@ public class Mp4H264WriterTests
                 writer.Finish();
             }
 
-            byte[] data = File.ReadAllBytes(path);
+            File.Move(partial, finalPath, overwrite: true);
+            byte[] data = File.ReadAllBytes(finalPath);
             Assert.True(data.Length > 1000, $"出力が小さすぎる: {data.Length} bytes");
 
             // ISO BMFF: 先頭ボックスが ftyp、moov(インデックス)と mdat があること
@@ -76,7 +84,8 @@ public class Mp4H264WriterTests
         }
         finally
         {
-            File.Delete(path);
+            File.Delete(partial);
+            File.Delete(finalPath);
         }
     }
 
@@ -101,9 +110,10 @@ public class Mp4H264WriterTests
         return string.Join(",", names);
     }
 
-    [Mp4Fact]
+    [Fact]
     public void Constructor_OddSize_Throws()
     {
+        // 偶数検査は MFStartup より前に行われるため、Media Foundation の有無に依らない
         string path = TempPath();
         try
         {
@@ -122,26 +132,14 @@ public class Mp4H264WriterTests
         string path = TempPath();
         using (var writer = new Mp4H264Writer(path, 64, 48, 15))
         {
+            // 長さ検査は unsafe コピーの読み越え防止。弾かれたフレームは数えない
+            Assert.Throws<ArgumentException>(() => writer.AddFrameRgb24(new byte[10]));
             writer.AddFrameRgb24(MakeFrame(64, 48, 0));
+            Assert.Equal(1, writer.FrameCount);
 
             // Finishしない = 中断
         }
 
         Assert.False(File.Exists(path), "書きかけのMP4が残らないこと");
-    }
-
-    [Mp4Fact]
-    public void AddFrame_WrongBufferLength_Throws()
-    {
-        string path = TempPath();
-        try
-        {
-            using var writer = new Mp4H264Writer(path, 64, 48, 15);
-            Assert.Throws<ArgumentException>(() => writer.AddFrameRgb24(new byte[10]));
-        }
-        finally
-        {
-            File.Delete(path);
-        }
     }
 }
