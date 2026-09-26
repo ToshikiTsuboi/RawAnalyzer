@@ -19,7 +19,8 @@ public class TiffLoaderTests
         const int width = 5;
         const int height = 3;
         ushort[] pixels = TestData.MakePattern(width * height, 8);
-        byte[] tiff = TestData.BuildTiff(pixels, width, height, 8, bigEndian: false);
+        var page = TiffBuilder.GrayPage(width, height, 8, TiffBuilder.SampleBytes(pixels, 8));
+        byte[] tiff = new TiffBuilder().Build(page);
 
         using RawImage image = TiffLoader.Load(tiff);
         Assert.Equal(width, image.Width);
@@ -42,7 +43,8 @@ public class TiffLoaderTests
         const int width = 4;
         const int height = 4;
         ushort[] pixels = TestData.MakePattern(width * height, 16);
-        byte[] tiff = TestData.BuildTiff(pixels, width, height, 16, bigEndian);
+        var page = TiffBuilder.GrayPage(width, height, 16, TiffBuilder.SampleBytes(pixels, 16, bigEndian));
+        byte[] tiff = new TiffBuilder(bigEndian).Build(page);
 
         using RawImage image = TiffLoader.Load(tiff);
         Assert.Equal(16, image.Format.BitDepth);
@@ -62,7 +64,8 @@ public class TiffLoaderTests
         const int width = 6;
         const int height = 5;
         ushort[] pixels = TestData.MakePattern(width * height, 16);
-        byte[] tiff = TestData.BuildTiff(pixels, width, height, 16, bigEndian: false, rowsPerStrip: 2);
+        var page = TiffBuilder.GrayPage(width, height, 16, TiffBuilder.SampleBytes(pixels, 16), rowsPerStrip: 2);
+        byte[] tiff = new TiffBuilder().Build(page);
 
         using RawImage image = TiffLoader.Load(tiff);
         for (int y = 0; y < height; y++)
@@ -77,19 +80,19 @@ public class TiffLoaderTests
     [Fact]
     public void Load_Compressed_Throws()
     {
-        byte[] tiff = TestData.BuildTiff(new ushort[4], 2, 2, 16, false, compression: 5);
+        byte[] tiff = new TiffBuilder().Build(TiffBuilder.GrayPage(2, 2, 16, new byte[8], compression: 5));
         Assert.Throws<InvalidDataException>(() => TiffLoader.Load(tiff));
     }
 
     [Fact]
     public void Load_BadByteOrderMarkOrMagicNumber_Throws()
     {
-        byte[] badByteOrder = TestData.BuildTiff(new ushort[4], 2, 2, 16, false);
+        byte[] badByteOrder = new TiffBuilder().Build(TiffBuilder.GrayPage(2, 2, 16, new byte[8]));
         badByteOrder[0] = (byte)'X';
         badByteOrder[1] = (byte)'X';
         Assert.Throws<InvalidDataException>(() => TiffLoader.Load(badByteOrder));
 
-        byte[] badMagic = TestData.BuildTiff(new ushort[4], 2, 2, 16, false);
+        byte[] badMagic = new TiffBuilder().Build(TiffBuilder.GrayPage(2, 2, 16, new byte[8]));
         badMagic[2] = 99;
         Assert.Throws<InvalidDataException>(() => TiffLoader.Load(badMagic));
     }

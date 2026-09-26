@@ -128,11 +128,13 @@ public class TiffStackTests
     public void Probe_RejectsCyclicAndOutOfBoundsDirectoryChains()
     {
         byte[] bytes = BuildGappedStack(false);
-        BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(8 + 2 + 9 * 12), 8);
+        int firstIfd = IfdOffset(bytes, 0);
+        int nextLink = NextIfdLinkOffset(bytes, firstIfd);
+        BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(nextLink), (uint)firstIfd); // 先頭IFDが自分自身を指す
         using var cycle = new Fixture(bytes);
         Assert.False(TiffLoader.TryProbePixelLayout(cycle.Path, out _, out _));
 
-        BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(8 + 2 + 9 * 12), uint.MaxValue);
+        BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(nextLink), uint.MaxValue);
         using var invalid = new Fixture(bytes);
         Assert.False(TiffLoader.TryProbePixelLayout(invalid.Path, out _, out _));
     }
@@ -306,9 +308,11 @@ public class TiffStackTests
         byte[] bytes = BuildGappedStack(false);
         // 選択していないページのストリップだけをファイル外へ向ける。
         // 先頭ページは8bitにしてWIC経由にもオンデマンド性があることを検証する。
-        BinaryPrimitives.WriteUInt16LittleEndian(bytes.AsSpan(8 + 2 + 2 * 12 + 8), 8);
-        WriteU32(bytes, 8 + 2 + 8 * 12 + 8, 4, false);
-        WriteU32(bytes, 256 + 8 + 2 + 5 * 12 + 8, uint.MaxValue, false);
+        int firstIfd = IfdOffset(bytes, 0);
+        int secondIfd = IfdOffset(bytes, 1);
+        BinaryPrimitives.WriteUInt16LittleEndian(bytes.AsSpan(EntryValueOffset(bytes, firstIfd, 258)), 8);
+        BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(EntryValueOffset(bytes, firstIfd, 279)), 4);
+        BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(EntryValueOffset(bytes, secondIfd, 273)), uint.MaxValue);
         using var file = new Fixture(bytes);
         DecodedImage first = ImageFileLoader.Load(file.Path);
         using RawImage image = first.Luminance;
@@ -344,28 +348,53 @@ public class TiffStackTests
         return source;
     }
 
+    /// <summary>
+    /// 2×2・16bit・単一ストリップの3ページ(ページ n の画素値は (n+1)*1000)。各ページの前に未使用バイトを
+    /// 挟み、IFD が詰めて並ばない(next-IFD を辿らないと次ページに着けない)ファイルにする。
+    /// </summary>
     private static byte[] BuildGappedStack(bool bigEndian)
     {
-        const int spacing = 256;
-        var result = new byte[spacing * 3];
-        for (int page = 0; page < 3; page++)
+        var pages = new TiffBuilder.Page[3];
+        for (int page = 0; page < pages.Length; page++)
         {
-            byte[] single = TestData.BuildTiff(Enumerable.Repeat((ushort)((page + 1) * 1000), 4).ToArray(),
-                2, 2, 16, bigEndian);
-            int start = spacing * page;
-            single.CopyTo(result, start);
-            // 単一ストリップの絶対オフセットとnext-IFDだけを再配置する。
-            WriteU32(result, start + 8 + 2 + 5 * 12 + 8, (uint)(start + 122), bigEndian);
-            WriteU32(result, start + 8 + 2 + 9 * 12, page == 2 ? 0 : (uint)(start + spacing + 8), bigEndian);
+            ushort[] pixels = Enumerable.Repeat((ushort)((page + 1) * 1000), 4).ToArray();
+            pages[page] = TiffBuilder.GrayPage(2, 2, 16, TiffBuilder.SampleBytes(pixels, 16, bigEndian));
+            pages[page].GapBefore = 128;
         }
 
-        return result;
+        return new TiffBuilder(bigEndian).Build(pages);
     }
 
-    private static void WriteU32(byte[] data, int offset, uint value, bool bigEndian)
+    /// <summary>リトルエンディアンのクラシックTIFFで、pageIndex 番目の IFD の先頭位置(ヘッダから next-IFD を辿る)。</summary>
+    private static int IfdOffset(byte[] tiff, int pageIndex)
     {
-        if (bigEndian) BinaryPrimitives.WriteUInt32BigEndian(data.AsSpan(offset), value);
-        else BinaryPrimitives.WriteUInt32LittleEndian(data.AsSpan(offset), value);
+        int ifd = BinaryPrimitives.ReadInt32LittleEndian(tiff.AsSpan(4));
+        for (int i = 0; i < pageIndex; i++)
+        {
+            ifd = BinaryPrimitives.ReadInt32LittleEndian(tiff.AsSpan(NextIfdLinkOffset(tiff, ifd)));
+        }
+
+        return ifd;
+    }
+
+    /// <summary>IFD 末尾にある next-IFD ポインタの位置。</summary>
+    private static int NextIfdLinkOffset(byte[] tiff, int ifd)
+        => ifd + 2 + (BinaryPrimitives.ReadUInt16LittleEndian(tiff.AsSpan(ifd)) * 12);
+
+    /// <summary>IFD 内で tag を持つエントリの値フィールド(インライン値)の位置。</summary>
+    private static int EntryValueOffset(byte[] tiff, int ifd, ushort tag)
+    {
+        int count = BinaryPrimitives.ReadUInt16LittleEndian(tiff.AsSpan(ifd));
+        for (int i = 0; i < count; i++)
+        {
+            int entry = ifd + 2 + (i * 12);
+            if (BinaryPrimitives.ReadUInt16LittleEndian(tiff.AsSpan(entry)) == tag)
+            {
+                return entry + 8;
+            }
+        }
+
+        throw new ArgumentException($"タグ {tag} が IFD にありません。", nameof(tag));
     }
 
     private sealed class Fixture : IDisposable

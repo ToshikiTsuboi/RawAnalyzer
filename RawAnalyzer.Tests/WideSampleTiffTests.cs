@@ -18,73 +18,6 @@ public class WideSampleTiffTests
     private const int Width = 4;
     private const int Height = 3;
 
-    /// <summary>単一ストリップ・非圧縮の最小TIFFを作る(リトルエンディアン)。</summary>
-    private static byte[] BuildTiff(
-        byte[] samples, int width, int height, int bitsPerSample, int samplesPerPixel,
-        int sampleFormat)
-    {
-        const int TagCount = 10;
-        const int IfdOffset = 8;
-        int ifdSize = 2 + (TagCount * 12) + 4;
-        int arraysOffset = IfdOffset + ifdSize;
-        bool arrays = samplesPerPixel > 1;
-        int arraysSize = arrays ? samplesPerPixel * 2 * 2 : 0; // BitsPerSample + SampleFormat
-        int dataOffset = arraysOffset + arraysSize;
-        var file = new byte[dataOffset + samples.Length];
-
-        file[0] = (byte)'I';
-        file[1] = (byte)'I';
-        BinaryPrimitives.WriteUInt16LittleEndian(file.AsSpan(2), 42);
-        BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(4), IfdOffset);
-        BinaryPrimitives.WriteUInt16LittleEndian(file.AsSpan(IfdOffset), TagCount);
-
-        int entry = IfdOffset + 2;
-        void Write(ushort tag, ushort type, uint count, uint value)
-        {
-            BinaryPrimitives.WriteUInt16LittleEndian(file.AsSpan(entry), tag);
-            BinaryPrimitives.WriteUInt16LittleEndian(file.AsSpan(entry + 2), type);
-            BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(entry + 4), count);
-            if (type == 3 && count == 1)
-            {
-                BinaryPrimitives.WriteUInt16LittleEndian(file.AsSpan(entry + 8), (ushort)value);
-            }
-            else
-            {
-                BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(entry + 8), value);
-            }
-
-            entry += 12;
-        }
-
-        uint bitsValue = arrays ? (uint)arraysOffset : (uint)bitsPerSample;
-        uint formatValue = arrays ? (uint)(arraysOffset + (samplesPerPixel * 2)) : (uint)sampleFormat;
-        Write(256, 3, 1, (uint)width);
-        Write(257, 3, 1, (uint)height);
-        Write(258, 3, (uint)samplesPerPixel, bitsValue);
-        Write(259, 3, 1, 1); // Compression = none
-        Write(262, 3, 1, samplesPerPixel == 1 ? 1u : 2u); // BlackIsZero / RGB
-        Write(273, 4, 1, (uint)dataOffset);
-        Write(277, 3, 1, (uint)samplesPerPixel);
-        Write(278, 4, 1, (uint)height);
-        Write(279, 4, 1, (uint)samples.Length);
-        Write(339, 3, (uint)samplesPerPixel, formatValue);
-        BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(entry), 0); // 次のIFDなし
-
-        if (arrays)
-        {
-            for (int i = 0; i < samplesPerPixel; i++)
-            {
-                BinaryPrimitives.WriteUInt16LittleEndian(
-                    file.AsSpan(arraysOffset + (i * 2)), (ushort)bitsPerSample);
-                BinaryPrimitives.WriteUInt16LittleEndian(
-                    file.AsSpan(arraysOffset + (samplesPerPixel * 2) + (i * 2)), (ushort)sampleFormat);
-            }
-        }
-
-        samples.CopyTo(file, dataOffset);
-        return file;
-    }
-
     private static byte[] FloatSamples(params float[] values)
     {
         var bytes = new byte[values.Length * 4];
@@ -107,22 +40,6 @@ public class WideSampleTiffTests
         return bytes;
     }
 
-    private static DecodedImage LoadTiff(byte[] file)
-    {
-        string dir = Path.Combine(Path.GetTempPath(), "RawAnalyzerTests");
-        Directory.CreateDirectory(dir);
-        string path = Path.Combine(dir, Guid.NewGuid().ToString("N") + ".tif");
-        File.WriteAllBytes(path, file);
-        try
-        {
-            return ImageFileLoader.Load(path);
-        }
-        finally
-        {
-            File.Delete(path);
-        }
-    }
-
     private static float[] Ramp(float maximum)
     {
         var values = new float[Width * Height];
@@ -137,9 +54,9 @@ public class WideSampleTiffTests
     [Fact]
     public void Float32Gray_Normalized_FillsFullRange()
     {
-        byte[] file = BuildTiff(FloatSamples(Ramp(1f)), Width, Height, 32, 1, 3);
+        var page = TiffBuilder.GrayPage(Width, Height, 32, FloatSamples(Ramp(1f)), sampleFormat: 3);
 
-        DecodedImage decoded = Load(file);
+        DecodedImage decoded = Load(page);
         using RawImage owned = decoded.Luminance;
         RawImage image = decoded.Luminance;
 
@@ -156,11 +73,11 @@ public class WideSampleTiffTests
     {
         // WICはこのページもGray32Floatとして返す。実数として読むと
         // 1,000,000 が 1.4e-39 になり、全画素が真っ暗に潰れる
-        byte[] file = BuildTiff(
-            Int32Samples(0, 250_000, 500_000, 750_000, 1_000_000, 0, 0, 0, 0, 0, 0, 0),
-            Width, Height, 32, 1, 1);
+        var page = TiffBuilder.GrayPage(Width, Height, 32,
+            Int32Samples(0, 250_000, 500_000, 750_000, 1_000_000, 0, 0, 0, 0, 0, 0, 0));
+        page.Tags[339] = (3, new long[] { 1 }); // SampleFormat=符号なし整数 を明示する(省略時の既定と同じ)
 
-        DecodedImage decoded = Load(file);
+        DecodedImage decoded = Load(page);
         using RawImage owned = decoded.Luminance;
 
         Assert.Equal(0, decoded.Luminance.GetPixel(0, 0));
@@ -171,11 +88,10 @@ public class WideSampleTiffTests
     [Fact]
     public void SignedInt32Gray_KeepsNegativeTail()
     {
-        byte[] file = BuildTiff(
-            Int32Samples(-1000, -500, 0, 500, 1000, 0, 0, 0, 0, 0, 0, 0),
-            Width, Height, 32, 1, 2);
+        var page = TiffBuilder.GrayPage(Width, Height, 32,
+            Int32Samples(-1000, -500, 0, 500, 1000, 0, 0, 0, 0, 0, 0, 0), sampleFormat: 2);
 
-        DecodedImage decoded = Load(file);
+        DecodedImage decoded = Load(page);
         using RawImage owned = decoded.Luminance;
 
         Assert.Equal(0, decoded.Luminance.GetPixel(0, 0));       // -1000 が下端
@@ -194,9 +110,10 @@ public class WideSampleTiffTests
             values[(i * 3) + 2] = 0.0f;
         }
 
-        byte[] file = BuildTiff(FloatSamples(values), Width, Height, 32, 3, 3);
+        var page = TiffBuilder.GrayPage(
+            Width, Height, 32, FloatSamples(values), photometric: 2, sampleFormat: 3, samplesPerPixel: 3);
 
-        DecodedImage decoded = Load(file);
+        DecodedImage decoded = Load(page);
         using RawImage owned = decoded.Luminance;
 
         Assert.NotNull(decoded.Color);
@@ -217,9 +134,9 @@ public class WideSampleTiffTests
             BinaryPrimitives.WriteHalfLittleEndian(bytes.AsSpan(i * 2), (Half)ramp[i]);
         }
 
-        byte[] file = BuildTiff(bytes, Width, Height, 16, 1, 3);
+        var page = TiffBuilder.GrayPage(Width, Height, 16, bytes, sampleFormat: 3);
 
-        DecodedImage decoded = Load(file);
+        DecodedImage decoded = Load(page);
         using RawImage owned = decoded.Luminance;
 
         Assert.Equal(0, decoded.Luminance.GetPixel(0, 0));
@@ -230,5 +147,10 @@ public class WideSampleTiffTests
         Assert.NotNull(decoded.ValueNote);
     }
 
-    private static DecodedImage Load(byte[] file) => LoadTiff(file);
+    /// <summary>単一ページのリトルエンディアンTIFFを一時ファイルに書き、本番経路で読み込む。</summary>
+    private static DecodedImage Load(TiffBuilder.Page page)
+    {
+        using var file = TempTiff.Write(new TiffBuilder().Build(page));
+        return ImageFileLoader.Load(file.Path);
+    }
 }
