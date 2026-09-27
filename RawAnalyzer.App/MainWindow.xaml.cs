@@ -4008,8 +4008,8 @@ public partial class MainWindow : Window
     /// <remarks>
     /// <see cref="RejectWhileOpening"/> は読み込みの確定待ちだけを断る(保存などは縮小表示の
     /// 作成中や他の操作の内側でも始められる)。実行中の処理すべてを断る操作(結果で表示中の画像を
-    /// 差し替えるビニング・フィルタ・画像演算・欠陥補正)は、何が実行中かを同じ形のダイアログで
-    /// 知らせる(黙って無視しない)。
+    /// 差し替えるビニング・フィルタ・画像演算・欠陥補正と、実行中の処理の完了で結果が表示中の画像の
+    /// ものでなくなる欠陥検出)は、何が実行中かを同じ形のダイアログで知らせる(黙って無視しない)。
     /// </remarks>
     /// <param name="operation">操作名(「ビニング」など)。</param>
     /// <returns>拒否した場合はtrue。</returns>
@@ -4429,7 +4429,10 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (RejectWhileOpening("欠陥画素検出"))
+        // 読み込み中・縮小表示の作成中・他の処理の実行中は始めない(ビニング・フィルタ・補正・演算と同じ)。
+        // HDR分割・合成の計算中に始めると、進捗表示の中で派生ビューが表示され、検出結果は表示中の画像の
+        // ものではなくなって黙って捨てられる。理由を知らせ、実行ボタンを押せる状態へ戻す
+        if (RejectWhileBusy("欠陥画素検出"))
         {
             _defectWindow?.ResetRunButton();
             return;
