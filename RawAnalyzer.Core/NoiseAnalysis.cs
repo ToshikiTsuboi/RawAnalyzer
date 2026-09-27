@@ -48,6 +48,8 @@ public readonly record struct NoiseMeasurement(
 /// 画素数重み付きでRMS合成する。混合統計ではチャネル間の感度差
 /// (センサ欠陥ではない構造)がσ_totalに乗り、σ_FPNが桁違いに過大になるため
 /// (EMVA1288もカラーはチャネル別評価を要求している)。
+/// 集計した画素から測定値を求める定義は、格子版の <see cref="ChannelRegionAnalysis"/> と共有している
+/// (同じ画素集合なら同じ測定値になる)。
 /// </summary>
 public static class NoiseAnalysis
 {
@@ -73,11 +75,10 @@ public static class NoiseAnalysis
     {
         RegionOfInterest roi = (region ?? new RegionOfInterest(0, 0, image.Width, image.Height))
             .Clamp(image.Width, image.Height);
-        (long count, double mean, double sigma) = ComputeSpatialStats(
+        NoiseMoments[] channels = ComputeSpatialMoments(
             image, frame, roi, pattern, cancellationToken);
-        double saturation = ResolveSaturation(saturationCode, image.Format.BitDepth);
-        return new NoiseMeasurement(
-            count, mean, sigma, double.NaN, double.NaN, saturation);
+        return NoiseDefinition.Evaluate(
+            channels, difference: null, saturationCode, image.Format.BitDepth);
     }
 
     /// <summary>
@@ -128,96 +129,84 @@ public static class NoiseAnalysis
 
         RegionOfInterest roi = (region ?? new RegionOfInterest(0, 0, imageA.Width, imageA.Height))
             .Clamp(imageA.Width, imageA.Height);
-        (long countA, double meanA, double sigmaTotal) = ComputeSpatialStats(
+        NoiseMoments[] channels = ComputeSpatialMoments(
             imageA, frameA, roi, pattern, cancellationToken);
+        NoiseMoments difference = ComputeDifferenceMoments(
+            imageA, imageB, frameA, frameB, roi, cancellationToken);
+        return NoiseDefinition.Evaluate(
+            channels, difference, saturationCode, imageA.Format.BitDepth);
+    }
+
+    /// <summary>
+    /// 2枚の差分 A−B のモーメント(σ_temporal の元)を集計する。
+    /// 評価画素は空間統計と同じ roi の全画素。
+    /// </summary>
+    private static NoiseMoments ComputeDifferenceMoments(
+        RawImage imageA,
+        RawImage imageB,
+        int frameA,
+        int frameB,
+        RegionOfInterest roi,
+        CancellationToken cancellationToken)
+    {
+        // 画素0個の roi は読まない。幅0で高さのある roi(画像の外をクランプした場合など)の
+        // 行を読みに行くと CopyRegion が範囲外の例外になり、単一測定や格子版は
+        // 画素0個の測定値を返すのに2枚測定だけ例外で落ちていた
+        if (roi.PixelCount == 0)
+        {
+            return default;
+        }
 
         int shiftA = 16 - imageA.Format.BitDepth;
         int shiftB = 16 - imageB.Format.BitDepth;
-
-        // 差分は ±65535 に収まるので、二乗和は long で 2.1e9 サンプルまで正確。
-        // doubleでの逐次加算より丸めも小さい
         object gate = new();
-        long sum = 0;
-        UInt128 sumSq = UInt128.Zero;
-        long count = 0;
+        var total = default(NoiseMoments);
 
         Parallel.For(
             0,
             roi.Height,
             new ParallelOptions { CancellationToken = cancellationToken },
             () => (RowA: new ushort[roi.Width], RowB: new ushort[roi.Width],
-                   Sum: 0L, SumSq: UInt128.Zero, Count: 0L),
+                   Moments: default(NoiseMoments)),
             (row, _, local) =>
             {
                 imageA.CopyRegion(frameA, roi.X, roi.Y + row, roi.Width, 1, local.RowA);
                 imageB.CopyRegion(frameB, roi.X, roi.Y + row, roi.Width, 1, local.RowB);
-                long rowSum = local.Sum;
-
-                // スレッドローカルも UInt128 で持つ(longでは合算前に桁あふれする)
-                UInt128 rowSumSq = local.SumSq;
-                long rowCount = local.Count;
+                NoiseMoments moments = local.Moments;
                 for (int x = 0; x < roi.Width; x++)
                 {
-                    int diff = (local.RowA[x] >> shiftA) - (local.RowB[x] >> shiftB);
-                    rowSum += diff;
-                    rowSumSq += (ulong)((long)diff * diff);
-                    rowCount++;
+                    moments.Add((local.RowA[x] >> shiftA) - (local.RowB[x] >> shiftB));
                 }
 
-                return (local.RowA, local.RowB, rowSum, rowSumSq, rowCount);
+                return (local.RowA, local.RowB, moments);
             },
             local =>
             {
                 lock (gate)
                 {
-                    sum += local.Sum;
-                    sumSq += local.SumSq;
-                    count += local.Count;
+                    total.Add(local.Moments);
                 }
             });
 
         cancellationToken.ThrowIfCancellationRequested();
-
-        double sigmaTemporal = 0;
-        if (count > 0)
-        {
-            double meanDiff = (double)sum / count;
-            double varianceDiff = Math.Max(
-                0, ((double)sumSq / count) - (meanDiff * meanDiff));
-            // 独立な2枚の差分は分散が2倍になるため √2 で割る
-            sigmaTemporal = Math.Sqrt(varianceDiff / 2.0);
-        }
-
-        double sigmaFpn = Math.Sqrt(Math.Max(
-            0, sigmaTotal * sigmaTotal - sigmaTemporal * sigmaTemporal));
-        double saturation = ResolveSaturation(saturationCode, imageA.Format.BitDepth);
-
-        return new NoiseMeasurement(
-            countA, meanA, sigmaTotal, sigmaTemporal, sigmaFpn, saturation);
+        return total;
     }
 
     /// <summary>
-    /// 空間統計(σ_totalの元)を計算する。評価画素は時間ノイズの差分と同じ roi の全画素。
-    /// Bayer指定時はチャネル内分散を画素数重みでプールした √(Σ nᵢσᵢ² / Σ nᵢ) を返し、
-    /// チャネル間の平均値差が分散に混入しないようにする。
+    /// 空間統計(σ_totalの元)のモーメントを集計する。評価画素は時間ノイズの差分と同じ roi の全画素。
+    /// Bayer指定時は画素の絶対座標の偶奇(=チャネル)ごとの4つ、指定なしは全画素で1つを返す
+    /// (チャネル内分散の画素数重みプール √(Σ nᵢσᵢ² / Σ nᵢ) は <see cref="NoiseDefinition"/> が行う)。
     /// </summary>
-    private static (long Count, double Mean, double Sigma) ComputeSpatialStats(
+    private static NoiseMoments[] ComputeSpatialMoments(
         RawImage image,
         int frame,
         RegionOfInterest roi,
         BayerPattern pattern,
         CancellationToken cancellationToken)
     {
-        if (pattern == BayerPattern.None)
-        {
-            RegionStatistics stats = ImageAnalysis.ComputeStatistics(
-                image, frame, roi, cancellationToken);
-            return (stats.SampleCount, stats.Mean, stats.Sigma);
-        }
-
         if (roi.PixelCount == 0)
         {
-            return (0, 0, 0);
+            return Array.Empty<NoiseMoments>();
         }
 
         // ImageAnalysis.ComputeChannelAnalysis は roi を外側の2x2境界へ広げるので使わない。
@@ -230,9 +219,7 @@ public static class NoiseAnalysis
         // 測定用途なのでサンプリングせず全画素から取る
         int shift = 16 - image.Format.BitDepth;
         object gate = new();
-        var sums = new long[4];
-        var sumSqs = new UInt128[4];
-        var counts = new long[4];
+        var classes = new NoiseMoments[4];
 
         Parallel.For(
             0,
@@ -252,51 +239,29 @@ public static class NoiseAnalysis
                 {
                     for (int c = 0; c < 4; c++)
                     {
-                        sums[c] += local.Sums[c];
-                        sumSqs[c] += local.SumSqs[c];
-                        counts[c] += local.Counts[c];
+                        classes[c].Add(local.Classes[c]);
                     }
                 }
             });
 
         cancellationToken.ThrowIfCancellationRequested();
-
-        long total = 0;
-        long totalSum = 0;
-        double pooledVariance = 0;
-        for (int c = 0; c < 4; c++)
+        if (pattern != BayerPattern.None)
         {
-            long n = counts[c];
-            if (n == 0)
-            {
-                continue;
-            }
-
-            double mean = (double)sums[c] / n;
-            double variance = (double)sumSqs[c] / n - mean * mean;
-            total += n;
-            totalSum += sums[c];
-            pooledVariance += n * Math.Max(0, variance);
+            return classes;
         }
 
-        return total > 0
-            ? (total, (double)totalSum / total, Math.Sqrt(pooledVariance / total))
-            : (0, 0, 0);
-    }
+        // チャネルに分けない場合は roi の全画素を1つの集合にする(整数の和なので合算しても厳密)
+        var all = default(NoiseMoments);
+        for (int c = 0; c < 4; c++)
+        {
+            all.Add(classes[c]);
+        }
 
-    private static double ResolveSaturation(double saturationCode, int bitDepth)
-    {
-        double max = (1 << bitDepth) - 1;
-
-        // 前のファイル(より深いビット深度)の飽和コードが残っていても DR を過大評価しない
-        // NaN は比較を素通りするので有限性も確かめる(NaNだとDRがNaNになる)
-        return double.IsFinite(saturationCode) && saturationCode > 0
-            ? Math.Min(saturationCode, max)
-            : max;
+        return new[] { all };
     }
 
     /// <summary>
-    /// 画素の絶対座標の偶奇(2x2の4クラス = Bayerの4チャネル)ごとの和・二乗和・画素数。
+    /// 画素の絶対座標の偶奇(2x2の4クラス = Bayerの4チャネル)ごとのモーメント。
     /// 並列集計のスレッドローカル状態として使う。
     /// </summary>
     private sealed class ParityAccumulator
@@ -309,14 +274,8 @@ public static class NoiseAnalysis
         /// <summary>1行ぶんの読み込みバッファ。</summary>
         internal ushort[] Row { get; }
 
-        /// <summary>クラス別の総和(添字 = 行偶奇×2 + 列偶奇)。</summary>
-        internal long[] Sums { get; } = new long[4];
-
-        /// <summary>クラス別の二乗和。</summary>
-        internal UInt128[] SumSqs { get; } = new UInt128[4];
-
-        /// <summary>クラス別の画素数。</summary>
-        internal long[] Counts { get; } = new long[4];
+        /// <summary>クラス別のモーメント(添字 = 行偶奇×2 + 列偶奇)。</summary>
+        internal NoiseMoments[] Classes { get; } = new NoiseMoments[4];
 
         /// <summary><see cref="Row"/> に読み込んだ1行を集計する。</summary>
         /// <param name="rowParity">行の絶対Y座標の偶奇。</param>
@@ -341,9 +300,12 @@ public static class NoiseAnalysis
                 }
 
                 int parity = (rowParity << 1) | ((firstColumnParity + start) & 1);
-                Sums[parity] += sum;
-                SumSqs[parity] += sumSq;
-                Counts[parity] += count;
+                Classes[parity].Add(new NoiseMoments
+                {
+                    Count = count,
+                    Sum = sum,
+                    SumOfSquares = sumSq,
+                });
             }
         }
     }

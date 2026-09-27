@@ -8,6 +8,7 @@ namespace RawAnalyzer.Core;
 /// 値はすべてraw code値域で返す。統計・射影・ノイズの定義は矩形版
 /// (<see cref="ImageAnalysis"/> / <see cref="NoiseAnalysis"/>)と揃えてあり、
 /// 格子の画素だけを並べた画像を矩形版で解析した結果と一致する。
+/// ノイズは、集計した画素から測定値を求める部分を矩形版と共有している(違うのは画素の走査だけ)。
 /// 格子は1チャネルなので、Bayerのチャネル別プールは不要(σはそのチャネルのσ)。
 /// </remarks>
 public static class ChannelRegionAnalysis
@@ -160,10 +161,11 @@ public static class ChannelRegionAnalysis
         CancellationToken cancellationToken = default)
     {
         ThrowIfOutside(image, region);
-        Moments moments = Accumulate(image, frame, null, 0, region, cancellationToken);
-        return new NoiseMeasurement(
-            moments.Count, moments.Mean, moments.Sigma, double.NaN, double.NaN,
-            ResolveSaturation(saturationCode, image.Format.BitDepth));
+        (NoiseMoments values, _) = Accumulate(image, frame, null, 0, region, cancellationToken);
+
+        // 格子は1チャネルなので、空間統計は1つの集合(矩形版のBayerなしと同じ扱い)
+        return NoiseDefinition.Evaluate(
+            new[] { values }, difference: null, saturationCode, image.Format.BitDepth);
     }
 
     /// <summary>
@@ -205,15 +207,10 @@ public static class ChannelRegionAnalysis
         }
 
         ThrowIfOutside(imageA, region);
-        Moments moments = Accumulate(imageA, frameA, imageB, frameB, region, cancellationToken);
-
-        // 独立な2枚の差分は分散が2倍になるため √2 で割る
-        double sigmaTemporal = Math.Sqrt(moments.DifferenceVariance / 2.0);
-        double sigmaFpn = Math.Sqrt(Math.Max(
-            0, moments.Sigma * moments.Sigma - sigmaTemporal * sigmaTemporal));
-        return new NoiseMeasurement(
-            moments.Count, moments.Mean, moments.Sigma, sigmaTemporal, sigmaFpn,
-            ResolveSaturation(saturationCode, imageA.Format.BitDepth));
+        (NoiseMoments values, NoiseMoments difference) =
+            Accumulate(imageA, frameA, imageB, frameB, region, cancellationToken);
+        return NoiseDefinition.Evaluate(
+            new[] { values }, difference, saturationCode, imageA.Format.BitDepth);
     }
 
     /// <summary>格子1行ぶんを元画像から読むときの幅(両端の格子点を含む)。</summary>
@@ -230,9 +227,10 @@ public static class ChannelRegionAnalysis
     }
 
     /// <summary>
-    /// 領域内のAの1次・2次モーメントと、Bがあれば差分A−Bの1次・2次モーメントを1回の走査で集める。
+    /// 領域内のAのモーメントと、Bがあれば差分A−Bのモーメントを1回の走査で集める
+    /// (測定値への換算は <see cref="NoiseDefinition"/> が矩形版と共通の定義で行う)。
     /// </summary>
-    private static Moments Accumulate(
+    private static (NoiseMoments Values, NoiseMoments Difference) Accumulate(
         RawImage imageA,
         int frameA,
         RawImage? imageB,
@@ -264,67 +262,34 @@ public static class ChannelRegionAnalysis
                 for (int i = 0; i < region.Width; i++)
                 {
                     int a = local.RowA[2 * i] >> shiftA;
-                    local.Sum += a;
-
-                    // 16bitでは code^2 が約4.3e9。long の総和は約21億サンプルで桁あふれするため
-                    // 矩形版と同じく UInt128 で持つ
-                    local.SumSq += (ulong)((long)a * a);
+                    local.Values.Add(a);
                     if (imageB is not null)
                     {
-                        int difference = a - (local.RowB[2 * i] >> shiftB);
-                        local.DifferenceSum += difference;
-                        local.DifferenceSumSq += (ulong)((long)difference * difference);
+                        local.Difference.Add(a - (local.RowB[2 * i] >> shiftB));
                     }
                 }
 
-                local.Count += region.Width;
                 return local;
             },
             local =>
             {
                 lock (gate)
                 {
-                    total.Sum += local.Sum;
-                    total.SumSq += local.SumSq;
-                    total.DifferenceSum += local.DifferenceSum;
-                    total.DifferenceSumSq += local.DifferenceSumSq;
-                    total.Count += local.Count;
+                    total.Values.Add(local.Values);
+                    total.Difference.Add(local.Difference);
                 }
             });
 
         cancellationToken.ThrowIfCancellationRequested();
-        long count = total.Count;
-        double mean = (double)total.Sum / count;
-        double variance = Math.Max(0, (double)total.SumSq / count - mean * mean);
-        double differenceMean = (double)total.DifferenceSum / count;
-        double differenceVariance = Math.Max(
-            0, (double)total.DifferenceSumSq / count - differenceMean * differenceMean);
-        return new Moments(count, mean, Math.Sqrt(variance), differenceVariance);
+        return (total.Values, total.Difference);
     }
-
-    /// <summary>飽和信号レベルの解決(<see cref="NoiseAnalysis"/> と同じ規則)。</summary>
-    private static double ResolveSaturation(double saturationCode, int bitDepth)
-    {
-        double max = (1 << bitDepth) - 1;
-
-        // 前のファイル(より深いビット深度)の飽和コードやNaNが残っていてもDRを誤らない
-        return double.IsFinite(saturationCode) && saturationCode > 0
-            ? Math.Min(saturationCode, max)
-            : max;
-    }
-
-    private readonly record struct Moments(
-        long Count, double Mean, double Sigma, double DifferenceVariance);
 
     /// <summary>並列走査のスレッドローカル集計。</summary>
     private sealed class Accumulator(int span)
     {
         public readonly ushort[] RowA = new ushort[span];
         public readonly ushort[] RowB = new ushort[span];
-        public long Sum;
-        public UInt128 SumSq;
-        public long DifferenceSum;
-        public UInt128 DifferenceSumSq;
-        public long Count;
+        public NoiseMoments Values;
+        public NoiseMoments Difference;
     }
 }
