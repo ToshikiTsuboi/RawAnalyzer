@@ -108,4 +108,38 @@ public class ImageOperationGateTests
         Assert.Same(dispose, first);
         await waiter.WaitAsync(TimeSpan.FromSeconds(10));
     }
+
+    [Fact]
+    public void ActivityStamp_AdvancesWhenOperationOrLoadStarts_NotWhenItEnds()
+    {
+        // ファイル連番の送りは操作・読み込みに譲る。次のファイルを読んでいる間に始まった操作
+        // (HDR分割など)は差し替えの時点で終わっていることもあるため、終わっていても
+        // 「始まった」ことが分かること(実行中かどうかだけでは見分けられない)
+        var gate = new ImageOperationGate();
+        int initial = gate.ActivityStamp;
+        Assert.True(gate.WhenOperationsIdleAsync().IsCompleted);
+        Assert.Equal(initial, gate.ActivityStamp); // 問い合わせでは進まない
+
+        IDisposable operation = gate.EnterOperation();
+        int afterOperation = gate.ActivityStamp;
+        Assert.NotEqual(initial, afterOperation);
+
+        operation.Dispose();
+        Assert.False(gate.IsOperationRunning);
+        Assert.Equal(afterOperation, gate.ActivityStamp); // 終了では戻らない
+
+        IDisposable load = gate.BeginLoad();
+        int afterLoad = gate.ActivityStamp;
+        Assert.NotEqual(afterOperation, afterLoad);
+
+        load.Dispose();
+        load.Dispose();
+        Assert.Equal(afterLoad, gate.ActivityStamp);
+
+        // 入れ子の操作(ダイアログ→実行)も開始として数える
+        using IDisposable outer = gate.EnterOperation();
+        int afterOuter = gate.ActivityStamp;
+        using IDisposable inner = gate.EnterOperation();
+        Assert.NotEqual(afterOuter, gate.ActivityStamp);
+    }
 }

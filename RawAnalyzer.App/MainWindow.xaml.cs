@@ -3575,6 +3575,11 @@ public partial class MainWindow : Window
                 string path = _sequenceFiles[index];
                 bool isRaw = IsRawFile(path);
                 RawFormat expectedFormat = _currentFormat!;
+
+                // 送りは保存・演算などの操作や通常の読み込みに譲る。次のファイルを読む間に
+                // それらが始まったら、差し替えの時点で終わっていても送らない(HDR分割の
+                // 派生ビューや開き直した画像を上書きしない。TIFFのページ送りは読み込みの中止で同じことをする)
+                int activity = _imageGate.ActivityStamp;
                 RawImage image;
                 ColorImage? color = null;
                 int pageCount = 1;
@@ -3602,7 +3607,8 @@ public partial class MainWindow : Window
                 // await中にモーダル(保存・測定・演算)が開いていたら差し替えない。
                 // モーダルのディスパッチャポンプ内でここが再開すると、処理対象の
                 // 画像を背後で破棄してしまう
-                if (_busyDepth > 0 || !ReferenceEquals(expectedFormat, _currentFormat))
+                if (_busyDepth > 0 || activity != _imageGate.ActivityStamp
+                    || !ReferenceEquals(expectedFormat, _currentFormat))
                 {
                     image.Dispose();
                     return;
@@ -3625,12 +3631,16 @@ public partial class MainWindow : Window
                     || (color is not null) != (_colorImage is not null)
                     || format.Bayer != _currentFormat.Bayer;
 
-                // カラー画像は輝度と一緒に差し替える。片方だけだと前フレームの色が残る
-                _colorImage = color;
-                _vm.IsColorImage = color is not null;
-                Viewport.SetColorImage(color);
-
-                RawImage? old = await Viewport.ReplaceImageAsync(image, format, color: color);
+                // 表示と MainWindow の状態は同じUIターンで交換する(TIFFのページ送りと同じ)。
+                // ReplaceImageAsync は最初の await より前にビューポートの参照を交換する。
+                // 状態の交換を await の後にすると、その間に始まった保存・演算などが旧画像を
+                // 対象にし、その途中で画像を差し替え・破棄してしまう。
+                // 旧画像を読んでいる解析は先に止め、旧画像と旧Bayerピラミッドは
+                // それを読んでいた描画が止まってから破棄する
+                // (走行中だとParallel.For内でObjectDisposedExceptionになる)
+                CancelAnalysis();
+                RawImage? oldImage = _currentImage;
+                BayerPyramid? oldBayer = _mainBayerPyramid;
                 _currentImage = image;
                 _currentFormat = format;
                 _currentPath = path;
@@ -3639,14 +3649,14 @@ public partial class MainWindow : Window
                     { BayerOverride = format.Bayer } : null;
                 _tiffPageIndex = 0;
                 _mainPyramid = null;
-                _mainBayerPyramid?.Dispose();
                 _mainBayerPyramid = null;
                 _sequenceIndex = index;
 
-                // 旧画像を読んでいる解析を止めてから破棄する
-                // (走行中だとParallel.For内でObjectDisposedExceptionになる)
-                CancelAnalysis();
-                old?.Dispose();
+                // カラー画像は輝度と一緒に差し替える。片方だけだと前フレームの色が残る
+                _colorImage = color;
+                _vm.IsColorImage = color is not null;
+                Viewport.SetColorImage(color);
+                Task<RawImage?> pending = Viewport.ReplaceImageAsync(image, format, color: color);
                 Title = $"RawAnalyzer — {Path.GetFileName(path)}{TiffPageNote}";
                 if (layoutChanged)
                 {
@@ -3667,6 +3677,16 @@ public partial class MainWindow : Window
                 _vm.SelectedFile = _vm.FilteredFiles.FirstOrDefault(f => string.Equals(
                     f.FullPath, path, StringComparison.OrdinalIgnoreCase));
                 // Filesのリスト・位置・再生状態を維持する。TIFFのページ送りへは切り替えない。
+
+                try
+                {
+                    await pending;
+                }
+                finally
+                {
+                    oldBayer?.Dispose();
+                    oldImage?.Dispose();
+                }
             }
 
         }

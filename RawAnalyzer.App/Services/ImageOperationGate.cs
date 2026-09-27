@@ -15,12 +15,18 @@ namespace RawAnalyzer.App.Services;
 /// 呼び出し側は、読み込みの確定待ちがある間は操作を始めず(<see cref="IsLoadPending"/>)、
 /// 読み込みは実行中の操作が終わるまで確定を待つ(<see cref="WhenOperationsIdleAsync"/>)。
 /// </para>
+/// <para>
+/// ファイル連番の送りは逆に操作・読み込みへ譲る(操作の終了を待たず、送りをやめる)。
+/// 次のファイルを読んでいる間に操作・読み込みが始まっていないことを
+/// <see cref="ActivityStamp"/> で確かめ、差し替えは表示と状態の交換を同じUIターンで済ませる。
+/// </para>
 /// <para>UIスレッド専用(排他制御はしない)。</para>
 /// </remarks>
 internal sealed class ImageOperationGate
 {
     private int _operationDepth;
     private int _pendingLoads;
+    private int _activityStamp;
     private TaskCompletionSource? _idle;
 
     /// <summary>表示画像を使う操作の実行中か(入れ子を含む)。</summary>
@@ -28,6 +34,16 @@ internal sealed class ImageOperationGate
 
     /// <summary>開始から確定(または破棄)までの途中にある読み込みがあるか。</summary>
     internal bool IsLoadPending => _pendingLoads > 0;
+
+    /// <summary>
+    /// 操作・読み込みを始めるたびに進む通し番号(終了では変わらない)。
+    /// </summary>
+    /// <remarks>
+    /// 操作に譲る差し替え(ファイル連番の送り)が、準備の間に操作・読み込みが始まったかを
+    /// 見分けるために使う。準備中に始まって差し替えまでに終わった操作(HDR分割の派生ビュー、
+    /// 開き直した画像など)は実行中かどうかでは見分けられず、送りがその結果を上書きしてしまう。
+    /// </remarks>
+    internal int ActivityStamp => _activityStamp;
 
     /// <summary>
     /// 表示画像を使う操作に入る。戻り値を Dispose すると抜ける(二重の Dispose は無視する)。
@@ -40,6 +56,7 @@ internal sealed class ImageOperationGate
     internal IDisposable EnterOperation()
     {
         _operationDepth++;
+        _activityStamp++;
         return new Scope(ExitOperation);
     }
 
@@ -51,6 +68,7 @@ internal sealed class ImageOperationGate
     internal IDisposable BeginLoad()
     {
         _pendingLoads++;
+        _activityStamp++;
         return new Scope(() => _pendingLoads--);
     }
 
