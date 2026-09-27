@@ -3597,8 +3597,6 @@ public partial class MainWindow : Window
         {
             if (_sequenceMode == SequenceMode.Frames)
             {
-                Viewport.SetDefectMarkers(null);
-
                 // ピラミッドは生成元フレーム専用なので、フレームを移ったら捨てる。
                 // 進行中の描画が読んでいる可能性があるため、切り離して描画停止を
                 // 待ってからDisposeする(即Disposeすると読み出しがODEになり、
@@ -3620,6 +3618,14 @@ public partial class MainWindow : Window
                     return;
                 }
 
+                // 欠陥検出の結果は検出したフレームの画素のもの。フレームを移すこのUIターンで、
+                // 他の差し替え経路と同じく検出元を手放し、マーカーと欠陥ウィンドウも閉じる
+                // (前フレームの一覧を現フレームのものと誤解させない。残すと一覧からの移動は
+                // 現フレームの同じ座標を指し、補正はフレームの不一致で断られる)。
+                // 送れなかったときは一覧・マーカーをそろえて残すので、消すのは移すときだけにする
+                ClearDefectSource();
+                Viewport.SetDefectMarkers(null);
+                _defectWindow?.Close();
                 Viewport.SetFrame(index);
                 _sequenceIndex = index;
             }
