@@ -4683,12 +4683,16 @@ public partial class MainWindow : Window
         // ファイル連番の送りでも、次のグレーの画像ファイルへ引き継ぐ(TIFFのページ送りと同じ)
         _sequenceBayerOverride = pattern;
 
-        if (pattern == _currentFormat.Bayer)
+        // 表示中の画像へも送りと同じ規則で付ける。デコード済みのカラー画像には付けない
+        // (カラー画像の表示中は右パネルで指定させないが、付けると表示はカラーのまま
+        // チャネル別統計・欠陥検出・ノイズ測定が輝度へ Bayer を当てる)。指定は上で保持し、次のグレーの画像に付く
+        RawFormat format = ImageFileBayer.Apply(_currentFormat, _colorImage is not null, pattern);
+        if (format.Bayer == _currentFormat.Bayer)
         {
             return;
         }
 
-        _currentFormat = _currentFormat with { Bayer = pattern };
+        _currentFormat = format;
         if (_derivedImage is null && _currentImage is not null)
         {
             Viewport.UpdateFormat(_currentFormat);

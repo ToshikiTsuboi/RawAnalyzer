@@ -225,7 +225,13 @@ public sealed class MainViewModel : ObservableObject
     public bool HasImage
     {
         get => _hasImage;
-        set => SetProperty(ref _hasImage, value);
+        set
+        {
+            if (SetProperty(ref _hasImage, value))
+            {
+                OnPropertyChanged(nameof(CanEditBayer));
+            }
+        }
     }
 
     /// <summary>ステータスバー左端の画像情報。</summary>
@@ -598,8 +604,23 @@ public sealed class MainViewModel : ObservableObject
     public bool IsColorImage
     {
         get => _isColorImage;
-        set => SetProperty(ref _isColorImage, value);
+        set
+        {
+            if (SetProperty(ref _isColorImage, value))
+            {
+                OnPropertyChanged(nameof(CanEditBayer));
+            }
+        }
     }
+
+    /// <summary>右パネルの Bayer 指定を操作できるか。</summary>
+    /// <remarks>
+    /// デコード済みのカラー画像は RGB のまま表示し、Bayer を適用しない(TIFF のページ送り・
+    /// ファイル連番の送り・表示モードの選択と同じ規約)。カラー画像で指定できると、表示はカラーのまま
+    /// チャネル別統計などが輝度へ Bayer を当ててしまう。指定そのものはカラー画像を挟んでも保持され、
+    /// 次のグレーの画像に付く。
+    /// </remarks>
+    public bool CanEditBayer => _hasImage && !_isColorImage;
 
     /// <summary>左パネル(ファイル)を表示するか。</summary>
     public bool LeftPanelVisible

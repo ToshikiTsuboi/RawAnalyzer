@@ -759,9 +759,10 @@
                                 <DockPanel Margin="0,2">
                                     <TextBlock Style="{StaticResource RowLabel}" Text="Bayer"
                                                VerticalAlignment="Center" />
+                                    <!-- カラー画像には Bayer を適用しないので、表示中は指定させない -->
                                     <ComboBox x:Name="FmtBayerCombo" DockPanel.Dock="Right"
                                               MinWidth="96" FontSize="11"
-                                              IsEnabled="{Binding HasImage}"
+                                              IsEnabled="{Binding CanEditBayer}"
                                               SelectionChanged="OnFmtBayerChanged"
                                               ToolTip="Bayerパターンはここでいつでも変更できます(再読込不要)">
                                         <ComboBoxItem Content="RGGB" />

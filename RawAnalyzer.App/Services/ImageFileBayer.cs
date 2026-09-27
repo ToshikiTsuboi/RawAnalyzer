@@ -10,6 +10,7 @@ namespace RawAnalyzer.App.Services;
 /// 指定はグレーの画像にだけ付け、ファイル自身の CFAPattern より優先する(指定の初期値は開いた画像の
 /// 配列なので、利用者が変えなければ開いたファイルの CFAPattern が続く)。デコード済みのカラー画像は
 /// RGB のまま表示するので Bayer を付けない。指定そのものは、カラー画像を挟んでも呼び出し側が保持する。
+/// 右パネルで指定を変えたときも、表示中の画像へは同じ規則で付ける(raw は常にグレーなので指定どおり)。
 /// </remarks>
 internal static class ImageFileBayer
 {
