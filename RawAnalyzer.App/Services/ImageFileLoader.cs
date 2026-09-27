@@ -499,7 +499,16 @@ internal static class ImageFileLoader
                 $"1画素あたり{channels}サンプルのTIFFには対応していません。");
         }
 
-        if (format.BitsPerPixel != channels * info.BitsPerSample)
+        // グレー+アルファなど多チャネルのグレーは、先頭チャネルだけをグレーとして開く(DecodeFrameと同じ)。
+        // WICはこれをRGBA(R=G=B=グレー)や先頭チャネルだけのグレーに展開して返すため、
+        // 1画素のサンプル数は元のSamplesPerPixelではなくWICの画素幅から求める
+        bool gray = channels == 1 || info.Photometric is 0 or 1;
+        int decodedChannels = format.BitsPerPixel / info.BitsPerSample;
+        bool layoutOk = format.BitsPerPixel % info.BitsPerSample == 0
+            && (gray
+                ? decodedChannels == channels || (channels > 1 && decodedChannels is >= 1 and <= 4)
+                : decodedChannels == channels && channels >= 3);
+        if (!layoutOk)
         {
             throw new NotSupportedException(
                 $"{info.BitsPerSample}bit×{channels}サンプルのTIFFですが、" +
@@ -509,10 +518,10 @@ internal static class ImageFileLoader
         int width = frame.PixelWidth;
         int height = frame.PixelHeight;
         long pixels = (long)width * height;
-        int outputChannels = channels == 1 ? 1 : 3;
+        int outputChannels = gray ? 1 : 3;
 
         // 32bitサンプルは中間のint[]を持つぶん、通常経路より1画素あたりの所要が大きい
-        long bytes = pixels * ((4L * channels) + (2L * outputChannels)
+        long bytes = pixels * ((4L * decodedChannels) + (2L * outputChannels)
             + (outputChannels == 1 ? 0 : 2));
         if (bytes > MaxDecodedBytes)
         {
@@ -522,21 +531,21 @@ internal static class ImageFileLoader
                 $"{MaxDecodedBytes / (1024.0 * 1024 * 1024):F1} GB を超えています。");
         }
 
-        if (pixels * channels > int.MaxValue)
+        if (pixels * decodedChannels > int.MaxValue)
         {
             throw new NotSupportedException("サンプル数が多すぎます。");
         }
 
         SampleInterpretation interpretation = info.Interpretation;
         int[] bits = ReadWideSamples(
-            frame, width, height, channels, info.BitsPerSample / 8,
+            frame, width, height, decodedChannels, info.BitsPerSample / 8,
             interpretation == SampleInterpretation.SignedInteger, ct, progress);
-        long samples = pixels * channels;
 
-        // WICは8bitのRGBをB,G,Rの順(Bgr24/Bgra32/Pbgra32)で返す。DecodeFrameと同じくRGBの順へ
-        // 並べ直す。アルファは値域にも出力にも入れない
-        bool bgr = IsBgrOrder(format);
-        if (channels == 4 || (channels == 3 && bgr))
+        // 出力のチャネルへ詰め直す。グレーは先頭チャネル、カラーはRGB。WICは8bitのRGBを
+        // B,G,Rの順(Bgr24/Bgra32/Pbgra32)で返すので、DecodeFrameと同じくRGBの順へ並べ直す。
+        // アルファなど残りのチャネルは値域にも出力にも入れない
+        bool bgr = !gray && IsBgrOrder(format);
+        if (decodedChannels != outputChannels || bgr)
         {
             int red = bgr ? 2 : 0;
             int blue = bgr ? 0 : 2;
@@ -547,7 +556,13 @@ internal static class ImageFileLoader
                     ct.ThrowIfCancellationRequested();
                 }
 
-                long source = i * channels;
+                long source = i * decodedChannels;
+                if (gray)
+                {
+                    bits[i] = bits[source];
+                    continue;
+                }
+
                 int r = bits[source + red];
                 int g = bits[source + 1];
                 int b = bits[source + blue];
@@ -555,11 +570,9 @@ internal static class ImageFileLoader
                 bits[(i * 3) + 1] = g;
                 bits[(i * 3) + 2] = b;
             }
-
-            channels = 3;
-            samples = pixels * 3;
         }
 
+        long samples = pixels * outputChannels;
         SampleRange range = SampleScaling.Scan(bits, samples, interpretation, ct);
         SampleScaling scaling = SampleScaling.FromRange(range);
         progress?.Report(0.85);
@@ -570,7 +583,7 @@ internal static class ImageFileLoader
         ct.ThrowIfCancellationRequested();
 
         string note = scaling.Describe(info.BitsPerSample);
-        if (channels == 1)
+        if (gray)
         {
             var rawFormat = new RawFormat { Width = width, Height = height, BitDepth = 16 };
             return new DecodedImage(RawImage.FromPixels(rawFormat, codes), null)

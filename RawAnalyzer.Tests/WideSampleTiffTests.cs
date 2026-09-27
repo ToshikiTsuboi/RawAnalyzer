@@ -398,6 +398,75 @@ public class WideSampleTiffTests
         Assert.Contains("WhiteIsZero", ex.Message);
     }
 
+    [Theory]
+    [InlineData(32, 3)] // WICはRgba128Float
+    [InlineData(32, 2)]
+    [InlineData(32, 1)]
+    [InlineData(16, 3)] // WICはRgba64
+    [InlineData(16, 2)]
+    [InlineData(8, 2)] // WICはBgra32
+    public void GrayWithAlpha_WideSamples_OpensFirstChannelAsGray(int bits, int sampleFormat)
+    {
+        // WICはグレー+アルファをRGBA(R=G=B=グレー)に展開して返すため、元タグの2サンプル分の
+        // 画素幅と合わず読込エラーになっていた。先頭チャネルだけをグレーとして開き、
+        // アルファ(100)は値域に入れない
+        float[] grayAndAlpha = { 0f, 100f, 10f, 100f, 20f, 100f };
+        byte[] samples = sampleFormat != 3
+            ? IntegerSamples(bits, Array.ConvertAll(grayAndAlpha, v => (long)v))
+            : bits == 16 ? HalfSamples(grayAndAlpha) : FloatSamples(grayAndAlpha);
+        var page = TiffBuilder.GrayPage(3, 1, bits, samples, sampleFormat: sampleFormat, samplesPerPixel: 2);
+        page.Tags[338] = (3, new long[] { 2 }); // ExtraSamples = unassociated alpha
+
+        DecodedImage decoded = Load(page);
+        using RawImage owned = decoded.Luminance;
+
+        Assert.Null(decoded.Color);
+        Assert.Equal(16, decoded.Luminance.Format.BitDepth);
+        Assert.Equal(new[] { 0, 32768, 65535 }, Row(decoded.Luminance));
+        Assert.Equal($"{bits}bit値 0〜20 → 16bit (1code≈0.000305)", decoded.ValueNote);
+    }
+
+    [Theory]
+    [InlineData(3)]
+    [InlineData(2)]
+    public void MultiChannelGray16_WideSamples_OpensFirstChannelAsGray(int sampleFormat)
+    {
+        // 3サンプルのグレー(ExtraSamples=未指定)をWICは先頭チャネルだけのGray16で返す
+        float[] values = { 0f, 7f, 7f, 10f, 7f, 7f, 20f, 7f, 7f };
+        byte[] samples = sampleFormat == 3
+            ? HalfSamples(values)
+            : IntegerSamples(16, Array.ConvertAll(values, v => (long)v));
+        var page = TiffBuilder.GrayPage(3, 1, 16, samples, sampleFormat: sampleFormat, samplesPerPixel: 3);
+        page.Tags[338] = (3, new long[] { 0, 0 });
+
+        DecodedImage decoded = Load(page);
+        using RawImage owned = decoded.Luminance;
+
+        Assert.Null(decoded.Color);
+        Assert.Equal(new[] { 0, 32768, 65535 }, Row(decoded.Luminance));
+        Assert.Equal("16bit値 0〜20 → 16bit (1code≈0.000305)", decoded.ValueNote);
+    }
+
+    [Fact]
+    public void GrayWithAlpha_Float32WhiteIsZero_MatchesSingleSample()
+    {
+        // WICは32bit実数のグレー+アルファでもグレーを 1−v で返す。1サンプルのページと同じ結果になること
+        float[] gray = { 0f, 0.5f, 1f };
+        float[] grayAndAlpha = { 0f, 1f, 0.5f, 1f, 1f, 1f };
+        DecodedImage single = Load(TiffBuilder.GrayPage(3, 1, 32, FloatSamples(gray), photometric: 0, sampleFormat: 3));
+        using RawImage singleOwned = single.Luminance;
+        var page = TiffBuilder.GrayPage(
+            3, 1, 32, FloatSamples(grayAndAlpha), photometric: 0, sampleFormat: 3, samplesPerPixel: 2);
+        page.Tags[338] = (3, new long[] { 2 });
+
+        DecodedImage decoded = Load(page);
+        using RawImage owned = decoded.Luminance;
+
+        Assert.Equal(new[] { 65535, 32768, 0 }, Row(single.Luminance));
+        Assert.Equal(Row(single.Luminance), Row(decoded.Luminance));
+        Assert.Equal(single.ValueNote, decoded.ValueNote);
+    }
+
     /// <summary>PlanarConfiguration=2(成分ごとに1ストリップ)の半精度RGB(A)ページ。</summary>
     private static TiffBuilder.Page PlanarRgbPage(int width, int height, int samplesPerPixel, float[] interleaved)
     {
