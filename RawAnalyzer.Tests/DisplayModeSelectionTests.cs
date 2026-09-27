@@ -136,4 +136,80 @@ public class DisplayModeSelectionTests
         Assert.Equal(DisplayModeSelection.Refusal.None, selected.Refusal);
         Assert.Equal(expected, selected.ViewportMode);
     }
+
+    [Fact]
+    public void HdrMode_OnRawWithoutHdr_PointsToFormatChange()
+    {
+        // raw は「フォーマット変更…」(読み込みダイアログ)で HDR 方式を指定して開き直せる
+        DisplayModeSelection.Refusal refusal =
+            DisplayModeSelection.ForHdrMode(HdrMode.None, isColor: false, isRawFile: true);
+
+        Assert.Equal(DisplayModeSelection.Refusal.NoHdr, refusal);
+        Assert.Contains("フォーマット変更", DisplayModeSelection.Explain(refusal));
+    }
+
+    [Theory]
+    [InlineData(true)]  // カラー画像(常に画像ファイル)
+    [InlineData(false)] // グレーの画像ファイル(TIFF 等)
+    public void HdrMode_OnImageFile_DoesNotPointToFormatChange(bool isColor)
+    {
+        // 「フォーマット変更…」は raw でしか開き直さず、画像ファイルでは何も起きない。
+        // 以前はカラー画像・画像ファイルでも「フォーマット変更…から設定」と案内していた
+        DisplayModeSelection.Refusal refusal =
+            DisplayModeSelection.ForHdrMode(HdrMode.None, isColor, isRawFile: false);
+        string message = DisplayModeSelection.Explain(refusal);
+
+        Assert.NotEqual(DisplayModeSelection.Refusal.None, refusal);
+        Assert.NotEqual(DisplayModeSelection.Refusal.NoHdr, refusal);
+        Assert.DoesNotContain("フォーマット変更", message);
+        Assert.Contains("raw(.raw/.bin)", message);
+    }
+
+    [Fact]
+    public void HdrMode_OnColorImage_ExplainsItStaysColor()
+    {
+        // カラー画像は RGB のまま表示する(Bayer 系の表示を断るときと同じ説明)
+        string message = DisplayModeSelection.Explain(
+            DisplayModeSelection.ForHdrMode(HdrMode.None, isColor: true, isRawFile: false));
+
+        Assert.StartsWith("カラー画像(RGB)はカラーのまま表示します。", message);
+        Assert.Contains("HDR分割・合成", message);
+    }
+
+    [Fact]
+    public void HdrMode_OnGrayImageFile_ExplainsHdrCannotBeSpecified()
+    {
+        // 画像ファイルには HDR 方式を指定する手段がない。raw として開き直す手段を示す
+        string message = DisplayModeSelection.Explain(
+            DisplayModeSelection.ForHdrMode(HdrMode.None, isColor: false, isRawFile: false));
+
+        Assert.StartsWith("画像ファイル(TIFF等)にはHDR方式を指定できません。", message);
+        Assert.Contains("rawで保存", message);
+    }
+
+    [Theory]
+    [InlineData(HdrMode.Auto)]
+    [InlineData(HdrMode.LineInterleaved)]
+    [InlineData(HdrMode.FrameSequential)]
+    public void HdrMode_WithHdrFormat_IsAllowed(HdrMode hdr)
+    {
+        Assert.Equal(
+            DisplayModeSelection.Refusal.None,
+            DisplayModeSelection.ForHdrMode(hdr, isColor: false, isRawFile: true));
+    }
+
+    [Fact]
+    public void BayerModeRefusals_KeepTheirExplanations()
+    {
+        // Bayer 系の表示を断るときの説明も同じ仕組みで出す(文言は従来どおり)
+        Assert.StartsWith(
+            "カラー画像(RGB)はカラーのまま表示します。",
+            DisplayModeSelection.Explain(DisplayModeSelection.Refusal.ColorImage));
+        Assert.Contains(
+            "Bayerカラー・カラー現像・チャネル分割",
+            DisplayModeSelection.Explain(DisplayModeSelection.Refusal.ColorImage));
+        Assert.Contains(
+            "右パネルの「フォーマット」→「Bayer」",
+            DisplayModeSelection.Explain(DisplayModeSelection.Refusal.NoBayer));
+    }
 }

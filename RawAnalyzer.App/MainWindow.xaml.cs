@@ -2755,9 +2755,14 @@ public partial class MainWindow : Window
         int index = DisplayModeCombo.SelectedIndex;
         if (index is 4 or 5)
         {
-            if (_currentFormat.Hdr == HdrMode.None)
+            // HDR 方式は raw の読み込みダイアログ(フォーマット変更…)でしか指定できない。
+            // カラー画像・画像ファイルでは、そこから設定するよう案内せず、実際に取れる手段を示す
+            DisplayModeSelection.Refusal hdrRefusal = DisplayModeSelection.ForHdrMode(
+                _currentFormat.Hdr, _colorImage is not null,
+                isRawFile: _currentPath is not null && IsRawFile(_currentPath));
+            if (hdrRefusal != DisplayModeSelection.Refusal.None)
             {
-                MessageBox.Show(this, "この表示モードにはHDR方式の指定が必要です(フォーマット変更…から設定)。",
+                MessageBox.Show(this, DisplayModeSelection.Explain(hdrRefusal),
                     "RawAnalyzer", MessageBoxButton.OK, MessageBoxImage.Information);
                 DisplayModeCombo.SelectedIndex = 0;
                 return;
@@ -2816,12 +2821,7 @@ public partial class MainWindow : Window
             index, _colorImage is not null, _currentFormat.Bayer);
         if (selected.Refusal != DisplayModeSelection.Refusal.None)
         {
-            MessageBox.Show(this,
-                selected.Refusal == DisplayModeSelection.Refusal.ColorImage
-                    ? "カラー画像(RGB)はカラーのまま表示します。\n" +
-                      "Bayerカラー・カラー現像・チャネル分割は、Bayer配列のRaw画像で使える表示です。"
-                    : "この表示モードにはBayerパターンの指定が必要です。\n" +
-                      "右パネルの「フォーマット」→「Bayer」でパターン(RGGB等)を選択してください。",
+            MessageBox.Show(this, DisplayModeSelection.Explain(selected.Refusal),
                 "RawAnalyzer", MessageBoxButton.OK, MessageBoxImage.Information);
             DisplayModeCombo.SelectedIndex = 0;
             return;

@@ -34,6 +34,17 @@ internal static class DisplayModeSelection
 
         /// <summary>Bayer パターンがないため、Bayer カラー・カラー現像・チャネル分割が成立しない。</summary>
         NoBayer,
+
+        /// <summary>
+        /// HDR 方式の指定がないため、HDR 分割・合成が成立しない(raw は「フォーマット変更…」で指定できる)。
+        /// </summary>
+        NoHdr,
+
+        /// <summary>画像ファイル(TIFF 等)には HDR 方式を指定できないため、HDR 分割・合成を使えない。</summary>
+        HdrOnImageFile,
+
+        /// <summary>デコード済みのカラー画像には HDR 分割・合成を使わない(RGB のまま表示する)。</summary>
+        HdrOnColorImage,
     }
 
     /// <summary>
@@ -79,7 +90,8 @@ internal static class DisplayModeSelection
     /// <remarks>
     /// カラー画像の Raw 表示(選択 0)は RGB のままの表示で、Bayer 系の表示は右パネルで Bayer を
     /// 指定していても使わない(<see cref="ForSequenceImage"/> と同じ規約。選択を戻した先もカラー表示)。
-    /// HDR 分割・合成(4, 5)は派生ビューを作るので呼び出し側が先に扱う(ここでは Raw 表示と同じ扱い)。
+    /// HDR 分割・合成(4, 5)は派生ビューを作るので、呼び出し側が先に <see cref="ForHdrMode"/> で扱う
+    /// (ここでは Raw 表示と同じ扱い)。
     /// </remarks>
     /// <param name="selectedIndex">選ばれた表示モード選択の項目番号。</param>
     /// <param name="isColor">表示中の画像がデコード済みのカラー画像か。</param>
@@ -98,6 +110,59 @@ internal static class DisplayModeSelection
             ? new Selected(ViewportDisplayMode.Raw, Refusal.NoBayer)
             : new Selected(ModeOf(selectedIndex), Refusal.None);
     }
+
+    /// <summary>
+    /// 表示モード選択(メニュー・ショートカットを含む)で HDR 分割・合成(4, 5)が選ばれたとき、
+    /// 表示中の画像に使えるか判定する。
+    /// </summary>
+    /// <remarks>
+    /// HDR 方式は raw の読み込みダイアログ(「フォーマット変更…」で開き直すときも同じ)でしか指定できない。
+    /// 画像ファイル(TIFF 等)は HDR 方式を持たず、「フォーマット変更…」も raw 以外では何もしないので、
+    /// そこから設定するよう案内しない。デコード済みのカラー画像は RGB のまま表示する
+    /// (<see cref="ForSelectedMode"/> と同じ規約)。
+    /// </remarks>
+    /// <param name="hdr">表示中の画像のフォーマットの HDR 方式。</param>
+    /// <param name="isColor">表示中の画像がデコード済みのカラー画像か。</param>
+    /// <param name="isRawFile">表示中の画像のファイルが raw(.raw/.bin)か。</param>
+    /// <returns>使えない理由。使えるときは <see cref="Refusal.None"/>。</returns>
+    internal static Refusal ForHdrMode(HdrMode hdr, bool isColor, bool isRawFile)
+    {
+        if (isColor)
+        {
+            return Refusal.HdrOnColorImage;
+        }
+
+        if (hdr != HdrMode.None)
+        {
+            return Refusal.None;
+        }
+
+        return isRawFile ? Refusal.NoHdr : Refusal.HdrOnImageFile;
+    }
+
+    /// <summary>
+    /// 選ばれた表示モードを断った理由を、利用者に知らせる文にする。
+    /// </summary>
+    /// <param name="refusal">断った理由。</param>
+    /// <returns>メッセージボックスに出す文。<see cref="Refusal.None"/> は空文字列。</returns>
+    internal static string Explain(Refusal refusal) => refusal switch
+    {
+        Refusal.ColorImage =>
+            "カラー画像(RGB)はカラーのまま表示します。\n" +
+            "Bayerカラー・カラー現像・チャネル分割は、Bayer配列のRaw画像で使える表示です。",
+        Refusal.NoBayer =>
+            "この表示モードにはBayerパターンの指定が必要です。\n" +
+            "右パネルの「フォーマット」→「Bayer」でパターン(RGGB等)を選択してください。",
+        Refusal.NoHdr => "この表示モードにはHDR方式の指定が必要です(フォーマット変更…から設定)。",
+        Refusal.HdrOnImageFile =>
+            "画像ファイル(TIFF等)にはHDR方式を指定できません。\n" +
+            "HDR分割・合成は、raw(.raw/.bin)を開くときにHDR方式を指定すると使えます" +
+            "(この画像もrawで保存してから開き直せば指定できます)。",
+        Refusal.HdrOnColorImage =>
+            "カラー画像(RGB)はカラーのまま表示します。\n" +
+            "HDR分割・合成は、HDR方式を指定して開いたraw(.raw/.bin)で使える表示です。",
+        _ => "",
+    };
 
     /// <summary>グレー画像での項目番号に対応するビューポートの表示モード。</summary>
     private static ViewportDisplayMode ModeOf(int index) => index switch
