@@ -2263,8 +2263,6 @@ public partial class MainWindow : Window
         RawImage processed, string label, bool closeDefectWindow, ColorImage? color = null)
     {
         RawImage? expectedSource = _currentImage;
-        int displayIndex = color is null && processed.Format.Bayer != BayerPattern.None
-            ? Math.Clamp(DisplayModeCombo.SelectedIndex, 0, 3) : 0;
         // 旧画像を読んでいる解析タスクを止めてから破棄する
         CancelAnalysis();
         await Viewport.ClearImageAsync();
@@ -2318,17 +2316,13 @@ public partial class MainWindow : Window
 
         Viewport.SetImage(processed, processed.Format);
         Viewport.SetColorImage(color);
-        DisplayModeCombo.SelectedIndex = displayIndex;
-        Viewport.SetDisplayMode(displayIndex switch
-        {
-            1 => ViewportDisplayMode.BayerColor,
-            2 => ViewportDisplayMode.ColorDevelop,
-            3 => ViewportDisplayMode.ChannelSplit,
-            _ => ViewportDisplayMode.Raw,
-        });
+
+        // 表示モードは処理前の選択を保つ(送りと同じ規約)。カラーの処理結果は RGB のまま表示する
+        // (Raw 表示へ戻すとカラー画像のビニング・フィルタの結果がグレーで表示される)
+        DisplayModeSelection.Choice display =
+            ApplyDisplayModeToNewImage(color is not null, processed.Format.Bayer);
         Viewport.SetLut(BuildLut());
         UpdateDevelopLuts();
-        DisplayModeCombo.IsEnabled = color is null;
 
         // 加工結果はディスク上のファイルと一致しないためシーケンス再生は無効化
         StopPlayback();
@@ -2338,7 +2332,7 @@ public partial class MainWindow : Window
         RefreshHistogram(roi: null);
         _mainPyramid = null;
         await BuildPyramidAsync(processed, _loadCts?.Token ?? CancellationToken.None);
-        if (displayIndex != 0 && ReferenceEquals(processed, _currentImage))
+        if (display.ComboIndex != 0 && ReferenceEquals(processed, _currentImage))
         {
             await EnsureBayerPyramidAsync();
         }
@@ -2810,34 +2804,68 @@ public partial class MainWindow : Window
             await RestoreMainImageAsync();
         }
 
-        ViewportDisplayMode mode = index switch
-        {
-            1 => ViewportDisplayMode.BayerColor,
-            2 => ViewportDisplayMode.ColorDevelop,
-            3 => ViewportDisplayMode.ChannelSplit,
-            _ => ViewportDisplayMode.Raw,
-        };
-
-        if (mode != ViewportDisplayMode.Raw && _currentFormat.Bayer == BayerPattern.None)
+        // カラー画像の Raw 表示は RGB のままの表示で、Bayer 系の表示は使わない(開いたとき・送りと同じ)。
+        // メニューなどから Bayer 系を選んで断ったあとの戻り先も、グレーの Raw 表示ではなくカラー表示にする
+        DisplayModeSelection.Selected selected = DisplayModeSelection.ForSelectedMode(
+            index, _colorImage is not null, _currentFormat.Bayer);
+        if (selected.Refusal != DisplayModeSelection.Refusal.None)
         {
             MessageBox.Show(this,
-                "この表示モードにはBayerパターンの指定が必要です。\n" +
-                "右パネルの「フォーマット」→「Bayer」でパターン(RGGB等)を選択してください。",
+                selected.Refusal == DisplayModeSelection.Refusal.ColorImage
+                    ? "カラー画像(RGB)はカラーのまま表示します。\n" +
+                      "Bayerカラー・カラー現像・チャネル分割は、Bayer配列のRaw画像で使える表示です。"
+                    : "この表示モードにはBayerパターンの指定が必要です。\n" +
+                      "右パネルの「フォーマット」→「Bayer」でパターン(RGGB等)を選択してください。",
                 "RawAnalyzer", MessageBoxButton.OK, MessageBoxImage.Information);
             DisplayModeCombo.SelectedIndex = 0;
             return;
         }
 
+        ViewportDisplayMode mode = selected.ViewportMode;
         if (mode == ViewportDisplayMode.ColorDevelop)
         {
             EnsureDevelopLuts();
         }
 
         Viewport.SetDisplayMode(mode);
-        if (mode != ViewportDisplayMode.Raw)
+        if (mode is ViewportDisplayMode.BayerColor or ViewportDisplayMode.ColorDevelop
+            or ViewportDisplayMode.ChannelSplit)
         {
             await EnsureBayerPyramidAsync();
         }
+    }
+
+    /// <summary>
+    /// 表示する画像を差し替えた直後に、表示モードの選択とビューポートの表示モードを同じ結果にそろえる。
+    /// </summary>
+    /// <remarks>
+    /// ファイル連番の送り・TIFF のページ送り・処理結果の差し替えで共通(DisplayModeSelection の規約)。
+    /// 選択中のモードは新しい画像でも成立すれば保ち、成立しないモードだけ選択ごと戻す。
+    /// カラー画像は RGB のまま表示し、選択は Raw 表示・操作不可にする。
+    /// 選択の変更は OnDisplayModeChanged を通るので、MainWindow の状態(画像・フォーマット・カラー画像)を
+    /// 新しい画像へ交換してから呼ぶ。分割⇔非分割の切替で ROI を捨てるのはビューポートが行う。
+    /// </remarks>
+    /// <param name="isColor">新しい画像がデコード済みのカラー画像か。</param>
+    /// <param name="bayer">新しい画像のBayerパターン。</param>
+    /// <returns>適用した表示モード。</returns>
+    private DisplayModeSelection.Choice ApplyDisplayModeToNewImage(bool isColor, BayerPattern bayer)
+    {
+        DisplayModeSelection.Choice display = DisplayModeSelection.ForSequenceImage(
+            DisplayModeCombo.SelectedIndex, isColor, bayer);
+        DisplayModeCombo.IsEnabled = display.ComboEnabled;
+
+        // 再生中の送りでは多くの場合どちらも変わらないので、変わるときだけ設定する
+        if (DisplayModeCombo.SelectedIndex != display.ComboIndex)
+        {
+            DisplayModeCombo.SelectedIndex = display.ComboIndex;
+        }
+
+        if (Viewport.DisplayMode != display.ViewportMode)
+        {
+            Viewport.SetDisplayMode(display.ViewportMode);
+        }
+
+        return display;
     }
 
     /// <summary>
@@ -3666,21 +3694,8 @@ public partial class MainWindow : Window
                 // 表示モードはツールバーの選択を保つ。新しい画像で成立しないモード(カラー画像への
                 // Bayer系表示、Bayerなしでのカラー・現像・分割)だけ、選択も含めて戻す
                 // (SetColorImage は選択を見ずに Raw/カラー表示へ戻すので、表示と選択が食い違う)。
-                // 選択の変更は OnDisplayModeChanged を通るので状態の交換後に行う。
-                // 分割⇔非分割の切替で ROI を捨てるのはビューポートの差し替え・モード変更が行う。
-                // 再生中の送りでは多くの場合どちらも変わらないので、変わるときだけ設定する
-                DisplayModeSelection.Choice display = DisplayModeSelection.ForSequenceImage(
-                    DisplayModeCombo.SelectedIndex, color is not null, format.Bayer);
-                DisplayModeCombo.IsEnabled = display.ComboEnabled;
-                if (DisplayModeCombo.SelectedIndex != display.ComboIndex)
-                {
-                    DisplayModeCombo.SelectedIndex = display.ComboIndex;
-                }
-
-                if (Viewport.DisplayMode != display.ViewportMode)
-                {
-                    Viewport.SetDisplayMode(display.ViewportMode);
-                }
+                // 選択の変更は OnDisplayModeChanged を通るので状態の交換後に行う
+                ApplyDisplayModeToNewImage(color is not null, format.Bayer);
 
                 Title = $"RawAnalyzer — {Path.GetFileName(path)}{TiffPageNote}";
                 if (layoutChanged)

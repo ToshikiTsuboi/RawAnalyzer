@@ -1,6 +1,5 @@
 ﻿using System.IO;
 using System.Windows;
-using RawAnalyzer.App.Rendering;
 using RawAnalyzer.App.Services;
 using RawAnalyzer.Core;
 
@@ -114,8 +113,6 @@ public partial class MainWindow
         BayerPyramid? oldBayer = _mainBayerPyramid;
         bool sizeChanged = oldImage?.Width != image.Width || oldImage?.Height != image.Height;
         RawFormat format = stack.GetPageFormat(decoded);
-        BayerPattern pattern = format.Bayer;
-        int mode = pattern == BayerPattern.None ? 0 : Math.Clamp(DisplayModeCombo.SelectedIndex, 0, 3);
         CancelAnalysis();
         // 読込済みページの所有権を移す時点で、元ページの縮小/Bayer計算も打ち切る。
         // 読込要求は完了済みなので、次のページ用のライフタイムへ更新できる。
@@ -150,15 +147,11 @@ public partial class MainWindow
         // ReplaceImageAsyncは最初のawaitより前にビューポートの参照を交換する。
         // MainWindowの状態も同じUIターンで交換し、次の操作に半更新状態を見せない。
         Task<RawImage?> pending = Viewport.ReplaceImageAsync(image, format, color: decoded.Color);
-        DisplayModeCombo.IsEnabled = decoded.Color is null;
-        DisplayModeCombo.SelectedIndex = mode;
-        Viewport.SetDisplayMode(mode switch
-        {
-            1 => ViewportDisplayMode.BayerColor,
-            2 => ViewportDisplayMode.ColorDevelop,
-            3 => ViewportDisplayMode.ChannelSplit,
-            _ => ViewportDisplayMode.Raw,
-        });
+
+        // 表示モードはファイル連番の送りと同じ規約でそろえる。カラーのページは RGB のまま表示し
+        // (選択は Raw 表示・操作不可)、グレーのページでは成立する選択を保つ。
+        // 以前はカラーのページを Raw 表示にしており、2ページ目以降や送りで戻った先頭ページがグレーになった
+        ApplyDisplayModeToNewImage(decoded.Color is not null, format.Bayer);
         Viewport.SetLut(BuildLut());
         UpdateDevelopLuts();
         Title = $"RawAnalyzer — {Path.GetFileName(_currentPath)}{TiffPageNote}";
