@@ -252,6 +252,34 @@ public class WideSampleTiffTests
         Assert.Contains("半精度", ex.Message);
     }
 
+    [Theory]
+    [InlineData(3, 0)]
+    [InlineData(4, 2)] // 非関連アルファ(WICはBgra32)
+    [InlineData(4, 1)] // 関連アルファ(WICはPbgra32)
+    public void SignedInt8Rgb_KeepsChannelOrder(int samplesPerPixel, int extraSamples)
+    {
+        // WICは符号あり8bitのRGBをB,G,Rの順(Bgr24/Bgra32/Pbgra32)で返す。
+        // 並べ替えずにRGBとして読むと赤と青が入れ替わる
+        sbyte[] values = { 10, 20, 30, 40 };
+        byte[] samples = Array.ConvertAll(values[..samplesPerPixel], v => (byte)v);
+        var page = TiffBuilder.GrayPage(
+            1, 1, 8, samples, photometric: 2, sampleFormat: 2, samplesPerPixel: samplesPerPixel);
+        if (extraSamples != 0)
+        {
+            page.Tags[338] = (3, new long[] { extraSamples });
+        }
+
+        DecodedImage decoded = Load(page);
+        using RawImage owned = decoded.Luminance;
+
+        Assert.NotNull(decoded.Color);
+        decoded.Color!.GetPixel(0, 0, out ushort r, out ushort g, out ushort b);
+        Assert.Equal(21845, r);
+        Assert.Equal(43690, g);
+        Assert.Equal(65535, b);
+        Assert.Equal("8bit値 0〜30 → 16bit (1code≈0.000458)", decoded.ValueNote);
+    }
+
     /// <summary>PlanarConfiguration=2(成分ごとに1ストリップ)の半精度RGB(A)ページ。</summary>
     private static TiffBuilder.Page PlanarRgbPage(int width, int height, int samplesPerPixel, float[] interleaved)
     {

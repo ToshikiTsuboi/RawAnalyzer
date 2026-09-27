@@ -510,9 +510,14 @@ internal static class ImageFileLoader
             frame, width, height, channels, info.BitsPerSample / 8,
             interpretation == SampleInterpretation.SignedInteger, ct, progress);
         long samples = pixels * channels;
-        if (channels == 4)
+
+        // WICは8bitのRGBをB,G,Rの順(Bgr24/Bgra32/Pbgra32)で返す。DecodeFrameと同じくRGBの順へ
+        // 並べ直す。アルファは値域にも出力にも入れない
+        bool bgr = IsBgrOrder(format);
+        if (channels == 4 || (channels == 3 && bgr))
         {
-            // アルファは値域にも出力にも入れない
+            int red = bgr ? 2 : 0;
+            int blue = bgr ? 0 : 2;
             for (long i = 0; i < pixels; i++)
             {
                 if ((i & 0xFFFFF) == 0)
@@ -520,9 +525,13 @@ internal static class ImageFileLoader
                     ct.ThrowIfCancellationRequested();
                 }
 
-                bits[(i * 3) + 0] = bits[i * 4];
-                bits[(i * 3) + 1] = bits[(i * 4) + 1];
-                bits[(i * 3) + 2] = bits[(i * 4) + 2];
+                long source = i * channels;
+                int r = bits[source + red];
+                int g = bits[source + 1];
+                int b = bits[source + blue];
+                bits[(i * 3) + 0] = r;
+                bits[(i * 3) + 1] = g;
+                bits[(i * 3) + 2] = b;
             }
 
             channels = 3;
@@ -560,6 +569,13 @@ internal static class ImageFileLoader
             luminance.Dispose();
             throw;
         }
+    }
+
+    /// <summary>WICの画素形式がB,G,Rの順に並ぶ(8bitのカラー形式)か。</summary>
+    private static bool IsBgrOrder(PixelFormat format)
+    {
+        return format == PixelFormats.Bgr24 || format == PixelFormats.Bgr32
+            || format == PixelFormats.Bgra32 || format == PixelFormats.Pbgra32;
     }
 
     /// <summary>サンプルのビット列を32bit語の配列として読み出す。</summary>
