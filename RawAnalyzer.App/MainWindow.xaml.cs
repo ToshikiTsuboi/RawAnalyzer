@@ -2194,7 +2194,10 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (RejectWhileOpening("画像演算"))
+        // 読み込み中・縮小表示の作成中・他の処理の実行中は始めない(ビニング・フィルタと同じ)。
+        // HDR分割・合成の計算中に始めると、ダイアログ・進捗表示の中で派生ビューが表示され、その後で
+        // 元画像だけを演算結果へ差し替えてしまう。黙って無視せず理由を知らせる
+        if (RejectWhileBusy("画像演算"))
         {
             return;
         }
@@ -2278,7 +2281,7 @@ public partial class MainWindow : Window
             _ => "÷",
         };
         await ApplyProcessedImageAsync(
-            corrected, $"{opLabel} {Path.GetFileName(choice.ReferencePath)}");
+            source, corrected, $"{opLabel} {Path.GetFileName(choice.ReferencePath)}");
     }
 
     /// <summary>
@@ -2287,25 +2290,34 @@ public partial class MainWindow : Window
     /// <remarks>
     /// 欠陥検出の結果は処理前の画像のものなので、欠陥補正の結果を含めて破棄する
     /// (欠陥ウィンドウは閉じずに「未実行」へ戻す。他の差し替え経路と同じ規約)。
+    /// 処理を始めた後で前提が崩れていたら(HDR分割・合成の派生ビューを表示中、元画像が処理の元では
+    /// なくなった)、結果を破棄して理由を知らせ、差し替えない(ProcessedImageReplacement)。
     /// </remarks>
-    /// <param name="processed">差し替える画像。</param>
+    /// <param name="source">処理の元にした画像(処理の開始時の元画像)。</param>
+    /// <param name="processed">差し替える画像。差し替えなかったときは破棄する。</param>
     /// <param name="label">タイトル等に表示する処理ラベル。</param>
     /// <param name="color">RGBの処理結果。processedは同じ画像の輝度であること。</param>
     /// <param name="defectNotice">
     /// 欠陥ウィンドウで一覧を破棄したときに出す案内。省略時は画像が替わったことを示す。
     /// 差し替えと同じUIターンで出す(縮小表示の作成を待った後で出すと、その間に検出し直した一覧を消す)。
     /// </param>
-    private async Task ApplyProcessedImageAsync(
-        RawImage processed, string label, ColorImage? color = null, string? defectNotice = null)
+    /// <returns>差し替えた場合はtrue。</returns>
+    private async Task<bool> ApplyProcessedImageAsync(
+        RawImage source, RawImage processed, string label, ColorImage? color = null,
+        string? defectNotice = null)
     {
-        RawImage? expectedSource = _currentImage;
+        // 処理は実行中の操作・HDR表示の間は始めないが、前提が崩れていたら表示に触れる前に断る
+        if (RejectProcessedImage(source, processed, label))
+        {
+            return false;
+        }
+
         // 旧画像を読んでいる解析タスクを止めてから破棄する
         CancelAnalysis();
         await Viewport.ClearImageAsync();
-        if (!ReferenceEquals(expectedSource, _currentImage))
+        if (RejectProcessedImage(source, processed, label))
         {
-            processed.Dispose();
-            return;
+            return false;
         }
 
         // 旧画像から作られたBayerピラミッドを残すと、EnsureBayerPyramidAsyncの
@@ -2369,6 +2381,30 @@ public partial class MainWindow : Window
         {
             await EnsureBayerPyramidAsync();
         }
+
+        return true;
+    }
+
+    /// <summary>
+    /// 処理結果で差し替える前提が崩れていたら、結果を破棄して理由を知らせる。
+    /// </summary>
+    /// <param name="source">処理の元にした画像。</param>
+    /// <param name="processed">差し替える予定だった画像。断ったときは破棄する。</param>
+    /// <param name="label">処理ラベル。</param>
+    /// <returns>断った場合はtrue。</returns>
+    private bool RejectProcessedImage(RawImage source, RawImage processed, string label)
+    {
+        ProcessedImageReplacement.Refusal refusal = ProcessedImageReplacement.Check(
+            source, _currentImage, derivedViewShown: _derivedImage is not null);
+        if (refusal == ProcessedImageReplacement.Refusal.None)
+        {
+            return false;
+        }
+
+        processed.Dispose();
+        MessageBox.Show(this, ProcessedImageReplacement.Explain(refusal, label),
+            "RawAnalyzer", MessageBoxButton.OK, MessageBoxImage.Information);
+        return true;
     }
 
     // ---- バッチ現像 / 動画書き出し ----
@@ -3971,8 +4007,9 @@ public partial class MainWindow : Window
     /// </summary>
     /// <remarks>
     /// <see cref="RejectWhileOpening"/> は読み込みの確定待ちだけを断る(保存などは縮小表示の
-    /// 作成中や他の操作の内側でも始められる)。実行中の処理すべてを断る操作(ビニング・
-    /// フィルタ)は、何が実行中かを同じ形のダイアログで知らせる(黙って無視しない)。
+    /// 作成中や他の操作の内側でも始められる)。実行中の処理すべてを断る操作(結果で表示中の画像を
+    /// 差し替えるビニング・フィルタ・画像演算・欠陥補正)は、何が実行中かを同じ形のダイアログで
+    /// 知らせる(黙って無視しない)。
     /// </remarks>
     /// <param name="operation">操作名(「ビニング」など)。</param>
     /// <returns>拒否した場合はtrue。</returns>
@@ -4661,7 +4698,10 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (RejectWhileOpening("欠陥画素補正"))
+        // 読み込み中・縮小表示の作成中・他の処理の実行中は始めない(ビニング・フィルタと同じ)。
+        // HDR分割・合成の計算中に始めると、進捗表示の中で派生ビューが表示され、その後で元画像だけを
+        // 補正結果へ差し替えてしまう。黙って無視せず理由を知らせる
+        if (RejectWhileBusy("欠陥画素補正"))
         {
             _defectWindow?.ResetRunButton();
             return;
@@ -4704,10 +4744,16 @@ public partial class MainWindow : Window
         // 補正前の一覧は差し替えで破棄する(残すと「この欠陥を補正」を押せても表示中の画像のもの
         // ではないと断られるだけ)。欠陥ウィンドウには補正したことと、補正後の画像は検出し直して
         // 確かめることを示す(一覧がないので下の ResetRunButton でも補正ボタンは無効のまま)
-        await ApplyProcessedImageAsync(
-            corrected, $"欠陥補正 {count}px ({methodLabel})",
+        bool applied = await ApplyProcessedImageAsync(
+            source, corrected, $"欠陥補正 {count}px ({methodLabel})",
             defectNotice: DefectPixelWindow.CorrectionAppliedNotice(count, methodLabel));
         _defectWindow?.ResetRunButton();
+        if (!applied)
+        {
+            // 差し替えなかった(理由は表示済み)。一覧は前提を崩した差し替えの側で破棄されている
+            return;
+        }
+
         _vm.ImageInfoText = $"欠陥画素 {count} 個を{methodLabel}補間で補正しました" +
             "(保存すると補正後のデータが出力されます)";
     }
