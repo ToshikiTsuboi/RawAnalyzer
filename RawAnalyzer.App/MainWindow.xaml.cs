@@ -704,6 +704,9 @@ public partial class MainWindow : Window
             return;
         }
 
+        // 生成中にフレームを移した・画像を差し替えた場合は捨てる。フレームの送りは表示中の画像・
+        // フレームの世代(_loadCts)を進めてトークンを取り消すので、取り消しの前に生成が終わっていても、
+        // 前フレーム用のピラミッドで現フレームのものを上書きしない(画像の差し替えは画像でも照合する)
         if (ct.IsCancellationRequested || !ReferenceEquals(image, _currentImage))
         {
             return;
@@ -740,11 +743,14 @@ public partial class MainWindow : Window
         }
 
         int frame = derived ? 0 : Viewport.Frame;
+
+        // 表示中の画像・フレームの世代(_loadCts)のトークンで作る。フレームの送り・画像の差し替えで取り消される
+        CancellationToken ct = _loadCts?.Token ?? default;
         BayerPyramid bayer;
         try
         {
             bayer = await BayerPyramid.CreateAsync(
-                image, format, frame, cancellationToken: _loadCts?.Token ?? default);
+                image, format, frame, cancellationToken: ct);
         }
         catch (Exception ex) when (TaskRaceGuard.IsAbandoned(ex))
         {
@@ -753,7 +759,10 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (!ReferenceEquals(image, ActiveImage) || frame != (derived ? 0 : Viewport.Frame))
+        // 取り消しの前に生成が終わっていた前の世代の結果も捨てる(グレーのピラミッドと同じ規約)。
+        // フレームを移して戻ったときに、戻った後で始めた生成の結果と二重に取り付けない
+        if (ct.IsCancellationRequested
+            || !ReferenceEquals(image, ActiveImage) || frame != (derived ? 0 : Viewport.Frame))
         {
             bayer.Dispose();
             return;
@@ -3617,6 +3626,14 @@ public partial class MainWindow : Window
                 {
                     return;
                 }
+
+                // 旧フレーム用の縮小ピラミッド・Bayerピラミッドの生成を打ち切る(ファイル連番・TIFFのページ送りと
+                // 同じく、表示中の画像・フレームの世代を進める)。生成は _loadCts のトークンで走り、完了時に
+                // トークンの取り消しを見て結果を捨てる。フレームを移しても取り消さないと、連続して送ったときに
+                // 前フレーム用の生成が後から終わって現フレームのピラミッドを上書きし(描画側はフレームの
+                // 不一致で使わないので、次に送るまで等倍データから描く)、送りのたびの生成も積み上がって
+                // CPU とメモリを使い続ける。送れなかったときは取り消さない
+                ReplaceLoadCts(new CancellationTokenSource());
 
                 // 欠陥検出の結果は検出したフレームの画素のもの。フレームを移すこのUIターンで、
                 // 他の差し替え経路と同じく検出元を手放し、マーカーと欠陥ウィンドウも閉じる
