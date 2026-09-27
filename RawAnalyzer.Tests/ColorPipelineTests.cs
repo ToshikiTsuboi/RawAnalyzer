@@ -1,3 +1,4 @@
+using RawAnalyzer.App.Rendering;
 using RawAnalyzer.Core;
 using Xunit;
 
@@ -247,5 +248,97 @@ public class ColorPipelineTests
         Assert.Equal(255, r);
         Assert.Equal(0, g);
         Assert.InRange(b, (byte)127, (byte)128);
+    }
+
+    public static IEnumerable<object[]> DiagonalMatrixCases()
+    {
+        // 対角行列 diag(dR,dG,dB) を掛ける行列経路は、WBゲインへ同じ倍率を
+        // 掛けた非行列経路(クリップは最終段の1回だけ)と同じ出力になるはず。
+        // 1. レビュー指摘#5の再現値: WB R=2 で1を超えた値が行列0.5倍で範囲内へ戻る
+        yield return new object[] { new DevelopParameters(GainR: 2.0, Gamma: 1.0), 0.5, 1.0, 1.0 };
+
+        // 2. 行列で1を超えた値・黒レベル未満の負の値を、コントラスト<1が範囲内へ戻す
+        yield return new object[]
+        {
+            new DevelopParameters(BlackLevel: 8192, Gamma: 1.0, Contrast: 0.5), 1.5, 1.0, 1.0,
+        };
+
+        // 3. 黒/白点・全体ゲイン・コントラスト>1・ガンマ2.2 を含む一般の組み合わせ
+        yield return new object[]
+        {
+            new DevelopParameters(
+                BlackLevel: 4096, GainR: 1.8, GainB: 1.4, Gamma: 2.2,
+                WhitePoint: 60000, Gain: 1.5, Contrast: 1.3),
+            0.7, 1.1, 0.6,
+        };
+    }
+
+    [Theory]
+    [MemberData(nameof(DiagonalMatrixCases))]
+    public void DevelopLuts_DiagonalMatrix_MatchesEquivalentWbGains(
+        DevelopParameters parameters, double dR, double dG, double dB)
+    {
+        // 行列前(WB・ゲイン後)や行列後・コントラスト前で0〜1へ切り詰めると、
+        // 行列やコントラストで範囲内へ戻るはずの値が失われて非行列経路とずれる
+        var withMatrix = DevelopLuts.Create(
+            parameters with { Matrix = new ColorMatrix(dR, 0, 0, 0, dG, 0, 0, 0, dB) });
+        var reference = DevelopLuts.Create(parameters with
+        {
+            GainR = parameters.GainR * dR,
+            GainG = parameters.GainG * dG,
+            GainB = parameters.GainB * dB,
+        });
+        Assert.True(withMatrix.HasMatrix);
+        Assert.False(reference.HasMatrix);
+
+        for (int v = 0; v < 65536; v++)
+        {
+            var code = (ushort)v;
+            withMatrix.Convert(code, code, code, out byte r, out byte g, out byte b);
+
+            // 行列経路はガンマLUTの入力量子化(65536段)ぶんだけ丸めが違い得る
+            Assert.InRange(r - reference.R[v], -1, 1);
+            Assert.InRange(g - reference.G[v], -1, 1);
+            Assert.InRange(b - reference.B[v], -1, 1);
+        }
+    }
+
+    [Fact]
+    public void DevelopLuts_MatrixAfterWbOverflow_DisplayAndExportKeepHighlight()
+    {
+        // レビュー指摘#5: Gamma=1、WB R=2、行列diag(0.5,1,1)、R=49151 は
+        // 0.75×2=1.5 → 行列で0.75 → 191 になるはず(行列前に1へ切り詰めると128)。
+        // 表示(ViewportRenderer)と現像保存(ImageExport)は同じ DevelopLuts.Convert を通る
+        const int size = 8;
+        ushort[] mosaic = BuildConstantMosaic(size, size, BayerPattern.Rggb, 49151, 32768, 16384);
+        using RawImage image = TestImages.FromCodes(mosaic, size, size, bayer: BayerPattern.Rggb);
+        var luts = DevelopLuts.Create(new DevelopParameters(
+            GainR: 2.0, Gamma: 1.0, Matrix: new ColorMatrix(0.5, 0, 0, 0, 1, 0, 0, 0, 1)));
+
+        byte[] exported = ImageExport.DevelopRgb24(image, 0, BayerPattern.Rggb, luts);
+
+        var request = new RenderRequest
+        {
+            Source = new RawImageRenderSource(image, 0),
+            Lut = DisplayLut.Create(new DisplayParameters()),
+            Mode = ViewportDisplayMode.ColorDevelop,
+            Pattern = BayerPattern.Rggb,
+            DevelopLuts = luts,
+        };
+        var displayed = new byte[size * size * 4];
+        ViewportRenderer.Render(
+            request, zoom: 1.0, originX: 0, originY: 0, size, size, displayed, default);
+
+        for (int i = 0; i < size * size; i++)
+        {
+            Assert.Equal(191, exported[i * 3]);
+            Assert.Equal(128, exported[i * 3 + 1]);
+            Assert.Equal(64, exported[i * 3 + 2]);
+
+            // 表示バッファは BGRA
+            Assert.Equal(64, displayed[i * 4]);
+            Assert.Equal(128, displayed[i * 4 + 1]);
+            Assert.Equal(191, displayed[i * 4 + 2]);
+        }
     }
 }
