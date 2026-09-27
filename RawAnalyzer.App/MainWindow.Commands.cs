@@ -250,7 +250,11 @@ public partial class MainWindow
                 Id = "format",
                 Category = "ファイル",
                 Title = "フォーマットを変更して開き直す…",
+                Description = "raw(.raw/.bin)の寸法・ビット深度・HDR方式などを指定し直す(画像ファイルでは使えません)",
                 Key = Key.F2,
+
+                // raw 以外(画像ファイル)では実行時に理由を出す。ここで無効にすると、F2 もパレットの Enter も
+                // 黙って無視される(ビニング・フィルタの実行中の判定と同じ扱い)
                 CanExecute = () => _vm.HasImage,
                 Execute = () => OnChangeFormatClick(this, empty),
             },

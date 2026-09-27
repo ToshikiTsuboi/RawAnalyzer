@@ -78,6 +78,7 @@ public sealed class MainViewModel : ObservableObject
     private string _histDynamicRangeText = "—";
     private bool _isFullscreen;
     private bool _isColorImage;
+    private bool _isRawFile;
     private bool _leftPanelVisible = true;
     private bool _rightPanelVisible = true;
     private string _fmtBitDepthText = "—";
@@ -230,6 +231,8 @@ public sealed class MainViewModel : ObservableObject
             if (SetProperty(ref _hasImage, value))
             {
                 OnPropertyChanged(nameof(CanEditBayer));
+                OnPropertyChanged(nameof(CanChangeFormat));
+                OnPropertyChanged(nameof(ChangeFormatToolTip));
             }
         }
     }
@@ -609,9 +612,38 @@ public sealed class MainViewModel : ObservableObject
             if (SetProperty(ref _isColorImage, value))
             {
                 OnPropertyChanged(nameof(CanEditBayer));
+                OnPropertyChanged(nameof(ChangeFormatToolTip));
             }
         }
     }
+
+    /// <summary>表示中の画像のファイルが raw(.raw/.bin)か。</summary>
+    public bool IsRawFile
+    {
+        get => _isRawFile;
+        set
+        {
+            if (SetProperty(ref _isRawFile, value))
+            {
+                OnPropertyChanged(nameof(CanChangeFormat));
+                OnPropertyChanged(nameof(ChangeFormatToolTip));
+            }
+        }
+    }
+
+    /// <summary>「フォーマット変更…」(HDRメニューの項目・右パネルの「変更…」)を使えるか。</summary>
+    /// <remarks>
+    /// 読み込みダイアログでフォーマットを指定し直して開き直せるのは raw だけ。画像ファイル(TIFF 等)は
+    /// フォーマットをファイル自身が持つので使えない(以前は押せて、押しても何も起きなかった)。
+    /// </remarks>
+    public bool CanChangeFormat => _hasImage && _isRawFile;
+
+    /// <summary>
+    /// 「フォーマット変更…」を使えないときに示す理由(ツールチップ)。使えるとき・画像がないときは null。
+    /// </summary>
+    public string? ChangeFormatToolTip => _hasImage && !_isRawFile
+        ? FormatChangeAvailability.ExplainUnavailable(_isColorImage)
+        : null;
 
     /// <summary>右パネルの Bayer 指定を操作できるか。</summary>
     /// <remarks>

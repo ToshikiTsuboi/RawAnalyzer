@@ -127,8 +127,11 @@
                 <MenuItem Header="HDR合成表示" Click="OnMenuDisplayModeClick" Tag="5"
                           IsEnabled="{Binding HasImage}" />
                 <Separator />
+                <!-- raw 以外(画像ファイル)では使えないので無効にし、理由をツールチップで示す -->
                 <MenuItem Header="HDR方式の設定 (フォーマット変更)…" Click="OnChangeFormatClick"
-                          IsEnabled="{Binding HasImage}" />
+                          IsEnabled="{Binding CanChangeFormat}"
+                          ToolTip="{Binding ChangeFormatToolTip}"
+                          ToolTipService.ShowOnDisabled="True" />
             </MenuItem>
             <MenuItem Header="ツール(_T)">
                 <MenuItem Header="ROI選択モード" IsCheckable="True"
@@ -782,7 +785,9 @@
                                 <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
                                     <Button Style="{StaticResource ToolButton}" Content="変更…"
                                             Click="OnChangeFormatClick" FontSize="11"
-                                            IsEnabled="{Binding HasImage}" />
+                                            IsEnabled="{Binding CanChangeFormat}"
+                                            ToolTip="{Binding ChangeFormatToolTip}"
+                                            ToolTipService.ShowOnDisabled="True" />
                                 </StackPanel>
                             </StackPanel>
                         </Border>

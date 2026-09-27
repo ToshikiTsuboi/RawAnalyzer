@@ -499,6 +499,16 @@ public partial class MainWindow : Window
             RawFormat? initial = _correctionLabel is null ? _currentFormat
                 : TryGetRememberedFormat(_currentPath, SafeFileSize(_currentPath));
             OpenPath(_currentPath, initial);
+            return;
+        }
+
+        // 画像ファイル(TIFF 等)はフォーマットをファイル自身が持ち、開き直せない。メニュー・右パネルの
+        // ボタンは無効にしてツールチップで理由を示すが、キー(F2)・コマンドパレットからは実行されるので、
+        // 黙って何もしないのではなく同じ理由を知らせる
+        if (_currentImage is not null)
+        {
+            MessageBox.Show(this, FormatChangeAvailability.ExplainUnavailable(_colorImage is not null),
+                "フォーマット変更", MessageBoxButton.OK, MessageBoxImage.Information);
         }
     }
 
@@ -645,6 +655,10 @@ public partial class MainWindow : Window
         ClearDefectSource();
         _currentFormat = image.Format;
         _currentPath = path;
+
+        // 「フォーマット変更…」は raw でしか使えない。ファイル連番の送りは同じ拡張子のファイルだけを
+        // 送る(SequenceScanner)ので、開いたときに決めれば送りの後も変わらない
+        _vm.IsRawFile = IsRawFile(path);
         _tiffStack = pageCount > 1
             ? new TiffStackSource(path, pageCount) { BayerOverride = image.Format.Bayer } : null;
         _sequenceBayerOverride = image.Format.Bayer;
