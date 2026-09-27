@@ -439,6 +439,12 @@ public sealed class ImageViewport : FrameworkElement
     /// 完了後は取り付けていたピラミッドを安全にDisposeできる
     /// (描画中にDisposeすると読み出しがObjectDisposedExceptionになる)。
     /// </summary>
+    /// <remarks>
+    /// 切り離しは呼び出したUIターンで済み、返されたタスクは呼び出した時点で進行中だった描画の停止だけを待つ。
+    /// 止めた描画は描き直さないので、同じUIターンで続けて <see cref="SetFrame"/> などで描画を始める
+    /// (その描画は切り離したピラミッドを使わず、待ちも止めもしない)。フレーム送りは送りを決めたUIターンで
+    /// 切り離しとフレームの切り替えを行い、それから停止を待って破棄する。
+    /// </remarks>
     public async Task DetachBayerPyramidAsync()
     {
         _renderCts?.Cancel();

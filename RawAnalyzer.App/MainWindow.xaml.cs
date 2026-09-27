@@ -3606,27 +3606,6 @@ public partial class MainWindow : Window
         {
             if (_sequenceMode == SequenceMode.Frames)
             {
-                // ピラミッドは生成元フレーム専用なので、フレームを移ったら捨てる。
-                // 進行中の描画が読んでいる可能性があるため、切り離して描画停止を
-                // 待ってからDisposeする(即Disposeすると読み出しがODEになり、
-                // 後続のawaitで未処理例外としてUIまで届く)
-                if (_mainBayerPyramid is not null)
-                {
-                    // フィールドはawait前にローカルへ退避して切っておく。
-                    // await中に別経路が同じインスタンスを掴むとDisposeが二重になる
-                    BayerPyramid pyramid = _mainBayerPyramid;
-                    _mainBayerPyramid = null;
-                    await Viewport.DetachBayerPyramidAsync();
-                    pyramid.Dispose();
-                }
-
-                // await中にモーダル(保存・測定・演算)が開いたら差し替えない
-                // (ファイル連番側と同じガード)
-                if (_busyDepth > 0)
-                {
-                    return;
-                }
-
                 // 旧フレーム用の縮小ピラミッド・Bayerピラミッドの生成を打ち切る(ファイル連番・TIFFのページ送りと
                 // 同じく、表示中の画像・フレームの世代を進める)。生成は _loadCts のトークンで走り、完了時に
                 // トークンの取り消しを見て結果を捨てる。フレームを移しても取り消さないと、連続して送ったときに
@@ -3634,6 +3613,18 @@ public partial class MainWindow : Window
                 // 不一致で使わないので、次に送るまで等倍データから描く)、送りのたびの生成も積み上がって
                 // CPU とメモリを使い続ける。送れなかったときは取り消さない
                 ReplaceLoadCts(new CancellationTokenSource());
+
+                // Bayerピラミッドも生成元フレーム専用なので、フレームを移したら捨てる。切り離しは送りを決めた
+                // このUIターンで、フレームを移すのと一緒に行う(先に切り離して描画の停止を待つと、その間に
+                // 始まった操作に譲って送りをやめたとき、表示中のフレームのピラミッドだけを失って作り直されず、
+                // Bayer系の表示が等倍データからの描画になる)。切り離す前に始まっていた描画は読んでいる
+                // 可能性があるので、止まってから破棄する(描画中に破棄すると読み出しがODEになる)。
+                // フィールドはawait前に切っておく(await中に別経路が同じインスタンスを掴むとDisposeが二重になる)
+                BayerPyramid? oldBayer = _mainBayerPyramid;
+                _mainBayerPyramid = null;
+                Task bayerDetached = oldBayer is null
+                    ? Task.CompletedTask
+                    : Viewport.DetachBayerPyramidAsync();
 
                 // 欠陥検出の結果は検出したフレームの画素のもの。フレームを移すこのUIターンで、
                 // 他の差し替え経路と同じく検出元を手放し、マーカーと欠陥ウィンドウも閉じる
@@ -3645,6 +3636,18 @@ public partial class MainWindow : Window
                 _defectWindow?.Close();
                 Viewport.SetFrame(index);
                 _sequenceIndex = index;
+
+                if (oldBayer is not null)
+                {
+                    try
+                    {
+                        await bayerDetached;
+                    }
+                    finally
+                    {
+                        oldBayer.Dispose();
+                    }
+                }
             }
             else
             {

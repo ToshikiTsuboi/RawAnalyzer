@@ -416,6 +416,100 @@ public class ImageViewportTests
         }
     });
 
+    [Fact]
+    public Task DetachBayerPyramidThenSetFrameInSameTurn_DrawsNewFrameAndNeverUsesDetachedPyramid() =>
+        WpfTestHost.Run(async () =>
+    {
+        // フレーム送りは、送りを決めたUIターンで Bayer ピラミッドの切り離しとフレームの切り替えを行い、
+        // 切り離しの完了(切り離す前に始まっていた描画の停止)を待ってからピラミッドを破棄する
+        // (先に切り離して停止を待つと、その間に始まった操作に譲って送りをやめたとき、表示中のフレームの
+        // ピラミッドだけを失う)。この順で、新しいフレームの描画は止まらずに表示され、
+        // 破棄したピラミッドは元のフレームへ戻っても使われないこと
+        const int size = 64;
+        const ushort frame0Value = 8000;
+        const ushort frame1Value = 56000;
+        var format = new RawFormat
+        {
+            Width = size, Height = size, BitDepth = 16, Bayer = BayerPattern.Rggb, FrameCount = 2,
+        };
+        var codes = new ushort[size * size * 2];
+        codes.AsSpan(0, size * size).Fill(frame0Value);
+        codes.AsSpan(size * size).Fill(frame1Value);
+        using RawImage image = TestImages.FromCodes(codes, format);
+        BayerPyramid pyramid = BayerPyramid.Create(image, format, frame: 0, maxLevelPixels: long.MaxValue);
+        DisplayLut lut = DisplayLut.Create(new DisplayParameters());
+        var viewport = new ImageViewport();
+        viewport.Measure(new Size(240, 180));
+        viewport.Arrange(new Rect(0, 0, 240, 180));
+        viewport.SetImage(image, format);
+        viewport.SetBayerPyramid(pyramid, frame: 0);
+        viewport.SetDisplayMode(ViewportDisplayMode.BayerColor);
+
+        // 表示されたフレームと縮小率を記録する(描画結果の表示は UI スレッドで行われる)
+        var frame0FromPyramid = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var frame1Shown = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var frame0ShownAgain = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+        bool returned = false;
+        viewport.ViewportStateChanged += (_, e) =>
+        {
+            if (viewport.Frame == 0 && !returned && e.Zoom == 0.25 && e.RenderedFactor == 4)
+            {
+                frame0FromPyramid.TrySetResult(); // 縮小表示をフレーム0のピラミッドから描いた
+            }
+            else if (viewport.Frame == 1)
+            {
+                frame1Shown.TrySetResult(e.RenderedFactor);
+            }
+            else if (viewport.Frame == 0 && returned)
+            {
+                frame0ShownAgain.TrySetResult(e.RenderedFactor);
+            }
+        };
+
+        try
+        {
+            viewport.CenterOn(size / 2, size / 2, 0.25);
+            await frame0FromPyramid.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.Equal(lut.Map(frame0Value), CenterValue(viewport));
+
+            // 読み込みの完了後に動くアイドル時の描き直しを済ませ、以降の表示が下の操作による描画だけになるようにする
+            await Task.Delay(400);
+
+            // ピラミッドを読む描画を走らせたまま、同じUIターンで切り離してフレーム1へ移す
+            viewport.SetBayerPyramid(pyramid, frame: 0);
+            Task detached = viewport.DetachBayerPyramidAsync();
+            viewport.SetFrame(1);
+            await detached.WaitAsync(TimeSpan.FromSeconds(10));
+            pyramid.Dispose();
+
+            // 新しいフレームの描画は切り離しで止まらず、等倍データから表示される
+            Assert.Equal(1, await frame1Shown.Task.WaitAsync(TimeSpan.FromSeconds(10)));
+            Assert.Equal(lut.Map(frame1Value), CenterValue(viewport));
+
+            // 元のフレームへ戻っても、破棄したピラミッドは使わない(使うと読み出しが破棄済みで失敗し、表示されない)
+            returned = true;
+            viewport.SetFrame(0);
+            Assert.Equal(1, await frame0ShownAgain.Task.WaitAsync(TimeSpan.FromSeconds(10)));
+            Assert.Equal(lut.Map(frame0Value), CenterValue(viewport));
+        }
+        finally
+        {
+            await viewport.ClearImageAsync();
+            pyramid.Dispose();
+        }
+    });
+
+    /// <summary>
+    /// 表示中の描画結果の中央の画素の最も明るいチャネル。Bayerカラー表示では、その画素のチャネルの値
+    /// (他のチャネルは暗く描く)。
+    /// </summary>
+    private static byte CenterValue(ImageViewport viewport)
+    {
+        byte[] pixels = RenderedPixels(viewport, out int width, out int height);
+        int offset = ((height / 2) * width + width / 2) * 4;
+        return Math.Max(pixels[offset], Math.Max(pixels[offset + 1], pixels[offset + 2]));
+    }
+
     /// <summary>描画されたプロファイルマーカーの横線のY・縦線のX(描かれていなければnull)。</summary>
     private static (double? RowY, double? ColumnX) ProfileMarkerLines(ImageViewport viewport)
     {
