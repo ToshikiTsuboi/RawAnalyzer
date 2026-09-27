@@ -21,6 +21,9 @@ public partial class DefectPixelWindow : Window
     // 最初の案内のままにする
     private bool _resultShown;
 
+    // 表示中の一覧を補正に使えるか(HDR表示中の検出結果は使えない)
+    private bool _correctable;
+
     /// <summary>ウィンドウを生成する。</summary>
     public DefectPixelWindow()
     {
@@ -44,12 +47,21 @@ public partial class DefectPixelWindow : Window
     }
 
     /// <summary>検出結果を表示する。</summary>
+    /// <remarks>
+    /// 補正に使えない結果(HDR表示中の検出など)でも、一覧・移動・コピー・CSV保存は使える。
+    /// 「この欠陥を補正」だけは有効にせず(押しても断られるだけになる)、理由を一覧の上に示す。
+    /// </remarks>
     /// <param name="result">検出結果。</param>
     /// <param name="maxCode">ビット深度の最大raw code。</param>
-    public void ShowResult(DefectDetectionResult result, int maxCode)
+    /// <param name="correctionUnavailableReason">
+    /// この結果で補正できない理由と次にすること。補正できる結果ならnull。
+    /// </param>
+    public void ShowResult(
+        DefectDetectionResult result, int maxCode, string? correctionUnavailableReason = null)
     {
         _result = result;
         _resultShown = true;
+        _correctable = correctionUnavailableReason is null;
         var sb = new StringBuilder();
         if (result.ChannelThresholds.Count > 0)
         {
@@ -77,6 +89,11 @@ public partial class DefectPixelWindow : Window
 
         sb.Append($"検出: 白点 {result.HotCount} / 黒点 {result.DeadCount}")
             .Append(result.Truncated ? "  ⚠ 上限で打ち切り" : "");
+        if (correctionUnavailableReason is not null)
+        {
+            sb.AppendLine().Append(correctionUnavailableReason);
+        }
+
         SummaryText.Text = sb.ToString();
 
         var rows = new List<DefectRow>(result.Defects.Count);
@@ -93,12 +110,12 @@ public partial class DefectPixelWindow : Window
 
         DefectList.ItemsSource = rows;
         RunButton.IsEnabled = true;
-        CorrectButton.IsEnabled = result.Defects.Count > 0;
+        CorrectButton.IsEnabled = _correctable && result.Defects.Count > 0;
     }
 
     private void OnCorrectClick(object sender, RoutedEventArgs e)
     {
-        if (_result is null || _result.Defects.Count == 0)
+        if (_result is null || _result.Defects.Count == 0 || !_correctable)
         {
             return;
         }
@@ -165,8 +182,8 @@ public partial class DefectPixelWindow : Window
     {
         RunButton.IsEnabled = true;
 
-        // 補正のキャンセル・エラー時も、一覧が残っているなら再度押せるようにする
-        CorrectButton.IsEnabled = _result is { Defects.Count: > 0 };
+        // 補正のキャンセル・エラー時も、補正に使える一覧が残っているなら再度押せるようにする
+        CorrectButton.IsEnabled = _correctable && _result is { Defects.Count: > 0 };
     }
 
     private void OnRunClick(object sender, RoutedEventArgs e)
@@ -199,7 +216,10 @@ public partial class DefectPixelWindow : Window
         }
     }
 
-    private string? BuildTable(char separator)
+    /// <summary>コピー(Excel用)・CSV保存に使う一覧の表を作る。</summary>
+    /// <param name="separator">列の区切り文字。</param>
+    /// <returns>見出し行付きの表。検出結果がなければnull。</returns>
+    internal string? BuildTable(char separator)
     {
         if (_result is null)
         {

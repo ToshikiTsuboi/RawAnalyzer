@@ -133,6 +133,56 @@ public class DefectPixelWindowTests
         window.Close();
     });
 
+    [Fact]
+    public Task UncorrectableResult_ListsDefectsButDoesNotOfferCorrection() => WpfTestHost.Run(() =>
+    {
+        // HDR表示(派生ビュー)中の検出結果。補正は HDR 表示中は断られるので、以前のように
+        // 「この欠陥を補正」を有効にせず(押すと必ず断られた)、理由と次にすることを一覧の上に出す
+        var window = new DefectPixelWindow();
+        var list = (ListView)window.FindName("DefectList");
+        var correct = (Button)window.FindName("CorrectButton");
+        var run = (Button)window.FindName("RunButton");
+        var summary = (TextBlock)window.FindName("SummaryText");
+
+        window.ShowResult(DetectTwoDefects(), 4095, correctionUnavailableReason: HdrReason);
+
+        Assert.False(correct.IsEnabled);
+        Assert.True(run.IsEnabled);
+        Assert.Contains(HdrReason, summary.Text);
+
+        // 検出結果・一覧・コピー/CSV の表は従来どおり
+        Assert.Contains("白点 1 / 黒点 1", summary.Text);
+        Assert.Equal(2, list.Items.Count);
+        Assert.Equal(3, window.BuildTable(',')!.Split('\n', StringSplitOptions.RemoveEmptyEntries).Length);
+
+        // 検出・補正の失敗やキャンセルで操作可能へ戻しても、補正は押させない
+        window.ResetRunButton();
+        Assert.False(correct.IsEnabled);
+        Assert.True(run.IsEnabled);
+        window.Close();
+    });
+
+    [Fact]
+    public Task CorrectableResult_AfterUncorrectableOne_OffersCorrectionAgain() => WpfTestHost.Run(() =>
+    {
+        // Raw表示へ戻して検出し直した一覧は補正できる(HDR表示中の理由を持ち越さない)
+        var window = new DefectPixelWindow();
+        var correct = (Button)window.FindName("CorrectButton");
+        var summary = (TextBlock)window.FindName("SummaryText");
+        window.ShowResult(DetectTwoDefects(), 4095, correctionUnavailableReason: HdrReason);
+        window.DiscardResult();
+
+        window.ShowResult(DetectTwoDefects(), 4095);
+
+        Assert.True(correct.IsEnabled);
+        Assert.DoesNotContain(HdrReason, summary.Text);
+        window.ResetRunButton();
+        Assert.True(correct.IsEnabled);
+        window.Close();
+    });
+
+    private const string HdrReason = "HDR表示中は欠陥補正できません。Raw表示に戻してから検出し直して補正してください。";
+
     /// <summary>白点1・黒点1を埋め込んだ12bitの平坦な画像から検出した結果。</summary>
     private static DefectDetectionResult DetectTwoDefects()
     {
