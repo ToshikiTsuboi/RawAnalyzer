@@ -87,7 +87,7 @@ public sealed record TiffSampleInfo(
 /// <remarks>
 /// 役割は3つ。(1) 非圧縮16bitグレーの連続配置を見つけて <see cref="RawLoader"/> に渡す、
 /// (2) WICが正しく扱えない非圧縮ページ(CFA、10/12/14/24/64bit、符号あり、BigTIFF、
-/// ImageJ仮想スタック、16bit実数のRGB)を自前で復号する、(3) WICへ渡す前にヘッダを検査して
+/// ImageJ仮想スタック、16bit実数・16bit符号ありのRGB)を自前で復号する、(3) WICへ渡す前にヘッダを検査して
 /// 「黙って壊れる」形式(未知の圧縮など)を弾く材料を返す。
 /// </remarks>
 public static unsafe class TiffLoader
@@ -434,8 +434,9 @@ public static unsafe class TiffLoader
     /// </summary>
     /// <remarks>
     /// WICは16bit実数(半精度)のRGBを、0〜1へ切り詰めてsRGBのガンマを掛けた16bit整数
-    /// (Rgb48/Rgba64)として返すため、1を超える値・負値・線形性が失われる。元のサンプルを
-    /// 直接読んで、32bit実数のRGBと同じくRGBの3成分をまとめた値域で写す(チャネル間の比を保つ)。
+    /// (Rgb48/Rgba64)として返すため、1を超える値・負値・線形性が失われる。16bit符号ありの
+    /// RGBは復号自体に失敗する。元のサンプルを直接読んで、32bit実数・整数のRGBと同じく
+    /// RGBの3成分をまとめた値域で写す(チャネル間の比を保つ)。
     /// 4番目のサンプル(アルファ)は値域にも出力にも入れない。
     /// 対象は Photometric=RGB、BitsPerSample 8/16/24/32/64 のうちWICがそのまま読める
     /// 16bit以下の符号なし整数を除く形式、チャンキー/プレーン分離、ストリップ/タイル、BigTIFF。

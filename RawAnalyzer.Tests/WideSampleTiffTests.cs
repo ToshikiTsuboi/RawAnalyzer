@@ -237,9 +237,9 @@ public class WideSampleTiffTests
         }
 
         TiffBuilder.Page half = tiled
-            ? TiledRgbPage(width, height, samplesPerPixel, HalfSamples(samples), 2, 2)
+            ? TiledRgbPage(width, height, 16, 3, samplesPerPixel, HalfSamples(samples), 2, 2)
             : planar
-                ? PlanarRgbPage(width, height, samplesPerPixel, samples)
+                ? PlanarRgbPage(width, height, 16, 3, samplesPerPixel, HalfSamples(samples))
                 : TiffBuilder.GrayPage(width, height, 16, HalfSamples(samples),
                     photometric: 2, sampleFormat: 3, samplesPerPixel: samplesPerPixel);
         if (samplesPerPixel == 4)
@@ -310,6 +310,83 @@ public class WideSampleTiffTests
         Assert.Equal(43690, g);
         Assert.Equal(65535, b);
         Assert.Equal("8bit値 0〜30 → 16bit (1code≈0.000458)", decoded.ValueNote);
+    }
+
+    [Theory]
+    [InlineData(3, false, false)]
+    [InlineData(4, false, false)]
+    [InlineData(3, true, false)]
+    [InlineData(4, true, false)]
+    [InlineData(3, false, true)]
+    [InlineData(4, false, true)]
+    public void SignedInt16Rgb_ScalesLikeSignedInt32Rgb(int samplesPerPixel, bool planar, bool tiled)
+    {
+        // WICは符号あり16bitのRGB/RGBAを復号できず、読込エラーになっていた。非圧縮なら自前で読み、
+        // 同じ値の32bit符号ありRGB(WICが生のビット列を返す経路)と同じコード・同じ換算になること。
+        // アルファ(4サンプル目、RGBの値域外の30000)は値域に入れない
+        const int width = 3;
+        const int height = 2;
+        long[] rgb =
+        {
+            -1000, 0, 1000, 250, -250, 500, 7, -7, 0,
+            -32, 64, -128, 999, -999, 1, 300, 200, 100,
+        };
+        var samples = new long[width * height * samplesPerPixel];
+        for (int i = 0; i < width * height; i++)
+        {
+            for (int c = 0; c < samplesPerPixel; c++)
+            {
+                samples[(i * samplesPerPixel) + c] = c < 3 ? rgb[(i * 3) + c] : 30000;
+            }
+        }
+
+        byte[] chunky = IntegerSamples(16, samples);
+        TiffBuilder.Page page = tiled
+            ? TiledRgbPage(width, height, 16, 2, samplesPerPixel, chunky, 2, 2)
+            : planar
+                ? PlanarRgbPage(width, height, 16, 2, samplesPerPixel, chunky)
+                : TiffBuilder.GrayPage(width, height, 16, chunky,
+                    photometric: 2, sampleFormat: 2, samplesPerPixel: samplesPerPixel);
+        if (samplesPerPixel == 4)
+        {
+            page.Tags[338] = (3, new long[] { 2 }); // ExtraSamples = unassociated alpha
+        }
+
+        DecodedImage expected = Load(TiffBuilder.GrayPage(
+            width, height, 32, IntegerSamples(32, rgb), photometric: 2, sampleFormat: 2, samplesPerPixel: 3));
+        using RawImage expectedOwned = expected.Luminance;
+        DecodedImage actual = Load(page);
+        using RawImage actualOwned = actual.Luminance;
+
+        AssertSameColor(expected, actual);
+        actual.Color!.GetPixel(0, 0, out ushort r, out ushort g, out ushort b);
+        Assert.Equal(0, r);       // -1000 が下端
+        Assert.Equal(32768, g);   // 0 が中央
+        Assert.Equal(65535, b);   // 1000 が上端
+        Assert.Equal("32bit値 -1000〜1000 → 16bit (1code≈0.0305)", expected.ValueNote);
+        Assert.Equal("16bit値 -1000〜1000 → 16bit (1code≈0.0305)", actual.ValueNote);
+    }
+
+    [Theory]
+    [InlineData(3)]
+    [InlineData(4)]
+    public void SignedInt16Rgb_Compressed_IsRejectedWithReason(int samplesPerPixel)
+    {
+        // WICは符号あり16bitのRGBを復号できない(以前は「イメージが破損している可能性があります」という
+        // WICの汎用の文言だった)。自前で読めない圧縮ページは、開く前に理由付きのエラーにする
+        long[] samples = { -100, 0, 100, 30000 };
+        var page = TiffBuilder.GrayPage(1, 1, 16, IntegerSamples(16, samples[..samplesPerPixel]),
+            photometric: 2, sampleFormat: 2, samplesPerPixel: samplesPerPixel);
+        if (samplesPerPixel == 4)
+        {
+            page.Tags[338] = (3, new long[] { 2 });
+        }
+
+        Deflate(page);
+        using var file = TempTiff.Write(new TiffBuilder().Build(page));
+
+        var ex = Assert.Throws<InvalidDataException>(() => ImageFileLoader.Load(file.Path));
+        Assert.Contains("16bit符号あり整数", ex.Message);
     }
 
     [Theory]
@@ -467,38 +544,63 @@ public class WideSampleTiffTests
         Assert.Equal(single.ValueNote, decoded.ValueNote);
     }
 
-    /// <summary>PlanarConfiguration=2(成分ごとに1ストリップ)の半精度RGB(A)ページ。</summary>
-    private static TiffBuilder.Page PlanarRgbPage(int width, int height, int samplesPerPixel, float[] interleaved)
+    /// <summary>
+    /// PlanarConfiguration=2(成分ごとに1ストリップ)のRGB(A)ページ。chunky は1画素に
+    /// samplesPerPixel サンプルを並べたバイト列(1サンプル bits/8 バイト)。
+    /// </summary>
+    private static TiffBuilder.Page PlanarRgbPage(
+        int width, int height, int bits, int sampleFormat, int samplesPerPixel, byte[] chunky)
     {
-        var page = TiffBuilder.GrayPage(width, height, 16, HalfSamples(interleaved),
-            photometric: 2, sampleFormat: 3, samplesPerPixel: samplesPerPixel);
+        var page = TiffBuilder.GrayPage(width, height, bits, chunky,
+            photometric: 2, sampleFormat: sampleFormat, samplesPerPixel: samplesPerPixel);
         page.Blocks.Clear();
+        int bytesPer = bits / 8;
         int pixels = width * height;
         for (int c = 0; c < samplesPerPixel; c++)
         {
-            var plane = new float[pixels];
+            var plane = new byte[pixels * bytesPer];
             for (int i = 0; i < pixels; i++)
             {
-                plane[i] = interleaved[(i * samplesPerPixel) + c];
+                chunky.AsSpan(((i * samplesPerPixel) + c) * bytesPer, bytesPer).CopyTo(plane.AsSpan(i * bytesPer));
             }
 
-            page.Blocks.Add(HalfSamples(plane));
+            page.Blocks.Add(plane);
         }
 
         page.Tags[284] = (3, new long[] { 2 });
         return page;
     }
 
-    /// <summary>チャンキーの半精度RGB(A)をタイルにしたページ(1画素ぶんのバイト列をタイルへ並べ、タグをRGBへ直す)。</summary>
+    /// <summary>チャンキーのRGB(A)をタイルにしたページ(1画素ぶんのバイト列をタイルへ並べ、タグをRGBへ直す)。</summary>
     private static TiffBuilder.Page TiledRgbPage(
-        int width, int height, int samplesPerPixel, byte[] samples, int tileWidth, int tileHeight)
+        int width, int height, int bits, int sampleFormat, int samplesPerPixel, byte[] chunky,
+        int tileWidth, int tileHeight)
     {
-        var page = TiffBuilder.TiledGrayPage(width, height, 16 * samplesPerPixel, samples, tileWidth, tileHeight);
-        page.Tags[258] = (3, Enumerable.Repeat(16L, samplesPerPixel).ToArray());
+        var page = TiffBuilder.TiledGrayPage(width, height, bits * samplesPerPixel, chunky, tileWidth, tileHeight);
+        page.Tags[258] = (3, Enumerable.Repeat((long)bits, samplesPerPixel).ToArray());
         page.Tags[262] = (3, new long[] { 2 });
         page.Tags[277] = (3, new long[] { samplesPerPixel });
-        page.Tags[339] = (3, Enumerable.Repeat(3L, samplesPerPixel).ToArray());
+        page.Tags[339] = (3, Enumerable.Repeat((long)sampleFormat, samplesPerPixel).ToArray());
         return page;
+    }
+
+    /// <summary>2つの読込結果が同じRGBコード・同じ輝度であることを確かめる。</summary>
+    private static void AssertSameColor(DecodedImage expected, DecodedImage actual)
+    {
+        Assert.NotNull(expected.Color);
+        Assert.NotNull(actual.Color);
+        Assert.Equal(expected.Luminance.Width, actual.Luminance.Width);
+        Assert.Equal(expected.Luminance.Height, actual.Luminance.Height);
+        for (int y = 0; y < expected.Luminance.Height; y++)
+        {
+            for (int x = 0; x < expected.Luminance.Width; x++)
+            {
+                expected.Color!.GetPixel(x, y, out ushort er, out ushort eg, out ushort eb);
+                actual.Color!.GetPixel(x, y, out ushort ar, out ushort ag, out ushort ab);
+                Assert.Equal((er, eg, eb), (ar, ag, ab));
+                Assert.Equal(expected.Luminance.GetPixel(x, y), actual.Luminance.GetPixel(x, y));
+            }
+        }
     }
 
     /// <summary>各ストリップ/タイルをzlibで圧縮し、Compression=8(Deflate)にする。</summary>

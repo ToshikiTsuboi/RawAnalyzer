@@ -265,8 +265,10 @@ internal static class ImageFileLoader
 
         if (info.SamplesPerPixel != 1)
         {
-            // WICは半精度のRGBを0〜1へ切り詰めてガンマを掛けた整数で返し、元の値に戻せない
-            return IsHalfFloatColor(info) && info.Photometric == 2 && info.SamplesPerPixel is 3 or 4;
+            // WICは半精度のRGBを0〜1へ切り詰めてガンマを掛けた整数で返し(元の値に戻せない)、
+            // 16bit符号ありのRGBは復号自体に失敗する
+            return info.Photometric == 2 && info.SamplesPerPixel is 3 or 4
+                && (IsHalfFloatColor(info) || IsSignedInt16Color(info));
         }
 
         return info.IsBigTiff                       // WICはBigTIFFを開けない
@@ -303,6 +305,17 @@ internal static class ImageFileLoader
     private static bool IsHalfFloatColor(TiffSampleInfo info)
     {
         return info.SampleFormat == 3 && info.BitsPerSample == 16 && info.Photometric is not (0 or 1);
+    }
+
+    /// <summary>
+    /// 16bit符号あり整数のカラーページか。WICはこれを復号できない(RGB/RGBAとも読込エラーになる。
+    /// グレーは生のビット列をGray16で返すので対象外)。
+    /// </summary>
+    /// <param name="info">ページのサンプル形式。</param>
+    /// <returns>該当すればtrue。</returns>
+    private static bool IsSignedInt16Color(TiffSampleInfo info)
+    {
+        return info.SampleFormat == 2 && info.BitsPerSample == 16 && info.Photometric is not (0 or 1);
     }
 
     private static DecodedImage? TryDecodeNativeGray(
@@ -417,6 +430,13 @@ internal static class ImageFileLoader
             throw new InvalidDataException(
                 "16bit実数(半精度)のカラーTIFFは非圧縮のRGBのみ対応しています" +
                 "(WICは値を0〜1に切り詰め、ガンマ変換した整数で返すため元の値に戻せません)。");
+        }
+
+        if (IsSignedInt16Color(info))
+        {
+            throw new InvalidDataException(
+                "16bit符号あり整数のカラーTIFFは非圧縮のRGB(3〜4サンプル/画素)のみ対応しています" +
+                "(WICはこの形式を復号できません)。");
         }
 
         if (WicBreaksWhiteIsZero(info))
