@@ -140,6 +140,11 @@ public partial class MainWindow : Window
     private bool _sequenceBusy;
     private bool _updatingSequenceUi;
 
+    // ファイル連番の送りで画像ファイル(TIFF等)へ引き継ぐ、右パネルのBayer指定。
+    // TIFFのページ送り(TiffStackSource.BayerOverride)と同じく、開いた画像の配列から始めて
+    // 右パネルの変更で更新し、カラー画像を挟んでも保持してグレーの画像にだけ付ける(ImageFileBayer)
+    private BayerPattern _sequenceBayerOverride;
+
     // HDR分割/合成の派生ビュー
     private RawImage? _derivedImage;
     private HdrImage? _hdrFloatImage;
@@ -642,6 +647,7 @@ public partial class MainWindow : Window
         _currentPath = path;
         _tiffStack = pageCount > 1
             ? new TiffStackSource(path, pageCount) { BayerOverride = image.Format.Bayer } : null;
+        _sequenceBayerOverride = image.Format.Bayer;
         _tiffPageIndex = 0;
         _valueNote = valueNote;
         _histogram = null;
@@ -3657,7 +3663,13 @@ public partial class MainWindow : Window
                     return;
                 }
 
-                RawFormat format = isRaw ? expectedFormat : image.Format;
+                // raw は現在のフォーマット(右パネルの Bayer 指定を含む)で読んでいる。画像ファイル(TIFF等)は
+                // ファイル自身のフォーマットに、右パネルの Bayer 指定を引き継ぐ(TIFFのページ送りと同じ規約。
+                // グレーの画像ではファイルの CFAPattern より指定を優先し、カラー画像には付けない)。
+                // ファイル自身の Bayer(通常の TIFF はなし)をそのまま使うと、指定が送りで消えて
+                // Bayer 系の表示が Raw 表示へ戻る
+                RawFormat format = isRaw ? expectedFormat
+                    : ImageFileBayer.Apply(image.Format, color is not null, _sequenceBayerOverride);
 
                 // ビット深度やカラー/グレーが変わると、黒レベル上限・画像情報・
                 // フォーマットパネル・表示モードの前提が崩れる。追従させる
@@ -4634,6 +4646,9 @@ public partial class MainWindow : Window
         {
             _tiffStack.BayerOverride = pattern;
         }
+
+        // ファイル連番の送りでも、次のグレーの画像ファイルへ引き継ぐ(TIFFのページ送りと同じ)
+        _sequenceBayerOverride = pattern;
 
         if (pattern == _currentFormat.Bayer)
         {

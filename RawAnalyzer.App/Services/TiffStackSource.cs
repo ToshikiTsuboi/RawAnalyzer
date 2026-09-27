@@ -20,10 +20,9 @@ internal sealed class TiffStackSource(string path, int pageCount, bool pageNavig
     // 表示中のRGBページのBayer=Noneとは独立に、ユーザーが選んだCFAを保持する。
     internal BayerPattern BayerOverride { get; set; } = BayerPattern.None;
 
-    internal RawFormat GetPageFormat(DecodedImage decoded) => decoded.Luminance.Format with
-    {
-        Bayer = decoded.Color is null ? BayerOverride : BayerPattern.None,
-    };
+    // グレーのページ(CFAページを含む)には指定を、RGBページにはNoneを付ける(ファイル連番の送りと共通の規則)
+    internal RawFormat GetPageFormat(DecodedImage decoded) =>
+        ImageFileBayer.Apply(decoded.Luminance.Format, decoded.Color is not null, BayerOverride);
 
     internal async Task<DecodedImage> LoadPageAsync(
         int index, CancellationToken ct, IProgress<double>? progress = null)
