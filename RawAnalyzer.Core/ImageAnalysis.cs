@@ -632,6 +632,12 @@ public static class ImageAnalysis
     /// <summary>
     /// ヒストグラムから解析指標(中央値・最頻値・パーセンタイル・飽和率など)を求める。
     /// </summary>
+    /// <remarks>
+    /// 中央値・P1・P99 は同じ順位規約で求める: 昇順に並べた N 個のうち、
+    /// 0始まりの順位 floor(q·(N−1) + 0.5) の値(線形補間の位置 q·(N−1) に最も近い標本、
+    /// ちょうど中間なら上側)。順位は q について単調なので、標本数によらず
+    /// P1 ≤ 中央値 ≤ P99 が成り立つ。偶数個の中央値は中央2個のうち上側の値になる。
+    /// </remarks>
     /// <param name="histogram">ヒストグラム結果。</param>
     /// <returns>解析指標。</returns>
     public static HistogramMetrics ComputeHistogramMetrics(HistogramResult histogram)
@@ -652,12 +658,13 @@ public static class ImageAnalysis
         bool medianFound = false;
         bool p1Found = false;
         bool p99Found = false;
-        long medianTarget = total / 2;
-        long p1Target = (long)(total * 0.01);
 
-        // total==1 だと (long)(1*0.99)==0 となり、P1/Medianと違って
-        // 最初のビンで即成立して P99 < P1 という矛盾表示になる
-        long p99Target = Math.Max(1, (long)(total * 0.99));
+        // 以前は中央値・P1 が「累積 > floor(q·N)」、P99 が「累積 ≥ floor(q·N)」と
+        // 規約が別々で、2画素 [100,200] で中央値200・P99=100 と逆転していた。
+        // 3つとも同じ式の順位にし、順位 r の値 = 累積度数が初めて r を超えるビン、で引く
+        long medianRank = QuantileRank(total, 0.5);
+        long p1Rank = QuantileRank(total, 0.01);
+        long p99Rank = QuantileRank(total, 0.99);
 
         for (int i = 0; i < bins.Length; i++)
         {
@@ -669,19 +676,19 @@ public static class ImageAnalysis
             }
 
             accumulated += count;
-            if (!p1Found && accumulated > p1Target)
+            if (!p1Found && accumulated > p1Rank)
             {
                 p1 = i;
                 p1Found = true;
             }
 
-            if (!medianFound && accumulated > medianTarget)
+            if (!medianFound && accumulated > medianRank)
             {
                 median = i;
                 medianFound = true;
             }
 
-            if (!p99Found && accumulated >= p99Target)
+            if (!p99Found && accumulated > p99Rank)
             {
                 p99 = i;
                 p99Found = true;
@@ -699,6 +706,14 @@ public static class ImageAnalysis
         return new HistogramMetrics(
             total, stats.Mean, stats.Sigma, stats.Min, stats.Max,
             median, mode, p1, p99, saturated, zero, dynamicRange);
+    }
+
+    /// <summary>
+    /// 分位点 q の0始まりの順位 floor(q·(N−1) + 0.5) を返す(0 ≤ 順位 ≤ N−1)。
+    /// </summary>
+    private static long QuantileRank(long count, double quantile)
+    {
+        return (long)Math.Floor(quantile * (count - 1) + 0.5);
     }
 
     /// <summary>

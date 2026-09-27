@@ -259,4 +259,87 @@ public class ProfileAndMetricsTests
         Assert.Equal(4095, metrics.Max);
         Assert.True(metrics.DynamicRangeDb > 0);
     }
+
+    /// <summary>1行の12bit画像を作り、全画素のヒストグラム指標を求める。</summary>
+    private static HistogramMetrics MetricsOf(ushort[] codes)
+    {
+        using RawImage image = TestImages.FromCodes(codes, codes.Length, 1, bitDepth: 12);
+        return ImageAnalysis.ComputeHistogramMetrics(ImageAnalysis.ComputeHistogram(image, 0));
+    }
+
+    [Fact]
+    public void ComputeHistogramMetrics_TwoPixelRoi_KeepsPercentileOrder()
+    {
+        // レビュー指摘#15の再現値: コード[100,200]のROIで Median=200・P99=100 と逆転していた
+        // (中央値は「累積 > N/2」、P99 は「累積 ≥ floor(0.99N)」と順位規約が違っていた)
+        ushort[] codes = { 4095, 100, 200, 4095 };
+        using RawImage image = TestImages.FromCodes(codes, 4, 1, bitDepth: 12);
+
+        HistogramMetrics metrics = ImageAnalysis.ComputeHistogramMetrics(
+            ImageAnalysis.ComputeHistogram(image, 0, new RegionOfInterest(1, 0, 2, 1)));
+
+        Assert.Equal(2, metrics.SampleCount);
+        Assert.Equal(100, metrics.P1);
+        Assert.Equal(200, metrics.Median);   // 偶数個の中央値は従来どおり上側の値
+        Assert.Equal(200, metrics.P99);
+    }
+
+    [Theory]
+    [InlineData(new ushort[] { 70 }, 70, 70, 70)]                      // 1画素
+    [InlineData(new ushort[] { 30, 10, 20 }, 10, 20, 30)]              // 奇数
+    [InlineData(new ushort[] { 40, 10, 30, 20 }, 10, 30, 40)]          // 偶数(中央値は上側)
+    [InlineData(new ushort[] { 50, 40, 30, 20, 10 }, 10, 30, 50)]
+    [InlineData(new ushort[] { 5, 9, 5, 9, 9, 1 }, 1, 9, 9)]           // 重複あり
+    public void ComputeHistogramMetrics_SmallSamples_UseSingleRankConvention(
+        ushort[] codes, int expectedP1, int expectedMedian, int expectedP99)
+    {
+        HistogramMetrics metrics = MetricsOf(codes);
+
+        Assert.Equal(expectedP1, metrics.P1);
+        Assert.Equal(expectedMedian, metrics.Median);
+        Assert.Equal(expectedP99, metrics.P99);
+    }
+
+    [Theory]
+    [InlineData(100, 1, 50, 98)]
+    [InlineData(1000, 10, 500, 989)]
+    public void ComputeHistogramMetrics_LargeSamples_KeepEstablishedPercentiles(
+        int count, int expectedP1, int expectedMedian, int expectedP99)
+    {
+        // 規約の統一で、100・1000画素のような通常の標本の値は変わらない
+        // (0..N-1 を1個ずつ: P1・P99 は両端から約1%ずつ除いた位置)
+        ushort[] codes = Enumerable.Range(0, count).Select(i => (ushort)i).ToArray();
+
+        HistogramMetrics metrics = MetricsOf(codes);
+
+        Assert.Equal(expectedP1, metrics.P1);
+        Assert.Equal(expectedMedian, metrics.Median);
+        Assert.Equal(expectedP99, metrics.P99);
+    }
+
+    [Fact]
+    public void ComputeHistogramMetrics_AnySampleCount_MatchesRankConventionAndStaysOrdered()
+    {
+        // 中央値・P1・P99 は同じ規約で求める: 昇順 N 個のうち0始まりの順位
+        // floor(q·(N−1) + 0.5) の値(補間位置 q·(N−1) に最も近い順位、ちょうど中間は上側)
+        var random = new Random(15);
+        for (int n = 1; n <= 130; n++)
+        {
+            var codes = new ushort[n];
+            for (int i = 0; i < n; i++)
+            {
+                codes[i] = (ushort)random.Next(0, 64);   // 重複を多く含める
+            }
+
+            HistogramMetrics metrics = MetricsOf(codes);
+            ushort[] sorted = codes.Order().ToArray();
+
+            Assert.Equal(sorted[(int)Math.Floor(0.01 * (n - 1) + 0.5)], metrics.P1);
+            Assert.Equal(sorted[(int)Math.Floor(0.5 * (n - 1) + 0.5)], metrics.Median);
+            Assert.Equal(sorted[(int)Math.Floor(0.99 * (n - 1) + 0.5)], metrics.P99);
+            Assert.True(
+                metrics.P1 <= metrics.Median && metrics.Median <= metrics.P99,
+                $"N={n}: P1={metrics.P1}, Median={metrics.Median}, P99={metrics.P99}");
+        }
+    }
 }
