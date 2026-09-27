@@ -328,6 +328,117 @@ public class HdrSplitterTests
     }
 
     [Fact]
+    public void Split_LineInterleavedMultiFrame_SplitsRequestedFrame()
+    {
+        // 行交互HDRのマルチフレームは、各フレームが別時刻の1回の撮影(長秒/短秒を行交互に含む)。
+        // 2フレーム目を表示してHDR分割・合成しても先頭フレームの画素が使われ、
+        // 別時刻の画像を表示・保存していた(レビュー指摘 #4)
+        const int width = 2;
+        const int height = 4;
+        var format = new RawFormat
+        {
+            Width = width, Height = height, BitDepth = 16, FrameCount = 2,
+            Hdr = HdrMode.LineInterleaved, HdrStages = 2,
+        };
+        using RawImage image = TestImages.FromCodes(
+            BuildLineInterleavedFrames(width, height, (1000, 100), (5000, 500)), format);
+
+        IReadOnlyList<RawImage> split = HdrSplitter.Split(image, format, frame: 1);
+        try
+        {
+            Assert.Equal(2, split.Count);
+            AssertAllPixels(split[0], 5000); // 長秒
+            AssertAllPixels(split[1], 500);  // 短秒
+        }
+        finally
+        {
+            foreach (RawImage stage in split)
+            {
+                stage.Dispose();
+            }
+        }
+    }
+
+    [Fact]
+    public void Split_FrameSequential_UsesAllFramesRegardlessOfFrameArgument()
+    {
+        // フレーム連結ではフレームそのものが各露光。表示中のフレームを渡しても
+        // 露光の選択と取り違えず、全フレームを長秒→短秒の順に返す
+        const int width = 2;
+        const int height = 2;
+        var values = new ushort[width * height * 2];
+        Array.Fill(values, (ushort)1000, 0, width * height);
+        Array.Fill(values, (ushort)100, width * height, width * height);
+        var format = new RawFormat
+        {
+            Width = width, Height = height, BitDepth = 16, FrameCount = 2,
+            Hdr = HdrMode.FrameSequential, HdrStages = 2,
+        };
+        using RawImage image = TestImages.FromCodes(values, format);
+
+        IReadOnlyList<RawImage> split = HdrSplitter.Split(image, format, frame: 1);
+        try
+        {
+            Assert.Equal(2, split.Count);
+            AssertAllPixels(split[0], 1000);
+            AssertAllPixels(split[1], 100);
+        }
+        finally
+        {
+            foreach (RawImage stage in split)
+            {
+                stage.Dispose();
+            }
+        }
+    }
+
+    [Theory]
+    [InlineData(-1)]
+    [InlineData(2)]
+    public void Split_FrameOutOfRange_Throws(int frame)
+    {
+        var format = new RawFormat
+        {
+            Width = 2, Height = 4, BitDepth = 16, FrameCount = 2,
+            Hdr = HdrMode.LineInterleaved, HdrStages = 2,
+        };
+        using RawImage image = TestImages.FromCodes(new ushort[2 * 4 * 2], format);
+
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => HdrSplitter.Split(image, format, frame));
+    }
+
+    /// <summary>
+    /// 1行ごとに長秒/短秒が交互に並ぶ行交互HDRのフレーム群を作る(フレーム順に連結)。
+    /// </summary>
+    private static ushort[] BuildLineInterleavedFrames(
+        int width, int height, params (ushort Long, ushort Short)[] frames)
+    {
+        var values = new ushort[width * height * frames.Length];
+        for (int f = 0; f < frames.Length; f++)
+        {
+            for (int y = 0; y < height; y++)
+            {
+                ushort value = y % 2 == 0 ? frames[f].Long : frames[f].Short;
+                Array.Fill(values, value, (f * height + y) * width, width);
+            }
+        }
+
+        return values;
+    }
+
+    private static void AssertAllPixels(RawImage image, ushort expected)
+    {
+        for (int y = 0; y < image.Height; y++)
+        {
+            for (int x = 0; x < image.Width; x++)
+            {
+                Assert.Equal(expected, image.GetPixel(x, y));
+            }
+        }
+    }
+
+    [Fact]
     public void Split_FrameSequentialWithWrongFrameCount_Throws()
     {
         var format = new RawFormat

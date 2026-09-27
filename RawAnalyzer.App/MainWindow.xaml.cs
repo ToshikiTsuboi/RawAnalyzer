@@ -2758,11 +2758,34 @@ public partial class MainWindow : Window
             && ReferenceEquals(source, _currentImage);
     }
 
+    // HDR派生ビュー(分割・合成)の元にした元画像のフレーム。派生ビューがある間だけ参照する
+    private int _hdrSourceFrame;
+
+    /// <summary>
+    /// HDR分割・合成の元にする元画像のフレーム番号を決めて控える。
+    /// </summary>
+    /// <remarks>
+    /// 行交互HDRは1フレームが全露光を含む1回の撮影なので、表示中のフレームを分割する。
+    /// 派生ビューの表示中は Viewport.Frame が派生画像(常に0)を指すため、
+    /// 分割⇔合成の切替では派生ビューの元にしたフレームを引き継ぐ。
+    /// </remarks>
+    /// <returns>元画像のフレーム番号。</returns>
+    private int CaptureHdrSourceFrame()
+    {
+        if (_derivedImage is null)
+        {
+            _hdrSourceFrame = Viewport.Frame;
+        }
+
+        return _hdrSourceFrame;
+    }
+
     private async Task EnterHdrSplitAsync()
     {
         // 再生タイマーの連番送りと競合すると、Split中の画像が背後で破棄される
         using BusyScope busy = EnterBusy();
         RawImage image = _currentImage!;
+        int sourceFrame = CaptureHdrSourceFrame();
 
         // フォーマットパネルで変更したBayerパターンやHDR方式を反映する
         // (image.Format は読み込み時のまま固定なので _currentFormat を渡す)
@@ -2770,7 +2793,7 @@ public partial class MainWindow : Window
         IReadOnlyList<RawImage> frames;
         try
         {
-            frames = await Task.Run(() => HdrSplitter.Split(image, splitFormat));
+            frames = await Task.Run(() => HdrSplitter.Split(image, splitFormat, sourceFrame));
         }
         catch (Exception ex) when (TaskRaceGuard.IsAbandoned(ex))
         {
@@ -2872,13 +2895,14 @@ public partial class MainWindow : Window
         using BusyScope busy = EnterBusy();
         RawImage image = _currentImage!;
         RawFormat format = _currentFormat!;
+        int sourceFrame = CaptureHdrSourceFrame();
         HdrImage merged;
         RawImage quantized;
         try
         {
             (merged, quantized) = await Task.Run(() =>
             {
-                IReadOnlyList<RawImage> frames = HdrSplitter.Split(image, format);
+                IReadOnlyList<RawImage> frames = HdrSplitter.Split(image, format, sourceFrame);
                 try
                 {
                     HdrImage result = HdrMerger.Merge(frames, new HdrMergeParameters(

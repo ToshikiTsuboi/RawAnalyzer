@@ -20,6 +20,8 @@ public static class HdrSplitter
 
     /// <summary>
     /// フォーマットを明示してHDRフレームへ分割する。
+    /// 行交互レイアウトでは先頭フレームを分割する
+    /// (表示中など任意のフレームを分割するには frame を指定するオーバーロードを使う)。
     /// </summary>
     /// <param name="image">分割する画像。</param>
     /// <param name="format">
@@ -33,6 +35,29 @@ public static class HdrSplitter
     /// HDR方式が未指定、フレーム構成が不正、または画像が大きすぎる場合。
     /// </exception>
     public static IReadOnlyList<RawImage> Split(RawImage image, RawFormat format)
+        => Split(image, format, frame: 0);
+
+    /// <summary>
+    /// フォーマットと分割元のフレームを明示してHDRフレームへ分割する。
+    /// </summary>
+    /// <param name="image">分割する画像。</param>
+    /// <param name="format">
+    /// 使用するフォーマット記述子。画素レイアウト(幅・高さ・ビット深度・フレーム数)は
+    /// <paramref name="image"/> と一致していること。
+    /// </param>
+    /// <param name="frame">
+    /// 行交互レイアウトで分割するフレーム番号(0 ≤ frame &lt; FrameCount)。
+    /// 行交互では1フレームが全露光を行ごとに含む1回の撮影なので、表示中のフレームを渡す。
+    /// フレーム連結ではフレームそのものが各露光のため常に全フレームを使い、
+    /// この値は範囲の検証にだけ使う(露光の選択には使わない)。
+    /// </param>
+    /// <returns>分割された各フレーム(長秒→短秒の順、各Hdr=None)。</returns>
+    /// <exception cref="ArgumentException">画素レイアウトが画像と一致しない場合。</exception>
+    /// <exception cref="ArgumentOutOfRangeException">フレーム番号が範囲外の場合。</exception>
+    /// <exception cref="InvalidOperationException">
+    /// HDR方式が未指定、フレーム構成が不正、または画像が大きすぎる場合。
+    /// </exception>
+    public static IReadOnlyList<RawImage> Split(RawImage image, RawFormat format, int frame)
     {
         // フォーマットパネルで変更した Bayer パターンや HDR 方式を反映するための経路。
         // 画素の読み出し位置は image.Format 側で決まるので、レイアウトの一致は必須。
@@ -43,6 +68,12 @@ public static class HdrSplitter
             throw new ArgumentException(
                 "画素レイアウト(幅・高さ・ビット深度・フレーム数)が画像と一致しません。",
                 nameof(format));
+        }
+
+        if ((uint)frame >= (uint)image.FrameCount)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(frame), frame, $"フレーム番号は0〜{image.FrameCount - 1}で指定してください。");
         }
 
         if (format.Hdr == HdrMode.None)
@@ -75,7 +106,7 @@ public static class HdrSplitter
             return SplitFrameSequential(image, format, stages);
         }
 
-        return SplitLineInterleaved(image, format, stages);
+        return SplitLineInterleaved(image, format, stages, frame);
     }
 
     /// <summary>
@@ -133,7 +164,7 @@ public static class HdrSplitter
     }
 
     private static IReadOnlyList<RawImage> SplitLineInterleaved(
-        RawImage image, RawFormat format, int stages)
+        RawImage image, RawFormat format, int stages, int frame)
     {
         int width = image.Width;
 
@@ -175,7 +206,7 @@ public static class HdrSplitter
                 int subY = y + startRow;
                 int sourceY = subY / blockHeight * period
                     + stageIndex * blockHeight + subY % blockHeight;
-                image.CopyRegion(0, 0, sourceY, width, 1, pixels.AsSpan(y * width, width));
+                image.CopyRegion(frame, 0, sourceY, width, 1, pixels.AsSpan(y * width, width));
             });
 
             RawFormat subFormat = format with
