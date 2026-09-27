@@ -3655,8 +3655,27 @@ public partial class MainWindow : Window
                 // カラー画像は輝度と一緒に差し替える。片方だけだと前フレームの色が残る
                 _colorImage = color;
                 _vm.IsColorImage = color is not null;
-                Viewport.SetColorImage(color);
                 Task<RawImage?> pending = Viewport.ReplaceImageAsync(image, format, color: color);
+
+                // 表示モードはツールバーの選択を保つ。新しい画像で成立しないモード(カラー画像への
+                // Bayer系表示、Bayerなしでのカラー・現像・分割)だけ、選択も含めて戻す
+                // (SetColorImage は選択を見ずに Raw/カラー表示へ戻すので、表示と選択が食い違う)。
+                // 選択の変更は OnDisplayModeChanged を通るので状態の交換後に行う。
+                // 分割⇔非分割の切替で ROI を捨てるのはビューポートの差し替え・モード変更が行う。
+                // 再生中の送りでは多くの場合どちらも変わらないので、変わるときだけ設定する
+                DisplayModeSelection.Choice display = DisplayModeSelection.ForSequenceImage(
+                    DisplayModeCombo.SelectedIndex, color is not null, format.Bayer);
+                DisplayModeCombo.IsEnabled = display.ComboEnabled;
+                if (DisplayModeCombo.SelectedIndex != display.ComboIndex)
+                {
+                    DisplayModeCombo.SelectedIndex = display.ComboIndex;
+                }
+
+                if (Viewport.DisplayMode != display.ViewportMode)
+                {
+                    Viewport.SetDisplayMode(display.ViewportMode);
+                }
+
                 Title = $"RawAnalyzer — {Path.GetFileName(path)}{TiffPageNote}";
                 if (layoutChanged)
                 {
@@ -3665,6 +3684,9 @@ public partial class MainWindow : Window
                     UpdateFormatPanel(format);
                     _histogram = null;
                     _channelHistograms = null;
+
+                    // 現像LUTは白飛びの判定に素材のビット深度を使う。カラー現像のまま送るので作り直す
+                    UpdateDevelopLuts();
                 }
 
                 long frameFileSize = SafeFileSize(path);
