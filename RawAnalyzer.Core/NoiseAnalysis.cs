@@ -56,7 +56,9 @@ public static class NoiseAnalysis
     /// </summary>
     /// <param name="image">対象画像(通常はダークフレーム)。</param>
     /// <param name="frame">フレーム番号。</param>
-    /// <param name="region">評価領域。nullなら全体。</param>
+    /// <param name="region">
+    /// 評価領域。nullなら全体。Bayer指定時も2x2境界へ広げず、この領域の画素だけで集計する。
+    /// </param>
     /// <param name="pattern">Bayerパターン。None以外でσをチャネル別に計算する。</param>
     /// <param name="saturationCode">飽和信号レベル(raw code)。0以下ならビット深度の最大値。</param>
     /// <param name="cancellationToken">キャンセルトークン。</param>
@@ -87,7 +89,10 @@ public static class NoiseAnalysis
     /// <param name="imageB">2枚目(同一サイズ・同一条件)。</param>
     /// <param name="frameA">1枚目のフレーム番号。</param>
     /// <param name="frameB">2枚目のフレーム番号。</param>
-    /// <param name="region">評価領域。nullなら全体。</param>
+    /// <param name="region">
+    /// 評価領域。nullなら全体。σ_total と σ_temporal はどちらもこの領域の画素だけで集計する
+    /// (Bayer指定時も2x2境界へ広げない)。
+    /// </param>
     /// <param name="pattern">Bayerパターン。None以外でσ_totalをチャネル別に計算する。</param>
     /// <param name="saturationCode">飽和信号レベル(raw code)。0以下ならビット深度の最大値。</param>
     /// <param name="cancellationToken">キャンセルトークン。</param>
@@ -192,8 +197,8 @@ public static class NoiseAnalysis
     }
 
     /// <summary>
-    /// 空間統計(σ_totalの元)を計算する。Bayer指定時はチャネル内分散を
-    /// 画素数重みでプールした √(Σ nᵢσᵢ² / Σ nᵢ) を返し、
+    /// 空間統計(σ_totalの元)を計算する。評価画素は時間ノイズの差分と同じ roi の全画素。
+    /// Bayer指定時はチャネル内分散を画素数重みでプールした √(Σ nᵢσᵢ² / Σ nᵢ) を返し、
     /// チャネル間の平均値差が分散に混入しないようにする。
     /// </summary>
     private static (long Count, double Mean, double Sigma) ComputeSpatialStats(
@@ -210,24 +215,73 @@ public static class NoiseAnalysis
             return (stats.SampleCount, stats.Mean, stats.Sigma);
         }
 
+        if (roi.PixelCount == 0)
+        {
+            return (0, 0, 0);
+        }
+
+        // ImageAnalysis.ComputeChannelAnalysis は roi を外側の2x2境界へ広げるので使わない。
+        // 差分(時間ノイズ)は roi そのものを集計するため、空間統計だけ広げると
+        // σ_FPN = √(σ_total² − σ_temporal²) が別々の画素集合の分散の差になる
+        // (6×6 RGGB・roi=(1,1,4,4) では16画素のはずが36画素になり、roi外の1画素で
+        // 存在しないFPNが数百LSB出ていた)。Bayerチャネルは画素の絶対座標の偶奇で決まるので、
+        // 2x2に揃えなくても roi の画素をそのまま振り分けられる。4つの偶奇クラスが
+        // R/Gr/Gb/Bに1対1で対応するため、プール分散はパターンの種類に依らない。
         // 測定用途なのでサンプリングせず全画素から取る
-        ChannelAnalysisResult analysis = ImageAnalysis.ComputeChannelAnalysis(
-            image, frame, pattern, roi, maxSamples: long.MaxValue, cancellationToken);
+        int shift = 16 - image.Format.BitDepth;
+        object gate = new();
+        var sums = new long[4];
+        var sumSqs = new UInt128[4];
+        var counts = new long[4];
+
+        Parallel.For(
+            0,
+            roi.Height,
+            new ParallelOptions { CancellationToken = cancellationToken },
+            () => new ParityAccumulator(roi.Width),
+            (row, _, local) =>
+            {
+                int y = roi.Y + row;
+                image.CopyRegion(frame, roi.X, y, roi.Width, 1, local.Row);
+                local.AddRow(y & 1, roi.X & 1, shift);
+                return local;
+            },
+            local =>
+            {
+                lock (gate)
+                {
+                    for (int c = 0; c < 4; c++)
+                    {
+                        sums[c] += local.Sums[c];
+                        sumSqs[c] += local.SumSqs[c];
+                        counts[c] += local.Counts[c];
+                    }
+                }
+            });
+
+        cancellationToken.ThrowIfCancellationRequested();
+
         long total = 0;
+        long totalSum = 0;
         double pooledVariance = 0;
-        foreach (ChannelHistogram channel in analysis.Channels)
+        for (int c = 0; c < 4; c++)
         {
-            long n = channel.Statistics.SampleCount;
+            long n = counts[c];
+            if (n == 0)
+            {
+                continue;
+            }
+
+            double mean = (double)sums[c] / n;
+            double variance = (double)sumSqs[c] / n - mean * mean;
             total += n;
-            pooledVariance += n * channel.Statistics.Sigma * channel.Statistics.Sigma;
+            totalSum += sums[c];
+            pooledVariance += n * Math.Max(0, variance);
         }
 
-        if (total > 0)
-        {
-            pooledVariance /= total;
-        }
-
-        return (total, analysis.Total.Statistics.Mean, Math.Sqrt(pooledVariance));
+        return total > 0
+            ? (total, (double)totalSum / total, Math.Sqrt(pooledVariance / total))
+            : (0, 0, 0);
     }
 
     private static double ResolveSaturation(double saturationCode, int bitDepth)
@@ -239,5 +293,58 @@ public static class NoiseAnalysis
         return double.IsFinite(saturationCode) && saturationCode > 0
             ? Math.Min(saturationCode, max)
             : max;
+    }
+
+    /// <summary>
+    /// 画素の絶対座標の偶奇(2x2の4クラス = Bayerの4チャネル)ごとの和・二乗和・画素数。
+    /// 並列集計のスレッドローカル状態として使う。
+    /// </summary>
+    private sealed class ParityAccumulator
+    {
+        internal ParityAccumulator(int width)
+        {
+            Row = new ushort[width];
+        }
+
+        /// <summary>1行ぶんの読み込みバッファ。</summary>
+        internal ushort[] Row { get; }
+
+        /// <summary>クラス別の総和(添字 = 行偶奇×2 + 列偶奇)。</summary>
+        internal long[] Sums { get; } = new long[4];
+
+        /// <summary>クラス別の二乗和。</summary>
+        internal UInt128[] SumSqs { get; } = new UInt128[4];
+
+        /// <summary>クラス別の画素数。</summary>
+        internal long[] Counts { get; } = new long[4];
+
+        /// <summary><see cref="Row"/> に読み込んだ1行を集計する。</summary>
+        /// <param name="rowParity">行の絶対Y座標の偶奇。</param>
+        /// <param name="firstColumnParity">Row[0] の絶対X座標の偶奇。</param>
+        /// <param name="shift">16bit正規化値を raw code へ戻す右シフト量。</param>
+        internal void AddRow(int rowParity, int firstColumnParity, int shift)
+        {
+            ushort[] row = Row;
+            for (int start = 0; start < 2 && start < row.Length; start++)
+            {
+                long sum = 0;
+
+                // 1画素あたり最大 65535² ≈ 4.3e9 なので、1行(半分)なら ulong で桁あふれしない
+                ulong sumSq = 0;
+                long count = 0;
+                for (int x = start; x < row.Length; x += 2)
+                {
+                    int code = row[x] >> shift;
+                    sum += code;
+                    sumSq += (ulong)((long)code * code);
+                    count++;
+                }
+
+                int parity = (rowParity << 1) | ((firstColumnParity + start) & 1);
+                Sums[parity] += sum;
+                SumSqs[parity] += sumSq;
+                Counts[parity] += count;
+            }
+        }
     }
 }

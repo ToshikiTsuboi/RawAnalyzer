@@ -195,6 +195,109 @@ public class NoiseAnalysisTests
     }
 
     [Fact]
+    public void MeasurePair_BayerRoi_UsesSameRegionForSpatialAndTemporal()
+    {
+        // レビュー指摘#6の再現値: 6×6 RGGB、roi=(1,1,4,4) 内はすべて1000、roi外の(0,0)だけ5000。
+        // 空間統計だけ roi を外側の2x2境界へ広げると36画素・σ_total≈628.5 になり、
+        // 同じ画像同士(σ_temporal=0)で σ_FPN≈628.5 という存在しないFPNが出ていた
+        const int size = 6;
+        var codes = new ushort[size * size];
+        Array.Fill(codes, (ushort)1000);
+        codes[0] = 5000;
+        using RawImage image = TestImages.FromCodes(codes, size, size, bitDepth: 16);
+        var roi = new RegionOfInterest(1, 1, 4, 4);
+
+        NoiseMeasurement single = NoiseAnalysis.MeasureSingle(
+            image, region: roi, pattern: BayerPattern.Rggb);
+        NoiseMeasurement pair = NoiseAnalysis.MeasurePair(
+            image, image, region: roi, pattern: BayerPattern.Rggb);
+
+        Assert.Equal(16, single.SampleCount);
+        Assert.Equal(1000, single.Mean, 10);
+        Assert.Equal(0, single.SigmaTotal, 10);
+        Assert.Equal(16, pair.SampleCount);
+        Assert.Equal(0, pair.SigmaTotal, 10);
+        Assert.Equal(0, pair.SigmaTemporal, 10);
+        Assert.Equal(0, pair.SigmaFpn, 10);
+    }
+
+    [Theory]
+    [InlineData(1, 1, 5, 3)]   // 奇数座標・奇数サイズ(2x2境界へ広げると 6×4=24 画素になる)
+    [InlineData(2, 1, 4, 4)]   // 偶数X・奇数Y
+    [InlineData(3, 2, 1, 3)]   // 1列だけ(2チャネルしか含まない)
+    public void MeasurePair_BayerRoi_MatchesPerChannelReferenceOnExactRoi(
+        int roiX, int roiY, int roiWidth, int roiHeight)
+    {
+        // roi 外は極端な値にして、評価領域が1画素でもはみ出せば結果が変わるようにする
+        const int width = 8;
+        const int height = 6;
+        var roi = new RegionOfInterest(roiX, roiY, roiWidth, roiHeight);
+        var a = new ushort[width * height];
+        var b = new ushort[width * height];
+        for (int y = 0; y < height; y++)
+        {
+            for (int x = 0; x < width; x++)
+            {
+                int i = y * width + x;
+                bool inside = x >= roi.X && x < roi.X + roi.Width
+                    && y >= roi.Y && y < roi.Y + roi.Height;
+                int channelOffset = ((y & 1) * 2 + (x & 1)) * 300;
+                a[i] = inside ? (ushort)(1000 + channelOffset + (i * 37 % 23) * 3) : (ushort)4000;
+                b[i] = inside ? (ushort)(a[i] + (i * 17 % 7) - 3) : (ushort)0;
+            }
+        }
+
+        using RawImage imageA = TestImages.FromCodes(a, width, height, bitDepth: 12);
+        using RawImage imageB = TestImages.FromCodes(b, width, height, bitDepth: 12);
+
+        NoiseMeasurement result = NoiseAnalysis.MeasurePair(
+            imageA, imageB, region: roi, pattern: BayerPattern.Rggb);
+        NoiseMeasurement mixed = NoiseAnalysis.MeasurePair(imageA, imageB, region: roi);
+
+        // 期待値: roi の画素だけを絶対座標の偶奇(=Bayerチャネル)で分け、
+        // チャネル内分散を画素数重みでプールする(2パスで計算)
+        var channelValues = new List<double>[4];
+        for (int c = 0; c < 4; c++)
+        {
+            channelValues[c] = new List<double>();
+        }
+
+        var diffs = new List<double>();
+        for (int y = roi.Y; y < roi.Y + roi.Height; y++)
+        {
+            for (int x = roi.X; x < roi.X + roi.Width; x++)
+            {
+                int i = y * width + x;
+                channelValues[(y & 1) * 2 + (x & 1)].Add(a[i]);
+                diffs.Add(a[i] - b[i]);
+            }
+        }
+
+        double pooled = 0;
+        foreach (List<double> values in channelValues.Where(values => values.Count > 0))
+        {
+            double channelMean = values.Average();
+            pooled += values.Sum(v => (v - channelMean) * (v - channelMean));
+        }
+
+        double sigmaTotal = Math.Sqrt(pooled / roi.PixelCount);
+        double diffMean = diffs.Average();
+        double sigmaTemporal = Math.Sqrt(
+            diffs.Sum(d => (d - diffMean) * (d - diffMean)) / diffs.Count / 2.0);
+        double mean = channelValues.SelectMany(values => values).Average();
+
+        Assert.Equal(roi.PixelCount, result.SampleCount);
+        Assert.Equal(mixed.SampleCount, result.SampleCount);
+        Assert.Equal(mean, result.Mean, 9);
+        Assert.Equal(mixed.Mean, result.Mean, 9);
+        Assert.Equal(sigmaTotal, result.SigmaTotal, 9);
+        Assert.Equal(sigmaTemporal, result.SigmaTemporal, 9);
+        Assert.Equal(
+            Math.Sqrt(Math.Max(0, sigmaTotal * sigmaTotal - sigmaTemporal * sigmaTemporal)),
+            result.SigmaFpn, 9);
+    }
+
+    [Fact]
     public void MeasurePair_SizeMismatch_Throws()
     {
         using RawImage a = TestImages.FromCodes(new ushort[16], 4, 4, bitDepth: 12);
