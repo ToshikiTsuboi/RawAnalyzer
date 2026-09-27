@@ -275,7 +275,22 @@ internal static class ImageFileLoader
             || info.IsRawPhotometric                // CFAはWICが現像してしまう
             || info.BitsPerSample is 10 or 12 or 14 or 24 or 64
             || (info.SampleFormat == 2 && info.BitsPerSample == 8)
-            || (info.SampleFormat == 3 && info.BitsPerSample == 64);
+            || (info.SampleFormat == 3 && info.BitsPerSample == 64)
+            || WicBreaksWhiteIsZero(info);          // WICのWhiteIsZero反転で値が壊れる
+    }
+
+    /// <summary>
+    /// WICのWhiteIsZero反転で値が壊れる形式か。WICは8/16bitをビット反転、32bitを実数の 1−v で
+    /// 反転して返す。整数8/16bitと32bit実数ではこれが自前復号と同じ向きになるが、半精度はビット反転で
+    /// 非数や別の値になり、32bit整数は実数として 1−v されて元に戻せない。
+    /// </summary>
+    /// <param name="info">ページのサンプル形式。</param>
+    /// <returns>該当すればtrue。</returns>
+    private static bool WicBreaksWhiteIsZero(TiffSampleInfo info)
+    {
+        return info.Photometric == 0
+            && ((info.SampleFormat == 3 && info.BitsPerSample == 16)
+                || (info.SampleFormat != 3 && info.BitsPerSample == 32));
     }
 
     /// <summary>
@@ -402,6 +417,13 @@ internal static class ImageFileLoader
             throw new InvalidDataException(
                 "16bit実数(半精度)のカラーTIFFは非圧縮のRGBのみ対応しています" +
                 "(WICは値を0〜1に切り詰め、ガンマ変換した整数で返すため元の値に戻せません)。");
+        }
+
+        if (WicBreaksWhiteIsZero(info))
+        {
+            throw new InvalidDataException(
+                "WhiteIsZero(Photometric=0)の16bit実数・32bit整数TIFFは、非圧縮の1サンプル/画素のみ" +
+                "対応しています(WICの白黒反転で値が壊れるため)。");
         }
 
         bool bitsOk = info.SampleFormat switch

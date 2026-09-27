@@ -365,6 +365,8 @@ public static unsafe class TiffLoader
     /// ImageJの仮想ページ。16bit以下の符号なし整数はそのビット深度のまま
     /// (value &lt;&lt; (16-N))、それ以外は値域を調べて16bitコードへ写し、
     /// 対応関係を <paramref name="scaling"/> で返す。
+    /// WhiteIsZero(Photometric=0)は、整数を全ビット反転(符号なしは 最大値−v、符号ありは −1−v)、
+    /// 実数を 1−v として反転してから写す(WICが8/16bit整数・32bit実数で返す向きと同じ)。
     /// 非対応の形式は false と理由を返す。データ自体が壊れている場合は例外。
     /// </remarks>
     /// <param name="path">TIFFファイルのパス。</param>
@@ -1530,7 +1532,12 @@ public static unsafe class TiffLoader
         int width = page.Width;
         int height = page.Height;
         bool bigEndian = header.BigEndian;
-        bool invert = page.Photometric == 0 && page.Format == 1;
+
+        // WhiteIsZero は大小を反転して BlackIsZero にそろえる。整数は全ビット反転(符号なしは
+        // 最大値−v、符号ありは −1−v)、実数は 1−v。WICが8/16bit整数と32bit実数で返す向きと同じにし、
+        // サンプル形式・幅や読み込み経路で白黒が逆転しないようにする
+        bool invertBits = page.Photometric == 0 && page.Format != 3;
+        bool invertValue = page.Photometric == 0 && page.Format == 3;
         var codes = new ushort[(long)width * height];
         var values = new ulong[width];
 
@@ -1545,7 +1552,7 @@ public static unsafe class TiffLoader
                 long index = ((long)y * width) + x0;
                 for (int i = 0; i < count; i++)
                 {
-                    ulong v = invert ? max - values[i] : values[i];
+                    ulong v = invertBits ? max - values[i] : values[i];
                     codes[index + i] = (ushort)(v << shift);
                 }
             }, ct, progress, 0, 1);
@@ -1559,13 +1566,18 @@ public static unsafe class TiffLoader
         // それ以外は値域を調べてから16bitへ写す(2パス。MMFなので再読は安価)
         var accumulator = new SampleRangeAccumulator();
         ulong maxUnsigned = page.Bits == 64 ? ulong.MaxValue : (1UL << page.Bits) - 1;
+        double Sample(ulong raw)
+        {
+            double value = ToValue(invertBits ? maxUnsigned - raw : raw, page.Bits, page.Format);
+            return invertValue ? 1 - value : value;
+        }
+
         ForEachRow(data, page, (y, x0, count, bytes) =>
         {
             UnpackRow(bytes, count, page.Bits, bigEndian, values);
             for (int i = 0; i < count; i++)
             {
-                ulong raw = invert ? maxUnsigned - values[i] : values[i];
-                accumulator.Add(ToValue(raw, page.Bits, page.Format));
+                accumulator.Add(Sample(values[i]));
             }
         }, ct, progress, 0, 0.5);
 
@@ -1576,8 +1588,7 @@ public static unsafe class TiffLoader
             long index = ((long)y * width) + x0;
             for (int i = 0; i < count; i++)
             {
-                ulong raw = invert ? maxUnsigned - values[i] : values[i];
-                codes[index + i] = result.ToCode(ToValue(raw, page.Bits, page.Format));
+                codes[index + i] = result.ToCode(Sample(values[i]));
             }
         }, ct, progress, 0.5, 0.5);
 

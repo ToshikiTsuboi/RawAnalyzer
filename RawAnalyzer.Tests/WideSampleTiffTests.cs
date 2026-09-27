@@ -41,6 +41,38 @@ public class WideSampleTiffTests
         return bytes;
     }
 
+    private static byte[] DoubleSamples(params float[] values)
+    {
+        var bytes = new byte[values.Length * 8];
+        for (int i = 0; i < values.Length; i++)
+        {
+            BinaryPrimitives.WriteDoubleLittleEndian(bytes.AsSpan(i * 8), values[i]);
+        }
+
+        return bytes;
+    }
+
+    /// <summary>整数値の下位 bits ビットをリトルエンディアンで並べる(8/16/24/32/64bit)。</summary>
+    private static byte[] IntegerSamples(int bits, params long[] values)
+    {
+        int bytesPer = bits / 8;
+        var bytes = new byte[values.Length * bytesPer];
+        for (int i = 0; i < values.Length; i++)
+        {
+            for (int k = 0; k < bytesPer; k++)
+            {
+                bytes[(i * bytesPer) + k] = (byte)(values[i] >> (8 * k));
+            }
+        }
+
+        return bytes;
+    }
+
+    private static int[] Row(RawImage image)
+    {
+        return Enumerable.Range(0, image.Width).Select(x => (int)image.GetPixel(x, 0)).ToArray();
+    }
+
     private static byte[] HalfSamples(params float[] values)
     {
         var bytes = new byte[values.Length * 2];
@@ -278,6 +310,92 @@ public class WideSampleTiffTests
         Assert.Equal(43690, g);
         Assert.Equal(65535, b);
         Assert.Equal("8bit値 0〜30 → 16bit (1code≈0.000458)", decoded.ValueNote);
+    }
+
+    [Theory]
+    [InlineData(16)]
+    [InlineData(32)]
+    [InlineData(64)]
+    public void FloatWhiteIsZero_IsInvertedAtAnyWidth(int bits)
+    {
+        // 以前は64bitは反転されず [0,32768,65535]、16bitはWICのビット反転で非数や別の値になっていた
+        float[] values = { 0f, 0.5f, 1f };
+        byte[] samples = bits switch { 16 => HalfSamples(values), 32 => FloatSamples(values), _ => DoubleSamples(values) };
+
+        DecodedImage decoded = Load(TiffBuilder.GrayPage(3, 1, bits, samples, photometric: 0, sampleFormat: 3));
+        using RawImage owned = decoded.Luminance;
+
+        Assert.Equal(new[] { 65535, 32768, 0 }, Row(decoded.Luminance));
+        Assert.Equal($"{bits}bit実数 0〜1 → 16bit", decoded.ValueNote);
+    }
+
+    [Theory]
+    [InlineData(16)]
+    [InlineData(64)]
+    public void FloatWhiteIsZero_BeyondOneAndNegative_MatchesFloat32(int bits)
+    {
+        // 32bit実数のWhiteIsZeroはWICが 1−v で返す。範囲外の値でも同じ向き・同じ換算になること
+        float[] values = { 0f, 0.5f, 1f, 2f, -1f, 4f };
+        byte[] samples = bits == 16 ? HalfSamples(values) : DoubleSamples(values);
+
+        DecodedImage expected = Load(TiffBuilder.GrayPage(6, 1, 32, FloatSamples(values), photometric: 0, sampleFormat: 3));
+        using RawImage expectedOwned = expected.Luminance;
+        DecodedImage actual = Load(TiffBuilder.GrayPage(6, 1, bits, samples, photometric: 0, sampleFormat: 3));
+        using RawImage actualOwned = actual.Luminance;
+
+        // 1−v = [1, 0.5, 0, −1, 2, −3] を −3〜2 で写す
+        Assert.Equal(new[] { 52428, 45874, 39321, 26214, 65535, 0 }, Row(expected.Luminance));
+        Assert.Equal(Row(expected.Luminance), Row(actual.Luminance));
+        Assert.Equal("32bit値 -3〜2 → 16bit (1code≈7.63E-05)", expected.ValueNote);
+        Assert.Equal($"{bits}bit値 -3〜2 → 16bit (1code≈7.63E-05)", actual.ValueNote);
+    }
+
+    [Theory]
+    [InlineData(8)]
+    [InlineData(16)]
+    [InlineData(32)]
+    [InlineData(64)]
+    public void SignedWhiteIsZero_IsInvertedAtAnyWidth(int bits)
+    {
+        // 符号ありは全ビット反転(−1−v。WICが8/16bitで返す向き)にそろえる。
+        // 以前は非圧縮の8/64bitが反転されず、32bitはWICが実数として 1−v して値が壊れていた
+        DecodedImage decoded = Load(TiffBuilder.GrayPage(
+            3, 1, bits, IntegerSamples(bits, -100, 0, 100), photometric: 0, sampleFormat: 2));
+        using RawImage owned = decoded.Luminance;
+
+        Assert.Equal(new[] { 65535, 32768, 0 }, Row(decoded.Luminance));
+        Assert.Equal($"{bits}bit値 -101〜99 → 16bit (1code≈0.00305)", decoded.ValueNote);
+    }
+
+    [Theory]
+    [InlineData(24)]
+    [InlineData(32)]
+    public void UnsignedWideWhiteIsZero_IsInverted(int bits)
+    {
+        // 32bit符号なしはWICが実数として 1−v して全画素が同じ値に潰れていた。24bitと同じく 最大値−v で反転する
+        long max = (1L << bits) - 1;
+        DecodedImage decoded = Load(TiffBuilder.GrayPage(
+            3, 1, bits, IntegerSamples(bits, 0, 1L << (bits - 1), max), photometric: 0));
+        using RawImage owned = decoded.Luminance;
+
+        Assert.Equal(new[] { 65535, 32767, 0 }, Row(decoded.Luminance));
+        Assert.StartsWith($"{bits}bit値 0〜", decoded.ValueNote);
+    }
+
+    [Theory]
+    [InlineData(16, 3)]
+    [InlineData(32, 1)]
+    [InlineData(32, 2)]
+    public void WhiteIsZero_CompressedHalfOrInt32_IsRejectedWithReason(int bits, int sampleFormat)
+    {
+        // WICはこれらのWhiteIsZeroをビット反転・実数の 1−v で壊して返す。自前で読めない圧縮ページは開かない
+        byte[] samples = sampleFormat == 3 ? HalfSamples(0f, 0.5f, 1f) : IntegerSamples(bits, 1, 100, 1000);
+        var page = TiffBuilder.GrayPage(3, 1, bits, samples, photometric: 0, sampleFormat: sampleFormat);
+        Deflate(page);
+        using var file = TempTiff.Write(new TiffBuilder().Build(page));
+
+        var ex = Assert.Throws<InvalidDataException>(() => ImageFileLoader.Load(file.Path));
+        Assert.Contains("WhiteIsZero", ex.Message);
     }
 
     /// <summary>PlanarConfiguration=2(成分ごとに1ストリップ)の半精度RGB(A)ページ。</summary>
