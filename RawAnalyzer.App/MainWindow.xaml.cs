@@ -126,6 +126,10 @@ public partial class MainWindow : Window
     // 入力イベントが動き続ける。処理対象の画像が背後で差し替え・破棄されるのを防ぐ。
     private int _busyDepth;
 
+    // 通常の読み込み(OpenPath)と、表示画像を使う操作(EnterBusy)の排他。
+    // 読み込みの確定待ちの間は操作を始めず、読み込みは操作の終了を待ってから確定する
+    private readonly ImageOperationGate _imageGate = new();
+
     // OpenPath の世代。await から戻った時点で世代が進んでいたら結果を捨てる
     private int _openGeneration;
 
@@ -502,7 +506,12 @@ public partial class MainWindow : Window
     private async void OpenPath(string path, RawFormat? initialFormat = null)
     {
         // 読み込み中に再生タイマーや保留中の連番送りが画像を差し替えないようにする
-        using BusyScope busy = EnterBusy();
+        using BusyScope busy = EnterLoadBusy();
+
+        // 開始から確定(または破棄)までは、保存・演算など表示画像を使う操作を始めさせない。
+        // 確定がそれらのダイアログ・進捗表示(入れ子ポンプ)の中で走ると、操作のために
+        // 作った画面が別の画像を処理し、処理中の画像も破棄されてしまう
+        using IDisposable pendingLoad = _imageGate.BeginLoad();
         int generation = ++_openGeneration;
 
         RawFormat? format = null;
@@ -585,6 +594,23 @@ public partial class MainWindow : Window
             }
         }
 
+        // 読み込みより先に始まっていた操作(保存・演算・HDR分割など)があれば、終わるのを
+        // 待ってから差し替える。操作のダイアログ・進捗表示の中で確定すると、操作の
+        // 対象画像を背後で差し替え・破棄してしまう(開く要求は捨てずに後から表示する)
+        try
+        {
+            while (_imageGate.IsOperationRunning
+                && !cts.IsCancellationRequested && generation == _openGeneration)
+            {
+                _vm.ImageInfoText = $"処理の完了後に {Path.GetFileName(path)} を表示します…";
+                await _imageGate.WhenOperationsIdleAsync().WaitAsync(cts.Token);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // 待機中に別ファイルが開かれた・ウィンドウが閉じられた(下で結果を捨てる)
+        }
+
         if (cts.IsCancellationRequested || generation != _openGeneration)
         {
             // 読み込み中に別ファイルを開かれていた場合は結果を捨てる
@@ -653,6 +679,10 @@ public partial class MainWindow : Window
         DetectSequence();
 
         RefreshHistogram(roi: null);
+
+        // 差し替えを終えたので、以降の操作は新しい画像を対象に始めてよい
+        // (ピラミッド生成は差し替え後の画像を検証してから取り付ける。二重の Dispose は無視される)
+        pendingLoad.Dispose();
         await BuildPyramidAsync(image, cts.Token);
     }
 
@@ -1696,6 +1726,11 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (RejectWhileOpening("保存"))
+        {
+            return;
+        }
+
         // ダイアログ表示中も再生タイマーは動くため、ここから保存完了まで差し替えを止める
         using BusyScope busy = EnterBusy();
 
@@ -2078,6 +2113,11 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (RejectWhileOpening("画像演算"))
+        {
+            return;
+        }
+
         using BusyScope busy = EnterBusy();
         if (_derivedImage is not null)
         {
@@ -2268,6 +2308,11 @@ public partial class MainWindow : Window
             MessageBox.Show(this,
                 "補正・HDR表示を適用中はバッチ書き出しできません。元のファイルを開き直してください。",
                 "バッチ書き出し", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        if (RejectWhileOpening("バッチ書き出し"))
+        {
             return;
         }
 
@@ -2783,6 +2828,12 @@ public partial class MainWindow : Window
 
     private async Task EnterHdrSplitAsync()
     {
+        if (RejectWhileOpening("HDR分割表示"))
+        {
+            DisplayModeCombo.SelectedIndex = 0;
+            return;
+        }
+
         // 再生タイマーの連番送りと競合すると、Split中の画像が背後で破棄される
         using BusyScope busy = EnterBusy();
         RawImage image = _currentImage!;
@@ -2889,6 +2940,12 @@ public partial class MainWindow : Window
         if (_hdrFloatImage is not null && _derivedImage is not null)
         {
             Viewport.SetDisplayMode(ViewportDisplayMode.Raw);
+            return;
+        }
+
+        if (RejectWhileOpening("HDR合成表示"))
+        {
+            DisplayModeCombo.SelectedIndex = 0;
             return;
         }
 
@@ -3622,25 +3679,66 @@ public partial class MainWindow : Window
 
     /// <summary>
     /// 重い処理の実行中スコープに入る。再生を止め、連番送りを抑止する。
+    /// 表示画像を使う操作として数え、その間は通常の読み込みを確定させない。
     /// 戻り値を using で受けること。
     /// </summary>
-    private BusyScope EnterBusy()
+    private BusyScope EnterBusy() => EnterBusyCore(_imageGate.EnterOperation());
+
+    /// <summary>
+    /// 通常の読み込み(OpenPath)用の実行中スコープに入る。再生を止め、連番送りを抑止するが、
+    /// 表示画像を使う操作としては数えない(読み込み自身が操作の終了を待って確定するため)。
+    /// 戻り値を using で受けること。
+    /// </summary>
+    private BusyScope EnterLoadBusy() => EnterBusyCore(operation: null);
+
+    private BusyScope EnterBusyCore(IDisposable? operation)
     {
         CancelTiffPageLoad();
         StopPlayback();
         _busyDepth++;
-        return new BusyScope(this);
+        return new BusyScope(this, operation);
+    }
+
+    /// <summary>
+    /// 通常の読み込みが確定待ちなら、表示画像を使う操作を始めずに理由を知らせる。
+    /// </summary>
+    /// <remarks>
+    /// 確定待ちの間に操作を始めると、操作のダイアログ・進捗表示(Dispatcher の入れ子ポンプ)の
+    /// 中で読み込みが確定し、操作の対象画像が背後で差し替え・破棄される。
+    /// </remarks>
+    /// <param name="operation">操作名(「保存」など)。</param>
+    /// <returns>拒否した場合はtrue。</returns>
+    private bool RejectWhileOpening(string operation)
+    {
+        if (!_imageGate.IsLoadPending)
+        {
+            return false;
+        }
+
+        MessageBox.Show(this,
+            $"画像の読み込み中は{operation}を開始できません。読み込みの完了後にもう一度実行してください。",
+            "RawAnalyzer", MessageBoxButton.OK, MessageBoxImage.Information);
+        return true;
     }
 
     /// <summary>重い処理の実行中スコープ。Disposeで抜ける。</summary>
     private readonly struct BusyScope : IDisposable
     {
         private readonly MainWindow _owner;
+        private readonly IDisposable? _operation;
 
-        internal BusyScope(MainWindow owner) => _owner = owner;
+        internal BusyScope(MainWindow owner, IDisposable? operation)
+        {
+            _owner = owner;
+            _operation = operation;
+        }
 
         /// <summary>スコープを抜ける。</summary>
-        public void Dispose() => _owner._busyDepth--;
+        public void Dispose()
+        {
+            _owner._busyDepth--;
+            _operation?.Dispose();
+        }
     }
 
     private void StopPlayback()
@@ -3998,6 +4096,12 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (RejectWhileOpening("欠陥画素検出"))
+        {
+            _defectWindow?.ResetRunButton();
+            return;
+        }
+
         using BusyScope busy = EnterBusy();
         RawImage image = ActiveImage;
         int frame = Viewport.Frame;
@@ -4154,6 +4258,12 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (RejectWhileOpening("ノイズ測定"))
+        {
+            _noiseWindow?.ResetRunButton();
+            return;
+        }
+
         using BusyScope busy = EnterBusy();
         int frame = Viewport.Frame;
 
@@ -4239,6 +4349,12 @@ public partial class MainWindow : Window
                 "この検出結果は現在表示中の画像・フレームのものではないため適用できません。" +
                 "再度「検出実行」を行ってください。",
                 "欠陥画素補正", MessageBoxButton.OK, MessageBoxImage.Information);
+            _defectWindow?.ResetRunButton();
+            return;
+        }
+
+        if (RejectWhileOpening("欠陥画素補正"))
+        {
             _defectWindow?.ResetRunButton();
             return;
         }
