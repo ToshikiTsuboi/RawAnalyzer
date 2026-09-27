@@ -221,6 +221,26 @@ public class TiffSpecTests
     }
 
     [Fact]
+    public void Float64_ExtremeFiniteRange_IsNotCollapsed()
+    {
+        // 値はすべて有限だが最大−最小が double を超える。以前は幅1へ潰れて [0,65535,65535]、
+        // 換算表示も「-1E+308〜-1E+308」になっていた
+        var bytes = new byte[3 * 8];
+        BinaryPrimitives.WriteDoubleLittleEndian(bytes.AsSpan(0), -1e308);
+        BinaryPrimitives.WriteDoubleLittleEndian(bytes.AsSpan(8), 0);
+        BinaryPrimitives.WriteDoubleLittleEndian(bytes.AsSpan(16), 1e308);
+        var page = TiffBuilder.GrayPage(3, 1, 64, bytes, sampleFormat: 3);
+        using var file = TempTiff.Write(new TiffBuilder().Build(page));
+
+        DecodedImage decoded = ImageFileLoader.Load(file.Path);
+        using RawImage image = decoded.Luminance;
+        Assert.Equal(0, image.GetPixel(0, 0));
+        Assert.Equal(32768, image.GetPixel(1, 0));
+        Assert.Equal(65535, image.GetPixel(2, 0));
+        Assert.Equal("64bit値 -1E+308〜1E+308 → 16bit (1code≈3.05E+303)", decoded.ValueNote);
+    }
+
+    [Fact]
     public void Uint24_IsScaledWithNote()
     {
         var bytes = new byte[W * H * 3];

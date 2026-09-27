@@ -74,6 +74,38 @@ public class SampleScalingTests
     }
 
     [Fact]
+    public void ExtremeFiniteRange_MapsWithoutOverflow()
+    {
+        // −1e308〜1e308 はすべて有限だが、最大−最小が double を超えて Infinity になる。
+        // 以前は幅1に置き換わって 0 も 1e308 も 65535 に潰れ、表示も「-1E+308〜-1E+308」になっていた
+        SampleScaling scaling = SampleScaling.FromRange(new SampleRange(-1e308, 1e308, 0));
+
+        Assert.False(scaling.IsNormalized);
+        Assert.Equal(0, scaling.ToCode(-1e308));
+        Assert.Equal(32768, scaling.ToCode(0));
+        Assert.Equal(49151, scaling.ToCode(5e307));
+        Assert.Equal(65535, scaling.ToCode(1e308));
+        Assert.Equal(-1e308, scaling.Offset);
+        Assert.Equal(1e308, scaling.Upper);
+        Assert.Equal(double.PositiveInfinity, scaling.Span);
+        Assert.InRange(scaling.ValuePerCode, 3.05e303, 3.06e303);
+        Assert.Equal("64bit値 -1E+308〜1E+308 → 16bit (1code≈3.05E+303)", scaling.Describe(64));
+    }
+
+    [Theory]
+    [InlineData(-3.0)]
+    [InlineData(-1e308)]
+    public void ConstantNegativeRange_StaysFinite(double value)
+    {
+        // 全画素が同じ負値。値が大きく offset+1 が桁落ちで同じ値になっても 0 へ写して破綻させない
+        SampleScaling scaling = SampleScaling.FromRange(new SampleRange(value, value, 0));
+
+        Assert.Equal(0, scaling.ToCode(value));
+        Assert.True(scaling.Upper > scaling.Offset);
+        Assert.True(double.IsFinite(scaling.ValuePerCode) && scaling.ValuePerCode > 0);
+    }
+
+    [Fact]
     public void NonFinite_CountedAndMappedToZero()
     {
         int[] bits = FloatBits(float.NaN, 10f, float.PositiveInfinity, 20f);

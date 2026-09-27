@@ -80,17 +80,30 @@ public struct SampleRangeAccumulator
 /// 呼び出し側が表示できるようにする(1codeが表す値が分かれば絶対値へ戻せる)。
 /// HDR合成の <see cref="HdrImage.ToRawImage16"/> と同じ考え方で、
 /// 表示は常にフルレンジを使い、量子化幅を明示する。
+/// 対応関係は両端の値(ともに有限)で持つ。64bit実数の −1e308〜1e308 のように
+/// 幅(最大−最小)が double で表せない値域でも、桁あふれせずに写せる。
 /// </remarks>
 /// <param name="Offset">コード0が表す値。負値を含む場合のみ0以外になる。</param>
-/// <param name="Span">コード0〜65535が表す値の幅。</param>
+/// <param name="Upper">コード65535が表す値(Offsetより大きい)。</param>
 /// <param name="Range">元データの値域。</param>
-public sealed record SampleScaling(double Offset, double Span, SampleRange Range)
+public sealed record SampleScaling(double Offset, double Upper, SampleRange Range)
 {
-    /// <summary>1コードが表す元の値の刻み。</summary>
-    public double ValuePerCode => Span / 65535.0;
+    /// <summary>
+    /// コード0〜65535が表す値の幅(Upper−Offset)。幅が double の範囲を超える値域では +∞。
+    /// </summary>
+    public double Span => Upper - Offset;
+
+    /// <summary>1コードが表す元の値の刻み。幅が double の範囲を超える値域でも有限。</summary>
+    public double ValuePerCode => HalfSpan / (65535.0 * 0.5);
 
     /// <summary>正規化(0〜1)の慣習として扱ったか。</summary>
-    public bool IsNormalized => Offset == 0 && Span == 1;
+    public bool IsNormalized => Offset == 0 && Upper == 1;
+
+    /// <summary>
+    /// 幅の半分。両端を半分にしてから差を取るので桁あふれしない。2倍・半分は誤差なしのため、
+    /// 通常の値域では (Upper−Offset)/2 と同じ値になる。
+    /// </summary>
+    private double HalfSpan => (Upper * 0.5) - (Offset * 0.5);
 
     /// <summary>
     /// 32bitのビット列を実値として解釈する。
@@ -200,18 +213,20 @@ public sealed record SampleScaling(double Offset, double Span, SampleRange Range
         double minimum = double.IsFinite(range.Minimum) ? range.Minimum : 0;
         double maximum = double.IsFinite(range.Maximum) ? range.Maximum : 0;
         double offset = Math.Min(0, minimum);
-        double span = maximum - offset;
-        if (offset == 0 && span <= 1)
+        double upper = maximum;
+        if (offset == 0 && upper <= 1)
         {
-            span = 1; // 0〜1の正規化データ
+            upper = 1; // 0〜1の正規化データ(非有限のみ・全画素0も含む)
         }
 
-        if (!double.IsFinite(span) || span <= 0)
+        if (upper <= offset)
         {
-            span = 1; // 全画素が同値・非有限のみでも破綻させない
+            // 全画素が同じ負値。幅1にして破綻させない。桁落ちで offset+1 が同じ値に
+            // なるほど大きい値なら、次に大きい表現可能な値を上端にする
+            upper = offset + 1 > offset ? offset + 1 : Math.BitIncrement(offset);
         }
 
-        return new SampleScaling(offset, span, range);
+        return new SampleScaling(offset, upper, range);
     }
 
     /// <summary>
@@ -226,7 +241,8 @@ public sealed record SampleScaling(double Offset, double Span, SampleRange Range
             return 0;
         }
 
-        double code = Math.Round((value - Offset) / Span * 65535.0);
+        // 値も半分にしてから差を取り、幅が double を超える値域でも桁あふれさせない
+        double code = Math.Round(((value * 0.5) - (Offset * 0.5)) / HalfSpan * 65535.0);
         return (ushort)Math.Clamp(code, 0, 65535);
     }
 
@@ -290,7 +306,7 @@ public sealed record SampleScaling(double Offset, double Span, SampleRange Range
         string body = IsNormalized
             ? $"{bitsPerSample}bit実数 0〜1 → 16bit"
             : $"{bitsPerSample}bit値 {Offset.ToString("G6", culture)}〜" +
-              $"{(Offset + Span).ToString("G6", culture)} → 16bit " +
+              $"{Upper.ToString("G6", culture)} → 16bit " +
               $"(1code≈{ValuePerCode.ToString("G3", culture)})";
         return Range.NonFiniteCount > 0
             ? $"{body}・非数{Range.NonFiniteCount.ToString("N0", culture)}画素は0"
