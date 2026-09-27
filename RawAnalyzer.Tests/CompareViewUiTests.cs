@@ -258,6 +258,133 @@ public class CompareViewUiTests
         }
     });
 
+    [Theory]
+    [InlineData(0, 1, false)] // 視野→等倍
+    [InlineData(1, 0, false)] // 等倍→視野
+    [InlineData(0, 2, false)] // 視野→オフ
+    [InlineData(2, 0, true)] // オフでAだけ拡大→視野
+    [InlineData(2, 1, true)] // オフでAだけ拡大→等倍
+    public Task SwitchSyncMode_BaseUntouched_AllPanesKeepFittingAsGridChanges(
+        int fromIndex, int toIndex, bool zoomOther) => WpfTestHost.Run(async () =>
+    {
+        // 切替の基準(アクティブ=最後に追加したB)が未操作で全体表示に追従中なら、
+        // 切替後も全ペインが全体表示に追従する。基準だけ追従が残ると、次の
+        // ペイン増減で基準だけ再フィットし、基準の変換を写した他ペインとずれる
+        using var small = new ImageFixture(480, 320);
+        using var large = new ImageFixture(960, 640);
+        var view = NewView();
+        try
+        {
+            SelectSync(view, fromIndex);
+            Assert.True(await view.AddPaneFromPathAsync(small.Path));
+            await LayoutAsync(view, 1280, 720);
+            Assert.True(await view.AddPaneFromPathAsync(large.Path));
+            await LayoutAsync(view, 1280, 720);
+            if (zoomOther)
+            {
+                // ホイールでの拡大はアクティブを変えないので、基準のBは未操作のまま
+                ZoomAround(PaneAt(view, 0), 4, 0.6, 0.4);
+            }
+
+            SelectSync(view, toIndex);
+            AssertAllFitting(view);
+
+            Assert.True(await view.AddPaneFromPathAsync(small.Path));
+            await LayoutAsync(view, 1280, 720);
+            AssertAllFitting(view);
+
+            await ClosePaneAsync(view, 0);
+            await LayoutAsync(view, 1280, 720);
+            AssertAllFitting(view);
+        }
+        finally
+        {
+            await view.CloseAllAsync();
+        }
+    });
+
+    [Theory]
+    [InlineData(0, 1)] // 視野→等倍
+    [InlineData(1, 0)] // 等倍→視野
+    [InlineData(0, 2)] // 視野→オフ
+    [InlineData(2, 0)] // オフでBだけ拡大→視野
+    [InlineData(2, 1)] // オフでBだけ拡大→等倍
+    public Task SwitchSyncMode_AfterZooming_AlignsToBaseAndKeepsViewsAsGridChanges(
+        int fromIndex, int toIndex) => WpfTestHost.Run(async () =>
+    {
+        // 基準が操作済みなら、切替で他ペインが基準の視野へ揃い(基準自身は動かない)、
+        // 以後のペイン増減でも既存ペインは倍率と中心を保つ。オフへの切替では何も動かない
+        using var small = new ImageFixture(480, 320);
+        using var large = new ImageFixture(960, 640);
+        var view = NewView();
+        try
+        {
+            SelectSync(view, fromIndex);
+            Assert.True(await view.AddPaneFromPathAsync(small.Path));
+            await LayoutAsync(view, 1280, 720);
+            if (fromIndex != 2)
+            {
+                ZoomAround(PaneAt(view, 0), 4, 0.6, 0.4); // 同期中なので追加するBもこれに揃う
+            }
+
+            Assert.True(await view.AddPaneFromPathAsync(large.Path)); // 追加したBがアクティブ=基準
+            await LayoutAsync(view, 1280, 720);
+            if (fromIndex == 2)
+            {
+                ZoomAround(PaneAt(view, 1), 4, 0.6, 0.4); // オフなのでAは全体表示に追従したまま
+            }
+
+            ComparePaneView first = PaneAt(view, 0);
+            ComparePaneView second = PaneAt(view, 1);
+            (double Zoom, double X, double Y) firstView = ViewOf(first);
+            (double Zoom, double X, double Y) secondView = ViewOf(second);
+
+            SelectSync(view, toIndex);
+            AssertKeepsView(secondView, second);
+            if (toIndex == 2)
+            {
+                AssertKeepsView(firstView, first);
+            }
+            else
+            {
+                AssertSynced(toIndex, second, first);
+            }
+
+            firstView = ViewOf(first);
+            Assert.True(await view.AddPaneFromPathAsync(small.Path));
+            await LayoutAsync(view, 1280, 720);
+            ComparePaneView third = PaneAt(view, 2);
+            AssertKeepsView(firstView, first);
+            AssertKeepsView(secondView, second);
+            if (toIndex == 2)
+            {
+                AssertFitting(third); // オフでは新ペインは全体表示に追従する
+            }
+            else
+            {
+                AssertSynced(toIndex, second, third);
+            }
+
+            (double Zoom, double X, double Y) thirdView = ViewOf(third);
+            await ClosePaneAsync(view, 0);
+            await LayoutAsync(view, 1280, 720);
+            AssertKeepsView(secondView, second);
+            if (toIndex == 2)
+            {
+                AssertFitting(third);
+            }
+            else
+            {
+                AssertKeepsView(thirdView, third);
+                AssertSynced(toIndex, second, third);
+            }
+        }
+        finally
+        {
+            await view.CloseAllAsync();
+        }
+    });
+
     private static CompareView NewView() => new()
     {
         PaneLoader = async (path, token) => await ComparePane.LoadAsync(path, null, token),
@@ -295,6 +422,60 @@ public class CompareViewUiTests
     private static double FitZoomOf(ComparePaneView pane) => Math.Min(
         pane.ViewportControl.ActualWidth / pane.Pane!.Image.Width,
         pane.ViewportControl.ActualHeight / pane.Pane.Image.Height);
+
+    // 同期モードの選択(0=視野、1=等倍、2=オフ)。ユーザーの選択と同じくSelectionChangedが走る
+    private static void SelectSync(CompareView view, int index) =>
+        ((ComboBox)view.FindName("SyncCombo")).SelectedIndex = index;
+
+    private static async Task ClosePaneAsync(CompareView view, int index)
+    {
+        Button close = Descendants<Button>(PaneAt(view, index)).Single(button =>
+            AutomationProperties.GetName(button) == "ペインを閉じる");
+        close.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        await DrainAsync();
+    }
+
+    private static (double Zoom, double X, double Y) ViewOf(ComparePaneView pane)
+    {
+        (double x, double y) = CenterOf(pane);
+        return (pane.ViewportControl.Zoom, x, y);
+    }
+
+    // 倍率と表示中心が変わっていない(サイズ変化では中心を保って原点だけ動く)
+    private static void AssertKeepsView((double Zoom, double X, double Y) expected, ComparePaneView pane)
+    {
+        Assert.Equal(expected.Zoom, pane.ViewportControl.Zoom, 10);
+        Assert.Equal(expected.X, CenterOf(pane).X, 6);
+        Assert.Equal(expected.Y, CenterOf(pane).Y, 6);
+    }
+
+    // 現在のサイズでの全体表示になっている
+    private static void AssertFitting(ComparePaneView pane)
+    {
+        Assert.Equal(FitZoomOf(pane), pane.ViewportControl.Zoom, 10);
+        Assert.Equal(0.5, RelativeCenterOf(pane).X, 6);
+        Assert.Equal(0.5, RelativeCenterOf(pane).Y, 6);
+    }
+
+    private static void AssertAllFitting(CompareView view)
+    {
+        for (int i = 0; i < view.PaneCount; i++) AssertFitting(PaneAt(view, i));
+    }
+
+    // 同期モードどおりに揃っている(相対中心が一致し、視野なら相対幅、等倍なら倍率が一致)
+    private static void AssertSynced(int syncIndex, ComparePaneView expected, ComparePaneView actual)
+    {
+        Assert.Equal(RelativeCenterOf(expected).X, RelativeCenterOf(actual).X, 6);
+        Assert.Equal(RelativeCenterOf(expected).Y, RelativeCenterOf(actual).Y, 6);
+        if (syncIndex == 0)
+        {
+            Assert.Equal(RelativeWidthOf(expected), RelativeWidthOf(actual), 6);
+        }
+        else
+        {
+            Assert.Equal(expected.ViewportControl.Zoom, actual.ViewportControl.Zoom, 10);
+        }
+    }
 
     // 自動の全体表示(FitToView)を挟まずにレイアウトだけ確定させる
     private static async Task LayoutAsync(CompareView view, int width, int height)

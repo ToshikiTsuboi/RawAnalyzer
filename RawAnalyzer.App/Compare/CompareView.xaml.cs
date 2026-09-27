@@ -289,6 +289,7 @@ public partial class CompareView : UserControl
         };
 
         // モードを入れたら、アクティブ(なければ先頭)ペイン基準で即座に揃える
+        // (基準が未操作なら全ペインを全体表示の追従へ揃える。オフへの切替では何も動かさない)
         if (_syncMode != CompareSyncMode.Off)
         {
             ComparePaneView? source = _active ?? _panes.FirstOrDefault();
@@ -307,7 +308,10 @@ public partial class CompareView : UserControl
         }
     }
 
-    /// <summary>指定ペインのビュー状態を、他のペインへ写像して適用する。</summary>
+    /// <summary>
+    /// 指定ペインのビュー状態を、他のペインへ写像して適用する。
+    /// 基準が未操作で全体表示に追従中なら、他ペインも全体表示の追従へ戻す。
+    /// </summary>
     /// <param name="source">基準にするペイン。</param>
     /// <param name="only">指定するとこのペインだけに適用する(ペイン追加時の初期合わせ用)。</param>
     private void SyncFrom(ComparePaneView source, ComparePaneView? only = null)
@@ -332,6 +336,16 @@ public partial class CompareView : UserControl
                 if (ReferenceEquals(pane, source) || pane.Pane is null
                     || (only is not null && !ReferenceEquals(pane, only)))
                 {
+                    continue;
+                }
+
+                // 基準が全体表示に追従中なら、変換は写さず追従ごと揃える(ペイン追加時と
+                // 同じ規約。未操作の間は同期モードによらず各ペインが自分の全体表示)。
+                // 変換を写すと写した側だけ追従が外れ、次のペイン増減やリサイズで
+                // 基準だけが全体表示へ戻って他とずれる
+                if (source.IsAutoFit)
+                {
+                    pane.ResumeAutoFit();
                     continue;
                 }
 

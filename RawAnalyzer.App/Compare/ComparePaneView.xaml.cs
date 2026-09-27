@@ -123,7 +123,7 @@ public partial class ComparePaneView : UserControl
 
     /// <summary>
     /// 未操作で、全体表示をサイズ変化へ追従させている間はtrue
-    /// (ズーム/パン操作や同期の適用で解除される)。
+    /// (ズーム/パン操作や同期の適用で解除され、<see cref="ResumeAutoFit"/> で再開する)。
     /// </summary>
     internal bool IsAutoFit => _autoFit;
 
@@ -139,6 +139,21 @@ public partial class ComparePaneView : UserControl
     {
         _autoFit = false;
         Viewport.SetViewTransform(zoom, originX, originY);
+    }
+
+    /// <summary>
+    /// 全体表示へ戻し、未操作のときと同じくサイズ変化への追従を再開する
+    /// (同期の基準が全体表示に追従中のとき、他ペインをそれに揃えるために使う)。
+    /// </summary>
+    internal void ResumeAutoFit()
+    {
+        if (_autoFit)
+        {
+            return; // 追従中は常に全体表示なので描き直さない
+        }
+
+        _autoFit = true;
+        Viewport.FitToView();
     }
 
     /// <summary>他ペインのカーソル位置をゴースト表示する。</summary>
