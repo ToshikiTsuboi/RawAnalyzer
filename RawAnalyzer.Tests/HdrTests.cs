@@ -507,6 +507,150 @@ public class HdrSplitterTests
     }
 }
 
+/// <summary>
+/// HDR分割の1億画素制限は、実際にヒープへ展開する画素数で判定する
+/// (行交互は指定フレーム1枚分、フレーム連結は使う全フレーム)。
+/// </summary>
+/// <remarks>
+/// 全フレーム合計が1億画素を超える画像が要るため、1.01億画素ぶん(8bitで101,000,000バイト)の
+/// rawファイルを長さだけ確保して作り(伸ばした範囲は0として読める)、MemoryMappedFile経由で開く。
+/// 同じファイルを幅・高さ・フレーム数の異なるフォーマットで読み替えてクラス内で共有する。
+/// </remarks>
+public sealed class HdrSplitterPixelLimitTests
+    : IClassFixture<HdrSplitterPixelLimitTests.LargeRawFile>
+{
+    private readonly LargeRawFile _file;
+
+    public HdrSplitterPixelLimitTests(LargeRawFile file)
+    {
+        _file = file;
+    }
+
+    [Fact]
+    public void Split_LineInterleavedMultiFrame_LimitsOnlyTheSplitFrame()
+    {
+        // 1000×1000 の行交互HDRが101フレーム(全体1.01億画素、1フレーム100万画素)。
+        // 展開するのは指定フレーム1枚分なのに、全フレーム合計で判定して分割を拒否していた
+        var format = new RawFormat
+        {
+            Width = LargeRawFile.FrameWidth, Height = LargeRawFile.FrameHeight, BitDepth = 8,
+            FrameCount = LargeRawFile.FrameCount, Hdr = HdrMode.LineInterleaved, HdrStages = 2,
+        };
+        Assert.True(format.TotalPixels > RawLoader.DefaultInMemoryPixelThreshold);
+        using RawImage image = RawLoader.Load(_file.FilePath, format);
+
+        IReadOnlyList<RawImage> split = HdrSplitter.Split(image, format, frame: 1);
+        try
+        {
+            Assert.Equal(2, split.Count);
+            AssertAllCodes(split[0], LargeRawFile.Frame1Long);
+            AssertAllCodes(split[1], LargeRawFile.Frame1Short);
+        }
+        finally
+        {
+            foreach (RawImage stage in split)
+            {
+                stage.Dispose();
+            }
+        }
+    }
+
+    [Fact]
+    public void Split_LineInterleavedFrameOverLimit_Throws()
+    {
+        // 1フレームだけで1億画素を超える行交互は、従来どおり分割しない(全画素をヒープへ展開しない)
+        var format = new RawFormat
+        {
+            Width = 10_100, Height = 10_000, BitDepth = 8,
+            Hdr = HdrMode.LineInterleaved, HdrStages = 2,
+        };
+        using RawImage image = RawLoader.Load(_file.FilePath, format);
+
+        InvalidOperationException ex = Assert.Throws<InvalidOperationException>(
+            () => HdrSplitter.Split(image, format, frame: 0));
+        Assert.Contains("1億画素", ex.Message);
+    }
+
+    [Fact]
+    public void Split_FrameSequentialOverLimitInTotal_Throws()
+    {
+        // フレーム連結は全フレーム(=全露光)を展開するので、1フレームが1億画素以下
+        // (5,050万画素×2)でも合計で判定する
+        var format = new RawFormat
+        {
+            Width = 10_100, Height = 5_000, BitDepth = 8, FrameCount = 2,
+            Hdr = HdrMode.FrameSequential, HdrStages = 2,
+        };
+        using RawImage image = RawLoader.Load(_file.FilePath, format);
+
+        InvalidOperationException ex = Assert.Throws<InvalidOperationException>(
+            () => HdrSplitter.Split(image, format, frame: 1));
+        Assert.Contains("1億画素", ex.Message);
+    }
+
+    /// <summary>分割結果の全画素が指定の8bitコード(16bit正規化で code&lt;&lt;8)であること。</summary>
+    private static void AssertAllCodes(RawImage image, byte code)
+    {
+        var row = new ushort[image.Width];
+        for (int y = 0; y < image.Height; y++)
+        {
+            image.CopyRegion(0, 0, y, image.Width, 1, row);
+            Assert.All(row, value => Assert.Equal(code << 8, value));
+        }
+    }
+
+    /// <summary>
+    /// 1000×1000・8bit・101フレームぶんのrawファイル。先頭2フレームだけ行交互の値を書き、
+    /// 残りは長さを確保するだけにする(実データを書かないので作成は速い)。
+    /// </summary>
+    public sealed class LargeRawFile : IDisposable
+    {
+        internal const int FrameWidth = 1000;
+        internal const int FrameHeight = 1000;
+        internal const int FrameCount = 101;
+        internal const byte Frame0Long = 100;
+        internal const byte Frame0Short = 10;
+        internal const byte Frame1Long = 200;
+        internal const byte Frame1Short = 20;
+
+        public LargeRawFile()
+        {
+            string directory = Path.Combine(Path.GetTempPath(), "RawAnalyzerTests");
+            Directory.CreateDirectory(directory);
+            FilePath = Path.Combine(directory, Guid.NewGuid().ToString("N") + ".raw");
+            using var stream = new FileStream(FilePath, FileMode.CreateNew, FileAccess.Write);
+            stream.SetLength((long)FrameWidth * FrameHeight * FrameCount);
+
+            // 偶数行=長秒・奇数行=短秒。先頭から連続して書くので、確保だけの範囲は0埋めされない
+            var row = new byte[FrameWidth];
+            foreach ((byte longCode, byte shortCode) in new[]
+                { (Frame0Long, Frame0Short), (Frame1Long, Frame1Short) })
+            {
+                for (int y = 0; y < FrameHeight; y++)
+                {
+                    Array.Fill(row, y % 2 == 0 ? longCode : shortCode);
+                    stream.Write(row);
+                }
+            }
+        }
+
+        /// <summary>ファイルのパス。</summary>
+        public string FilePath { get; }
+
+        public void Dispose()
+        {
+            try
+            {
+                File.Delete(FilePath);
+            }
+            catch (IOException)
+            {
+                // MMFの解放がOSに反映されるまで削除できないことがある
+            }
+        }
+    }
+}
+
 public class HdrMergerTests
 {
     /// <summary>整合するシーン(S)から長秒/短秒フレームを合成用に生成する。</summary>

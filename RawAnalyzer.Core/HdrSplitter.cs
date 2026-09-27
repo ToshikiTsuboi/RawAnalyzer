@@ -55,7 +55,8 @@ public static class HdrSplitter
     /// <exception cref="ArgumentException">画素レイアウトが画像と一致しない場合。</exception>
     /// <exception cref="ArgumentOutOfRangeException">フレーム番号が範囲外の場合。</exception>
     /// <exception cref="InvalidOperationException">
-    /// HDR方式が未指定、フレーム構成が不正、または画像が大きすぎる場合。
+    /// HDR方式が未指定、フレーム構成が不正、または展開する画素数
+    /// (行交互は1フレーム分、フレーム連結は全フレームの合計)が1億画素を超える場合。
     /// </exception>
     public static IReadOnlyList<RawImage> Split(RawImage image, RawFormat format, int frame)
     {
@@ -87,26 +88,31 @@ public static class HdrSplitter
             throw new InvalidOperationException($"HDR段数は2または3である必要があります: {stages}");
         }
 
-        if (format.TotalPixels > RawLoader.DefaultInMemoryPixelThreshold)
+        HdrMode layout = ResolveLayout(format, stages);
+        if (layout == HdrMode.FrameSequential && format.FrameCount != stages)
         {
             throw new InvalidOperationException(
-                "1億画素を超える画像のHDR分割はサポートされていません。");
+                $"フレーム連結にはフレーム数({format.FrameCount})が" +
+                $"HDR段数({stages})と一致している必要があります。");
         }
 
-        HdrMode layout = ResolveLayout(format, stages);
-        if (layout == HdrMode.FrameSequential)
+        // 分割結果は全画素をヒープへ展開するので、上限は実際に展開する画素数で判定する。
+        // 行交互は指定フレーム1枚分だけを読んで分ける(他のフレームは読まない)。
+        // フレーム連結はフレームそのものが各露光なので全フレームを展開する。
+        // 全フレーム合計で判定すると、1フレームが小さい行交互の長いシーケンスまで拒否してしまう
+        long expandedPixels = layout == HdrMode.FrameSequential
+            ? format.TotalPixels
+            : (long)format.Width * format.Height;
+        if (expandedPixels > RawLoader.DefaultInMemoryPixelThreshold)
         {
-            if (format.FrameCount != stages)
-            {
-                throw new InvalidOperationException(
-                    $"フレーム連結にはフレーム数({format.FrameCount})が" +
-                    $"HDR段数({stages})と一致している必要があります。");
-            }
-
-            return SplitFrameSequential(image, format, stages);
+            throw new InvalidOperationException(layout == HdrMode.FrameSequential
+                ? "全露光フレームの合計が1億画素を超える画像のHDR分割はサポートされていません。"
+                : "1フレームが1億画素を超える画像のHDR分割はサポートされていません。");
         }
 
-        return SplitLineInterleaved(image, format, stages, frame);
+        return layout == HdrMode.FrameSequential
+            ? SplitFrameSequential(image, format, stages)
+            : SplitLineInterleaved(image, format, stages, frame);
     }
 
     /// <summary>
