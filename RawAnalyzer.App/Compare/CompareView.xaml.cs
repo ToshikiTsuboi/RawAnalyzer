@@ -216,16 +216,62 @@ public partial class CompareView : UserControl
         SetActive(view);
         RefreshChips();
 
-        // 同期中なら、既存ペインの表示範囲に合わせて新規ペインだけを開始位置に置く
-        // (同期オフでは各ペイン独立なので、既存の表示は一切動かさない)
+        // 新規ペインはまだレイアウト前でサイズが0のため、ここでは既存ペインの
+        // 表示範囲を写像できない(SyncFromが対象を飛ばして全体表示のまま残る)。
+        // 最初のレイアウトが確定してから合わせる
+        SyncNewPaneWhenLaidOut(view);
+    }
+
+    /// <summary>
+    /// 追加したペインの最初のレイアウト確定後に、既存ペインの表示範囲へ合わせる。
+    /// </summary>
+    /// <remarks>
+    /// LayoutUpdatedはレイアウト処理の最後、全要素のSizeChanged(既存ペインの
+    /// 表示中心の維持・新規ペインの全体表示)が済んだ後に来るため、
+    /// 双方のサイズが確定した状態で写像できる。
+    /// </remarks>
+    /// <param name="view">追加したペイン。</param>
+    private void SyncNewPaneWhenLaidOut(ComparePaneView view)
+    {
+        EventHandler? handler = null;
+        handler = (_, _) =>
+        {
+            if (_closing || !_panes.Contains(view) || view.Pane is null)
+            {
+                view.LayoutUpdated -= handler; // 表示される前に閉じられた(比較モード終了を含む)
+                return;
+            }
+
+            Controls.ImageViewport viewport = view.ViewportControl;
+            if (viewport.ActualWidth < 1 || viewport.ActualHeight < 1)
+            {
+                return; // まだ表示されていない
+            }
+
+            view.LayoutUpdated -= handler;
+            SyncNewPane(view);
+        };
+        view.LayoutUpdated += handler;
+    }
+
+    /// <summary>
+    /// 同期中なら、新規ペインだけを既存ペインの表示範囲に合わせる(既存ペインは動かさない)。
+    /// </summary>
+    /// <param name="view">追加したペイン。</param>
+    private void SyncNewPane(ComparePaneView view)
+    {
+        // 同期オフでは各ペイン独立なので、新規ペインは全体表示のまま置く
         if (_syncMode == CompareSyncMode.Off)
         {
             return;
         }
 
+        // 基準が未操作で全体表示に追従中なら、新規ペインも全体表示のまま追従させる。
+        // 変換を写すと新規ペインだけ追従が外れ、次のペイン増減で基準は全体表示へ
+        // 戻るのに新規ペインには前の倍率が残ってずれる
         ComparePaneView? reference = _panes.FirstOrDefault(
             p => !ReferenceEquals(p, view) && p.Pane is not null);
-        if (reference is not null)
+        if (reference is not null && !reference.IsAutoFit)
         {
             SyncFrom(reference, only: view);
         }

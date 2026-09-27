@@ -122,6 +122,12 @@ public partial class ComparePaneView : UserControl
     internal ImageViewport ViewportControl => Viewport;
 
     /// <summary>
+    /// 未操作で、全体表示をサイズ変化へ追従させている間はtrue
+    /// (ズーム/パン操作や同期の適用で解除される)。
+    /// </summary>
+    internal bool IsAutoFit => _autoFit;
+
+    /// <summary>
     /// 同期によるビュー変換の適用。ユーザー操作扱いにならず、
     /// <see cref="ViewChanged"/> は発火しない(入力イベント由来でないため)。
     /// 以後は同期に従うので全体表示の自動追従は解除する。

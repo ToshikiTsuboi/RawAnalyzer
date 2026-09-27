@@ -147,10 +147,163 @@ public class CompareViewUiTests
         }
     });
 
+    [Theory]
+    [InlineData(0)] // 視野(相対)
+    [InlineData(1)] // 等倍(1:1)
+    public Task AddPane_AfterZoomingExisting_NewPaneFollowsOnceLaidOut(int syncIndex) => WpfTestHost.Run(async () =>
+    {
+        // 解像度の違う2枚(Bは縦横2倍)。追加前はAが1列、追加後は2列でAのサイズも変わる
+        using var small = new ImageFixture(480, 320);
+        using var large = new ImageFixture(960, 640);
+        var view = NewView();
+        try
+        {
+            Assert.True(await view.AddPaneFromPathAsync(small.Path));
+            await LayoutAsync(view, 1280, 720);
+            ((ComboBox)view.FindName("SyncCombo")).SelectedIndex = syncIndex;
+            ComparePaneView first = PaneAt(view, 0);
+            ZoomAround(first, 4, 0.6, 0.4);
+            double widthBefore = first.ViewportControl.ActualWidth;
+            (double X, double Y) centerBefore = CenterOf(first);
+
+            Assert.True(await view.AddPaneFromPathAsync(large.Path));
+            await LayoutAsync(view, 1280, 720);
+
+            ComparePaneView second = PaneAt(view, 1);
+            Assert.True(second.ViewportControl.ActualWidth > 0 && second.ViewportControl.ActualHeight > 0);
+            Assert.True(first.ViewportControl.ActualWidth < widthBefore);
+
+            // 既存ペインは新ペインに引きずられない(サイズ変化でも倍率と中心を保つ)
+            Assert.Equal(4, first.ViewportControl.Zoom, 10);
+            Assert.Equal(centerBefore.X, CenterOf(first).X, 6);
+            Assert.Equal(centerBefore.Y, CenterOf(first).Y, 6);
+
+            // 新ペインはレイアウト確定後のサイズで既存ペインに揃う(全体表示のままにならない)
+            Assert.Equal(RelativeCenterOf(first).X, RelativeCenterOf(second).X, 6);
+            Assert.Equal(RelativeCenterOf(first).Y, RelativeCenterOf(second).Y, 6);
+            if (syncIndex == 0)
+            {
+                Assert.Equal(RelativeWidthOf(first), RelativeWidthOf(second), 6);
+            }
+            else
+            {
+                Assert.Equal(first.ViewportControl.Zoom, second.ViewportControl.Zoom, 10);
+            }
+        }
+        finally
+        {
+            await view.CloseAllAsync();
+        }
+    });
+
+    [Fact]
+    public Task AddPane_SyncOff_NewPaneStaysFitAndExistingKeepsView() => WpfTestHost.Run(async () =>
+    {
+        using var small = new ImageFixture(480, 320);
+        using var large = new ImageFixture(960, 640);
+        var view = NewView();
+        try
+        {
+            Assert.True(await view.AddPaneFromPathAsync(small.Path));
+            await LayoutAsync(view, 1280, 720);
+            ((ComboBox)view.FindName("SyncCombo")).SelectedIndex = 2; // オフ
+            ComparePaneView first = PaneAt(view, 0);
+            ZoomAround(first, 4, 0.6, 0.4);
+            (double X, double Y) centerBefore = CenterOf(first);
+
+            Assert.True(await view.AddPaneFromPathAsync(large.Path));
+            await LayoutAsync(view, 1280, 720);
+
+            ComparePaneView second = PaneAt(view, 1);
+            Assert.True(second.ViewportControl.ActualWidth > 0 && second.ViewportControl.ActualHeight > 0);
+            Assert.Equal(4, first.ViewportControl.Zoom, 10);
+            Assert.Equal(centerBefore.X, CenterOf(first).X, 6);
+            Assert.Equal(centerBefore.Y, CenterOf(first).Y, 6);
+            Assert.Equal(FitZoomOf(second), second.ViewportControl.Zoom, 10);
+            Assert.Equal(0.5, RelativeCenterOf(second).X, 6);
+            Assert.Equal(0.5, RelativeCenterOf(second).Y, 6);
+        }
+        finally
+        {
+            await view.CloseAllAsync();
+        }
+    });
+
+    [Fact]
+    public Task AddPanes_WithoutOperation_AllKeepFittingAsGridChanges() => WpfTestHost.Run(async () =>
+    {
+        // 未操作の間は全ペインが全体表示に追従する。同期で新ペインだけ追従を外すと、
+        // 次の追加でAは再フィットするのにBは前の倍率が残ってずれる
+        using var fixture = new ImageFixture(480, 320);
+        var view = NewView();
+        try
+        {
+            for (int i = 0; i < 3; i++)
+            {
+                Assert.True(await view.AddPaneFromPathAsync(fixture.Path));
+                await LayoutAsync(view, 1280, 720);
+            }
+
+            for (int i = 0; i < 3; i++)
+            {
+                ComparePaneView pane = PaneAt(view, i);
+                Assert.Equal(FitZoomOf(pane), pane.ViewportControl.Zoom, 10);
+                Assert.Equal(0.5, RelativeCenterOf(pane).X, 6);
+                Assert.Equal(0.5, RelativeCenterOf(pane).Y, 6);
+            }
+        }
+        finally
+        {
+            await view.CloseAllAsync();
+        }
+    });
+
     private static CompareView NewView() => new()
     {
         PaneLoader = async (path, token) => await ComparePane.LoadAsync(path, null, token),
     };
+
+    private static ComparePaneView PaneAt(CompareView view, int index) =>
+        (ComparePaneView)((UniformGrid)view.FindName("PaneGrid")).Children[index];
+
+    // ユーザーのズーム操作に相当(ApplyViewも操作と同じく全体表示への追従を止める)。
+    // 表示中心を画像の相対位置(relX, relY)に置く
+    private static void ZoomAround(ComparePaneView pane, double zoom, double relX, double relY)
+    {
+        var viewport = pane.ViewportControl;
+        pane.ApplyView(zoom,
+            relX * pane.Pane!.Image.Width - viewport.ActualWidth / (2 * zoom),
+            relY * pane.Pane.Image.Height - viewport.ActualHeight / (2 * zoom));
+    }
+
+    private static (double X, double Y) CenterOf(ComparePaneView pane)
+    {
+        var viewport = pane.ViewportControl;
+        return (viewport.OriginX + viewport.ActualWidth / (2 * viewport.Zoom),
+            viewport.OriginY + viewport.ActualHeight / (2 * viewport.Zoom));
+    }
+
+    private static (double X, double Y) RelativeCenterOf(ComparePaneView pane)
+    {
+        (double x, double y) = CenterOf(pane);
+        return (x / pane.Pane!.Image.Width, y / pane.Pane.Image.Height);
+    }
+
+    private static double RelativeWidthOf(ComparePaneView pane) =>
+        pane.ViewportControl.ActualWidth / pane.ViewportControl.Zoom / pane.Pane!.Image.Width;
+
+    private static double FitZoomOf(ComparePaneView pane) => Math.Min(
+        pane.ViewportControl.ActualWidth / pane.Pane!.Image.Width,
+        pane.ViewportControl.ActualHeight / pane.Pane.Image.Height);
+
+    // 自動の全体表示(FitToView)を挟まずにレイアウトだけ確定させる
+    private static async Task LayoutAsync(CompareView view, int width, int height)
+    {
+        view.Measure(new Size(width, height));
+        view.Arrange(new Rect(0, 0, width, height));
+        view.UpdateLayout();
+        await DrainAsync();
+    }
 
     private static async Task ArrangeAsync(CompareView view, int width, int height)
     {
@@ -217,10 +370,9 @@ public class CompareViewUiTests
     {
         internal string Path { get; }
 
-        internal ImageFixture()
+        internal ImageFixture(int width = 480, int height = 320)
         {
             Path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), Guid.NewGuid().ToString("N") + ".png");
-            const int width = 480, height = 320;
             var pixels = new byte[width * height * 3];
             for (int y = 0; y < height; y++)
                 for (int x = 0; x < width; x++)
