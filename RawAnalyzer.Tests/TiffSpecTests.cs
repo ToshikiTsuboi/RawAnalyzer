@@ -465,23 +465,118 @@ public class TiffSpecTests
                         string layout = $"Photometric={photometric} {bits}bit×{spp} SampleFormat={sampleFormat}";
                         string? uncompressed = LoadError(SamplePage(photometric, spp, bits, sampleFormat, compress: false));
                         string? compressed = LoadError(SamplePage(photometric, spp, bits, sampleFormat, compress: true));
-
-                        // 非圧縮のページが自分の圧縮方式として「非圧縮(1)」と書くのは案内ではない
-                        if (uncompressed is not null && uncompressed.Replace("非圧縮(1)", "").Contains("非圧縮"))
-                        {
-                            failures.Add($"{layout} 非圧縮: {uncompressed}");
-                        }
-
-                        if (compressed is not null && compressed.Contains("非圧縮") && uncompressed is not null)
-                        {
-                            failures.Add($"{layout} 圧縮: {compressed} ／ 非圧縮も開けない: {uncompressed}");
-                        }
+                        CheckUncompressedHint(layout, uncompressed, compressed, failures);
                     }
                 }
             }
         }
 
         Assert.True(failures.Count == 0, string.Join(Environment.NewLine, failures));
+    }
+
+    [Fact]
+    public void UncompressedHint_ContainerAndPhotometricAxes_AreConsistent()
+    {
+        // BigTIFF・SubIFD・CFA/LinearRaw・YCbCr の拒否文は、以前は「BigTIFFは非圧縮のグレースケール/CFAページのみ」
+        // 「CFA/LinearRaw(DNG)は非圧縮のみ」「このページ(SubIFD…)は非圧縮の1サンプル/画素のみ」「非圧縮のYCbCr」と、
+        // 開けない非圧縮ページやDeflate圧縮のページにも固定の「非圧縮」を出していた。格納形式(クラシック/
+        // BigTIFF/SubIFD)× Photometric(グレー/RGB/CFA/LinearRaw/YCbCr)で、上のテストと同じ2点を確かめる
+        var layouts = new List<(int Photometric, int Spp, int Bits, int Format)> { (6, 3, 8, 1) };
+        foreach ((int bits, int format) in new[] { (8, 1), (16, 1), (16, 2), (24, 2), (32, 3), (64, 3) })
+        {
+            layouts.Add((1, 1, bits, format));
+            layouts.Add((1, 2, bits, format));
+            layouts.Add((2, 3, bits, format));
+            layouts.Add((2, 4, bits, format));
+            layouts.Add((TiffLoader.PhotometricCfa, 1, bits, format));
+            layouts.Add((TiffLoader.PhotometricLinearRaw, 1, bits, format));
+            layouts.Add((TiffLoader.PhotometricLinearRaw, 3, bits, format));
+        }
+
+        string[] containers = { "クラシック", "BigTIFF", "SubIFD" };
+        var failures = new List<string>();
+        for (int container = 0; container < containers.Length; container++)
+        {
+            foreach ((int photometric, int spp, int bits, int format) in layouts)
+            {
+                string layout = $"{containers[container]} Photometric={photometric} {bits}bit×{spp} SampleFormat={format}";
+                string? uncompressed = LoadError(
+                    ContainerTiff(container, SamplePage(photometric, spp, bits, format, compress: false)));
+                string? compressed = LoadError(
+                    ContainerTiff(container, SamplePage(photometric, spp, bits, format, compress: true)));
+                CheckUncompressedHint(layout, uncompressed, compressed, failures);
+            }
+        }
+
+        Assert.True(failures.Count == 0, string.Join(Environment.NewLine, failures));
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    public void BigTiffOrSubIfd_Float32Rgb_IsDecodedNatively(int container)
+    {
+        // WICはBigTIFFとSubIFDのページを読めない。自前で復号できる32bit実数RGBは自前で開き、
+        // クラシックTIFF(WIC経由)と同じ結果にする。以前は「BigTIFFは非圧縮のグレースケール/CFAページのみ
+        // 対応しています」「このページ(SubIFD…)は非圧縮の1サンプル/画素のみ対応しています」で開けなかった
+        var rgb = new byte[2 * 3 * 4];
+        float[] values = { 0f, 0.5f, 2f, 4f, -1f, 1f };
+        for (int i = 0; i < values.Length; i++)
+        {
+            BinaryPrimitives.WriteSingleLittleEndian(rgb.AsSpan(i * 4), values[i]);
+        }
+
+        TiffBuilder.Page Page() => TiffBuilder.GrayPage(2, 1, 32, rgb, photometric: 2, sampleFormat: 3, samplesPerPixel: 3);
+        using var classicFile = TempTiff.Write(new TiffBuilder().Build(Page()));
+        using var file = TempTiff.Write(ContainerTiff(container, Page()));
+        DecodedImage expected = ImageFileLoader.Load(classicFile.Path);
+        using RawImage expectedOwned = expected.Luminance;
+        DecodedImage actual = ImageFileLoader.Load(file.Path);
+        using RawImage actualOwned = actual.Luminance;
+
+        Assert.NotNull(actual.Color);
+        for (int x = 0; x < 2; x++)
+        {
+            expected.Color!.GetPixel(x, 0, out ushort er, out ushort eg, out ushort eb);
+            actual.Color!.GetPixel(x, 0, out ushort ar, out ushort ag, out ushort ab);
+            Assert.Equal((er, eg, eb), (ar, ag, ab));
+        }
+
+        Assert.Equal("32bit値 -1〜4 → 16bit (1code≈7.63E-05)", actual.ValueNote);
+        Assert.Equal(expected.ValueNote, actual.ValueNote);
+
+        // 圧縮ページは自前では読めないが、非圧縮なら読めることを案内する
+        var compressed = Page();
+        TiffBuilder.Deflate(compressed);
+        using var compressedFile = TempTiff.Write(ContainerTiff(container, compressed));
+        var ex = Assert.Throws<InvalidDataException>(() => ImageFileLoader.Load(compressedFile.Path));
+        Assert.Contains("非圧縮であれば読めます", ex.Message);
+    }
+
+    [Fact]
+    public void LinearRaw3Samples_Uncompressed_DoesNotOfferUncompressed()
+    {
+        // 3サンプルのLinearRaw(linear DNG)は未対応。以前は非圧縮のページに「非圧縮のみ対応しています」と出ていた
+        var page = TiffBuilder.GrayPage(W, H, 16, new byte[W * H * 6], photometric: TiffLoader.PhotometricLinearRaw,
+            samplesPerPixel: 3);
+        using var file = TempTiff.Write(new TiffBuilder().Build(page));
+
+        var ex = Assert.Throws<InvalidDataException>(() => ImageFileLoader.Load(file.Path));
+        Assert.Contains("LinearRaw", ex.Message);
+        Assert.DoesNotContain("非圧縮", ex.Message.Replace("非圧縮(1)", ""));
+    }
+
+    [Fact]
+    public void YCbCr_LzwCompressed_NamesActualCompression()
+    {
+        // 以前はLZW圧縮のYCbCrにも「非圧縮のYCbCr TIFFは未対応です」と出ていた
+        var page = TiffBuilder.GrayPage(W, H, 8, new byte[W * H * 3], photometric: 6, compression: 5, samplesPerPixel: 3);
+        using var file = TempTiff.Write(new TiffBuilder().Build(page));
+
+        var ex = Assert.Throws<InvalidDataException>(() => ImageFileLoader.Load(file.Path));
+        Assert.Contains("YCbCr", ex.Message);
+        Assert.Contains("LZW(5)", ex.Message);
+        Assert.DoesNotContain("非圧縮", ex.Message);
     }
 
     [Fact]
@@ -544,8 +639,9 @@ public class TiffSpecTests
     }
 
     /// <summary>
-    /// 2×1画素、指定の Photometric・サンプル数・ビット幅・サンプル形式のページ。追加サンプル
-    /// (グレーの2番目以降、RGBの4番目以降)は非関連アルファとし、値は画素・チャネルごとに変える。
+    /// 2×1画素、指定の Photometric・サンプル数・ビット幅・サンプル形式のページ。色のチャネル
+    /// (RGB・YCbCr・3サンプルのLinearRawは3、それ以外は1)より後ろの追加サンプルは非関連アルファとし、
+    /// 値は画素・チャネルごとに変える。
     /// 実数は16/32/64bitのみIEEE形式で書き、それ以外の幅は整数のビット列を入れる(未対応の組み合わせ)。
     /// </summary>
     private static TiffBuilder.Page SamplePage(int photometric, int spp, int bits, int sampleFormat, bool compress)
@@ -579,7 +675,8 @@ public class TiffSpecTests
 
         var page = TiffBuilder.GrayPage(
             2, 1, bits, bytes, photometric: photometric, sampleFormat: sampleFormat, samplesPerPixel: spp);
-        int extra = spp - (photometric == 2 ? 3 : 1);
+        int colorChannels = photometric is 2 or 6 || (photometric == TiffLoader.PhotometricLinearRaw && spp >= 3) ? 3 : 1;
+        int extra = spp - colorChannels;
         if (extra > 0)
         {
             page.Tags[338] = (3, Enumerable.Repeat(2L, extra).ToArray()); // ExtraSamples = unassociated alpha
@@ -593,10 +690,16 @@ public class TiffSpecTests
         return page;
     }
 
-    /// <summary>本番経路で読み、開ければnull、開けなければエラー文を返す。</summary>
+    /// <summary>単一ページのクラシックTIFFとして本番経路で読み、開ければnull、開けなければエラー文を返す。</summary>
     private static string? LoadError(TiffBuilder.Page page)
     {
-        using var file = TempTiff.Write(new TiffBuilder().Build(page));
+        return LoadError(new TiffBuilder().Build(page));
+    }
+
+    /// <summary>TIFFのバイト列を本番経路で読み、開ければnull、開けなければエラー文を返す。</summary>
+    private static string? LoadError(byte[] tiff)
+    {
+        using var file = TempTiff.Write(tiff);
         try
         {
             ImageFileLoader.Load(file.Path).Luminance.Dispose();
@@ -605,6 +708,41 @@ public class TiffSpecTests
         catch (InvalidDataException ex)
         {
             return ex.Message;
+        }
+    }
+
+    /// <summary>
+    /// ページを格納形式ごとのTIFFにする。0=クラシック、1=BigTIFF、2=SubIFD(IFD0は縮小画像で、
+    /// 本体がSubIFDにある一般的なDNGの構成。WICはこのページに届かない)。
+    /// </summary>
+    private static byte[] ContainerTiff(int container, TiffBuilder.Page page)
+    {
+        if (container == 2)
+        {
+            var thumbnail = TiffBuilder.RgbPage(2, 2, new byte[12]);
+            thumbnail.Tags[254] = (4, new long[] { 1 });
+            thumbnail.SubIfds.Add(page);
+            return new TiffBuilder().Build(thumbnail);
+        }
+
+        return new TiffBuilder(bigTiff: container == 1).Build(page);
+    }
+
+    /// <summary>
+    /// 非圧縮ページ・圧縮ページのエラー文の組を調べ、矛盾を failures に加える。(1) 非圧縮のページの
+    /// エラー文は非圧縮を案内しない(自分の圧縮方式として「非圧縮(1)」と書くのは案内ではない)、
+    /// (2) 圧縮ページのエラー文が非圧縮を案内するなら、同じ構成の非圧縮ページは実際に開ける。
+    /// </summary>
+    private static void CheckUncompressedHint(string layout, string? uncompressed, string? compressed, List<string> failures)
+    {
+        if (uncompressed is not null && uncompressed.Replace("非圧縮(1)", "").Contains("非圧縮"))
+        {
+            failures.Add($"{layout} 非圧縮: {uncompressed}");
+        }
+
+        if (compressed is not null && compressed.Contains("非圧縮") && uncompressed is not null)
+        {
+            failures.Add($"{layout} 圧縮: {compressed} ／ 非圧縮も開けない: {uncompressed}");
         }
     }
 }

@@ -279,9 +279,10 @@ internal static class ImageFileLoader
         if (info.SamplesPerPixel != 1)
         {
             // WICは半精度のRGBを0〜1へ切り詰めてガンマを掛けた整数で返し(元の値に戻せない)、
-            // 16bit符号あり・24/64bitのRGBは復号自体に失敗する
+            // 16bit符号あり・24/64bitのRGBは復号自体に失敗し、BigTIFF・SubIFDには届かない
             return info.Photometric == 2 && info.SamplesPerPixel is 3 or 4
-                && (IsHalfFloatColor(info) || IsSignedInt16Color(info) || info.BitsPerSample is 24 or 64);
+                && (info.IsBigTiff || info.WicFrameIndex < 0
+                    || IsHalfFloatColor(info) || IsSignedInt16Color(info) || info.BitsPerSample is 24 or 64);
         }
 
         return info.IsBigTiff                       // WICはBigTIFFを開けない
@@ -370,6 +371,32 @@ internal static class ImageFileLoader
             : "";
     }
 
+    /// <summary>
+    /// 拒否の理由に添えるページの構成(例:「RGB・32bit実数×3サンプル・Deflate(8)」)。固定の案内の代わりに、
+    /// どの構成が読めなかったかを示す。
+    /// </summary>
+    /// <param name="info">ページのサンプル形式。</param>
+    /// <returns>表示用の文字列。</returns>
+    private static string DescribeLayout(TiffSampleInfo info)
+    {
+        string photometric = info.Photometric switch
+        {
+            0 => "グレー(WhiteIsZero)",
+            1 => "グレー",
+            2 => "RGB",
+            3 => "パレット",
+            5 => "CMYK",
+            6 => "YCbCr",
+            8 => "CIELab",
+            TiffLoader.PhotometricCfa => "CFA",
+            TiffLoader.PhotometricLinearRaw => "LinearRaw",
+            _ => $"Photometric={info.Photometric}",
+        };
+        string kind = info.SampleFormat switch { 2 => "符号あり整数", 3 => "実数", _ => "整数" };
+        string samples = info.SamplesPerPixel == 1 ? "" : $"×{info.SamplesPerPixel}サンプル";
+        return $"{photometric}・{info.BitsPerSample}bit{kind}{samples}・{TiffLoader.DescribeCompression(info.Compression)}";
+    }
+
     private static DecodedImage? TryDecodeNativeGray(
         string path, int pageIndex, TiffSampleInfo info, CancellationToken ct, IProgress<double>? progress)
     {
@@ -438,10 +465,13 @@ internal static class ImageFileLoader
     /// <exception cref="InvalidDataException">WICでは正しく読めない形式の場合。</exception>
     internal static void EnsureWicCapable(TiffSampleInfo info)
     {
+        // WICが読めない・現像してしまうページは、自前で復号できたものだけを開く。ここへ来たページには、
+        // 固定の「非圧縮のみ」ではなく構成を示し、非圧縮なら実際に読める場合だけ UncompressedHint を添える
         if (info.IsBigTiff)
         {
             throw new InvalidDataException(
-                "BigTIFFは非圧縮のグレースケール/CFAページのみ対応しています。");
+                $"BigTIFFのページ({DescribeLayout(info)})は未対応です{UncompressedHint(info)}。" +
+                "WICはBigTIFFを開けないため、自前で復号できる形式だけを読みます。");
         }
 
         if (!TiffLoader.IsWicCompression(info.Compression))
@@ -453,13 +483,15 @@ internal static class ImageFileLoader
         if (info.IsRawPhotometric)
         {
             throw new InvalidDataException(
-                "CFA/LinearRaw(DNG)は非圧縮のみ対応しています(可逆JPEG圧縮のDNGは未対応)。");
+                $"CFA/LinearRaw(DNG)のページ({DescribeLayout(info)})は未対応です{UncompressedHint(info)}。" +
+                "WICはCFA/LinearRawを現像してしまうため、自前で復号できる形式だけを読みます。");
         }
 
         if (info.WicFrameIndex < 0)
         {
             throw new InvalidDataException(
-                "このページ(SubIFD、またはImageJの連続スタック)は非圧縮の1サンプル/画素のみ対応しています。");
+                $"このページ(SubIFD、またはImageJの連続スタック。{DescribeLayout(info)})は未対応です" +
+                $"{UncompressedHint(info)}。WICはこのページを読めないため、自前で復号できる形式だけを読みます。");
         }
 
         if (info.SampleFormat is 5 or 6)
@@ -469,7 +501,8 @@ internal static class ImageFileLoader
 
         if (info.Photometric == 6 && info.Compression != 7)
         {
-            throw new InvalidDataException("非圧縮のYCbCr TIFFは未対応です(JPEG圧縮のYCbCrは読めます)。");
+            throw new InvalidDataException(
+                $"{TiffLoader.DescribeCompression(info.Compression)}のYCbCr TIFFは未対応です(JPEG圧縮のYCbCrは読めます)。");
         }
 
         if (info.Predictor == 2 && info.BitsPerSample == 32)

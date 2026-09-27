@@ -252,13 +252,13 @@ WICはこれらのページのサンプル形式を正しく返しません
 | 形式 | 経路 |
 | --- | --- |
 | 非圧縮 16bit グレー / CFA、ストリップ連続 | オンデマンド読み出し (巨大画像向け、メモリに展開しない) |
-| 非圧縮 8〜64bit グレー / CFA (10/12/14bit 詰め込み、24bit、64bit、符号あり、実数、タイル、BigTIFF、ImageJ 連続スタック)、WIC が読めない多チャネルのグレー、非圧縮の16bit実数・16bit符号あり整数・24bit・64bit の RGB | 自前で復号 |
+| 非圧縮 8〜64bit グレー / CFA (10/12/14bit 詰め込み、24bit、64bit、符号あり、実数、タイル、BigTIFF、ImageJ 連続スタック)、WIC が読めない多チャネルのグレー、非圧縮の16bit実数・16bit符号あり整数・24bit・64bit の RGB (BigTIFF・SubIFD では 8/16bit 符号なし整数以外の RGB) | 自前で復号 |
 | 圧縮 (LZW / ZIP / PackBits / JPEG / CCITT)、RGB、パレット、CMYK | WIC (Windows Imaging Component) |
 
 - **DNG / CFA**: `.dng` と Photometric=CFA の TIFF は現像せず、生の Bayer 値として開きます。
   CFAPattern から RGGB / BGGR / GRBG / GBRG を自動設定します (LinearRaw はモノクロ扱い)。
   IFD0 がサムネイルで本体が SubIFD にある一般的な DNG も本体を開きます。
-  可逆 JPEG 圧縮の DNG は未対応です (非圧縮のみ)。
+  可逆 JPEG 圧縮の DNG と、3 サンプルの LinearRaw (linear DNG) は未対応です (非圧縮で 1 サンプル/画素の CFA / LinearRaw のみ)。
 - **ビット深度**: 10/12/14bit 詰め込みはそのビット深度の画像として開きます (白点は 2^N−1)。
   24bit・64bit・符号あり整数・実数は 32bit TIFF と同じく値域から 16bit へ換算し、情報欄に表示します。
   16bit 符号あり整数・24bit・64bit の RGB は WIC が復号できないため非圧縮のみ対応です (圧縮されたものは理由付きのエラーにします)。
@@ -275,9 +275,10 @@ WICはこれらのページのサンプル形式を正しく返しません
   保存する形式) もアルファで割り戻さず、ファイルに書かれたサンプル値のまま読みます (16bit は 16bit のまま)。
 - **未対応の圧縮** (LZMA / Zstd / WebP / JPEG 2000 / JPEG XL / LERC など) は理由付きのエラーにします。
   WIC はこれらをエラーにせず真っ黒な画像として返すため、渡す前に弾いています。
-- **BigTIFF** は非圧縮のグレー / CFA のみ対応です (WIC は BigTIFF を開けません)。
+- **BigTIFF** は非圧縮で自前で復号できる形式のみ対応です (グレー / CFA / 多チャネルのグレーと、
+  8/16bit 符号なし整数以外の RGB。WIC は BigTIFF を開けません)。
 - 1bit / 2bit / 4bit のグレーは 8bit グレーとして開きます。パレット・CMYK・Lab は WIC の色変換結果を 8bit カラーとして表示します。
-  非圧縮の YCbCr、32bit サンプルの水平差分予測 (Predictor=2) は未対応です (実数差分 Predictor=3 は読めます)。
+  JPEG 圧縮以外の YCbCr (非圧縮・LZW・ZIP など)、32bit サンプルの水平差分予測 (Predictor=2) は未対応です (実数差分 Predictor=3 は読めます)。
 - Orientation タグは無視し、回転しません。比較画面のファイル名にも値域換算の説明を表示します。
 
 ### 11. 保存・書き出し
