@@ -184,28 +184,13 @@ internal static class ImageFileLoader
 
         if (sampleInfo is not null && NeedsNativeDecode(sampleInfo))
         {
-            EnsureDecodable(sampleInfo.Width, sampleInfo.Height, PixelFormats.Gray16);
-            if (TiffLoader.TryDecodeUncompressed(path, pageIndex, out RawImage? native,
-                    out SampleScaling? scaling, out string nativeReason, cancellationToken, progress))
+            DecodedImage? native = sampleInfo.SamplesPerPixel == 1
+                ? TryDecodeNativeGray(path, pageIndex, sampleInfo, cancellationToken, progress)
+                : TryDecodeNativeRgb(path, pageIndex, sampleInfo, cancellationToken, progress);
+            if (native is not null)
             {
-                try
-                {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    return new DecodedImage(native!, null)
-                    {
-                        PageCount = sampleInfo.PageCount,
-                        PageIndex = pageIndex,
-                        ValueNote = scaling?.Describe(sampleInfo.BitsPerSample),
-                    };
-                }
-                catch
-                {
-                    native!.Dispose();
-                    throw;
-                }
+                return native;
             }
-
-            AppLog.Info($"TIFFの自前復号は不可のためWICで開きます: {nativeReason}");
         }
 
         if (IsTiff(path) && reason.Length > 0)
@@ -266,15 +251,22 @@ internal static class ImageFileLoader
     }
 
     /// <summary>
-    /// WICでは正しく読めない非圧縮ページか。該当すれば <see cref="TiffLoader.TryDecodeUncompressed"/> で読む。
+    /// WICでは正しく読めない非圧縮ページか。該当すれば 1サンプル/画素は
+    /// <see cref="TiffLoader.TryDecodeUncompressed"/>、RGBは <see cref="TiffLoader.TryDecodeUncompressedRgb"/> で読む。
     /// </summary>
     /// <param name="info">ページのサンプル形式。</param>
     /// <returns>自前で復号すべきならtrue。</returns>
     internal static bool NeedsNativeDecode(TiffSampleInfo info)
     {
-        if (info.Compression != 1 || info.SamplesPerPixel != 1)
+        if (info.Compression != 1)
         {
             return false;
+        }
+
+        if (info.SamplesPerPixel != 1)
+        {
+            // WICは半精度のRGBを0〜1へ切り詰めてガンマを掛けた整数で返し、元の値に戻せない
+            return IsHalfFloatColor(info) && info.Photometric == 2 && info.SamplesPerPixel is 3 or 4;
         }
 
         return info.IsBigTiff                       // WICはBigTIFFを開けない
@@ -284,6 +276,75 @@ internal static class ImageFileLoader
             || info.BitsPerSample is 10 or 12 or 14 or 24 or 64
             || (info.SampleFormat == 2 && info.BitsPerSample == 8)
             || (info.SampleFormat == 3 && info.BitsPerSample == 64);
+    }
+
+    /// <summary>
+    /// 16bit実数(半精度)のカラーページか。WICはこれを0〜1へ切り詰めてsRGBのガンマを掛けた
+    /// 16bit整数(Rgb48/Rgba64)として返すため、1を超える値・負値・線形性が失われる
+    /// (グレーは生のビット列を返すので対象外)。
+    /// </summary>
+    /// <param name="info">ページのサンプル形式。</param>
+    /// <returns>該当すればtrue。</returns>
+    private static bool IsHalfFloatColor(TiffSampleInfo info)
+    {
+        return info.SampleFormat == 3 && info.BitsPerSample == 16 && info.Photometric is not (0 or 1);
+    }
+
+    private static DecodedImage? TryDecodeNativeGray(
+        string path, int pageIndex, TiffSampleInfo info, CancellationToken ct, IProgress<double>? progress)
+    {
+        EnsureDecodable(info.Width, info.Height, PixelFormats.Gray16);
+        if (!TiffLoader.TryDecodeUncompressed(path, pageIndex, out RawImage? native,
+                out SampleScaling? scaling, out string reason, ct, progress))
+        {
+            AppLog.Info($"TIFFの自前復号は不可のためWICで開きます: {reason}");
+            return null;
+        }
+
+        try
+        {
+            ct.ThrowIfCancellationRequested();
+            return new DecodedImage(native!, null)
+            {
+                PageCount = info.PageCount,
+                PageIndex = pageIndex,
+                ValueNote = scaling?.Describe(info.BitsPerSample),
+            };
+        }
+        catch
+        {
+            native!.Dispose();
+            throw;
+        }
+    }
+
+    private static DecodedImage? TryDecodeNativeRgb(
+        string path, int pageIndex, TiffSampleInfo info, CancellationToken ct, IProgress<double>? progress)
+    {
+        EnsureDecodable(info.Width, info.Height, PixelFormats.Rgb48);
+        if (!TiffLoader.TryDecodeUncompressedRgb(path, pageIndex, out ColorImage? color,
+                out SampleScaling? scaling, out string reason, ct, progress))
+        {
+            AppLog.Info($"TIFFの自前復号は不可です: {reason}");
+            return null;
+        }
+
+        RawImage luminance = color!.ToLuminance(ct);
+        try
+        {
+            ct.ThrowIfCancellationRequested();
+            return new DecodedImage(luminance, color)
+            {
+                PageCount = info.PageCount,
+                PageIndex = pageIndex,
+                ValueNote = scaling!.Describe(info.BitsPerSample),
+            };
+        }
+        catch
+        {
+            luminance.Dispose();
+            throw;
+        }
     }
 
     /// <summary>
@@ -334,6 +395,13 @@ internal static class ImageFileLoader
         if (info.Predictor == 2 && info.BitsPerSample == 32)
         {
             throw new InvalidDataException("32bitサンプルの水平差分予測(Predictor=2)は未対応です。");
+        }
+
+        if (IsHalfFloatColor(info))
+        {
+            throw new InvalidDataException(
+                "16bit実数(半精度)のカラーTIFFは非圧縮のRGBのみ対応しています" +
+                "(WICは値を0〜1に切り詰め、ガンマ変換した整数で返すため元の値に戻せません)。");
         }
 
         bool bitsOk = info.SampleFormat switch

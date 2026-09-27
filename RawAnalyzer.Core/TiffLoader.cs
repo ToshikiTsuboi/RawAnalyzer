@@ -87,7 +87,7 @@ public sealed record TiffSampleInfo(
 /// <remarks>
 /// 役割は3つ。(1) 非圧縮16bitグレーの連続配置を見つけて <see cref="RawLoader"/> に渡す、
 /// (2) WICが正しく扱えない非圧縮ページ(CFA、10/12/14/24/64bit、符号あり、BigTIFF、
-/// ImageJ仮想スタック)を自前で復号する、(3) WICへ渡す前にヘッダを検査して
+/// ImageJ仮想スタック、16bit実数のRGB)を自前で復号する、(3) WICへ渡す前にヘッダを検査して
 /// 「黙って壊れる」形式(未知の圧縮など)を弾く材料を返す。
 /// </remarks>
 public static unsafe class TiffLoader
@@ -420,6 +420,68 @@ public static unsafe class TiffLoader
             decoded?.Dispose();
             throw;
         }
+
+        image = decoded;
+        scaling = decodedScaling;
+        reason = why;
+        return ok;
+    }
+
+    /// <summary>
+    /// 非圧縮のRGBページ(3〜4サンプル/画素)を自前で復号し、値域から16bitコードへ写す。
+    /// </summary>
+    /// <remarks>
+    /// WICは16bit実数(半精度)のRGBを、0〜1へ切り詰めてsRGBのガンマを掛けた16bit整数
+    /// (Rgb48/Rgba64)として返すため、1を超える値・負値・線形性が失われる。元のサンプルを
+    /// 直接読んで、32bit実数のRGBと同じくRGBの3成分をまとめた値域で写す(チャネル間の比を保つ)。
+    /// 4番目のサンプル(アルファ)は値域にも出力にも入れない。
+    /// 対象は Photometric=RGB、BitsPerSample 8/16/24/32/64 のうちWICがそのまま読める
+    /// 16bit以下の符号なし整数を除く形式、チャンキー/プレーン分離、ストリップ/タイル、BigTIFF。
+    /// 非対応の形式は false と理由を返す。データ自体が壊れている場合は例外。
+    /// </remarks>
+    /// <param name="path">TIFFファイルのパス。</param>
+    /// <param name="pageIndex">ページ(0起点)。</param>
+    /// <param name="image">復号した画像(16bit)。</param>
+    /// <param name="scaling">16bitへ写した対応関係。</param>
+    /// <param name="reason">復号しなかった理由。</param>
+    /// <param name="cancellationToken">キャンセルトークン。</param>
+    /// <param name="progress">進捗(0〜1)。</param>
+    /// <returns>復号したらtrue。</returns>
+    /// <exception cref="InvalidDataException">ファイルが壊れている場合。</exception>
+    public static bool TryDecodeUncompressedRgb(
+        string path, int pageIndex, out ColorImage? image, out SampleScaling? scaling,
+        out string reason, CancellationToken cancellationToken = default,
+        IProgress<double>? progress = null)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(pageIndex);
+        cancellationToken.ThrowIfCancellationRequested();
+        ColorImage? decoded = null;
+        SampleScaling? decodedScaling = null;
+        string why = "";
+        bool ok = WithMappedFile(path, ref why, data =>
+        {
+            if (!TryParseHeader(data, out TiffHeader header, out string headerReason))
+            {
+                why = headerReason;
+                return false;
+            }
+
+            List<PageRef> pages = ReadPageTable(data, header, cancellationToken);
+            if ((uint)pageIndex >= (uint)pages.Count)
+            {
+                throw new ArgumentOutOfRangeException(nameof(pageIndex), "TIFFのページ範囲外です。");
+            }
+
+            PageLayout page = ReadPageLayout(data, header, pages[pageIndex]);
+            if (!IsNativelyDecodableRgb(page, out why))
+            {
+                return false;
+            }
+
+            decoded = DecodeRgbPage(data, header, page, cancellationToken, progress, out SampleScaling result);
+            decodedScaling = result;
+            return true;
+        }, rethrowInvalidData: true);
 
         image = decoded;
         scaling = decodedScaling;
@@ -1195,13 +1257,78 @@ public static unsafe class TiffLoader
         return true;
     }
 
+    private static bool IsNativelyDecodableRgb(PageLayout page, out string reason)
+    {
+        if (page.Compression != 1)
+        {
+            reason = $"圧縮ページ({DescribeCompression(page.Compression)})は自前では復号しません。";
+            return false;
+        }
+
+        if (page.Photometric != 2 || page.Spp is < 3 or > 4)
+        {
+            reason = $"RGB(3〜4サンプル/画素)のページのみ対象です(Photometric={page.Photometric}、SamplesPerPixel={page.Spp})。";
+            return false;
+        }
+
+        if (page.Planar is not (1 or 2))
+        {
+            reason = $"PlanarConfiguration={page.Planar} は未対応です。";
+            return false;
+        }
+
+        if (page.FillOrder != 1)
+        {
+            reason = $"FillOrder={page.FillOrder} は未対応です。";
+            return false;
+        }
+
+        bool formatOk = page.Format switch
+        {
+            1 => page.Bits is 24 or 32 or 64,
+            2 => page.Bits is 8 or 16 or 32 or 64,
+            3 => page.Bits is 16 or 32 or 64,
+            _ => false,
+        };
+        if (!formatOk)
+        {
+            reason = $"SampleFormat={page.Format} × {page.Bits}bit のRGBは対象外です。";
+            return false;
+        }
+
+        if (page.Width == 0 || page.Height == 0)
+        {
+            reason = "画像サイズが不正です。";
+            return false;
+        }
+
+        if ((long)page.Width * page.Height * 3 > Array.MaxLength)
+        {
+            reason = $"画像が大きすぎます({page.Width}×{page.Height})。";
+            return false;
+        }
+
+        reason = "";
+        return true;
+    }
+
     /// <summary>1行分のサンプルを処理するコールバック。</summary>
     private delegate void RowHandler(int y, int x0, int count, ReadOnlySpan<byte> bytes);
 
     /// <summary>ストリップ/タイルを順に辿り、行ごとにバイト列を渡す。</summary>
+    /// <param name="data">ファイル全体。</param>
+    /// <param name="page">ページ。</param>
+    /// <param name="handler">行ごとの処理。count は画素数(1画素に samplesPerPixel サンプル)。</param>
+    /// <param name="ct">キャンセルトークン。</param>
+    /// <param name="progress">進捗。</param>
+    /// <param name="progressStart">この走査の進捗の開始値。</param>
+    /// <param name="progressSpan">この走査の進捗の幅。</param>
+    /// <param name="samplesPerPixel">ストリップ/タイル内の1画素のサンプル数(チャンキーのRGBなら3〜4)。</param>
+    /// <param name="plane">プレーン分離(PlanarConfiguration=2)の成分番号。それ以外は0。</param>
     private static void ForEachRow(
         TiffBytes data, PageLayout page, RowHandler handler, CancellationToken ct,
-        IProgress<double>? progress, double progressStart, double progressSpan)
+        IProgress<double>? progress, double progressStart, double progressSpan,
+        int samplesPerPixel = 1, int plane = 0)
     {
         long[] offsets = page.Offsets;
         long[] counts = page.Counts;
@@ -1222,12 +1349,15 @@ public static unsafe class TiffLoader
             long tilesAcross = (page.Width + tileWidth - 1) / tileWidth;
             long tilesDown = (page.Height + tileHeight - 1) / tileHeight;
             long tileCount = tilesAcross * tilesDown;
-            if (offsets.Length < tileCount)
+
+            // プレーン分離では成分ごとに tileCount 枚ずつ並ぶ
+            long firstTile = plane * tileCount;
+            if (offsets.Length < firstTile + tileCount)
             {
                 throw new InvalidDataException("タイル数がタグと一致しません。");
             }
 
-            long tileRowBytes = ((long)tileWidth * page.Bits + 7) / 8;
+            long tileRowBytes = ((long)tileWidth * page.Bits * samplesPerPixel + 7) / 8;
             if (tileRowBytes > int.MaxValue)
             {
                 throw new InvalidDataException("タイル幅が大きすぎます。");
@@ -1240,14 +1370,16 @@ public static unsafe class TiffLoader
                 int y0 = (int)((t / tilesAcross) * tileHeight);
                 int rows = Math.Min(tileHeight, page.Height - y0);
                 int columns = Math.Min(tileWidth, page.Width - x0);
-                if (counts[t] < rows * tileRowBytes || offsets[t] < 0 || offsets[t] + (rows * tileRowBytes) > data.Length)
+                long tile = firstTile + t;
+                if (counts[tile] < rows * tileRowBytes || offsets[tile] < 0
+                    || offsets[tile] + (rows * tileRowBytes) > data.Length)
                 {
-                    throw new InvalidDataException($"タイル{t}がファイル範囲外、または短すぎます。");
+                    throw new InvalidDataException($"タイル{tile}がファイル範囲外、または短すぎます。");
                 }
 
                 for (int r = 0; r < rows; r++)
                 {
-                    handler(y0 + r, x0, columns, data.Slice(offsets[t] + (r * tileRowBytes), (int)tileRowBytes));
+                    handler(y0 + r, x0, columns, data.Slice(offsets[tile] + (r * tileRowBytes), (int)tileRowBytes));
                 }
 
                 progress?.Report(progressStart + (progressSpan * (t + 1) / tileCount));
@@ -1256,15 +1388,18 @@ public static unsafe class TiffLoader
             return;
         }
 
-        long rowBytes = ((long)page.Width * page.Bits + 7) / 8;
+        long rowBytes = ((long)page.Width * page.Bits * samplesPerPixel + 7) / 8;
         if (rowBytes > int.MaxValue)
         {
             throw new InvalidDataException("画像幅が大きすぎます。");
         }
 
-        long rowsPerStrip = page.RowsPerStrip <= 0 ? page.Height : page.RowsPerStrip;
+        long rowsPerStrip = page.RowsPerStrip <= 0 ? page.Height : Math.Min(page.RowsPerStrip, page.Height);
         long y = 0;
-        for (int s = 0; s < offsets.Length && y < page.Height; s++)
+
+        // プレーン分離では成分ごとに StripsPerImage 本ずつ並ぶ
+        long firstStrip = plane * ((page.Height + rowsPerStrip - 1) / rowsPerStrip);
+        for (long s = firstStrip; s < offsets.Length && y < page.Height; s++)
         {
             ct.ThrowIfCancellationRequested();
             long rows = Math.Min(rowsPerStrip, page.Height - y);
@@ -1450,6 +1585,63 @@ public static unsafe class TiffLoader
         return RawImage.FromPixels(
             new RawFormat { Width = width, Height = height, BitDepth = 16, Bayer = page.Bayer },
             codes);
+    }
+
+    private static ColorImage DecodeRgbPage(
+        TiffBytes data, TiffHeader header, PageLayout page, CancellationToken ct,
+        IProgress<double>? progress, out SampleScaling scaling)
+    {
+        int width = page.Width;
+        int height = page.Height;
+        bool bigEndian = header.BigEndian;
+
+        // チャンキーは1回の走査で1画素にsppサンプル、プレーン分離はR/G/Bを1成分ずつ走査する
+        bool planar = page.Planar == 2;
+        int samplesPerPixel = planar ? 1 : page.Spp;
+        int channelsPerPass = planar ? 1 : 3;
+        int planes = planar ? 3 : 1;
+        var values = new ulong[(long)width * samplesPerPixel];
+
+        // 1パス目: RGBの3成分をまとめた値域(アルファは入れない)
+        var accumulator = new SampleRangeAccumulator();
+        for (int plane = 0; plane < planes; plane++)
+        {
+            ForEachRow(data, page, (y, x0, count, bytes) =>
+            {
+                UnpackRow(bytes, count * samplesPerPixel, page.Bits, bigEndian, values);
+                for (int i = 0; i < count; i++)
+                {
+                    for (int c = 0; c < channelsPerPass; c++)
+                    {
+                        accumulator.Add(ToValue(values[(i * samplesPerPixel) + c], page.Bits, page.Format));
+                    }
+                }
+            }, ct, progress, 0.5 * plane / planes, 0.5 / planes, samplesPerPixel, plane);
+        }
+
+        // 2パス目: 16bitコードへ写してRGBのインターリーブへ置く
+        SampleScaling result = SampleScaling.FromRange(accumulator.ToRange());
+        var codes = new ushort[(long)width * height * 3];
+        for (int plane = 0; plane < planes; plane++)
+        {
+            int firstChannel = plane;
+            ForEachRow(data, page, (y, x0, count, bytes) =>
+            {
+                UnpackRow(bytes, count * samplesPerPixel, page.Bits, bigEndian, values);
+                long index = (((long)y * width) + x0) * 3;
+                for (int i = 0; i < count; i++)
+                {
+                    for (int c = 0; c < channelsPerPass; c++)
+                    {
+                        codes[index + (i * 3) + firstChannel + c] =
+                            result.ToCode(ToValue(values[(i * samplesPerPixel) + c], page.Bits, page.Format));
+                    }
+                }
+            }, ct, progress, 0.5 + (0.5 * plane / planes), 0.5 / planes, samplesPerPixel, plane);
+        }
+
+        scaling = result;
+        return ColorImage.FromInterleaved(width, height, 16, codes);
     }
 
     // ------------------------------------------------------------------ メモリ上の読み込み(先頭ページ)

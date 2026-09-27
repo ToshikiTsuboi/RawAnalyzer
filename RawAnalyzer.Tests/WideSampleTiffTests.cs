@@ -11,7 +11,8 @@ namespace RawAnalyzer.Tests;
 /// <remarks>
 /// WICは32bitのページをサンプル形式によらずGray32Floatとして返し、整数のビット列を
 /// そのまま実数として渡してくる。ファイルのSampleFormatで解釈することを実ファイルで
-/// 確かめる。16bit実数はWICが正しく変換するので従来経路のままであることも確認する。
+/// 確かめる。16bit実数(半精度)のグレーもWICは生のビット列をGray16で返すが、RGBは
+/// 0〜1へ切り詰めてガンマを掛けた整数(Rgb48)にしてしまうため、非圧縮なら自前で読む。
 /// </remarks>
 public class WideSampleTiffTests
 {
@@ -35,6 +36,17 @@ public class WideSampleTiffTests
         for (int i = 0; i < values.Length; i++)
         {
             BinaryPrimitives.WriteInt32LittleEndian(bytes.AsSpan(i * 4), values[i]);
+        }
+
+        return bytes;
+    }
+
+    private static byte[] HalfSamples(params float[] values)
+    {
+        var bytes = new byte[values.Length * 2];
+        for (int i = 0; i < values.Length; i++)
+        {
+            BinaryPrimitives.WriteHalfLittleEndian(bytes.AsSpan(i * 2), (Half)values[i]);
         }
 
         return bytes;
@@ -145,6 +157,150 @@ public class WideSampleTiffTests
             decoded.Luminance.GetPixel(1, 0) > decoded.Luminance.GetPixel(0, 0),
             "階調が単調に増えること");
         Assert.NotNull(decoded.ValueNote);
+    }
+
+    [Fact]
+    public void Float16Rgb_KeepsSampleValues()
+    {
+        // WICは半精度RGBを0〜1へ切り詰めてガンマを掛けたRgb48にするため、
+        // 生のビット列として読み直すと (65535,65436,0) のような値になっていた
+        var page = TiffBuilder.GrayPage(
+            1, 1, 16, HalfSamples(0.25f, 0.5f, 0.75f), photometric: 2, sampleFormat: 3, samplesPerPixel: 3);
+
+        DecodedImage decoded = Load(page);
+        using RawImage owned = decoded.Luminance;
+
+        Assert.NotNull(decoded.Color);
+        decoded.Color!.GetPixel(0, 0, out ushort r, out ushort g, out ushort b);
+        Assert.Equal(16384, r);
+        Assert.Equal(32768, g);
+        Assert.Equal(49151, b);
+        Assert.Equal("16bit実数 0〜1 → 16bit", decoded.ValueNote);
+    }
+
+    [Theory]
+    [InlineData(3, false, false)]
+    [InlineData(4, false, false)]
+    [InlineData(3, true, false)]
+    [InlineData(4, true, false)]
+    [InlineData(3, false, true)]
+    public void Float16Rgb_ScalesLikeFloat32Rgb(int samplesPerPixel, bool planar, bool tiled)
+    {
+        // 1を超える値と負値を含む3×2画像。同じ値の32bit実数RGB(WICが生のビット列を返す経路)と
+        // 同じコード・同じ換算になること。アルファ(4サンプル目)は値域に入れない
+        const int width = 3;
+        const int height = 2;
+        float[] rgb =
+        {
+            2f, -0.5f, 100f, 0f, 1f, 50f, 0.25f, 0.75f, -2f,
+            8f, 16f, 32f, 3f, 5f, 7f, 0.125f, 64f, -1f,
+        };
+        var samples = new float[width * height * samplesPerPixel];
+        for (int i = 0; i < width * height; i++)
+        {
+            for (int c = 0; c < samplesPerPixel; c++)
+            {
+                samples[(i * samplesPerPixel) + c] = c < 3 ? rgb[(i * 3) + c] : 1000f;
+            }
+        }
+
+        TiffBuilder.Page half = tiled
+            ? TiledRgbPage(width, height, samplesPerPixel, HalfSamples(samples), 2, 2)
+            : planar
+                ? PlanarRgbPage(width, height, samplesPerPixel, samples)
+                : TiffBuilder.GrayPage(width, height, 16, HalfSamples(samples),
+                    photometric: 2, sampleFormat: 3, samplesPerPixel: samplesPerPixel);
+        if (samplesPerPixel == 4)
+        {
+            half.Tags[338] = (3, new long[] { 2 }); // ExtraSamples = unassociated alpha
+        }
+
+        var single = TiffBuilder.GrayPage(
+            width, height, 32, FloatSamples(rgb), photometric: 2, sampleFormat: 3, samplesPerPixel: 3);
+
+        DecodedImage expected = Load(single);
+        using RawImage expectedOwned = expected.Luminance;
+        DecodedImage actual = Load(half);
+        using RawImage actualOwned = actual.Luminance;
+
+        Assert.NotNull(actual.Color);
+        for (int y = 0; y < height; y++)
+        {
+            for (int x = 0; x < width; x++)
+            {
+                expected.Color!.GetPixel(x, y, out ushort er, out ushort eg, out ushort eb);
+                actual.Color!.GetPixel(x, y, out ushort ar, out ushort ag, out ushort ab);
+                Assert.Equal((er, eg, eb), (ar, ag, ab));
+                Assert.Equal(expected.Luminance.GetPixel(x, y), actual.Luminance.GetPixel(x, y));
+            }
+        }
+
+        Assert.Equal("32bit値 -2〜100 → 16bit (1code≈0.00156)", expected.ValueNote);
+        Assert.Equal("16bit値 -2〜100 → 16bit (1code≈0.00156)", actual.ValueNote);
+    }
+
+    [Fact]
+    public void Float16Rgb_Compressed_IsRejectedWithReason()
+    {
+        // 圧縮ページは自前では復号できず、WICの返す値は切り詰め・ガンマ変換済みで元に戻せない
+        var page = TiffBuilder.GrayPage(
+            1, 1, 16, HalfSamples(0.25f, 0.5f, 0.75f), photometric: 2, sampleFormat: 3, samplesPerPixel: 3);
+        Deflate(page);
+        using var file = TempTiff.Write(new TiffBuilder().Build(page));
+
+        var ex = Assert.Throws<InvalidDataException>(() => ImageFileLoader.Load(file.Path));
+        Assert.Contains("半精度", ex.Message);
+    }
+
+    /// <summary>PlanarConfiguration=2(成分ごとに1ストリップ)の半精度RGB(A)ページ。</summary>
+    private static TiffBuilder.Page PlanarRgbPage(int width, int height, int samplesPerPixel, float[] interleaved)
+    {
+        var page = TiffBuilder.GrayPage(width, height, 16, HalfSamples(interleaved),
+            photometric: 2, sampleFormat: 3, samplesPerPixel: samplesPerPixel);
+        page.Blocks.Clear();
+        int pixels = width * height;
+        for (int c = 0; c < samplesPerPixel; c++)
+        {
+            var plane = new float[pixels];
+            for (int i = 0; i < pixels; i++)
+            {
+                plane[i] = interleaved[(i * samplesPerPixel) + c];
+            }
+
+            page.Blocks.Add(HalfSamples(plane));
+        }
+
+        page.Tags[284] = (3, new long[] { 2 });
+        return page;
+    }
+
+    /// <summary>チャンキーの半精度RGB(A)をタイルにしたページ(1画素ぶんのバイト列をタイルへ並べ、タグをRGBへ直す)。</summary>
+    private static TiffBuilder.Page TiledRgbPage(
+        int width, int height, int samplesPerPixel, byte[] samples, int tileWidth, int tileHeight)
+    {
+        var page = TiffBuilder.TiledGrayPage(width, height, 16 * samplesPerPixel, samples, tileWidth, tileHeight);
+        page.Tags[258] = (3, Enumerable.Repeat(16L, samplesPerPixel).ToArray());
+        page.Tags[262] = (3, new long[] { 2 });
+        page.Tags[277] = (3, new long[] { samplesPerPixel });
+        page.Tags[339] = (3, Enumerable.Repeat(3L, samplesPerPixel).ToArray());
+        return page;
+    }
+
+    /// <summary>各ストリップ/タイルをzlibで圧縮し、Compression=8(Deflate)にする。</summary>
+    private static void Deflate(TiffBuilder.Page page)
+    {
+        for (int i = 0; i < page.Blocks.Count; i++)
+        {
+            using var output = new MemoryStream();
+            using (var zlib = new System.IO.Compression.ZLibStream(output, System.IO.Compression.CompressionLevel.Optimal, leaveOpen: true))
+            {
+                zlib.Write(page.Blocks[i]);
+            }
+
+            page.Blocks[i] = output.ToArray();
+        }
+
+        page.Tags[259] = (3, new long[] { 8 });
     }
 
     /// <summary>単一ページのリトルエンディアンTIFFを一時ファイルに書き、本番経路で読み込む。</summary>
