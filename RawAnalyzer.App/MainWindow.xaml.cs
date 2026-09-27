@@ -2857,8 +2857,9 @@ public partial class MainWindow : Window
             && ReferenceEquals(source, _currentImage);
     }
 
-    // HDR派生ビュー(分割・合成)の元にした元画像のフレーム。派生ビューがある間だけ参照する
-    private int _hdrSourceFrame;
+    // HDR派生ビュー(分割・合成)の元にした元画像のフレーム。
+    // 派生ビューの計算とRaw表示への復帰(表示し直すフレーム)で参照する
+    private readonly HdrSourceFrame _hdrSourceFrame = new();
 
     /// <summary>
     /// HDR分割・合成の元にする元画像のフレーム番号を決めて控える。
@@ -2871,12 +2872,7 @@ public partial class MainWindow : Window
     /// <returns>元画像のフレーム番号。</returns>
     private int CaptureHdrSourceFrame()
     {
-        if (_derivedImage is null)
-        {
-            _hdrSourceFrame = Viewport.Frame;
-        }
-
-        return _hdrSourceFrame;
+        return _hdrSourceFrame.Capture(Viewport.Frame, derivedViewShown: _derivedImage is not null);
     }
 
     private async Task EnterHdrSplitAsync()
@@ -3132,7 +3128,12 @@ public partial class MainWindow : Window
         SyncLevelControlsToActiveBitDepth();
         _derivedBayerPyramid?.Dispose();
         _derivedBayerPyramid = null;
-        Viewport.SetImage(_currentImage!, _currentFormat!);
+
+        // HDR表示の元にしたフレームを表示し直す(既定のフレーム0へ戻すと、分割・合成した
+        // 撮影とは別のフレームになる)。シーケンスUIは下の DetectSequence が表示フレームに合わせる
+        Viewport.SetImage(
+            _currentImage!, _currentFormat!,
+            _hdrSourceFrame.ResolveRestoreFrame(_currentImage!.FrameCount));
 
         // 生成元フレームを偽らずに渡す(別フレーム産はレンダラ側で使われない)
         Viewport.SetPyramid(_mainPyramid, _mainPyramidFrame);
