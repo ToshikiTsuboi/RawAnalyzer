@@ -184,9 +184,10 @@ internal static class ImageFileLoader
 
         if (sampleInfo is not null && NeedsNativeDecode(sampleInfo))
         {
-            DecodedImage? native = sampleInfo.SamplesPerPixel == 1
-                ? TryDecodeNativeGray(path, pageIndex, sampleInfo, cancellationToken, progress)
-                : TryDecodeNativeRgb(path, pageIndex, sampleInfo, cancellationToken, progress);
+            // 多チャネルのグレーは先頭チャネルだけのグレーとして読む
+            DecodedImage? native = sampleInfo.SamplesPerPixel != 1 && sampleInfo.Photometric == 2
+                ? TryDecodeNativeRgb(path, pageIndex, sampleInfo, cancellationToken, progress)
+                : TryDecodeNativeGray(path, pageIndex, sampleInfo, cancellationToken, progress);
             if (native is not null)
             {
                 return native;
@@ -251,7 +252,7 @@ internal static class ImageFileLoader
     }
 
     /// <summary>
-    /// WICでは正しく読めない非圧縮ページか。該当すれば 1サンプル/画素は
+    /// WICでは正しく読めない非圧縮ページか。該当すれば 1サンプル/画素と多チャネルのグレーは
     /// <see cref="TiffLoader.TryDecodeUncompressed"/>、RGBは <see cref="TiffLoader.TryDecodeUncompressedRgb"/> で読む。
     /// </summary>
     /// <param name="info">ページのサンプル形式。</param>
@@ -261,6 +262,18 @@ internal static class ImageFileLoader
         if (info.Compression != 1)
         {
             return false;
+        }
+
+        if (info.SamplesPerPixel != 1 && info.Photometric is 0 or 1)
+        {
+            // 多チャネルのグレー(グレー+アルファなど)。WICは32bit・10/12/14/24/64bitの多チャネルを
+            // 読めず(32bitは3サンプル以上と、2サンプルで追加サンプルが未指定のものが読込エラー)、
+            // BigTIFF・SubIFDには届かない。自前復号は先頭チャネルだけを読む
+            return info.IsBigTiff
+                || info.WicFrameIndex < 0
+                || info.BitsPerSample is 10 or 12 or 14 or 24 or 32 or 64
+                || WicMisreadsGray(info)
+                || WicBreaksWhiteIsZero(info);
         }
 
         if (info.SamplesPerPixel != 1)
@@ -293,6 +306,29 @@ internal static class ImageFileLoader
         return info.Photometric == 0
             && ((info.SampleFormat == 3 && info.BitsPerSample == 16)
                 || (info.SampleFormat != 3 && info.BitsPerSample == 32));
+    }
+
+    /// <summary>
+    /// WICが多チャネルのグレーを復号できない、または誤った値で返す構成か。
+    /// 32bitは3サンプル以上と、2サンプルで追加サンプルが未指定(ExtraSamples=0)のものが読込エラーになる。
+    /// 8bitの3サンプルは、ExtraSamplesがあれば読込エラー、なければRGBとして返し(先頭チャネルはRに入る)、
+    /// WhiteIsZeroを反転しない。
+    /// </summary>
+    /// <param name="info">ページのサンプル形式。</param>
+    /// <returns>該当すればtrue。</returns>
+    private static bool WicMisreadsGray(TiffSampleInfo info)
+    {
+        if (info.Photometric is not (0 or 1) || info.SamplesPerPixel < 2)
+        {
+            return false;
+        }
+
+        return info.BitsPerSample switch
+        {
+            32 => info.SamplesPerPixel >= 3 || info.ExtraSampleType == 0,
+            8 => info.SamplesPerPixel == 3 && (info.ExtraSampleType >= 0 || info.Photometric == 0),
+            _ => false,
+        };
     }
 
     /// <summary>
@@ -465,6 +501,13 @@ internal static class ImageFileLoader
                 $"{UncompressedHint(info)}。WICの白黒反転では値が壊れます。");
         }
 
+        if (WicMisreadsGray(info))
+        {
+            throw new InvalidDataException(
+                $"{info.BitsPerSample}bit×{info.SamplesPerPixel}サンプルのグレーの{compression}TIFFは未対応です" +
+                $"{UncompressedHint(info)}。WICはこの構成を正しく復号できません。");
+        }
+
         bool bitsOk = info.SampleFormat switch
         {
             2 => info.BitsPerSample is 8 or 16 or 32,
@@ -530,17 +573,17 @@ internal static class ImageFileLoader
             return null;
         }
 
+        // グレー+アルファなど多チャネルのグレーは、先頭チャネルだけをグレーとして開く(DecodeFrameと同じ)。
+        // WICはこれをRGBA(R=G=B=グレー)や先頭チャネルだけのグレーに展開して返すため、
+        // 1画素のサンプル数は元のSamplesPerPixelではなくWICの画素幅から求める(5サンプル以上でも同じ)
         int channels = info.SamplesPerPixel;
-        if (channels is < 1 or > 4)
+        bool gray = channels == 1 || info.Photometric is 0 or 1;
+        if (channels < 1 || (!gray && channels > 4))
         {
             throw new NotSupportedException(
                 $"1画素あたり{channels}サンプルのTIFFには対応していません。");
         }
 
-        // グレー+アルファなど多チャネルのグレーは、先頭チャネルだけをグレーとして開く(DecodeFrameと同じ)。
-        // WICはこれをRGBA(R=G=B=グレー)や先頭チャネルだけのグレーに展開して返すため、
-        // 1画素のサンプル数は元のSamplesPerPixelではなくWICの画素幅から求める
-        bool gray = channels == 1 || info.Photometric is 0 or 1;
         int decodedChannels = format.BitsPerPixel / info.BitsPerSample;
         bool layoutOk = format.BitsPerPixel % info.BitsPerSample == 0
             && (gray
@@ -579,10 +622,12 @@ internal static class ImageFileLoader
             frame, width, height, decodedChannels, info.BitsPerSample / 8,
             interpretation == SampleInterpretation.SignedInteger, ct, progress);
 
-        // 出力のチャネルへ詰め直す。グレーは先頭チャネル、カラーはRGB。WICは8bitのRGBを
-        // B,G,Rの順(Bgr24/Bgra32/Pbgra32)で返すので、DecodeFrameと同じくRGBの順へ並べ直す。
+        // 出力のチャネルへ詰め直す。グレーは先頭チャネル、カラーはRGB。WICは8bitをB,G,Rの順
+        // (Bgr24/Bgra32/Pbgra32)で返すので、カラーはDecodeFrameと同じくRGBの順へ並べ直し、グレーは
+        // Rの位置を先頭チャネルとして拾う(グレー+アルファはR=G=Bだが、ExtraSamplesのない8bitの
+        // 3サンプルのグレーはWICがRGBとして返し、先頭チャネルはRにだけ入る)。
         // アルファなど残りのチャネルは値域にも出力にも入れない
-        bool bgr = !gray && IsBgrOrder(format);
+        bool bgr = IsBgrOrder(format);
         if (decodedChannels != outputChannels || bgr)
         {
             int red = bgr ? 2 : 0;
@@ -597,7 +642,7 @@ internal static class ImageFileLoader
                 long source = i * decodedChannels;
                 if (gray)
                 {
-                    bits[i] = bits[source];
+                    bits[i] = bits[source + red];
                     continue;
                 }
 

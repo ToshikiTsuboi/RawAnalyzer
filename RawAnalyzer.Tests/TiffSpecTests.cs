@@ -363,6 +363,30 @@ public class TiffSpecTests
     }
 
     [Fact]
+    public void BigTiff_GrayWithAlpha_OpensFirstChannel()
+    {
+        // WICはBigTIFFを開けない。非圧縮のグレー+アルファも自前で先頭チャネルを読む
+        // (以前は非圧縮のグレーなのに「BigTIFFは非圧縮のグレースケール/CFAページのみ対応しています」だった)
+        byte[] ramp = Ramp16();
+        var samples = new byte[W * H * 4];
+        for (int i = 0; i < W * H; i++)
+        {
+            ramp.AsSpan(i * 2, 2).CopyTo(samples.AsSpan(i * 4));
+            BinaryPrimitives.WriteUInt16LittleEndian(samples.AsSpan((i * 4) + 2), 50000);
+        }
+
+        var page = TiffBuilder.GrayPage(W, H, 16, samples, samplesPerPixel: 2);
+        page.Tags[338] = (3, new long[] { 2 }); // ExtraSamples = unassociated alpha
+        using var file = TempTiff.Write(new TiffBuilder(bigTiff: true).Build(page));
+
+        DecodedImage decoded = ImageFileLoader.Load(file.Path);
+        using RawImage image = decoded.Luminance;
+        Assert.Null(decoded.Color);
+        Assert.Equal(16, image.Format.BitDepth);
+        AssertRamp16(image);
+    }
+
+    [Fact]
     public void StripsOutOfOrder_BigTiff_AreReassembled()
     {
         var page = TiffBuilder.GrayPage(W, H, 16, Ramp16(), rowsPerStrip: 1);

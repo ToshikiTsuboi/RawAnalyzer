@@ -68,6 +68,15 @@ public sealed record TiffSampleInfo(
     /// <summary>Predictorタグ(1=なし、2=水平差分、3=実数差分)。</summary>
     public int Predictor { get; init; } = 1;
 
+    /// <summary>
+    /// ExtraSamplesタグの先頭の値(0=未指定、1=関連アルファ、2=非関連アルファ)。タグがなければ-1。
+    /// </summary>
+    /// <remarks>
+    /// WICは多チャネルのグレーをこの値で読み分け、組み合わせによっては復号に失敗する
+    /// (32bitの2サンプルで0=未指定、8bitの3サンプルで指定あり)。
+    /// </remarks>
+    public int ExtraSampleType { get; init; } = -1;
+
     /// <summary>CFA(32803)またはLinearRaw(34892)か。</summary>
     public bool IsRawPhotometric => Photometric is TiffLoader.PhotometricCfa or TiffLoader.PhotometricLinearRaw;
 
@@ -87,7 +96,8 @@ public sealed record TiffSampleInfo(
 /// <remarks>
 /// 役割は3つ。(1) 非圧縮16bitグレーの連続配置を見つけて <see cref="RawLoader"/> に渡す、
 /// (2) WICが正しく扱えない非圧縮ページ(CFA、10/12/14/24/64bit、符号あり、BigTIFF、
-/// ImageJ仮想スタック、16bit実数・16bit符号あり・24/64bitのRGB)を自前で復号する、(3) WICへ渡す前にヘッダを検査して
+/// ImageJ仮想スタック、16bit実数・16bit符号あり・24/64bitのRGB、32bitなどの多チャネルのグレー)を
+/// 自前で復号する、(3) WICへ渡す前にヘッダを検査して
 /// 「黙って壊れる」形式(未知の圧縮など)を弾く材料を返す。
 /// </remarks>
 public static unsafe class TiffLoader
@@ -111,6 +121,7 @@ public static unsafe class TiffLoader
     private const ushort TagTileOffsets = 324;
     private const ushort TagTileByteCounts = 325;
     private const ushort TagSubIfds = 330;
+    private const ushort TagExtraSamples = 338;
     private const ushort TagSampleFormat = 339;
     private const ushort TagCfaRepeatPatternDim = 33421;
     private const ushort TagCfaPattern = 33422;
@@ -129,6 +140,9 @@ public static unsafe class TiffLoader
 
     /// <summary>1つのIFDから辿るSubIFDの上限。</summary>
     private const int MaxSubIfds = 16;
+
+    /// <summary>扱う1画素あたりのサンプル数の上限。</summary>
+    private const int MaxSamplesPerPixel = 8;
 
     /// <summary>
     /// WICのTIFFデコーダが扱える圧縮方式。これ以外を渡すと、WICはエラーにせず
@@ -316,7 +330,7 @@ public static unsafe class TiffLoader
             }
 
             PageLayout page = ReadPageLayout(data, header, pages[pageIndex]);
-            if (page.Bits == 0 || page.Bits > 64 || page.Spp == 0 || page.Spp > 8)
+            if (page.Bits == 0 || page.Bits > 64 || page.Spp == 0 || page.Spp > MaxSamplesPerPixel)
             {
                 why = $"BitsPerSample={page.Bits}、SamplesPerPixel={page.Spp} は扱えません。";
                 return false;
@@ -333,6 +347,7 @@ public static unsafe class TiffLoader
                 Bayer = page.Bayer,
                 IsVirtualPage = pages[pageIndex].Virtual,
                 Predictor = page.Predictor,
+                ExtraSampleType = page.ExtraSample,
             };
             return true;
         });
@@ -357,12 +372,14 @@ public static unsafe class TiffLoader
     }
 
     /// <summary>
-    /// 非圧縮の1サンプル/画素ページを自前で復号する。
+    /// 非圧縮の1サンプル/画素ページ(と多チャネルのグレーの先頭チャネル)を自前で復号する。
     /// </summary>
     /// <remarks>
     /// 対象は BitsPerSample 8/10/12/14/16/24/32/64、SampleFormat 1〜3、
     /// Photometric 0/1/CFA/LinearRaw、ストリップ(順不同可)またはタイル、BigTIFF、
-    /// ImageJの仮想ページ。16bit以下の符号なし整数はそのビット深度のまま
+    /// ImageJの仮想ページ。グレー(Photometric 0/1)は多チャネル(グレー+アルファなど、
+    /// チャンキー/プレーン分離)でもよく、先頭チャネルだけを読む(残りは値域にも出力にも入れない)。
+    /// 16bit以下の符号なし整数はそのビット深度のまま
     /// (value &lt;&lt; (16-N))、それ以外は値域を調べて16bitコードへ写し、
     /// 対応関係を <paramref name="scaling"/> で返す。
     /// WhiteIsZero(Photometric=0)は、整数を全ビット反転(符号なしは 最大値−v、符号ありは −1−v)、
@@ -511,7 +528,7 @@ public static unsafe class TiffLoader
             Format: info.SampleFormat, Compression: 1, Photometric: info.Photometric, Planar: 1, FillOrder: 1,
             Tiled: false, TileWidth: 0, TileHeight: 0, RowsPerStrip: info.Height,
             Offsets: Array.Empty<long>(), Counts: Array.Empty<long>(), Bayer: info.Bayer, Virtual: false,
-            Predictor: 1);
+            Predictor: 1, ExtraSample: info.ExtraSampleType);
         return info.Photometric == 2
             ? IsNativelyDecodableRgb(page, out _)
             : IsNativelyDecodable(page, out _);
@@ -1035,11 +1052,11 @@ public static unsafe class TiffLoader
 
     // ------------------------------------------------------------------ ページ構造
 
-    /// <summary>1ページのタグを解釈した結果。</summary>
+    /// <summary>1ページのタグを解釈した結果。ExtraSample は ExtraSamples の先頭の値(なければ-1)。</summary>
     private sealed record PageLayout(
         int Width, int Height, int Bits, int Spp, int Format, int Compression, int Photometric,
         int Planar, int FillOrder, bool Tiled, int TileWidth, int TileHeight, long RowsPerStrip,
-        long[] Offsets, long[] Counts, BayerPattern Bayer, bool Virtual, int Predictor);
+        long[] Offsets, long[] Counts, BayerPattern Bayer, bool Virtual, int Predictor, int ExtraSample);
 
     private static PageLayout ReadPageLayout(TiffBytes data, TiffHeader header, PageRef page)
     {
@@ -1090,7 +1107,26 @@ public static unsafe class TiffLoader
             (int)format, (int)Math.Clamp(compression, 0, int.MaxValue), (int)Math.Clamp(photometric, 0, int.MaxValue),
             (int)planar, (int)fillOrder, tiled,
             (int)Math.Clamp(tileWidth, 0, int.MaxValue), (int)Math.Clamp(tileLength, 0, int.MaxValue),
-            rowsPerStrip, offsets, counts, bayer, page.Virtual, (int)Math.Clamp(predictor, 0, int.MaxValue));
+            rowsPerStrip, offsets, counts, bayer, page.Virtual, (int)Math.Clamp(predictor, 0, int.MaxValue),
+            ReadFirstExtraSample(entries, data, header));
+    }
+
+    /// <summary>
+    /// ExtraSamples の先頭の値(0=未指定、1=関連アルファ、2=非関連アルファ)。タグがなければ-1。
+    /// 画素の読み出しには使わないので、タグが壊れていても読込自体は止めずに-1とする。
+    /// </summary>
+    private static int ReadFirstExtraSample(List<IfdEntry> entries, TiffBytes data, TiffHeader header)
+    {
+        try
+        {
+            return GetScalar(entries, data, TagExtraSamples, header) is { } value && value is >= 0 and <= int.MaxValue
+                ? (int)value
+                : -1;
+        }
+        catch (InvalidDataException)
+        {
+            return -1;
+        }
     }
 
     /// <summary>CFARepeatPatternDim=2×2 の CFAPattern(0=R,1=G,2=B) を Bayer 配列へ写す。</summary>
@@ -1232,9 +1268,12 @@ public static unsafe class TiffLoader
             return false;
         }
 
-        if (page.Spp != 1)
+        // 多チャネルはグレー(グレー+アルファなど)だけを対象に、先頭チャネルを読む。CFA/LinearRawは1サンプルのみ
+        if (page.Spp != 1
+            && (page.Spp is < 1 or > MaxSamplesPerPixel || page.Photometric is not (0 or 1) || page.Planar is not (1 or 2)))
         {
-            reason = $"1サンプル/画素のページのみ自前で復号します(SamplesPerPixel={page.Spp})。";
+            reason = "1サンプル/画素のページと、多チャネルのグレー(チャンキー/プレーン分離)のみ自前で復号します" +
+                $"(SamplesPerPixel={page.Spp}、Photometric={page.Photometric}、PlanarConfiguration={page.Planar})。";
             return false;
         }
 
@@ -1564,8 +1603,12 @@ public static unsafe class TiffLoader
         // サンプル形式・幅や読み込み経路で白黒が逆転しないようにする
         bool invertBits = page.Photometric == 0 && page.Format != 3;
         bool invertValue = page.Photometric == 0 && page.Format == 3;
+
+        // 多チャネルのグレーは先頭チャネルだけを読む。チャンキーは1画素に Spp サンプル並ぶので
+        // stride おきに拾い、プレーン分離は先頭プレーンだけを走査する(残りのチャネルは値域にも入れない)
+        int stride = page.Planar == 2 ? 1 : page.Spp;
         var codes = new ushort[(long)width * height];
-        var values = new ulong[width];
+        var values = new ulong[(long)width * stride];
 
         // 16bit以下の符号なし整数はビット深度を保ったまま内部表現へ
         if (page.Format == 1 && page.Bits <= 16)
@@ -1574,14 +1617,15 @@ public static unsafe class TiffLoader
             ulong max = (1UL << page.Bits) - 1;
             ForEachRow(data, page, (y, x0, count, bytes) =>
             {
-                UnpackRow(bytes, count, page.Bits, bigEndian, values);
+                UnpackRow(bytes, count * stride, page.Bits, bigEndian, values);
                 long index = ((long)y * width) + x0;
                 for (int i = 0; i < count; i++)
                 {
-                    ulong v = invertBits ? max - values[i] : values[i];
+                    ulong raw = values[i * stride];
+                    ulong v = invertBits ? max - raw : raw;
                     codes[index + i] = (ushort)(v << shift);
                 }
-            }, ct, progress, 0, 1);
+            }, ct, progress, 0, 1, stride);
 
             scaling = null;
             return RawImage.FromPixels(
@@ -1600,23 +1644,23 @@ public static unsafe class TiffLoader
 
         ForEachRow(data, page, (y, x0, count, bytes) =>
         {
-            UnpackRow(bytes, count, page.Bits, bigEndian, values);
+            UnpackRow(bytes, count * stride, page.Bits, bigEndian, values);
             for (int i = 0; i < count; i++)
             {
-                accumulator.Add(Sample(values[i]));
+                accumulator.Add(Sample(values[i * stride]));
             }
-        }, ct, progress, 0, 0.5);
+        }, ct, progress, 0, 0.5, stride);
 
         SampleScaling result = SampleScaling.FromRange(accumulator.ToRange());
         ForEachRow(data, page, (y, x0, count, bytes) =>
         {
-            UnpackRow(bytes, count, page.Bits, bigEndian, values);
+            UnpackRow(bytes, count * stride, page.Bits, bigEndian, values);
             long index = ((long)y * width) + x0;
             for (int i = 0; i < count; i++)
             {
-                codes[index + i] = result.ToCode(Sample(values[i]));
+                codes[index + i] = result.ToCode(Sample(values[i * stride]));
             }
-        }, ct, progress, 0.5, 0.5);
+        }, ct, progress, 0.5, 0.5, stride);
 
         scaling = result;
         return RawImage.FromPixels(
