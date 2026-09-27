@@ -12,18 +12,25 @@ public static class WhiteBalance
 {
     /// <summary>
     /// グレーワールド仮定でWBゲインを計算する。
-    /// 画像全体(サンプリング)の各チャネル平均から R/Bゲイン = G平均 / 各平均 を求める。
+    /// 画像全体(サンプリング)の各チャネル平均から黒レベルを引き、
+    /// R/Bゲイン = G平均 / 各平均 を求める。
     /// </summary>
     /// <param name="image">対象画像。</param>
     /// <param name="frame">フレーム番号。</param>
     /// <param name="pattern">Bayerパターン。</param>
+    /// <param name="blackLevel">
+    /// 黒レベル(16bitフルスケール値域)。現像は黒減算後にWBゲインを掛けるため、
+    /// 現像に使う <see cref="DevelopParameters.BlackLevel"/> と同じ値を渡すと、
+    /// 求めたゲインで現像したときに中性になる。
+    /// </param>
     /// <param name="maxSamples">サンプリング画素数の上限。</param>
     /// <param name="cancellationToken">キャンセルトークン。</param>
-    /// <returns>WBゲイン。チャネル平均が0の場合はゲイン1。</returns>
+    /// <returns>WBゲイン。黒減算後のチャネル平均(またはG平均)が0以下の場合はゲイン1。</returns>
     public static WhiteBalanceGains ComputeGrayWorld(
         RawImage image,
         int frame,
         BayerPattern pattern,
+        ushort blackLevel = 0,
         long maxSamples = 4_000_000,
         CancellationToken cancellationToken = default)
     {
@@ -66,12 +73,12 @@ public static class WhiteBalance
             }
         }
 
-        double meanR = cntR > 0 ? (double)sumR / cntR : 0;
-        double meanG = cntG > 0 ? (double)sumG / cntG : 0;
-        double meanB = cntB > 0 ? (double)sumB / cntB : 0;
-        return new WhiteBalanceGains(
-            meanR > 0 ? meanG / meanR : 1.0,
-            meanB > 0 ? meanG / meanB : 1.0);
+        // 現像(DevelopLuts)は黒減算後の値にWBゲインを掛けるので、比も黒減算後の平均で取る。
+        // 画素ごとに0で切ると暗部のノイズで平均が持ち上がるため、平均から差し引く
+        double meanR = cntR > 0 ? (double)sumR / cntR - blackLevel : 0;
+        double meanG = cntG > 0 ? (double)sumG / cntG - blackLevel : 0;
+        double meanB = cntB > 0 ? (double)sumB / cntB - blackLevel : 0;
+        return new WhiteBalanceGains(RatioOrUnity(meanG, meanR), RatioOrUnity(meanG, meanB));
     }
 
     /// <summary>
@@ -82,9 +89,13 @@ public static class WhiteBalance
     /// <param name="pattern">Bayerパターン。</param>
     /// <param name="x">基準画素X。</param>
     /// <param name="y">基準画素Y。</param>
-    /// <returns>WBゲイン。チャネル値が0の場合はゲイン1。</returns>
+    /// <param name="blackLevel">
+    /// 黒レベル(16bitフルスケール値域)。現像に使う <see cref="DevelopParameters.BlackLevel"/>
+    /// と同じ値を渡すと、求めたゲインで現像したときにスポイトした色が中性になる。
+    /// </param>
+    /// <returns>WBゲイン。黒減算後のチャネル値(またはG)が0以下の場合はゲイン1。</returns>
     public static WhiteBalanceGains ComputeSpotGains(
-        RawImage image, int frame, BayerPattern pattern, int x, int y)
+        RawImage image, int frame, BayerPattern pattern, int x, int y, ushort blackLevel = 0)
     {
         if (pattern == BayerPattern.None)
         {
@@ -107,8 +118,24 @@ public static class WhiteBalance
         ushort v11 = image.GetPixel(blockX + 1, blockY + 1, frame);
         ColorPipeline.BlockToRgb(pattern, v00, v10, v01, v11,
             out ushort r, out ushort g, out ushort b);
+
+        // 現像は黒減算後の値にWBゲインを掛けるため、黒減算前の比では中性にならない
+        // (RGGB=(20000,30000;30000,40000)・黒10000 で R1.5/B0.75 → 現像(69,92,103))
+        double green = g - blackLevel;
         return new WhiteBalanceGains(
-            r > 0 ? (double)g / r : 1.0,
-            b > 0 ? (double)g / b : 1.0);
+            RatioOrUnity(green, r - blackLevel),
+            RatioOrUnity(green, b - blackLevel));
+    }
+
+    /// <summary>
+    /// G ÷ チャネル のゲインを返す。どちらかが0以下(黒レベル以下)なら中性を作れないので1。
+    /// </summary>
+    /// <remarks>
+    /// 黒減算後は暗部で0や負になり得る。0除算の無限大や負のゲインは現像LUTの生成で
+    /// 例外になるか、UI側のクランプで意味のない値に化けるため、判定不能として扱う。
+    /// </remarks>
+    private static double RatioOrUnity(double green, double channel)
+    {
+        return green > 0 && channel > 0 ? green / channel : 1.0;
     }
 }

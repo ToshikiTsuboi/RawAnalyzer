@@ -3121,17 +3121,22 @@ public partial class MainWindow : Window
         // フレーム0固定にすると、マルチフレームでフレームN表示中のAWBが
         // 見えていない画素から計算される
         int frame = Viewport.Frame;
+
+        // 現像は黒減算後にWBを掛けるので、推定も現像と同じ黒レベルで行う
+        ushort blackLevel = _blackPoint;
         WhiteBalanceGains gains;
         try
         {
-            gains = await Task.Run(() => WhiteBalance.ComputeGrayWorld(image, frame, pattern));
+            gains = await Task.Run(
+                () => WhiteBalance.ComputeGrayWorld(image, frame, pattern, blackLevel));
         }
         catch (Exception)
         {
             return;
         }
 
-        if (!ReferenceEquals(image, ActiveImage) || frame != Viewport.Frame)
+        if (!ReferenceEquals(image, ActiveImage) || frame != Viewport.Frame
+            || blackLevel != _blackPoint)
         {
             return;
         }
@@ -3169,8 +3174,9 @@ public partial class MainWindow : Window
             return;
         }
 
+        // 現像と同じ黒レベルで推定しないと、黒レベル設定時にスポイトした色が中性にならない
         WhiteBalanceGains gains = WhiteBalance.ComputeSpotGains(
-            ActiveImage, Viewport.Frame, ActiveFormat.Bayer, sourceX, sourceY);
+            ActiveImage, Viewport.Frame, ActiveFormat.Bayer, sourceX, sourceY, _blackPoint);
         _vm.WbGainG = 1.0;
         _vm.WbGainR = Math.Clamp(gains.GainR, 0.5, 4.0);
         _vm.WbGainB = Math.Clamp(gains.GainB, 0.5, 4.0);
