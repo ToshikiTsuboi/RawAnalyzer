@@ -4331,7 +4331,8 @@ public partial class MainWindow : Window
 
     private void OnDefectActivated(DefectPixel defect)
     {
-        Viewport.CenterOn(defect.X, defect.Y, Math.Max(Viewport.Zoom, 32));
+        // 欠陥は元画像の座標。チャネル分割表示ではその画素が並ぶ象限上の位置へ移動する
+        Viewport.CenterOnSourcePixel(defect.X, defect.Y, Math.Max(Viewport.Zoom, 32));
     }
 
     // ---- ノイズ / ダイナミックレンジ測定 ----
@@ -4658,7 +4659,8 @@ public partial class MainWindow : Window
     {
         if (_lastCursorInside)
         {
-            Viewport.CenterOn(_lastCursorX, _lastCursorY, Math.Max(Viewport.Zoom, 32));
+            // カーソル位置は元画像の座標で持っている(分割表示ではタイル上の位置へ戻す)
+            Viewport.CenterOnSourcePixel(_lastCursorX, _lastCursorY, Math.Max(Viewport.Zoom, 32));
         }
     }
 

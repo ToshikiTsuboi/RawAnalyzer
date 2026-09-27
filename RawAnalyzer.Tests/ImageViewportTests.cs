@@ -138,10 +138,168 @@ public class ImageViewportTests
         }
     });
 
-    private static (ImageViewport Viewport, RawImage Image) CreateBayerViewport(BayerPattern pattern)
+    [Fact]
+    public Task ChannelSplit_DrawsDefectMarkersWhereTheirPixelsAreShown() => WpfTestHost.Run(async () =>
     {
-        var format = new RawFormat { Width = 8, Height = 8, BitDepth = 12, Bayer = pattern };
-        RawImage image = RawImage.FromPixels(format, new ushort[64]);
+        // 欠陥の座標は元画像の座標。分割表示では各画素はそのチャネルの象限に並ぶので、
+        // マーカーもそこに描く(以前は元画像座標のまま描き、別チャネルの別の画素を指していた)
+        (ImageViewport viewport, RawImage image) = CreateBayerViewport(BayerPattern.Rggb);
+        try
+        {
+            viewport.SetDisplayMode(ViewportDisplayMode.ChannelSplit);
+            viewport.SetDefectMarkers(new[]
+            {
+                new DefectPixel(3, 5, 4095, DefectType.Hot), // (奇,奇) → 右下象限の (1,2)
+                new DefectPixel(6, 2, 0, DefectType.Dead),   // (偶,偶) → 左上象限の (3,1)
+            });
+            viewport.UpdateLayout();
+
+            Assert.Equal(
+                new[] { ScreenCenter(viewport, 4 + 1, 4 + 2), ScreenCenter(viewport, 3, 1) },
+                MarkerCenters(viewport));
+
+            // 元画像座標で表示するモードでは元の座標のまま
+            viewport.SetDisplayMode(ViewportDisplayMode.Raw);
+            viewport.UpdateLayout();
+
+            Assert.Equal(
+                new[] { ScreenCenter(viewport, 3, 5), ScreenCenter(viewport, 6, 2) },
+                MarkerCenters(viewport));
+        }
+        finally
+        {
+            await viewport.ClearImageAsync();
+            image.Dispose();
+        }
+    });
+
+    [Fact]
+    public Task ChannelSplit_OddSizedImage_SkipsDefectMarkersNotShownInTiles() =>
+        WpfTestHost.Run(async () =>
+    {
+        // 9×7 は 8×6 のタイルとして表示される。最終列・最終行の画素はどの象限にも並ばないので、
+        // 他の画素の位置に描いてしまわないよう描かない
+        (ImageViewport viewport, RawImage image) = CreateBayerViewport(BayerPattern.Rggb, 9, 7);
+        try
+        {
+            viewport.SetDisplayMode(ViewportDisplayMode.ChannelSplit);
+            viewport.SetDefectMarkers(new[]
+            {
+                new DefectPixel(8, 1, 4095, DefectType.Hot), // 最終列
+                new DefectPixel(1, 6, 4095, DefectType.Hot), // 最終行
+                new DefectPixel(5, 3, 4095, DefectType.Hot), // 右下象限の (2,1)
+            });
+            viewport.UpdateLayout();
+
+            Assert.Equal(new[] { ScreenCenter(viewport, 4 + 2, 3 + 1) }, MarkerCenters(viewport));
+        }
+        finally
+        {
+            await viewport.ClearImageAsync();
+            image.Dispose();
+        }
+    });
+
+    [Fact]
+    public Task ChannelSplit_CenterOnSourcePixel_CentersTheTileShowingThatPixel() =>
+        WpfTestHost.Run(async () =>
+    {
+        // 欠陥一覧・「ここを拡大」は元画像の座標で移動先を渡す。分割表示ではその画素が並ぶ
+        // 象限上の位置を中央に置く(以前は元画像座標をそのまま表示座標として中央に置いていた)
+        (ImageViewport viewport, RawImage image) = CreateBayerViewport(BayerPattern.Rggb);
+        try
+        {
+            viewport.SetDisplayMode(ViewportDisplayMode.ChannelSplit);
+
+            Assert.True(viewport.CenterOnSourcePixel(3, 5, 32));
+            AssertAtViewCenter(viewport, ScreenCenter(viewport, 4 + 1, 4 + 2));
+
+            viewport.SetDisplayMode(ViewportDisplayMode.Raw);
+
+            Assert.True(viewport.CenterOnSourcePixel(3, 5, 32));
+            AssertAtViewCenter(viewport, ScreenCenter(viewport, 3, 5));
+        }
+        finally
+        {
+            await viewport.ClearImageAsync();
+            image.Dispose();
+        }
+    });
+
+    [Fact]
+    public Task ChannelSplit_CenterOnSourcePixelNotShownInTiles_KeepsView() =>
+        WpfTestHost.Run(async () =>
+    {
+        // 9×7 の最終列の画素は分割表示に並ばない。別の画素へ移動しない
+        (ImageViewport viewport, RawImage image) = CreateBayerViewport(BayerPattern.Rggb, 9, 7);
+        try
+        {
+            viewport.SetDisplayMode(ViewportDisplayMode.ChannelSplit);
+            (double zoom, double originX, double originY) =
+                (viewport.Zoom, viewport.OriginX, viewport.OriginY);
+
+            Assert.False(viewport.CenterOnSourcePixel(8, 1, 32));
+            Assert.Equal((zoom, originX, originY), (viewport.Zoom, viewport.OriginX, viewport.OriginY));
+        }
+        finally
+        {
+            await viewport.ClearImageAsync();
+            image.Dispose();
+        }
+    });
+
+    private static void AssertAtViewCenter(ImageViewport viewport, Point screen)
+    {
+        Assert.Equal(viewport.ActualWidth / 2, screen.X, 9);
+        Assert.Equal(viewport.ActualHeight / 2, screen.Y, 9);
+    }
+
+    /// <summary>表示座標の画素の中心の画面座標(ビューポートの描画と同じ式)。</summary>
+    private static Point ScreenCenter(ImageViewport viewport, int x, int y)
+    {
+        return new Point(
+            (x + 0.5 - viewport.OriginX) * viewport.Zoom,
+            (y + 0.5 - viewport.OriginY) * viewport.Zoom);
+    }
+
+    /// <summary>描画された欠陥マーカー(円)の中心。</summary>
+    private static Point[] MarkerCenters(ImageViewport viewport)
+    {
+        return CollectGeometries<EllipseGeometry>(VisualTreeHelper.GetDrawing(viewport))
+            .Select(ellipse => ellipse.Center)
+            .ToArray();
+    }
+
+    private static List<T> CollectGeometries<T>(Drawing? drawing)
+        where T : Geometry
+    {
+        var geometries = new List<T>();
+        Collect(drawing);
+        return geometries;
+
+        void Collect(Drawing? node)
+        {
+            switch (node)
+            {
+                case DrawingGroup group:
+                    foreach (Drawing child in group.Children)
+                    {
+                        Collect(child);
+                    }
+
+                    break;
+                case GeometryDrawing { Geometry: T geometry }:
+                    geometries.Add(geometry);
+                    break;
+            }
+        }
+    }
+
+    private static (ImageViewport Viewport, RawImage Image) CreateBayerViewport(
+        BayerPattern pattern, int width = 8, int height = 8)
+    {
+        var format = new RawFormat { Width = width, Height = height, BitDepth = 12, Bayer = pattern };
+        RawImage image = RawImage.FromPixels(format, new ushort[width * height]);
         var viewport = new ImageViewport();
         viewport.Measure(new Size(240, 180));
         viewport.Arrange(new Rect(0, 0, 240, 180));

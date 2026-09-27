@@ -15,6 +15,67 @@ public class BayerSplitTests
         Assert.Equal((sx, sy), BayerSplit.MapTiledToSource(tx, ty, 4, 4));
     }
 
+    [Theory]
+    [InlineData(2, 2)]
+    [InlineData(4, 4)]
+    [InlineData(8, 6)]
+    [InlineData(6, 10)]
+    public void TryMapSourceToTiled_IsInverseOfMapTiledToSource(int tiledWidth, int tiledHeight)
+    {
+        // タイルの全画素と、タイルに並ぶ元画像の全画素が1対1に対応する
+        for (int y = 0; y < tiledHeight; y++)
+        {
+            for (int x = 0; x < tiledWidth; x++)
+            {
+                (int sourceX, int sourceY) = BayerSplit.MapTiledToSource(x, y, tiledWidth, tiledHeight);
+                Assert.True(BayerSplit.TryMapSourceToTiled(
+                    sourceX, sourceY, tiledWidth, tiledHeight, out int tiledX, out int tiledY));
+                Assert.Equal((x, y), (tiledX, tiledY));
+
+                Assert.True(BayerSplit.TryMapSourceToTiled(
+                    x, y, tiledWidth, tiledHeight, out tiledX, out tiledY));
+                Assert.Equal((x, y), BayerSplit.MapTiledToSource(tiledX, tiledY, tiledWidth, tiledHeight));
+            }
+        }
+    }
+
+    [Theory]
+    [InlineData(4, 0)]   // 最終列(奇数幅の端)
+    [InlineData(0, 2)]   // 最終行(奇数高さの端)
+    [InlineData(4, 2)]
+    [InlineData(-1, 0)]
+    [InlineData(0, -1)]
+    public void TryMapSourceToTiled_PixelNotInTiles_ReturnsFalse(int x, int y)
+    {
+        // 5×3 は 4×2 のタイルとして並べる(CreateTiled と同じく奇数の端は切り捨てる)
+        Assert.False(BayerSplit.TryMapSourceToTiled(x, y, 5 & ~1, 3 & ~1, out int tiledX, out int tiledY));
+        Assert.Equal((0, 0), (tiledX, tiledY));
+    }
+
+    [Fact]
+    public void TryMapSourceToTiledAxis_MatchesCreatedTiles()
+    {
+        // 行・列ごとの写像が、実際に並べたタイル画像の位置と一致する。
+        // 元画像の1行はタイル画像の1行に、1列は1列に並ぶ(値 = y*6+x で座標を識別)
+        ushort[] values = Enumerable.Range(0, 6 * 4).Select(i => (ushort)i).ToArray();
+        using RawImage image = TestImages.FromCodes(values, 6, 4);
+
+        ushort[] tiled = BayerSplit.CreateTiled(image);
+
+        for (int sourceY = 0; sourceY < 4; sourceY++)
+        {
+            Assert.True(BayerSplit.TryMapSourceToTiledAxis(sourceY, 4, out int tiledY));
+            for (int sourceX = 0; sourceX < 6; sourceX++)
+            {
+                Assert.True(BayerSplit.TryMapSourceToTiledAxis(sourceX, 6, out int tiledX));
+                Assert.Equal(sourceY * 6 + sourceX, tiled[tiledY * 6 + tiledX]);
+            }
+        }
+
+        Assert.False(BayerSplit.TryMapSourceToTiledAxis(6, 6, out _));
+        Assert.False(BayerSplit.TryMapSourceToTiledAxis(6, 7, out _)); // 奇数長は偶数へ切り詰めて扱う
+    }
+
     [Fact]
     public void CreateTiled_4x4_PlacesChannelsInQuadrants()
     {

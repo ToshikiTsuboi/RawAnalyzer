@@ -204,6 +204,34 @@ public sealed class ImageViewport : FrameworkElement
         && _format is { Bayer: not BayerPattern.None };
 
     /// <summary>
+    /// 元画像の画素座標を、いまの表示での座標(ROI・クリック位置と同じ表示座標)へ写す。
+    /// </summary>
+    /// <remarks>
+    /// チャネル分割表示では、その画素が並ぶ象限上の位置(描画と同じ規約の
+    /// <see cref="BayerSplit.TryMapSourceToTiled"/>)。それ以外の表示は表示座標=元画像座標。
+    /// </remarks>
+    /// <param name="sourceX">元画像X座標。</param>
+    /// <param name="sourceY">元画像Y座標。</param>
+    /// <param name="displayX">表示X座標。</param>
+    /// <param name="displayY">表示Y座標。</param>
+    /// <returns>
+    /// 表示に並んでいる画素ならtrue。チャネル分割表示では、奇数寸法の画像の最終列・最終行の
+    /// 画素はどの象限にも並ばないためfalse。
+    /// </returns>
+    public bool TryMapSourceToDisplay(int sourceX, int sourceY, out int displayX, out int displayY)
+    {
+        if (!IsChannelSplitLayout || _image is null)
+        {
+            displayX = sourceX;
+            displayY = sourceY;
+            return true;
+        }
+
+        return BayerSplit.TryMapSourceToTiled(
+            sourceX, sourceY, _image.Width & ~1, _image.Height & ~1, out displayX, out displayY);
+    }
+
+    /// <summary>
     /// マウス操作モード。設定するとカーソル形状も切り替わる
     /// (右パネルを畳んでいてもモードが分かるようにするため)。
     /// </summary>
@@ -612,6 +640,7 @@ public sealed class ImageViewport : FrameworkElement
 
     /// <summary>
     /// 指定画素がビュー中央に来るようにズーム・位置を設定する。
+    /// 座標は表示座標(ROI・クリック位置と同じ)。元画像の画素なら <see cref="CenterOnSourcePixel"/>。
     /// </summary>
     /// <param name="x">画素X座標。</param>
     /// <param name="y">画素Y座標。</param>
@@ -628,6 +657,28 @@ public sealed class ImageViewport : FrameworkElement
         _originY = y + 0.5 - ActualHeight / (2 * _zoom);
         ClampOrigin();
         RequestRender(fast: false);
+    }
+
+    /// <summary>
+    /// 元画像の画素がビュー中央に来るようにズーム・位置を設定する。
+    /// チャネル分割表示では、その画素が並ぶ象限上の位置を中央に置く。
+    /// </summary>
+    /// <param name="x">元画像X座標。</param>
+    /// <param name="y">元画像Y座標。</param>
+    /// <param name="zoom">ズーム率。</param>
+    /// <returns>
+    /// その画素が表示に並んでいればtrue。並ばない画素(チャネル分割表示での奇数寸法の
+    /// 最終列・最終行)はfalseで、表示は変えない。
+    /// </returns>
+    public bool CenterOnSourcePixel(int x, int y, double zoom)
+    {
+        if (!TryMapSourceToDisplay(x, y, out int displayX, out int displayY))
+        {
+            return false;
+        }
+
+        CenterOn(displayX, displayY, zoom);
+        return true;
     }
 
     /// <summary>
@@ -817,8 +868,15 @@ public sealed class ImageViewport : FrameworkElement
         double radius = Math.Max(5, _zoom * 0.7);
         foreach (DefectPixel defect in _defectMarkers)
         {
-            double cx = (defect.X + 0.5 - _originX) * _zoom;
-            double cy = (defect.Y + 0.5 - _originY) * _zoom;
+            // 欠陥は元画像の座標。チャネル分割表示ではその画素が並ぶ象限上に描き、
+            // どの象限にも並ばない画素(奇数寸法の端)は描かない
+            if (!TryMapSourceToDisplay(defect.X, defect.Y, out int x, out int y))
+            {
+                continue;
+            }
+
+            double cx = (x + 0.5 - _originX) * _zoom;
+            double cy = (y + 0.5 - _originY) * _zoom;
             if (cx < -radius || cy < -radius
                 || cx > ActualWidth + radius || cy > ActualHeight + radius)
             {

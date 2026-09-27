@@ -27,6 +27,60 @@ public static class BayerSplit
     }
 
     /// <summary>
+    /// 元画像の座標を、タイル画像でその画素が表示されている座標へ写像する
+    /// (<see cref="MapTiledToSource"/> の逆)。
+    /// </summary>
+    /// <remarks>
+    /// タイル画像は偶数寸法へ切り詰めて並べるため、奇数寸法の画像の最終列・最終行の画素は
+    /// どの象限にも現れない(falseを返す)。
+    /// </remarks>
+    /// <param name="x">元画像X座標。</param>
+    /// <param name="y">元画像Y座標。</param>
+    /// <param name="tiledWidth">タイル画像の幅(偶数)。</param>
+    /// <param name="tiledHeight">タイル画像の高さ(偶数)。</param>
+    /// <param name="tiledX">タイル画像X座標。falseのときは0。</param>
+    /// <param name="tiledY">タイル画像Y座標。falseのときは0。</param>
+    /// <returns>タイル画像に表示されている画素ならtrue。</returns>
+    public static bool TryMapSourceToTiled(
+        int x, int y, int tiledWidth, int tiledHeight, out int tiledX, out int tiledY)
+    {
+        if (TryMapSourceToTiledAxis(x, tiledWidth, out tiledX)
+            && TryMapSourceToTiledAxis(y, tiledHeight, out tiledY))
+        {
+            return true;
+        }
+
+        tiledX = 0;
+        tiledY = 0;
+        return false;
+    }
+
+    /// <summary>
+    /// 元画像の1軸の座標(列のX、または行のY)を、タイル画像でその列・行が並ぶ座標へ写像する。
+    /// </summary>
+    /// <remarks>
+    /// タイル画像の1行には元画像の1行だけが(左右の象限に偶数列・奇数列として)並び、
+    /// 1列には元画像の1列だけが(上下の象限に偶数行・奇数行として)並ぶ。
+    /// そのため軸ごとに独立に写像できる(<see cref="MapTiledToSource"/> も軸ごとに独立)。
+    /// </remarks>
+    /// <param name="source">元画像の座標。</param>
+    /// <param name="tiledLength">タイル画像のその軸の長さ(偶数)。</param>
+    /// <param name="tiled">タイル画像の座標。falseのときは0。</param>
+    /// <returns>タイル画像に並ぶ座標(0以上かつタイル画像の長さ未満)ならtrue。</returns>
+    public static bool TryMapSourceToTiledAxis(int source, int tiledLength, out int tiled)
+    {
+        int quadLength = tiledLength / 2;
+        if (source < 0 || source >= quadLength * 2)
+        {
+            tiled = 0;
+            return false;
+        }
+
+        tiled = (source & 1) * quadLength + (source >> 1);
+        return true;
+    }
+
+    /// <summary>
     /// タイル画像上の矩形を、元画像でそこに表示されている画素の集合(1チャネル分の格子)へ写像する。
     /// </summary>
     /// <remarks>
