@@ -1131,9 +1131,6 @@ public partial class MainWindow : Window
         return true;
     }
 
-    // チャネル分割表示でプロファイルマーカーをクリック位置に出し続けるための表示座標
-    private (int X, int Y) _profilePickDisplayPoint;
-
     private async void OnProfilePointClicked(object? sender, CursorPixelEventArgs e)
     {
         if (ActiveImage is null || ActiveFormat is null)
@@ -1205,10 +1202,11 @@ public partial class MainWindow : Window
             _profileWindow = new LineProfileWindow { Owner = this };
             _profileWindow.DirectionChanged += horizontal =>
             {
-                if (_profileWindow is not null)
+                if (_profileWindow is { } window)
                 {
-                    // マーカーは表示座標に出す(チャネル分割では元座標とずれるため)
-                    (int px, int py) = _profilePickDisplayPoint;
+                    // マーカーはプロファイルと同じ元画像の列・行で渡す
+                    // (表示のどこに並ぶかはビューポートが表示モードに合わせて写す)
+                    (int px, int py) = window.CurrentPoint;
                     Viewport.SetProfileMarker(px, py, horizontal);
                 }
             };
@@ -1224,8 +1222,9 @@ public partial class MainWindow : Window
         _profileWindow.SetProfiles(
             row, column, horizontalProjection, verticalProjection, projectionRoi,
             sourceX, sourceY, maxCode);
-        _profilePickDisplayPoint = (e.X, e.Y);
-        Viewport.SetProfileMarker(e.X, e.Y, _profileWindow.IsHorizontal);
+
+        // 表示座標(e.X, e.Y)で渡すと、分割⇔非分割の切替後にプロファイルと別の行・列を指す
+        Viewport.SetProfileMarker(sourceX, sourceY, _profileWindow.IsHorizontal);
         _profileWindow.Activate();
     }
 

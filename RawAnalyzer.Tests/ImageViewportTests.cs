@@ -248,6 +248,91 @@ public class ImageViewportTests
         }
     });
 
+    [Fact]
+    public Task ProfileMarker_StaysOnItsSourceRowAndColumnAcrossLayouts() =>
+        WpfTestHost.Run(async () =>
+    {
+        // プロファイル窓に出ているのは元画像の行 y=5 と列 x=3。マーカーはその行・列が
+        // いま並んでいる位置に描く。分割表示では元画像の1行はタイルの1行(左右の象限)に、
+        // 1列はタイルの1列(上下の象限)に並ぶ。以前は表示座標で持っていたため、
+        // 分割⇔非分割を切り替えるとプロファイルとは別の行・列の上に残った
+        (ImageViewport viewport, RawImage image) = CreateBayerViewport(BayerPattern.Rggb);
+        try
+        {
+            viewport.SetDisplayMode(ViewportDisplayMode.ChannelSplit);
+            viewport.SetProfileMarker(3, 5, horizontalActive: true);
+            viewport.UpdateLayout();
+
+            Assert.Equal(
+                (ScreenCenter(viewport, 0, 4 + 2).Y, ScreenCenter(viewport, 4 + 1, 0).X),
+                ProfileMarkerLines(viewport));
+
+            viewport.SetDisplayMode(ViewportDisplayMode.Raw);
+            viewport.UpdateLayout();
+
+            Assert.Equal(
+                (ScreenCenter(viewport, 0, 5).Y, ScreenCenter(viewport, 3, 0).X),
+                ProfileMarkerLines(viewport));
+
+            viewport.SetDisplayMode(ViewportDisplayMode.ChannelSplit);
+            viewport.UpdateLayout();
+
+            Assert.Equal(
+                (ScreenCenter(viewport, 0, 4 + 2).Y, ScreenCenter(viewport, 4 + 1, 0).X),
+                ProfileMarkerLines(viewport));
+        }
+        finally
+        {
+            await viewport.ClearImageAsync();
+            image.Dispose();
+        }
+    });
+
+    [Fact]
+    public Task ChannelSplit_OddSizedImage_OmitsProfileLineNotShownInTiles() =>
+        WpfTestHost.Run(async () =>
+    {
+        // 9×7 の最終列 x=8 は分割表示のどの象限にも並ばないので、その縦線は描かない
+        // (別の列の上に描かない)。行 y=3 は右下・左下の象限の行 1 に並ぶ
+        (ImageViewport viewport, RawImage image) = CreateBayerViewport(BayerPattern.Rggb, 9, 7);
+        try
+        {
+            viewport.SetDisplayMode(ViewportDisplayMode.ChannelSplit);
+            viewport.SetProfileMarker(8, 3, horizontalActive: false);
+            viewport.UpdateLayout();
+
+            Assert.Equal(((double?)ScreenCenter(viewport, 0, 3 + 1).Y, (double?)null), ProfileMarkerLines(viewport));
+
+            viewport.SetDisplayMode(ViewportDisplayMode.Raw);
+            viewport.UpdateLayout();
+
+            Assert.Equal(
+                (ScreenCenter(viewport, 0, 3).Y, ScreenCenter(viewport, 8, 0).X),
+                ProfileMarkerLines(viewport));
+        }
+        finally
+        {
+            await viewport.ClearImageAsync();
+            image.Dispose();
+        }
+    });
+
+    /// <summary>描画されたプロファイルマーカーの横線のY・縦線のX(描かれていなければnull)。</summary>
+    private static (double? RowY, double? ColumnX) ProfileMarkerLines(ImageViewport viewport)
+    {
+        List<LineGeometry> lines =
+            CollectGeometries<LineGeometry>(VisualTreeHelper.GetDrawing(viewport));
+        double? rowY = lines
+            .Where(line => line.StartPoint.Y == line.EndPoint.Y)
+            .Select(line => (double?)line.StartPoint.Y)
+            .SingleOrDefault();
+        double? columnX = lines
+            .Where(line => line.StartPoint.X == line.EndPoint.X)
+            .Select(line => (double?)line.StartPoint.X)
+            .SingleOrDefault();
+        return (rowY, columnX);
+    }
+
     private static void AssertAtViewCenter(ImageViewport viewport, Point screen)
     {
         Assert.Equal(viewport.ActualWidth / 2, screen.X, 9);

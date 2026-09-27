@@ -619,8 +619,13 @@ public sealed class ImageViewport : FrameworkElement
     /// ラインプロファイルの参照位置マーカーを表示する。
     /// アクティブ方向のラインを実線、もう一方を破線で描画する。
     /// </summary>
-    /// <param name="x">プロファイル列(垂直ライン)のX座標。</param>
-    /// <param name="y">プロファイル行(水平ライン)のY座標。</param>
+    /// <remarks>
+    /// 位置はプロファイルと同じ元画像の列・行で受け取り、描画時にいまの表示でその列・行が
+    /// 並ぶ位置へ写す。表示座標で持つと、チャネル分割とそれ以外を切り替えたときに
+    /// プロファイルとは別の行・列の上に残ってしまう。
+    /// </remarks>
+    /// <param name="x">プロファイル列(垂直ライン)の元画像X座標。</param>
+    /// <param name="y">プロファイル行(水平ライン)の元画像Y座標。</param>
     /// <param name="horizontalActive">水平プロファイルがアクティブか。</param>
     public void SetProfileMarker(int x, int y, bool horizontalActive)
     {
@@ -833,19 +838,50 @@ public sealed class ImageViewport : FrameworkElement
             return;
         }
 
-        double screenY = (_profileY + 0.5 - _originY) * _zoom;
-        double screenX = (_profileX + 0.5 - _originX) * _zoom;
         Pen horizontalPen = _profileHorizontalActive ? ProfileActivePen : ProfileInactivePen;
         Pen verticalPen = _profileHorizontalActive ? ProfileInactivePen : ProfileActivePen;
-        if (screenY >= 0 && screenY <= ActualHeight)
+
+        // マーカーは元画像の行・列で持ち、いまの表示でその行・列が並ぶ位置に描く。
+        // どの象限にも並ばない行・列(チャネル分割での奇数寸法の端)の線は描かない
+        if (TryMapSourceLineToDisplay(_profileY, _image.Height, out int displayY))
         {
-            dc.DrawLine(horizontalPen, new Point(0, screenY), new Point(ActualWidth, screenY));
+            double screenY = (displayY + 0.5 - _originY) * _zoom;
+            if (screenY >= 0 && screenY <= ActualHeight)
+            {
+                dc.DrawLine(horizontalPen, new Point(0, screenY), new Point(ActualWidth, screenY));
+            }
         }
 
-        if (screenX >= 0 && screenX <= ActualWidth)
+        if (TryMapSourceLineToDisplay(_profileX, _image.Width, out int displayX))
         {
-            dc.DrawLine(verticalPen, new Point(screenX, 0), new Point(screenX, ActualHeight));
+            double screenX = (displayX + 0.5 - _originX) * _zoom;
+            if (screenX >= 0 && screenX <= ActualWidth)
+            {
+                dc.DrawLine(verticalPen, new Point(screenX, 0), new Point(screenX, ActualHeight));
+            }
         }
+    }
+
+    /// <summary>
+    /// 元画像の1本の行(または列)の座標を、いまの表示でその行(列)が並ぶ表示座標へ写す。
+    /// </summary>
+    /// <remarks>
+    /// チャネル分割表示でも、元画像の1行はタイルの1行(左右の象限に偶数列・奇数列)に、
+    /// 1列はタイルの1列(上下の象限に偶数行・奇数行)に並ぶので、軸ごとに写せる。
+    /// </remarks>
+    /// <param name="source">元画像の行Y(または列X)。</param>
+    /// <param name="sourceLength">元画像の高さ(または幅)。</param>
+    /// <param name="display">表示座標。</param>
+    /// <returns>表示に並んでいればtrue。</returns>
+    private bool TryMapSourceLineToDisplay(int source, int sourceLength, out int display)
+    {
+        if (!IsChannelSplitLayout)
+        {
+            display = source;
+            return true;
+        }
+
+        return BayerSplit.TryMapSourceToTiledAxis(source, sourceLength & ~1, out display);
     }
 
     private static readonly Pen HotMarkerPen = CreateMarkerPen(Color.FromRgb(0xE6, 0x50, 0x3C));
