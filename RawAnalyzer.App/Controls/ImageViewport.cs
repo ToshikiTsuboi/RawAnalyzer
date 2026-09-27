@@ -1472,44 +1472,49 @@ public sealed class ImageViewport : FrameworkElement
     private Drawing BuildRawValueOverlay(OverlayData ov)
     {
         var group = new DrawingGroup();
-        using DrawingContext dc = group.Open();
 
-        int shift = 16 - _format!.BitDepth;
-        double fontSize = Math.Clamp(_zoom / 4.5, 9, 15);
-        double pixelsPerDip = VisualTreeHelper.GetDpi(this).PixelsPerDip;
-        Brush dark = Brushes.Black;
-        Brush light = Brushes.White;
-
-        for (int r = 0; r < ov.Rows; r++)
+        // 描画内容は DrawingContext を閉じたときに group へ書き込まれる。
+        // using 宣言だと閉じるのがメソッド末尾(Freeze の後)になり、凍結済みの
+        // group への書き込みで InvalidOperationException になるため、ブロックで閉じてから凍結する
+        using (DrawingContext dc = group.Open())
         {
-            double top = (ov.Y0 + r - _originY) * _zoom;
-            if (top + _zoom < 0 || top > ActualHeight)
-            {
-                continue;
-            }
+            int shift = 16 - _format!.BitDepth;
+            double fontSize = Math.Clamp(_zoom / 4.5, 9, 15);
+            double pixelsPerDip = VisualTreeHelper.GetDpi(this).PixelsPerDip;
+            Brush dark = Brushes.Black;
+            Brush light = Brushes.White;
 
-            for (int c = 0; c < ov.Cols; c++)
+            for (int r = 0; r < ov.Rows; r++)
             {
-                double left = (ov.X0 + c - _originX) * _zoom;
-                if (left + _zoom < 0 || left > ActualWidth)
+                double top = (ov.Y0 + r - _originY) * _zoom;
+                if (top + _zoom < 0 || top > ActualHeight)
                 {
                     continue;
                 }
 
-                ushort value = ov.Values[r * ov.Cols + c];
-                int code = value >> shift;
-                Brush brush = _lut.Map(value) > 140 ? dark : light;
-                var text = new FormattedText(
-                    code.ToString(CultureInfo.InvariantCulture),
-                    CultureInfo.InvariantCulture,
-                    FlowDirection.LeftToRight,
-                    OverlayTypeface,
-                    fontSize,
-                    brush,
-                    pixelsPerDip);
-                dc.DrawText(text, new Point(
-                    left + (_zoom - text.Width) / 2,
-                    top + (_zoom - text.Height) / 2));
+                for (int c = 0; c < ov.Cols; c++)
+                {
+                    double left = (ov.X0 + c - _originX) * _zoom;
+                    if (left + _zoom < 0 || left > ActualWidth)
+                    {
+                        continue;
+                    }
+
+                    ushort value = ov.Values[r * ov.Cols + c];
+                    int code = value >> shift;
+                    Brush brush = _lut.Map(value) > 140 ? dark : light;
+                    var text = new FormattedText(
+                        code.ToString(CultureInfo.InvariantCulture),
+                        CultureInfo.InvariantCulture,
+                        FlowDirection.LeftToRight,
+                        OverlayTypeface,
+                        fontSize,
+                        brush,
+                        pixelsPerDip);
+                    dc.DrawText(text, new Point(
+                        left + (_zoom - text.Width) / 2,
+                        top + (_zoom - text.Height) / 2));
+                }
             }
         }
 
