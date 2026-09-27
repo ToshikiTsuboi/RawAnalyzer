@@ -2264,20 +2264,25 @@ public partial class MainWindow : Window
             _ => "÷",
         };
         await ApplyProcessedImageAsync(
-            corrected, $"{opLabel} {Path.GetFileName(choice.ReferencePath)}", discardDefectResult: true);
+            corrected, $"{opLabel} {Path.GetFileName(choice.ReferencePath)}");
     }
 
     /// <summary>
     /// 加工済み画像を現在の画像として差し替える(以後の解析・現像・保存すべてに反映)。
     /// </summary>
+    /// <remarks>
+    /// 欠陥検出の結果は処理前の画像のものなので、欠陥補正の結果を含めて破棄する
+    /// (欠陥ウィンドウは閉じずに「未実行」へ戻す。他の差し替え経路と同じ規約)。
+    /// </remarks>
     /// <param name="processed">差し替える画像。</param>
     /// <param name="label">タイトル等に表示する処理ラベル。</param>
-    /// <param name="discardDefectResult">
-    /// 欠陥画素ウィンドウの検出結果を破棄するか(ウィンドウは閉じない)。
-    /// </param>
     /// <param name="color">RGBの処理結果。processedは同じ画像の輝度であること。</param>
+    /// <param name="defectNotice">
+    /// 欠陥ウィンドウで一覧を破棄したときに出す案内。省略時は画像が替わったことを示す。
+    /// 差し替えと同じUIターンで出す(縮小表示の作成を待った後で出すと、その間に検出し直した一覧を消す)。
+    /// </param>
     private async Task ApplyProcessedImageAsync(
-        RawImage processed, string label, bool discardDefectResult, ColorImage? color = null)
+        RawImage processed, string label, ColorImage? color = null, string? defectNotice = null)
     {
         RawImage? expectedSource = _currentImage;
         // 旧画像を読んでいる解析タスクを止めてから破棄する
@@ -2317,10 +2322,7 @@ public partial class MainWindow : Window
         _updatingSliders = false;
         UpdateFormatPanel(processed.Format);
         Viewport.SetDefectMarkers(null);
-        if (discardDefectResult)
-        {
-            _defectWindow?.DiscardResult();
-        }
+        _defectWindow?.DiscardResult(defectNotice);
 
         _correctionLabel = _correctionLabel is null ? label : $"{_correctionLabel}, {label}";
         UpdateNoiseWindowSource();
@@ -4684,8 +4686,13 @@ public partial class MainWindow : Window
         }
 
         string methodLabel = method == DefectCorrectionMethod.Mean ? "平均" : "メディアン";
+
+        // 補正前の一覧は差し替えで破棄する(残すと「この欠陥を補正」を押せても表示中の画像のもの
+        // ではないと断られるだけ)。欠陥ウィンドウには補正したことと、補正後の画像は検出し直して
+        // 確かめることを示す(一覧がないので下の ResetRunButton でも補正ボタンは無効のまま)
         await ApplyProcessedImageAsync(
-            corrected, $"欠陥補正 {count}px ({methodLabel})", discardDefectResult: false);
+            corrected, $"欠陥補正 {count}px ({methodLabel})",
+            defectNotice: DefectPixelWindow.CorrectionAppliedNotice(count, methodLabel));
         _defectWindow?.ResetRunButton();
         _vm.ImageInfoText = $"欠陥画素 {count} 個を{methodLabel}補間で補正しました" +
             "(保存すると補正後のデータが出力されます)";

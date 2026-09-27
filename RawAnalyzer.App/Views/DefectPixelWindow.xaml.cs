@@ -118,18 +118,37 @@ public partial class DefectPixelWindow : Window
     /// 処理結果へ差し替える・HDR表示に出入りすると表示中の画像のものではなくなる(一覧からの移動は
     /// 別の画素を指し、補正は断られる)ので、一覧を消して補正を押せなくし、「検出実行」で表示中の
     /// 画像を検出し直すよう案内する。ウィンドウを閉じないので、再生中に開いたウィンドウも次の送りで
-    /// 消えない。まだ何も検出していなければ最初の案内のままにする。
+    /// 消えない。
     /// </remarks>
-    public void DiscardResult()
+    /// <param name="notice">
+    /// 一覧の上に出す案内(破棄した理由と次にすること)。省略時は表示中の画像が替わったことを示し、
+    /// まだ何も検出していなければ最初の案内のままにする。
+    /// </param>
+    public void DiscardResult(string? notice = null)
     {
-        if (!_resultShown)
+        if (notice is null && !_resultShown)
         {
             return;
         }
 
-        ClearResult("表示中の画像が替わったため、検出結果を破棄しました。\n" +
+        _resultShown = true;
+        ClearResult(notice ?? "表示中の画像が替わったため、検出結果を破棄しました。\n" +
             "「検出実行」で表示中の画像を検出し直してください。");
     }
+
+    /// <summary>
+    /// 欠陥補正で表示中の画像を補正後のものへ差し替えたときに、<see cref="DiscardResult"/> へ渡す案内。
+    /// </summary>
+    /// <remarks>
+    /// 補正前の一覧は補正前の画像のもので、残すと「この欠陥を補正」を押せても表示中の画像のもの
+    /// ではないと断られるだけになる。補正後の画像に残った欠陥を確かめるのは検出のやり直し。
+    /// </remarks>
+    /// <param name="count">補正した画素数。</param>
+    /// <param name="methodLabel">補正方法の表示名(「メディアン」「平均」)。</param>
+    /// <returns>案内の文。</returns>
+    public static string CorrectionAppliedNotice(int count, string methodLabel) =>
+        $"欠陥画素 {count} 個を{methodLabel}補間で補正しました(補正前の一覧は破棄しました)。\n" +
+        "補正後の画像を確かめるには「検出実行」で検出し直してください。";
 
     /// <summary>一覧を消し、補正を押せない「未実行」の状態にして案内を出す。</summary>
     /// <param name="notice">一覧の上に出す案内。</param>

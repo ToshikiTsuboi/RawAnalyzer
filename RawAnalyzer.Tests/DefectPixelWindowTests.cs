@@ -87,6 +87,52 @@ public class DefectPixelWindowTests
         window.Close();
     });
 
+    [Fact]
+    public Task CorrectionApplied_DiscardsListAndAsksToDetectAgain() => WpfTestHost.Run(() =>
+    {
+        var window = new DefectPixelWindow();
+        bool closed = false;
+        window.Closed += (_, _) => closed = true;
+        var list = (ListView)window.FindName("DefectList");
+        var correct = (Button)window.FindName("CorrectButton");
+        var run = (Button)window.FindName("RunButton");
+        var summary = (TextBlock)window.FindName("SummaryText");
+        window.ShowResult(DetectTwoDefects(), 4095);
+
+        // 補正で表示中の画像が補正後のものへ差し替わった(MainWindow は差し替えで補正の案内とともに
+        // 一覧を破棄し、補正の完了後に ResetRunButton も呼ぶ)
+        window.DiscardResult(DefectPixelWindow.CorrectionAppliedNotice(2, "メディアン"));
+        window.ResetRunButton();
+
+        // 以前は補正前の一覧が残り、「この欠陥を補正」が再び押せた(押すと「表示中の画像のものではない」と
+        // 断られるだけ)。一覧を消して補正を押せなくし、次にすること(検出し直す)を示す
+        Assert.False(closed);
+        Assert.Empty(list.Items);
+        Assert.False(correct.IsEnabled);
+        Assert.True(run.IsEnabled);
+        Assert.Contains("2 個", summary.Text);
+        Assert.Contains("メディアン", summary.Text);
+        Assert.Contains("「検出実行」", summary.Text);
+        window.Close();
+    });
+
+    [Fact]
+    public Task CorrectionNotice_IsReplacedWhenImageChangesAgain() => WpfTestHost.Run(() =>
+    {
+        // 補正の案内は補正した画像についてのもの。別の画像へ差し替えたら差し替えの案内に替える
+        var window = new DefectPixelWindow();
+        var summary = (TextBlock)window.FindName("SummaryText");
+        window.ShowResult(DetectTwoDefects(), 4095);
+        window.DiscardResult(DefectPixelWindow.CorrectionAppliedNotice(2, "平均"));
+
+        window.DiscardResult();
+
+        Assert.DoesNotContain("補正しました", summary.Text);
+        Assert.Contains("画像が替わった", summary.Text);
+        Assert.False(((Button)window.FindName("CorrectButton")).IsEnabled);
+        window.Close();
+    });
+
     /// <summary>白点1・黒点1を埋め込んだ12bitの平坦な画像から検出した結果。</summary>
     private static DefectDetectionResult DetectTwoDefects()
     {
