@@ -55,6 +55,8 @@ public sealed record ColorMatrix(
 /// 適用順: 黒/白点正規化 → WBゲイン → 全体ゲイン → カラーマトリクス → コントラスト → ガンマ。
 /// 中間値は0〜1へ切り詰めず、ガンマの直前で1回だけクリップする
 /// (WBゲインで1を超えた値も、後段の行列やコントラストで範囲内へ戻り得るため)。
+/// ただしカラーマトリクス適用時、白点に達したチャネルを含む画素(情報が失われた白飛び)は、
+/// 行列でチャネル比が崩れて色かぶりしないよう、行列の前で0〜1へ切り詰めて中性に保つ。
 /// </summary>
 /// <param name="BlackLevel">黒レベル(16bitフルスケール値域)。減算後に正規化する。</param>
 /// <param name="GainR">Rチャネルのホワイトバランスゲイン。</param>
@@ -65,6 +67,11 @@ public sealed record ColorMatrix(
 /// <param name="WhitePoint">白点(16bitフルスケール値域)。この値以上が最大にマップされる。</param>
 /// <param name="Gain">全チャネル共通の線形ゲイン(1.0=等倍)。</param>
 /// <param name="Contrast">コントラスト(1.0=等倍)。中心0.5まわりの傾き。</param>
+/// <param name="SourceBitDepth">
+/// 入力画素の実ビット深度(1〜16)。白点に達した(情報が失われた)画素の判定に使う。
+/// Nbit素材の16bit値は code &lt;&lt; (16−N) で下位ビットが0なので、白点とは下位 16−N ビットを
+/// 除いた code で比べる(白点と同じcodeの画素も白点以上とみなす)。
+/// </param>
 public sealed record DevelopParameters(
     ushort BlackLevel = 0,
     double GainR = 1.0,
@@ -74,7 +81,8 @@ public sealed record DevelopParameters(
     ColorMatrix? Matrix = null,
     ushort WhitePoint = 65535,
     double Gain = 1.0,
-    double Contrast = 1.0);
+    double Contrast = 1.0,
+    int SourceBitDepth = 16);
 
 /// <summary>
 /// カラー現像用のチャネル別65536エントリLUT。
@@ -96,10 +104,13 @@ public sealed class DevelopLuts
     private readonly float[]? _matrix;
     private readonly float _contrastOffset;
 
+    // いずれかのチャネルがこの16bit値以上なら白点に達した(情報が失われた)画素
+    private readonly int _saturationThreshold;
+
     private DevelopLuts(
         byte[] r, byte[] g, byte[] b, DevelopParameters parameters,
         float[]? linearR, float[]? linearG, float[]? linearB,
-        byte[]? gammaLut, float[]? matrix, float contrastOffset)
+        byte[]? gammaLut, float[]? matrix, float contrastOffset, int saturationThreshold)
     {
         R = r;
         G = g;
@@ -111,6 +122,7 @@ public sealed class DevelopLuts
         _gammaLut = gammaLut;
         _matrix = matrix;
         _contrastOffset = contrastOffset;
+        _saturationThreshold = saturationThreshold;
     }
 
     /// <summary>Rチャネル用LUT(マトリクスなし時)。</summary>
@@ -171,6 +183,12 @@ public sealed class DevelopLuts
             throw new ArgumentOutOfRangeException(nameof(parameters), "Contrastは非負である必要があります。");
         }
 
+        if (parameters.SourceBitDepth is < 1 or > 16)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(parameters), "SourceBitDepthは1〜16である必要があります。");
+        }
+
         if (parameters.Matrix is not null && !parameters.Matrix.IsIdentity)
         {
             // マトリクス経路ではチャネル別byte LUTを参照しないので構築しない
@@ -185,14 +203,35 @@ public sealed class DevelopLuts
                 BuildLinearChannel(parameters, parameters.GainR),
                 BuildLinearChannel(parameters, parameters.GainG),
                 BuildLinearChannel(parameters, parameters.GainB),
-                BuildGammaLut(parameters), matrix, (float)(0.5 * (1.0 - contrast)));
+                BuildGammaLut(parameters), matrix, (float)(0.5 * (1.0 - contrast)),
+                SaturationThreshold(parameters));
         }
 
         return new DevelopLuts(
             BuildChannel(parameters, parameters.GainR),
             BuildChannel(parameters, parameters.GainG),
             BuildChannel(parameters, parameters.GainB),
-            parameters, null, null, null, null, null, 0f);
+            parameters, null, null, null, null, null, 0f, SaturationThreshold(parameters));
+    }
+
+    /// <summary>
+    /// いずれかのチャネルがこの16bit値以上なら、白点に達した(情報が失われた)画素とみなす。
+    /// </summary>
+    private static int SaturationThreshold(DevelopParameters p)
+    {
+        // 線形値 x の定義(BuildLinearChannel)に合わせる。白点 ≤ 黒点の縮退時は
+        // x = (v > 黒点 ? 1 : 0) なので、黒点を超える画素を白点以上とみなす
+        if (p.WhitePoint <= p.BlackLevel)
+        {
+            return p.BlackLevel + 1;
+        }
+
+        // 通常は白点以上(x ≥ 1)。ただし Nbit 素材の画素は code<<(16−N) で下位ビットが0、
+        // 白点はUIで白レベルcodeの上端(下位ビットを1で埋めた値)に置かれるため、16bit値のまま
+        // 比べると白レベルのcodeの画素(12bitの既定なら 4095<<4 = 65520 < 65535)が漏れる。
+        // 下位の量子化余白を落とし、code で比べる
+        int padding = (1 << (16 - p.SourceBitDepth)) - 1;
+        return p.WhitePoint & ~padding;
     }
 
     /// <summary>コントラスト適用・クリップ後の 0〜1 値へガンマを適用するLUT。</summary>
@@ -212,6 +251,7 @@ public sealed class DevelopLuts
     /// <summary>
     /// 線形RGB(16bit)を8bit表示値へ変換する。
     /// マトリクスなしはチャネル別LUT、ありは線形化→行列(コントラスト込み)→クリップ→ガンマで変換する。
+    /// マトリクスありでは、白点に達したチャネルを含む画素だけ線形値を行列の前で0〜1へ切り詰める。
     /// </summary>
     /// <param name="r16">R(16bitフルスケール)。</param>
     /// <param name="g16">G(16bitフルスケール)。</param>
@@ -229,12 +269,23 @@ public sealed class DevelopLuts
             return;
         }
 
-        // 線形値・行列出力とも0〜1へ切り詰めない。途中で切ると、WBゲインで1を超えた値や
-        // 行列で範囲外へ出た値が、後段の行列・コントラストで範囲内へ戻るはずの情報ごと失われる
-        // (非マトリクス経路 BuildChannel と同じく、クリップはガンマ直前の1回だけ)
+        // 飽和していない画素は、線形値・行列出力とも0〜1へ切り詰めない。途中で切ると、
+        // WBゲインで1を超えた値や行列で範囲外へ出た値が、後段の行列・コントラストで範囲内へ
+        // 戻るはずの情報ごと失われる(非マトリクス経路と同じく、クリップはガンマ直前の1回だけ)
         float lr = _linearR![r16];
         float lg = _linearG![g16];
         float lb = _linearB![b16];
+        if (Math.Max(r16, Math.Max(g16, b16)) >= _saturationThreshold)
+        {
+            // 白点に達したチャネルを含む画素は真の値が失われている。WB後の値をそのまま行列へ
+            // 通すとチャネル比が崩れ、負の係数で白飛びが色かぶりする(WB(2,1,1.5)と典型的な
+            // CCMでマゼンタ)。この画素だけ従来どおり行列の前で0〜1へ切り詰め、白飛びを中性に
+            // 保つ(dcraw の既定 -H 0 と同じ扱い)
+            lr = ClampUnit(lr);
+            lg = ClampUnit(lg);
+            lb = ClampUnit(lb);
+        }
+
         float[] m = _matrix;
         float offset = _contrastOffset;
         byte[] gamma = _gammaLut!;
@@ -247,10 +298,16 @@ public sealed class DevelopLuts
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static int ToGammaIndex(float value)
     {
+        return (int)(ClampUnit(value) * (GammaLutSize - 1) + 0.5f);
+    }
+
+    /// <summary>0〜1 へクリップする。NaN は 0。</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static float ClampUnit(float value)
+    {
         // NaN は大小比較をすべて素通りするので、否定側(0)へ落ちる形で書く
         // (極端なゲインで ∞×0 が生じても添字が範囲外にならない)
-        float clamped = value > 0f ? (value < 1f ? value : 1f) : 0f;
-        return (int)(clamped * (GammaLutSize - 1) + 0.5f);
+        return value > 0f ? (value < 1f ? value : 1f) : 0f;
     }
 
     private static byte[] BuildChannel(DevelopParameters p, double wbGain)

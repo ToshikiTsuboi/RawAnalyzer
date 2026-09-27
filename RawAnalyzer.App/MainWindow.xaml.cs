@@ -1290,10 +1290,13 @@ public partial class MainWindow : Window
     private DevelopParameters CurrentDevelopParameters()
     {
         double gamma = _vm.Gamma > 0 ? _vm.Gamma : 1.0;
+        // 白点(_whitePoint)は CurrentShift と同じビット深度で白レベルcodeの上端に置いている。
+        // 白飛び(白レベルのcode以上)の判定を code で行えるよう、同じビット深度を渡す
         return new DevelopParameters(
             _blackPoint, _vm.WbGainR, _vm.WbGainG, _vm.WbGainB, gamma,
             _colorMatrix.IsIdentity ? null : _colorMatrix,
-            _whitePoint, _vm.Gain, _vm.Contrast);
+            _whitePoint, _vm.Gain, _vm.Contrast,
+            SourceBitDepth: ActiveFormat?.BitDepth ?? 16);
     }
 
     /// <summary>

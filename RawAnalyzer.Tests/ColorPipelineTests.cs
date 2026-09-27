@@ -48,6 +48,8 @@ public class ColorPipelineTests
         yield return new object[] { new DevelopParameters(Gain: -1), typeof(ArgumentOutOfRangeException) };
         yield return new object[] { new DevelopParameters(Contrast: -1), typeof(ArgumentOutOfRangeException) };
         yield return new object[] { new DevelopParameters(Gamma: double.NaN), typeof(ArgumentOutOfRangeException) };
+        yield return new object[] { new DevelopParameters(SourceBitDepth: 0), typeof(ArgumentOutOfRangeException) };
+        yield return new object[] { new DevelopParameters(SourceBitDepth: 17), typeof(ArgumentOutOfRangeException) };
         yield return new object[]
         {
             new DevelopParameters(Gain: double.PositiveInfinity), typeof(ArgumentOutOfRangeException),
@@ -250,6 +252,79 @@ public class ColorPipelineTests
         Assert.InRange(b, (byte)127, (byte)128);
     }
 
+    /// <summary>行の和が1(白→白)で非対角が負の、典型的なカメラRGB→表示RGBの行列。</summary>
+    private static readonly ColorMatrix TypicalCcm = new(
+        1.6, -0.4, -0.2,
+        -0.2, 1.4, -0.2,
+        0.0, -0.5, 1.5);
+
+    [Theory]
+    [InlineData(1.0)]
+    [InlineData(2.2)]
+    public void DevelopLuts_SaturatedPixel_TypicalCcm_StaysWhite(double gamma)
+    {
+        // 全チャネルが白点(65535)に達した画素を WB(2,1,1.5)・典型的なCCMで現像する。
+        // WB後の (2,1,1.5) をそのまま行列へ通すと (2.5,0.7,1.75) → クリップで (1,0.7,1) の
+        // マゼンタになる。飽和画素は行列の前で0〜1へ切り詰めて (1,1,1) とし、白のまま保つ
+        var luts = DevelopLuts.Create(new DevelopParameters(
+            GainR: 2.0, GainB: 1.5, Gamma: gamma, Matrix: TypicalCcm));
+
+        luts.Convert(65535, 65535, 65535, out byte r, out byte g, out byte b);
+
+        Assert.Equal(255, r);
+        Assert.Equal(255, g);
+        Assert.Equal(255, b);
+    }
+
+    [Theory]
+    [InlineData(65535, 4095)]   // 既定の白レベル(最大code): 白点65535、画素は 4095<<4 = 65520
+    [InlineData(64015, 4000)]   // 白レベル code 4000: 白点 = 4000<<4 | 15
+    public void DevelopLuts_SaturatedPixel_ComparesInCodesOfSourceBitDepth(
+        int whitePoint, int whiteCode)
+    {
+        // アプリは Nbit 素材の白点を白レベルcodeの上端(下位ビットを1で埋めた値)に置き、
+        // 画素は code<<(16−N) で下位ビットが0。16bit値のまま比べると白レベルのcodeの画素が
+        // 白点未満になり、12bit等の白飛びがマゼンタのまま残る。code で比べて白に保つ
+        var luts = DevelopLuts.Create(new DevelopParameters(
+            GainR: 2.0, GainB: 1.5, Gamma: 1.0, Matrix: TypicalCcm,
+            WhitePoint: (ushort)whitePoint, SourceBitDepth: 12));
+
+        var saturated = (ushort)(whiteCode << 4);
+        luts.Convert(saturated, saturated, saturated, out byte r, out byte g, out byte b);
+        Assert.Equal(255, r);
+        Assert.Equal(255, g);
+        Assert.Equal(255, b);
+
+        // 1code下は飽和していない: 行列の前では切り詰めず、行列の後に1回だけクリップする
+        // (G = (−0.2·2 + 1.4 − 0.2·1.5)·x = 0.7x、R・B は1を超えて255)
+        var below = (ushort)((whiteCode - 1) << 4);
+        luts.Convert(below, below, below, out r, out g, out b);
+        int expectedG = (int)Math.Round(255 * 0.7 * below / whitePoint);
+        Assert.Equal(255, r);
+        Assert.InRange(g, expectedG - 1, expectedG + 1);
+        Assert.Equal(255, b);
+    }
+
+    [Fact]
+    public void DevelopLuts_DegenerateWhitePoint_TreatsAboveBlackAsSaturated()
+    {
+        // 白点 ≤ 黒点の縮退時、線形値は x = (v > 黒点 ? 1 : 0)。飽和の判定も同じ定義に合わせ、
+        // 黒点を超える画素を白点に達した画素とみなす
+        var luts = DevelopLuts.Create(new DevelopParameters(
+            BlackLevel: 30000, WhitePoint: 20000, GainR: 2.0, GainB: 1.5, Gamma: 1.0,
+            Matrix: TypicalCcm));
+
+        luts.Convert(40000, 40000, 40000, out byte r, out byte g, out byte b);
+        Assert.Equal(255, r);
+        Assert.Equal(255, g);
+        Assert.Equal(255, b);
+
+        luts.Convert(30000, 30000, 30000, out r, out g, out b);
+        Assert.Equal(0, r);
+        Assert.Equal(0, g);
+        Assert.Equal(0, b);
+    }
+
     public static IEnumerable<object[]> DiagonalMatrixCases()
     {
         // 対角行列 diag(dR,dG,dB) を掛ける行列経路は、WBゲインへ同じ倍率を
@@ -291,7 +366,11 @@ public class ColorPipelineTests
         Assert.True(withMatrix.HasMatrix);
         Assert.False(reference.HasMatrix);
 
-        for (int v = 0; v < 65536; v++)
+        // 白点以上の入力(情報が失われた飽和画素)は除外する。行列経路は白飛びを中性に保つため
+        // 飽和画素だけ行列の前で0〜1へ切り詰めるが、非行列経路はチャネル別LUTで他チャネルの
+        // 飽和を知り得ず最終段でしかクリップしないので、そこでは一致しない
+        // (この比較が確かめたいのは、飽和していない値のクリップ順序)
+        for (int v = 0; v < parameters.WhitePoint; v++)
         {
             var code = (ushort)v;
             withMatrix.Convert(code, code, code, out byte r, out byte g, out byte b);
