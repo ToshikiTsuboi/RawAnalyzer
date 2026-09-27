@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using RawAnalyzer.App.Controls;
 using RawAnalyzer.App.Rendering;
 using RawAnalyzer.Core;
@@ -317,6 +318,104 @@ public class ImageViewportTests
         }
     });
 
+    [Theory]
+    [InlineData(0.5, 2, 11)]
+    [InlineData(0.25, 4, 11)]
+    [InlineData(0.125, 8, 12)]
+    public Task ChannelSplit_ZoomedOut_QuadrantBoundaryMatchesActualSize(
+        double zoom, int factor, int center) => WpfTestHost.Run(async () =>
+    {
+        // 22×22 のタイルは象限 11×11 で、ROIの象限判定もこの境目(11)で行う。
+        // Bayer縮小レベルの象限は 11 を縮小率で割った端数を切り捨てた幅(L2: 5、L4: 2、L8: 1)
+        // しかなく、以前はそのタイルを一様に並べていたため、右・下の象限が等倍の境目より手前
+        // (L2: 10、L4/L8: 8)から始まり、画像の右端・下端も欠けていた。
+        // 画面の各画素は、その中心のタイル座標が属する象限のチャネルを示さなければならない
+        const int size = 22;
+        const int half = size / 2;
+        ushort[] channelValues = { 8000, 24000, 40000, 56000 }; // RGGB の位相 (0,0)(1,0)(0,1)(1,1)
+        var codes = new ushort[size * size];
+        for (int y = 0; y < size; y++)
+        {
+            for (int x = 0; x < size; x++)
+            {
+                codes[y * size + x] = channelValues[(y & 1) * 2 + (x & 1)];
+            }
+        }
+
+        var format = new RawFormat
+        {
+            Width = size, Height = size, BitDepth = 16, Bayer = BayerPattern.Rggb,
+        };
+        using RawImage image = TestImages.FromCodes(codes, format);
+        using BayerPyramid pyramid =
+            BayerPyramid.Create(image, format, maxLevelPixels: long.MaxValue);
+        var viewport = new ImageViewport();
+        viewport.Measure(new Size(240, 180));
+        viewport.Arrange(new Rect(0, 0, 240, 180));
+        viewport.SetImage(image, format);
+        viewport.SetBayerPyramid(pyramid);
+        viewport.SetDisplayMode(ViewportDisplayMode.ChannelSplit);
+
+        var presented = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        viewport.ViewportStateChanged += (_, e) =>
+        {
+            if (e.Zoom == zoom && e.RenderedFactor == factor)
+            {
+                presented.TrySetResult(); // 縮小レベルから描いた結果が表示された
+            }
+        };
+
+        try
+        {
+            viewport.CenterOn(center, center, zoom);
+            await presented.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+            byte[] pixels = RenderedPixels(viewport, out int width, out int height);
+            DisplayLut lut = DisplayLut.Create(new DisplayParameters());
+            int levelHalf = half / factor * factor; // 以前の境目
+            var mismatches = new List<string>();
+            bool checkedBandX = false;
+            bool checkedBandY = false;
+            for (int dy = 0; dy < height; dy++)
+            {
+                double tiledY = viewport.OriginY + (dy + 0.5) / zoom;
+                if (tiledY < 0 || tiledY >= size)
+                {
+                    continue;
+                }
+
+                for (int dx = 0; dx < width; dx++)
+                {
+                    double tiledX = viewport.OriginX + (dx + 0.5) / zoom;
+                    if (tiledX < 0 || tiledX >= size)
+                    {
+                        continue;
+                    }
+
+                    int channel = (tiledY < half ? 0 : 2) + (tiledX < half ? 0 : 1);
+                    byte expected = lut.Map(channelValues[channel]);
+                    byte actual = pixels[(dy * width + dx) * 4];
+                    if (actual != expected)
+                    {
+                        mismatches.Add($"({tiledX},{tiledY}): {actual} (期待 {expected})");
+                    }
+
+                    checkedBandX |= tiledX >= levelHalf && tiledX < half;
+                    checkedBandY |= tiledY >= levelHalf && tiledY < half;
+                }
+            }
+
+            Assert.Empty(mismatches);
+
+            // 以前ずれていた帯(縮小レベルの境目〜等倍の境目)の画素を実際に確かめている
+            Assert.True(checkedBandX && checkedBandY);
+        }
+        finally
+        {
+            await viewport.ClearImageAsync();
+        }
+    });
+
     /// <summary>描画されたプロファイルマーカーの横線のY・縦線のX(描かれていなければnull)。</summary>
     private static (double? RowY, double? ColumnX) ProfileMarkerLines(ImageViewport viewport)
     {
@@ -358,9 +457,18 @@ public class ImageViewportTests
     private static List<T> CollectGeometries<T>(Drawing? drawing)
         where T : Geometry
     {
-        var geometries = new List<T>();
+        return CollectDrawings<GeometryDrawing>(drawing)
+            .Select(geometryDrawing => geometryDrawing.Geometry)
+            .OfType<T>()
+            .ToList();
+    }
+
+    private static List<T> CollectDrawings<T>(Drawing? drawing)
+        where T : Drawing
+    {
+        var drawings = new List<T>();
         Collect(drawing);
-        return geometries;
+        return drawings;
 
         void Collect(Drawing? node)
         {
@@ -373,11 +481,25 @@ public class ImageViewportTests
                     }
 
                     break;
-                case GeometryDrawing { Geometry: T geometry }:
-                    geometries.Add(geometry);
+                case T match:
+                    drawings.Add(match);
                     break;
             }
         }
+    }
+
+    /// <summary>直近に表示された描画結果(BGRA、ビューポートと同じ大きさ)。</summary>
+    private static byte[] RenderedPixels(ImageViewport viewport, out int width, out int height)
+    {
+        viewport.UpdateLayout(); // OnRender → 描画結果のビットマップを描く
+        ImageDrawing drawing =
+            Assert.Single(CollectDrawings<ImageDrawing>(VisualTreeHelper.GetDrawing(viewport)));
+        var bitmap = (BitmapSource)drawing.ImageSource;
+        width = bitmap.PixelWidth;
+        height = bitmap.PixelHeight;
+        var pixels = new byte[width * height * 4];
+        bitmap.CopyPixels(pixels, width * 4, 0);
+        return pixels;
     }
 
     private static (ImageViewport Viewport, RawImage Image) CreateBayerViewport(

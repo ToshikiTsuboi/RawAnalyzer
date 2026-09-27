@@ -1355,7 +1355,7 @@ public sealed class ImageViewport : FrameworkElement
     /// <param name="Source">画素供給元。</param>
     /// <param name="CoordinateFactor">
     /// ソースの座標系が元画像の何分の1か。1以外のときは呼び出し側で
-    /// zoom を掛け、origin を割ってから描画する(グレー系ピラミッドは
+    /// zoom を掛け、origin を割ってから描画する(グレー系ピラミッドとチャネル分割は
     /// RenderSource.Factor で内部処理するため常に1)。
     /// </param>
     private readonly record struct SelectedSource(RenderSource Source, int CoordinateFactor);
@@ -1395,10 +1395,20 @@ public sealed class ImageViewport : FrameworkElement
                 }
             }
 
-            RenderSource source = _displayMode == ViewportDisplayMode.ChannelSplit
-                ? new ChannelSplitRenderSource(colorImage, colorFrame)
-                : new RawImageRenderSource(colorImage, colorFrame);
-            return new SelectedSource(source, coordinateFactor);
+            if (_displayMode == ViewportDisplayMode.ChannelSplit)
+            {
+                // 分割表示は等倍のタイル座標のまま描き、縮小は象限ごとにソース側で行う。
+                // 縮小レベルのタイルを一様に並べると、象限の幅・高さが縮小率で割り切れない
+                // とき右・下の象限が等倍の境目より手前から始まり、ROIの象限判定と食い違う
+                return new SelectedSource(
+                    new ChannelSplitRenderSource(
+                        colorImage, colorFrame, coordinateFactor,
+                        _image.Width & ~1, _image.Height & ~1),
+                    1);
+            }
+
+            return new SelectedSource(
+                new RawImageRenderSource(colorImage, colorFrame), coordinateFactor);
         }
 
         // ゼブラ判定は実画素値に対して行う必要がある。

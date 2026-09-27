@@ -193,7 +193,6 @@ public static class ViewportRenderer
         RenderSource source, double zoom, double originX, double originY,
         int destWidth, int destY)
     {
-        int factor = source.Factor;
         double invZoom = 1.0 / zoom;
         double srcY = originY + (destY + 0.5) * invZoom;
         if (srcY < 0 || srcY >= source.SourceHeight)
@@ -201,7 +200,7 @@ public static class ViewportRenderer
             return null;
         }
 
-        int levelY = Math.Min((int)(srcY / factor), source.LevelHeight - 1);
+        int levelY = Math.Min(source.ToLevelY(srcY), source.LevelHeight - 1);
         if (!TryComputeVisibleColumns(
                 zoom, originX, source.SourceWidth, destWidth, out int dx0, out int dx1))
         {
@@ -209,9 +208,9 @@ public static class ViewportRenderer
         }
 
         int levelX0 = Math.Clamp(
-            (int)((originX + (dx0 + 0.5) * invZoom) / factor), 0, source.LevelWidth - 1);
+            source.ToLevelX(originX + (dx0 + 0.5) * invZoom), 0, source.LevelWidth - 1);
         int levelX1 = Math.Clamp(
-            (int)((originX + (dx1 + 0.5) * invZoom) / factor), 0, source.LevelWidth - 1);
+            source.ToLevelX(originX + (dx1 + 0.5) * invZoom), 0, source.LevelWidth - 1);
         return new RowSpan(dx0, dx1, levelX0, levelX1 - levelX0 + 1, levelY);
     }
 
@@ -223,6 +222,12 @@ public static class ViewportRenderer
         DisplayLut lut = request.Lut;
         int factor = source.Factor;
         double invZoom = 1.0 / zoom;
+
+        // 左右を別々に縮小して並べるソース(チャネル分割の縮小表示)は、
+        // 継ぎ目から右の列のレベル座標を継ぎ目の位置から数え直す
+        int seamX = source.SeamX;
+        int seamLevelX = source.SeamLevelX;
+        double invFactor = 1.0 / factor;
 
         // 行バッファは幅数万でLOH行きになるため、描画ごとに確保せずプールから借りる
         Parallel.For(
@@ -261,7 +266,9 @@ public static class ViewportRenderer
                 {
                     double srcX = originX + ((dx + 0.5) * invZoom);
                     int levelX = Math.Clamp(
-                        (int)(originOverFactor + ((dx + 0.5) * invZoomOverFactor))
+                        (srcX < seamX
+                            ? (int)(originOverFactor + ((dx + 0.5) * invZoomOverFactor))
+                            : seamLevelX + (int)((srcX - seamX) * invFactor))
                             - s.LevelX0,
                         0,
                         s.Count - 1);
