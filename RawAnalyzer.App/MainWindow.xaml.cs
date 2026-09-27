@@ -3110,7 +3110,13 @@ public partial class MainWindow : Window
         _derivedBayerPyramid = null;
         _derivedImage?.Dispose();
         _derivedImage = derived;
+
+        // 欠陥検出の結果は検出した画像(元画像、または前の派生ビュー)の座標・画素のもの。
+        // 他の差し替え経路と同じく、派生ビューへ差し替えるこのUIターンで検出元を手放し、
+        // マーカーと欠陥ウィンドウも閉じる(元画像座標のマーカーを派生ビューに重ねない)
         ClearDefectSource();
+        Viewport.SetDefectMarkers(null);
+        _defectWindow?.Close();
         _hdrFloatImage = null;
         _hdrFrameParams = null;
         _vm.HasRoi = false;
@@ -3151,7 +3157,13 @@ public partial class MainWindow : Window
         await Viewport.ClearImageAsync();
         _derivedImage?.Dispose();
         _derivedImage = null;
+
+        // 派生ビューで検出した結果は、ここで破棄する派生画像のもの。HDR表示に入るときに元画像の
+        // 結果も破棄しているので、Raw表示へ戻したら検出し直す(他の差し替え経路と同じ規約)。
+        // マーカーと欠陥ウィンドウも閉じ、派生ビュー座標のマーカーを元画像に重ねない
         ClearDefectSource();
+        Viewport.SetDefectMarkers(null);
+        _defectWindow?.Close();
         _hdrFloatImage = null;
         _hdrFrameParams = null;
         _vm.HdrTargetVisible = false;
@@ -4571,7 +4583,9 @@ public partial class MainWindow : Window
     {
         if (_currentImage is null || _currentFormat is null || _derivedImage is not null)
         {
-            MessageBox.Show(this, "HDR表示中は欠陥補正できません。Raw表示に戻してから実行してください。",
+            // HDR表示の出入りで検出結果は破棄する(派生ビューの一覧は元画像に使えない)ので、
+            // Raw表示へ戻したら検出からやり直すよう案内する
+            MessageBox.Show(this, "HDR表示中は欠陥補正できません。Raw表示に戻してから検出し直して補正してください。",
                 "欠陥画素補正", MessageBoxButton.OK, MessageBoxImage.Information);
             _defectWindow?.ResetRunButton();
             return;
