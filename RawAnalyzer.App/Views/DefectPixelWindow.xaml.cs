@@ -17,6 +17,10 @@ public partial class DefectPixelWindow : Window
 {
     private DefectDetectionResult? _result;
 
+    // 検出結果(またはそれを破棄した案内)を表示したことがあるか。まだなら破棄する一覧はなく、
+    // 最初の案内のままにする
+    private bool _resultShown;
+
     /// <summary>ウィンドウを生成する。</summary>
     public DefectPixelWindow()
     {
@@ -45,6 +49,7 @@ public partial class DefectPixelWindow : Window
     public void ShowResult(DefectDetectionResult result, int maxCode)
     {
         _result = result;
+        _resultShown = true;
         var sb = new StringBuilder();
         if (result.ChannelThresholds.Count > 0)
         {
@@ -103,6 +108,37 @@ public partial class DefectPixelWindow : Window
             : DefectCorrectionMethod.Median;
         CorrectButton.IsEnabled = false;
         CorrectionRequested?.Invoke(_result, method);
+    }
+
+    /// <summary>
+    /// 表示する画像が替わったため、検出結果を破棄して「未実行」の状態へ戻す(ウィンドウは開いたまま)。
+    /// </summary>
+    /// <remarks>
+    /// 一覧は検出した画像・フレームの座標と画素値のもの。画像を開く・ページ/連番/フレームを送る・
+    /// 処理結果へ差し替える・HDR表示に出入りすると表示中の画像のものではなくなる(一覧からの移動は
+    /// 別の画素を指し、補正は断られる)ので、一覧を消して補正を押せなくし、「検出実行」で表示中の
+    /// 画像を検出し直すよう案内する。ウィンドウを閉じないので、再生中に開いたウィンドウも次の送りで
+    /// 消えない。まだ何も検出していなければ最初の案内のままにする。
+    /// </remarks>
+    public void DiscardResult()
+    {
+        if (!_resultShown)
+        {
+            return;
+        }
+
+        ClearResult("表示中の画像が替わったため、検出結果を破棄しました。\n" +
+            "「検出実行」で表示中の画像を検出し直してください。");
+    }
+
+    /// <summary>一覧を消し、補正を押せない「未実行」の状態にして案内を出す。</summary>
+    /// <param name="notice">一覧の上に出す案内。</param>
+    private void ClearResult(string notice)
+    {
+        _result = null;
+        DefectList.ItemsSource = null;
+        CorrectButton.IsEnabled = false;
+        SummaryText.Text = notice;
     }
 
     /// <summary>実行失敗・キャンセル時にボタンを操作可能な状態へ戻す。</summary>

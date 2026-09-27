@@ -657,7 +657,7 @@ public partial class MainWindow : Window
 
         Title = $"RawAnalyzer — {Path.GetFileName(path)}{TiffPageNote}";
         Viewport.SetDefectMarkers(null);
-        _defectWindow?.Close();
+        _defectWindow?.DiscardResult();
         UpdateNoiseWindowSource();
         _recentFiles.Add(path);
         RebuildRecentMenu();
@@ -2264,7 +2264,7 @@ public partial class MainWindow : Window
             _ => "÷",
         };
         await ApplyProcessedImageAsync(
-            corrected, $"{opLabel} {Path.GetFileName(choice.ReferencePath)}", closeDefectWindow: true);
+            corrected, $"{opLabel} {Path.GetFileName(choice.ReferencePath)}", discardDefectResult: true);
     }
 
     /// <summary>
@@ -2272,10 +2272,12 @@ public partial class MainWindow : Window
     /// </summary>
     /// <param name="processed">差し替える画像。</param>
     /// <param name="label">タイトル等に表示する処理ラベル。</param>
-    /// <param name="closeDefectWindow">欠陥画素ウィンドウを閉じるか。</param>
+    /// <param name="discardDefectResult">
+    /// 欠陥画素ウィンドウの検出結果を破棄するか(ウィンドウは閉じない)。
+    /// </param>
     /// <param name="color">RGBの処理結果。processedは同じ画像の輝度であること。</param>
     private async Task ApplyProcessedImageAsync(
-        RawImage processed, string label, bool closeDefectWindow, ColorImage? color = null)
+        RawImage processed, string label, bool discardDefectResult, ColorImage? color = null)
     {
         RawImage? expectedSource = _currentImage;
         // 旧画像を読んでいる解析タスクを止めてから破棄する
@@ -2315,9 +2317,9 @@ public partial class MainWindow : Window
         _updatingSliders = false;
         UpdateFormatPanel(processed.Format);
         Viewport.SetDefectMarkers(null);
-        if (closeDefectWindow)
+        if (discardDefectResult)
         {
-            _defectWindow?.Close();
+            _defectWindow?.DiscardResult();
         }
 
         _correctionLabel = _correctionLabel is null ? label : $"{_correctionLabel}, {label}";
@@ -3122,10 +3124,10 @@ public partial class MainWindow : Window
 
         // 欠陥検出の結果は検出した画像(元画像、または前の派生ビュー)の座標・画素のもの。
         // 他の差し替え経路と同じく、派生ビューへ差し替えるこのUIターンで検出元を手放し、
-        // マーカーと欠陥ウィンドウも閉じる(元画像座標のマーカーを派生ビューに重ねない)
+        // マーカーと欠陥ウィンドウの一覧も破棄する(元画像座標のマーカーを派生ビューに重ねない)
         ClearDefectSource();
         Viewport.SetDefectMarkers(null);
-        _defectWindow?.Close();
+        _defectWindow?.DiscardResult();
         _hdrFloatImage = null;
         _hdrFrameParams = null;
         _vm.HasRoi = false;
@@ -3169,10 +3171,10 @@ public partial class MainWindow : Window
 
         // 派生ビューで検出した結果は、ここで破棄する派生画像のもの。HDR表示に入るときに元画像の
         // 結果も破棄しているので、Raw表示へ戻したら検出し直す(他の差し替え経路と同じ規約)。
-        // マーカーと欠陥ウィンドウも閉じ、派生ビュー座標のマーカーを元画像に重ねない
+        // マーカーと欠陥ウィンドウの一覧も破棄し、派生ビュー座標のマーカーを元画像に重ねない
         ClearDefectSource();
         Viewport.SetDefectMarkers(null);
-        _defectWindow?.Close();
+        _defectWindow?.DiscardResult();
         _hdrFloatImage = null;
         _hdrFrameParams = null;
         _vm.HdrTargetVisible = false;
@@ -3627,13 +3629,13 @@ public partial class MainWindow : Window
                     : Viewport.DetachBayerPyramidAsync();
 
                 // 欠陥検出の結果は検出したフレームの画素のもの。フレームを移すこのUIターンで、
-                // 他の差し替え経路と同じく検出元を手放し、マーカーと欠陥ウィンドウも閉じる
+                // 他の差し替え経路と同じく検出元を手放し、マーカーと欠陥ウィンドウの一覧も破棄する
                 // (前フレームの一覧を現フレームのものと誤解させない。残すと一覧からの移動は
                 // 現フレームの同じ座標を指し、補正はフレームの不一致で断られる)。
                 // 送れなかったときは一覧・マーカーをそろえて残すので、消すのは移すときだけにする
                 ClearDefectSource();
                 Viewport.SetDefectMarkers(null);
-                _defectWindow?.Close();
+                _defectWindow?.DiscardResult();
                 Viewport.SetFrame(index);
                 _sequenceIndex = index;
 
@@ -3749,12 +3751,12 @@ public partial class MainWindow : Window
                 _sequenceIndex = index;
 
                 // 欠陥検出の結果は旧画像の座標・画素のもの。他の差し替え経路(開く・TIFFのページ送り)と
-                // 同じく、検出元への参照(この後で破棄する旧画像)を手放し、マーカーと欠陥ウィンドウも閉じて
-                // 別画像の欠陥を残して見せない。送れなかったときは画像も検出結果もそのまま残すので、
+                // 同じく、検出元への参照(この後で破棄する旧画像)を手放し、マーカーと欠陥ウィンドウの一覧も
+                // 破棄して別画像の欠陥を残して見せない。送れなかったときは画像も検出結果もそのまま残すので、
                 // マーカーを消すのは差し替えるときだけにする
                 ClearDefectSource();
                 Viewport.SetDefectMarkers(null);
-                _defectWindow?.Close();
+                _defectWindow?.DiscardResult();
 
                 // カラー画像は輝度と一緒に差し替える。片方だけだと前フレームの色が残る
                 _colorImage = color;
@@ -4683,7 +4685,7 @@ public partial class MainWindow : Window
 
         string methodLabel = method == DefectCorrectionMethod.Mean ? "平均" : "メディアン";
         await ApplyProcessedImageAsync(
-            corrected, $"欠陥補正 {count}px ({methodLabel})", closeDefectWindow: false);
+            corrected, $"欠陥補正 {count}px ({methodLabel})", discardDefectResult: false);
         _defectWindow?.ResetRunButton();
         _vm.ImageInfoText = $"欠陥画素 {count} 個を{methodLabel}補間で補正しました" +
             "(保存すると補正後のデータが出力されます)";

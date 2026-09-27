@@ -130,7 +130,7 @@ public partial class MainWindow
         _channelHistograms = null;
         ClearDefectSource();
         Viewport.SetDefectMarkers(null);
-        _defectWindow?.Close();
+        _defectWindow?.DiscardResult();
         if (sizeChanged)
         {
             _profileWindow?.Close();

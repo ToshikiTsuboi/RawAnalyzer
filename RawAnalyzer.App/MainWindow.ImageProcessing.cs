@@ -85,7 +85,7 @@ public partial class MainWindow
         try
         {
             await ApplyProcessedImageAsync(processed, choice.Label + frameNote,
-                closeDefectWindow: true, color: processedColor);
+                discardDefectResult: true, color: processedColor);
         }
         catch (Exception ex)
         {
