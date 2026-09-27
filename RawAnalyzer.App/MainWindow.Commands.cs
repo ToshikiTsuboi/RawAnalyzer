@@ -704,6 +704,17 @@ public partial class MainWindow
             return;
         }
 
+        // チャネル分割表示の中央は4象限(R/Gr/Gb/B)の境目なので、中央のROIは
+        // 必ず別チャネルの画素にまたがり解析できない。作ってから断るより先に知らせる
+        if (Viewport.IsChannelSplitLayout)
+        {
+            MessageBox.Show(this,
+                "チャネル分割表示では中央にROIを設定できません(4つの象限の境目になるため)。\n" +
+                "ROI選択モードで、1つの象限の中をドラッグして選択してください。",
+                "ROI", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
         int width = Math.Max(1, image.Width / 2);
         int height = Math.Max(1, image.Height / 2);
         Viewport.SetRoi(new Core.RegionOfInterest(

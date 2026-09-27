@@ -829,44 +829,31 @@ public partial class MainWindow : Window
             return;
         }
 
-        var cts = new CancellationTokenSource();
-        ReplaceAnalysisCts(cts);
         RawImage image = ActiveImage;
         int frame = Viewport.Frame;
         BayerPattern pattern = ActiveFormat?.Bayer ?? BayerPattern.None;
         bool byChannel = _vm.HistogramByChannel && pattern != BayerPattern.None;
 
-        HistogramResult result;
-        IReadOnlyList<ChannelHistogram>? channels = null;
-        RegionStatistics? exactStats = null;
+        // ROIは表示座標。チャネル分割表示ではタイル画像の座標なので、
+        // 表示されている画素の集合へ対応づけてから集計する
+        RoiAnalysisTarget target = ResolveRoiTarget(image, roi);
+        if (target is UnsupportedRoiTarget unsupported)
+        {
+            // 画像全体など別の画素で代わりに集計すると、ROIの統計と誤読される
+            ReplaceAnalysisCts(null);
+            ShowUnanalyzableRoi(unsupported.Reason);
+            return;
+        }
+
+        var cts = new CancellationTokenSource();
+        ReplaceAnalysisCts(cts);
+        RoiHistogram analysis;
         try
         {
-            if (byChannel)
-            {
-                ChannelAnalysisResult analysis = await Task.Run(
-                    () => ImageAnalysis.ComputeChannelAnalysis(
-                        image, frame, pattern, roi, cancellationToken: cts.Token),
-                    cts.Token);
-                result = analysis.Total;
-                channels = analysis.Channels;
-            }
-            else
-            {
-                result = await Task.Run(
-                    () => ImageAnalysis.ComputeHistogram(
-                        image, frame, roi, cancellationToken: cts.Token),
-                    cts.Token);
-            }
-
-            if (roi is { } r)
-            {
-                // ヒストグラムと同じ基準で間引く。全面ROIの10億画素で
-                // 2GBを毎回読み直していたのを避ける(厳密値はSampleCountで判別できる)
-                exactStats = await Task.Run(
-                    () => ImageAnalysis.ComputeStatistics(
-                        image, frame, r, ImageAnalysis.DefaultMaxHistogramSamples, cts.Token),
-                    cts.Token);
-            }
+            analysis = await Task.Run(
+                () => RoiAnalysis.ComputeHistogram(
+                    image, frame, target, pattern, byChannel, cts.Token),
+                cts.Token);
         }
         catch (Exception ex) when (TaskRaceGuard.IsAbandoned(ex))
         {
@@ -878,10 +865,12 @@ public partial class MainWindow : Window
             return;
         }
 
+        HistogramResult result = analysis.Histogram;
+        RegionStatistics? exactStats = analysis.RoiStatistics;
         _histogram = result;
-        _channelHistograms = channels;
+        _channelHistograms = analysis.Channels;
         UpdateChannelStatsPanel();
-        bool statsSampled = exactStats is { } s && s.SampleCount < (roi?.PixelCount ?? 0);
+        bool statsSampled = exactStats is { } s && s.SampleCount < RoiAnalysis.PixelCount(target);
         _vm.HistogramIsSampled = result.IsSampled || statsSampled;
         RegionStatistics stats = exactStats ?? result.Statistics;
         _vm.HistMeanSigmaText = $"{stats.Mean:F1} / {stats.Sigma:F1}";
@@ -896,12 +885,60 @@ public partial class MainWindow : Window
             : "—";
         RedrawHistogram();
 
-        if (roi is { } roiRect && exactStats is { } es)
+        if (exactStats is { } es)
         {
-            _vm.RoiOverlayText =
-                $"ROI: {roiRect.Width}×{roiRect.Height}  mean {es.Mean:F1}  σ {es.Sigma:F1}";
+            _vm.RoiOverlayText = target switch
+            {
+                ChannelRoiTarget channel =>
+                    $"ROI: {channel.Region.Width}×{channel.Region.Height} " +
+                    $"({BayerHelper.GetLabel(channel.Channel)}のみ)  mean {es.Mean:F1}  σ {es.Sigma:F1}",
+                SourceRoiTarget source =>
+                    $"ROI: {source.Roi.Width}×{source.Roi.Height}  mean {es.Mean:F1}  σ {es.Sigma:F1}",
+                _ => "",
+            };
             _vm.HasRoi = true;
         }
+    }
+
+    /// <summary>
+    /// 表示中のROI(表示座標)を、解析で集計する元画像の画素の集合へ対応づける。
+    /// </summary>
+    /// <param name="image">表示中の画像。</param>
+    /// <param name="displayRoi">表示座標のROI(なければnull)。</param>
+    /// <returns>集計対象。</returns>
+    private RoiAnalysisTarget ResolveRoiTarget(RawImage image, RegionOfInterest? displayRoi)
+    {
+        return RoiAnalysis.Resolve(
+            displayRoi, Viewport.IsChannelSplitLayout, image.Width, image.Height,
+            ActiveFormat?.Bayer ?? BayerPattern.None);
+    }
+
+    /// <summary>ROIが選ばれていて、表示中の画素へ対応づけて解析できるか。</summary>
+    private bool HasAnalyzableRoi =>
+        ActiveImage is { } image && Viewport.Roi is { PixelCount: > 0 } roi
+        && RoiAnalysis.IsAnalyzableRoi(ResolveRoiTarget(image, roi));
+
+    /// <summary>
+    /// 解析できないROIであることを示し、ヒストグラム欄を空にする(別の画素の統計を残さない)。
+    /// </summary>
+    /// <param name="reason">利用者向けの理由。</param>
+    private void ShowUnanalyzableRoi(string reason)
+    {
+        _histogram = null;
+        _channelHistograms = null;
+        UpdateChannelStatsPanel();
+        _vm.HistogramIsSampled = false;
+        _vm.HistMeanSigmaText = "— / —";
+        _vm.HistMinMaxText = "— / —";
+        _vm.HistMedianModeText = "— / —";
+        _vm.HistPercentileText = "— / —";
+        _vm.HistClipText = "— / —";
+        _vm.HistDynamicRangeText = "—";
+        RedrawHistogram();
+        _vm.RoiOverlayText = reason;
+
+        // 枠は残るので、解除(右クリック / Ctrl+G)できる状態にしておく
+        _vm.HasRoi = true;
     }
 
     private void UpdateChannelStatsPanel()
@@ -1021,7 +1058,8 @@ public partial class MainWindow : Window
 
     private void OnViewportRoiChanged(object? sender, EventArgs e)
     {
-        _noiseWindow?.SetRoiAvailability(Viewport.Roi is { PixelCount: > 0 });
+        // 象限をまたぐなど解析できないROIでは「ROI内のみ」を選ばせない
+        _noiseWindow?.SetRoiAvailability(HasAnalyzableRoi);
         if (Viewport.Roi is { PixelCount: > 0 } roi)
         {
             RefreshHistogram(roi);
@@ -1075,7 +1113,9 @@ public partial class MainWindow : Window
     {
         sourceX = x;
         sourceY = y;
-        if (Viewport.DisplayMode != ViewportDisplayMode.ChannelSplit)
+
+        // 表示モードが分割でもBayerなしならRawとして描かれている(表示座標=元画像座標)
+        if (!Viewport.IsChannelSplitLayout)
         {
             return true;
         }
@@ -1109,6 +1149,17 @@ public partial class MainWindow : Window
 
         int frame = Viewport.Frame;
         RegionOfInterest? roi = Viewport.Roi is { PixelCount: > 0 } r ? r : null;
+
+        // 射影はROIに表示されている画素だけで取る(チャネル分割では1チャネルの格子)。
+        // 象限をまたぐなど対応づけられないROIの射影は出さない。
+        // 射影の横軸はROIを描いた表示座標で示す
+        RoiAnalysisTarget target = ResolveRoiTarget(image, roi);
+        RegionOfInterest? projectionRoi = target switch
+        {
+            SourceRoiTarget source => source.Roi,
+            ChannelRoiTarget channel => channel.DisplayRoi,
+            _ => null,
+        };
         double[] row;
         double[] column;
         double[] horizontalProjection = Array.Empty<double>();
@@ -1129,9 +1180,8 @@ public partial class MainWindow : Window
                     ImageAnalysis.ExtractColumnProfile(image, frame, sourceX), v => (double)v);
 
                 // 水平・垂直を別々に呼ぶとROIを2回走査することになる
-                (double[] hp, double[] vp) = roi is { } region
-                    ? ImageAnalysis.ComputeProjections(image, frame, region, token)
-                    : (Array.Empty<double>(), Array.Empty<double>());
+                (double[] hp, double[] vp) =
+                    RoiAnalysis.ComputeProjections(image, frame, target, token);
                 return (rowValues, columnValues, hp, vp);
             }, token);
         }
@@ -1172,7 +1222,7 @@ public partial class MainWindow : Window
 
         int maxCode = (1 << ActiveFormat!.BitDepth) - 1;
         _profileWindow.SetProfiles(
-            row, column, horizontalProjection, verticalProjection, roi,
+            row, column, horizontalProjection, verticalProjection, projectionRoi,
             sourceX, sourceY, maxCode);
         _profilePickDisplayPoint = (e.X, e.Y);
         Viewport.SetProfileMarker(e.X, e.Y, _profileWindow.IsHorizontal);
@@ -4175,7 +4225,7 @@ public partial class MainWindow : Window
                 NoiseSourceName(),
                 _currentFolder,
                 (1 << ActiveFormat.BitDepth) - 1,
-                Viewport.Roi is { PixelCount: > 0 },
+                HasAnalyzableRoi,
                 ExpectedReferenceSize())
             {
                 Owner = this,
@@ -4253,7 +4303,7 @@ public partial class MainWindow : Window
             NoiseSourceName(),
             _currentFolder,
             (1 << ActiveFormat.BitDepth) - 1,
-            Viewport.Roi is { PixelCount: > 0 },
+            HasAnalyzableRoi,
             ExpectedReferenceSize());
     }
 
@@ -4294,6 +4344,18 @@ public partial class MainWindow : Window
         }
 
         RegionOfInterest? roi = request.UseRoi && Viewport.Roi is { PixelCount: > 0 } r ? r : null;
+
+        // ROIは表示されている画素へ対応づけて測る(チャネル分割では1チャネルの格子)。
+        // 対応づけられないROIを画像全体などで代用すると「ROI内」の値と誤読される
+        RoiAnalysisTarget target = ResolveRoiTarget(image, roi);
+        if (target is UnsupportedRoiTarget unsupported)
+        {
+            MessageBox.Show(this, unsupported.Reason, "ノイズ測定",
+                MessageBoxButton.OK, MessageBoxImage.Warning);
+            _noiseWindow?.ResetRunButton();
+            return;
+        }
+
         NoiseMeasurement measurement = default;
 
         ProgressWindow result = ProgressWindow.Run(
@@ -4303,16 +4365,16 @@ public partial class MainWindow : Window
             {
                 if (request.ReferencePath is null)
                 {
-                    measurement = NoiseAnalysis.MeasureSingle(
-                        image, frame, roi, format.Bayer, request.SaturationCode, ct);
+                    measurement = RoiAnalysis.MeasureNoise(
+                        image, null, frame, target, format.Bayer, request.SaturationCode, ct);
                     return;
                 }
 
                 using RawImage reference = IsRawFile(request.ReferencePath)
                     ? RawLoader.Load(request.ReferencePath, format with { FrameCount = 1 }, ct)
                     : ImageFileLoader.Load(request.ReferencePath, ct).Luminance;
-                measurement = NoiseAnalysis.MeasurePair(
-                    image, reference, frame, 0, roi, format.Bayer,
+                measurement = RoiAnalysis.MeasureNoise(
+                    image, reference, frame, target, format.Bayer,
                     request.SaturationCode, ct);
             }, ct));
 
@@ -4330,10 +4392,11 @@ public partial class MainWindow : Window
             return;
         }
 
+        // 1チャネルの格子はそのチャネルのσそのもの(チャネル別に分けて合成していない)
         _noiseWindow?.ShowResult(
             measurement, format.BitDepth,
             request.ReferencePath is null ? null : Path.GetFileName(request.ReferencePath),
-            perChannel: format.Bayer != BayerPattern.None);
+            perChannel: format.Bayer != BayerPattern.None && target is not ChannelRoiTarget);
     }
 
     private async void OnDefectCorrectionRequested(

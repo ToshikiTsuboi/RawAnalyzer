@@ -192,6 +192,18 @@ public sealed class ImageViewport : FrameworkElement
     public ViewportDisplayMode DisplayMode => _displayMode;
 
     /// <summary>
+    /// R/Gr/Gb/B の2x2タイル並置(チャネル分割)で描画しているか。
+    /// このときROI・クリック位置などの表示座標はタイル画像の座標で、元画像の座標ではない。
+    /// </summary>
+    /// <remarks>
+    /// 表示モードがチャネル分割でもBayerパターンが「なし」なら描画はRawへ落ちる
+    /// (<see cref="SelectSource"/> と同じ条件)。
+    /// </remarks>
+    public bool IsChannelSplitLayout =>
+        _displayMode == ViewportDisplayMode.ChannelSplit
+        && _format is { Bayer: not BayerPattern.None };
+
+    /// <summary>
     /// マウス操作モード。設定するとカーソル形状も切り替わる
     /// (右パネルを畳んでいてもモードが分かるようにするため)。
     /// </summary>
@@ -447,6 +459,7 @@ public sealed class ImageViewport : FrameworkElement
         RawImage image, RawFormat format, int frame = 0, ColorImage? color = null)
     {
         RawImage? old = _image;
+        bool wasChannelSplit = IsChannelSplitLayout;
         _renderCts?.Cancel();
         Task pending = _renderTask;
         _image = image;
@@ -465,6 +478,7 @@ public sealed class ImageViewport : FrameworkElement
         }
         else
         {
+            DiscardRoiOnLayoutChange(wasChannelSplit);
             RequestRender(fast: false);
         }
         try
@@ -485,7 +499,9 @@ public sealed class ImageViewport : FrameworkElement
     /// <param name="format">新しいフォーマット。</param>
     public void UpdateFormat(RawFormat format)
     {
+        bool wasChannelSplit = IsChannelSplitLayout;
         _format = format;
+        DiscardRoiOnLayoutChange(wasChannelSplit);
         RequestRender(fast: false);
     }
 
@@ -502,10 +518,29 @@ public sealed class ImageViewport : FrameworkElement
     /// <param name="mode">表示モード。</param>
     public void SetDisplayMode(ViewportDisplayMode mode)
     {
+        bool wasChannelSplit = IsChannelSplitLayout;
         _displayMode = mode;
         _overlay = null;
         _demosaicCache.Clear();
+        DiscardRoiOnLayoutChange(wasChannelSplit);
         RequestRender(fast: false);
+    }
+
+    /// <summary>
+    /// チャネル分割とそれ以外の表示が切り替わったら、ROI選択を捨てる。
+    /// </summary>
+    /// <remarks>
+    /// ROIは表示座標で保持している。タイル座標で選んだ矩形を元画像座標として
+    /// (あるいはその逆に)読み替えると、選んだときとは別の画素を指してしまう。
+    /// 解除は <see cref="RoiChanged"/> で通知するので、解析側は旧ROIの統計を消せる。
+    /// </remarks>
+    /// <param name="wasChannelSplit">変更前にチャネル分割で描画していたか。</param>
+    private void DiscardRoiOnLayoutChange(bool wasChannelSplit)
+    {
+        if (wasChannelSplit != IsChannelSplitLayout)
+        {
+            ClearRoi();
+        }
     }
 
     /// <summary>カラー現像LUTを差し替え、現像モードなら再描画する。</summary>
@@ -527,10 +562,12 @@ public sealed class ImageViewport : FrameworkElement
     /// <param name="color">カラー画像。</param>
     public void SetColorImage(ColorImage? color)
     {
+        bool wasChannelSplit = IsChannelSplitLayout;
         _colorImage = color;
         _displayMode = color is not null ? ViewportDisplayMode.TrueColor : ViewportDisplayMode.Raw;
         _overlay = null;
         _demosaicCache.Clear();
+        DiscardRoiOnLayoutChange(wasChannelSplit);
         RequestRender(fast: false);
     }
 

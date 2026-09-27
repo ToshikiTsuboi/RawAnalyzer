@@ -27,6 +27,50 @@ public static class BayerSplit
     }
 
     /// <summary>
+    /// タイル画像上の矩形を、元画像でそこに表示されている画素の集合(1チャネル分の格子)へ写像する。
+    /// </summary>
+    /// <remarks>
+    /// 1つの象限に収まる矩形は、元画像ではその象限のチャネルだけを2画素刻みで並べた格子になる。
+    /// 象限をまたぐ矩形は、別チャネルかつ元画像上で離れた位置の画素を隣に並べて見せているだけなので、
+    /// ひとつの領域として扱わない(falseを返す)。
+    /// </remarks>
+    /// <param name="tiled">タイル画像上の矩形。タイル画像の範囲へクランプしてから写像する。</param>
+    /// <param name="tiledWidth">タイル画像の幅(偶数)。</param>
+    /// <param name="tiledHeight">タイル画像の高さ(偶数)。</param>
+    /// <param name="region">写像先の格子領域。falseのときは既定値。</param>
+    /// <returns>クランプ後の矩形が空でなく、1つの象限に収まっていればtrue。</returns>
+    public static bool TryMapTiledRegion(
+        RegionOfInterest tiled, int tiledWidth, int tiledHeight, out ChannelRegion region)
+    {
+        region = default;
+        int quadWidth = tiledWidth / 2;
+        int quadHeight = tiledHeight / 2;
+        if (quadWidth <= 0 || quadHeight <= 0)
+        {
+            return false;
+        }
+
+        RegionOfInterest shown = tiled.Clamp(quadWidth * 2, quadHeight * 2);
+        if (shown.PixelCount == 0)
+        {
+            return false;
+        }
+
+        int quadX = shown.X / quadWidth;
+        int quadY = shown.Y / quadHeight;
+        if ((shown.X + shown.Width - 1) / quadWidth != quadX
+            || (shown.Y + shown.Height - 1) / quadHeight != quadY)
+        {
+            return false;
+        }
+
+        (int sourceX, int sourceY) = MapTiledToSource(
+            shown.X, shown.Y, quadWidth * 2, quadHeight * 2);
+        region = new ChannelRegion(sourceX, sourceY, shown.Width, shown.Height);
+        return true;
+    }
+
+    /// <summary>
     /// 指定象限が表示するチャネルを返す。
     /// </summary>
     /// <param name="pattern">Bayerパターン。</param>
