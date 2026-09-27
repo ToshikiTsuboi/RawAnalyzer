@@ -3085,6 +3085,9 @@ public partial class MainWindow : Window
         _hdrFloatImage = null;
         _hdrFrameParams = null;
         _vm.HasRoi = false;
+
+        // HDR合成は16bitになる。表示LUTの内部値は保ち、黒/白レベルの上限とコード値を換算し直す
+        SyncLevelControlsToActiveBitDepth();
         Viewport.SetDisplayMode(ViewportDisplayMode.Raw);
         Viewport.SetImage(derived, derived.Format);
         Viewport.SetLut(BuildLut());
@@ -3124,6 +3127,9 @@ public partial class MainWindow : Window
         _hdrFrameParams = null;
         _vm.HdrTargetVisible = false;
         _vm.HasRoi = false;
+
+        // HDR合成(16bit)から元画像のビット深度へ戻す(表示LUTの内部値は保つ)
+        SyncLevelControlsToActiveBitDepth();
         _derivedBayerPyramid?.Dispose();
         _derivedBayerPyramid = null;
         Viewport.SetImage(_currentImage!, _currentFormat!);
@@ -3244,12 +3250,29 @@ public partial class MainWindow : Window
     /// <summary>raw code の黒/白レベルを16bitフルスケールの内部値へ反映する。</summary>
     private void ApplyLevelCodes(double blackCode, double whiteCode)
     {
-        int shift = CurrentShift;
-        _blackPoint = (ushort)Math.Clamp((long)blackCode << shift, 0, 65535);
-
         // 白点はそのcodeの上端まで含める(下位ビットを立てる)
-        _whitePoint = (ushort)Math.Clamp(
-            ((long)whiteCode << shift) | ((1L << shift) - 1), 0, 65535);
+        (_blackPoint, _whitePoint) = DisplayLevels.ToPoints(
+            blackCode, whiteCode, ActiveFormat?.BitDepth ?? 16);
+    }
+
+    /// <summary>
+    /// 黒/白レベルの上限とコード値を、表示中の画像のビット深度で表し直す。
+    /// 表示LUTの内部値(黒点・白点)は変えない。
+    /// </summary>
+    /// <remarks>
+    /// 表示中の画像のビット深度が変わる経路(HDR合成の16bit化・元画像への復帰・
+    /// ビット深度の異なる連番)で呼ぶ。上限だけ更新すると、旧ビット深度のコード値が
+    /// 次のスライダー操作で新しいシフト量のまま内部値へ戻され、白点が急落する。
+    /// </remarks>
+    private void SyncLevelControlsToActiveBitDepth()
+    {
+        int bitDepth = ActiveFormat?.BitDepth ?? 16;
+        (int blackCode, int whiteCode) = DisplayLevels.ToCodes(_blackPoint, _whitePoint, bitDepth);
+        _updatingSliders = true;
+        _vm.BlackLevelMax = DisplayLevels.MaxCode(bitDepth);
+        _vm.BlackLevel = blackCode;
+        _vm.WhiteLevel = whiteCode;
+        _updatingSliders = false;
     }
 
     private void ResetDisplayParameters()
@@ -3626,7 +3649,8 @@ public partial class MainWindow : Window
                 Title = $"RawAnalyzer — {Path.GetFileName(path)}{TiffPageNote}";
                 if (layoutChanged)
                 {
-                    _vm.BlackLevelMax = (1 << format.BitDepth) - 1;
+                    // 上限だけ変えると旧ビット深度のコード値が残り、次の操作で白点が飛ぶ
+                    SyncLevelControlsToActiveBitDepth();
                     UpdateFormatPanel(format);
                     _histogram = null;
                     _channelHistograms = null;
