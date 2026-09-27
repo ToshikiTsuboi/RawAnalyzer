@@ -3529,6 +3529,13 @@ public partial class MainWindow : Window
         // スライダーが先に動いてしまっているので、表示中のフレームへ戻す
         if (count <= 1 || _sequenceBusy || _busyDepth > 0)
         {
+            // 実行中で送れないときは黙って戻さず、理由をステータスバーに出す
+            // (前の送りの完了待ちは連続操作で普通に起こるので知らせない)
+            if (count > 1)
+            {
+                NotifySequenceBusy();
+            }
+
             UpdateSequenceUi();
             return;
         }
@@ -3760,6 +3767,13 @@ public partial class MainWindow : Window
                 return;
             }
 
+            // 実行中は再生しない(始めても送れず、実行中に入ると再生は止まる)。理由を知らせる
+            if (NotifySequenceBusy())
+            {
+                PlayToggle.IsChecked = false;
+                return;
+            }
+
             PlayToggle.Content = "⏸ 停止";
             _playTimer ??= new DispatcherTimer();
             _playTimer.Tick -= OnPlayTick;
@@ -3841,11 +3855,56 @@ public partial class MainWindow : Window
             return false;
         }
 
-        MessageBox.Show(this,
-            $"画像の読み込み中は{operation}を開始できません。読み込みの完了後にもう一度実行してください。",
+        MessageBox.Show(this, BusyNotice.ForOperation(BusyReason.Loading, operation),
             "RawAnalyzer", MessageBoxButton.OK, MessageBoxImage.Information);
         return true;
     }
+
+    /// <summary>
+    /// 実行中(読み込み・操作・縮小表示の作成)なら、画像を処理する操作を始めずに理由を知らせる。
+    /// </summary>
+    /// <remarks>
+    /// <see cref="RejectWhileOpening"/> は読み込みの確定待ちだけを断る(保存などは縮小表示の
+    /// 作成中や他の操作の内側でも始められる)。実行中の処理すべてを断る操作(ビニング・
+    /// フィルタ)は、何が実行中かを同じ形のダイアログで知らせる(黙って無視しない)。
+    /// </remarks>
+    /// <param name="operation">操作名(「ビニング」など)。</param>
+    /// <returns>拒否した場合はtrue。</returns>
+    private bool RejectWhileBusy(string operation)
+    {
+        if (_busyDepth == 0)
+        {
+            return false;
+        }
+
+        MessageBox.Show(this, BusyNotice.ForOperation(CurrentBusyReason(), operation),
+            "RawAnalyzer", MessageBoxButton.OK, MessageBoxImage.Information);
+        return true;
+    }
+
+    /// <summary>
+    /// 実行中(読み込み・操作・縮小表示の作成)でフレームを送れないとき、理由をステータスバーに出す。
+    /// </summary>
+    /// <remarks>
+    /// 送り(ボタン・キー・スライダー・再生)は続けて起こり得るので、ダイアログではなく
+    /// ステータスバーで知らせる。送りの途中で始まった処理に譲って送りをやめる場合は、
+    /// 利用者がその処理を始めたことで分かるので知らせない。
+    /// </remarks>
+    /// <returns>実行中で送れない場合はtrue。</returns>
+    private bool NotifySequenceBusy()
+    {
+        if (_busyDepth == 0)
+        {
+            return false;
+        }
+
+        _vm.ImageInfoText = BusyNotice.ForSequence(CurrentBusyReason());
+        return true;
+    }
+
+    /// <summary>実行中(<see cref="_busyDepth"/> が正)である理由。</summary>
+    private BusyReason CurrentBusyReason() =>
+        BusyNotice.Classify(_imageGate.IsLoadPending, _imageGate.IsOperationRunning);
 
     /// <summary>重い処理の実行中スコープ。Disposeで抜ける。</summary>
     private readonly struct BusyScope : IDisposable

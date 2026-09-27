@@ -12,13 +12,13 @@ public partial class MainWindow
 
     private async Task ProcessImageAsync(bool binning)
     {
-        // 読み込みの確定待ちは下の busy 判定にも掛かるが、黙って無視せず理由を知らせる
-        if (_currentImage is not null && RejectWhileOpening(binning ? "ビニング" : "画像フィルタ"))
+        if (_currentImage is null || _currentFormat is null)
         {
             return;
         }
 
-        if (_currentImage is null || _currentFormat is null || _busyDepth > 0)
+        // 読み込み中・縮小表示の作成中・他の処理の実行中は始めない。黙って無視せず理由を知らせる
+        if (RejectWhileBusy(binning ? "ビニング" : "画像フィルタ"))
         {
             return;
         }

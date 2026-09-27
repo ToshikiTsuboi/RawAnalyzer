@@ -23,6 +23,8 @@ public partial class MainWindow
         if (stack is not { PageNavigationEnabled: true }
             || _busyDepth > 0 || _compareMode || _correctionLabel is not null)
         {
+            // 実行中で送れないときは黙って戻さず、理由をステータスバーに出す
+            NotifySequenceBusy();
             UpdateSequenceUi();
             return;
         }

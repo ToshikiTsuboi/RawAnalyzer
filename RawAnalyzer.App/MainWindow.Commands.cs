@@ -648,7 +648,9 @@ public partial class MainWindow
                 Category = "処理",
                 Title = "デジタルビニング (2×2 / 4×4)…",
                 Description = "平均 / 加算。モノクロ・Bayer CFA・RGBに対応",
-                CanExecute = () => _vm.HasImage && !_compareMode && _busyDepth == 0,
+
+                // 実行中かどうかは実行時に判定して理由を出す(ここで無効にするとパレットで黙って無視される)
+                CanExecute = () => _vm.HasImage && !_compareMode,
                 Execute = () => OnBinningClick(this, empty),
             },
             new()
@@ -657,7 +659,7 @@ public partial class MainWindow
                 Category = "処理",
                 Title = "画像フィルタ (平滑化 / シャープ / エッジ)…",
                 Description = "平均・ガウシアン・メディアン・アンシャープ・Sobel・最小値・最大値",
-                CanExecute = () => _vm.HasImage && !_compareMode && _busyDepth == 0,
+                CanExecute = () => _vm.HasImage && !_compareMode,
                 Execute = () => OnFilterClick(this, empty),
             },
 
