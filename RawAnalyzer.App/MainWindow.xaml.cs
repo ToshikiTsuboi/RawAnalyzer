@@ -3583,9 +3583,10 @@ public partial class MainWindow : Window
         _sequenceBusy = true;
         try
         {
-            Viewport.SetDefectMarkers(null);
             if (_sequenceMode == SequenceMode.Frames)
             {
+                Viewport.SetDefectMarkers(null);
+
                 // ピラミッドは生成元フレーム専用なので、フレームを移ったら捨てる。
                 // 進行中の描画が読んでいる可能性があるため、切り離して描画停止を
                 // 待ってからDisposeする(即Disposeすると読み出しがODEになり、
@@ -3698,6 +3699,14 @@ public partial class MainWindow : Window
                 _mainBayerPyramid = null;
                 _sequenceIndex = index;
 
+                // 欠陥検出の結果は旧画像の座標・画素のもの。他の差し替え経路(開く・TIFFのページ送り)と
+                // 同じく、検出元への参照(この後で破棄する旧画像)を手放し、マーカーと欠陥ウィンドウも閉じて
+                // 別画像の欠陥を残して見せない。送れなかったときは画像も検出結果もそのまま残すので、
+                // マーカーを消すのは差し替えるときだけにする
+                ClearDefectSource();
+                Viewport.SetDefectMarkers(null);
+                _defectWindow?.Close();
+
                 // カラー画像は輝度と一緒に差し替える。片方だけだと前フレームの色が残る
                 _colorImage = color;
                 _vm.IsColorImage = color is not null;
@@ -3721,6 +3730,10 @@ public partial class MainWindow : Window
                     // 現像LUTは白飛びの判定に素材のビット深度を使う。カラー現像のまま送るので作り直す
                     UpdateDevelopLuts();
                 }
+
+                // ノイズ測定ウィンドウの対象名・飽和コード・ROI の有無を新しい画像へ合わせる
+                // (表示モードの適用後に行う。分割表示かどうかで ROI を測れるかが変わる)
+                UpdateNoiseWindowSource();
 
                 long frameFileSize = SafeFileSize(path);
                 _vm.ImageInfoText =
