@@ -4350,18 +4350,19 @@ public partial class MainWindow : Window
         using BusyScope busy = EnterBusy();
         int frame = Viewport.Frame;
 
-        // 2枚目は常にフレーム0を読む。対象Aと同一ファイルをフレーム0表示中に
+        // 2枚目は常に先頭フレーム・先頭ページを読む。対象Aと同一ファイルの先頭を表示中に
         // 指定すると完全に同一のデータ同士になり、σ_temporal=0という
-        // 誤った測定値が無警告で出てしまう
-        if (request.ReferencePath is not null && _currentPath is not null
-            && _derivedImage is null && frame == 0
-            && string.Equals(request.ReferencePath, _currentPath,
-                StringComparison.OrdinalIgnoreCase))
+        // 誤った測定値が無警告で出てしまう。TIFFの2ページ目以降を表示中なら別データ
+        if (request.ReferencePath is not null
+            && NoiseReference.ReadsSameDataAsTarget(
+                request.ReferencePath, _currentPath, _derivedImage is not null, frame,
+                _tiffPageIndex))
         {
             MessageBox.Show(this,
                 "2枚目に対象Aと同じファイルが指定されています。同一データ同士の差分は" +
                 "常に0になり、時間ノイズを測定できません。別撮りのフレームを指定するか、" +
-                "マルチフレームファイルなら表示フレームを変えてください(2枚目はフレーム0を使います)。",
+                "マルチフレーム・複数ページのファイルなら表示フレーム・ページを変えてください" +
+                "(2枚目は先頭フレーム・先頭ページを使います)。",
                 "ノイズ測定", MessageBoxButton.OK, MessageBoxImage.Warning);
             _noiseWindow?.ResetRunButton();
             return;
