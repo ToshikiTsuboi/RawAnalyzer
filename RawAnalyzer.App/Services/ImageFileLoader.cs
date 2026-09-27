@@ -93,9 +93,9 @@ internal static class ImageFileLoader
             return 6 + 2; // ushort[px*3](出力と共用) + 輝度
         }
 
-        if (format == PixelFormats.Rgba64)
+        if (format == PixelFormats.Rgba64 || format == PixelFormats.Prgba64)
         {
-            return 8 + 6 + 2; // 読み出し + RGB詰め直し + 輝度
+            return 8 + 6 + 2; // 読み出し + RGB詰め直し + 輝度(関連アルファのPrgba64も変換せず16bitで読む)
         }
 
         // その他はBgra32へ変換して取り出す: byte[px*4] + ushort[px*3] + 輝度
@@ -781,8 +781,14 @@ internal static class ImageFileLoader
                 new RawFormat { Width = width, Height = height, BitDepth = 8 }, pixels), null);
         }
 
-        bool sixteenBit = format == PixelFormats.Rgb48 || format == PixelFormats.Rgba64;
-        BitmapSource source = sixteenBit || format == PixelFormats.Bgra32 ? frame
+        // TIFFの関連アルファ(ExtraSamples=1)のページをWICはPbgra32/Prgba64で返し、その値は
+        // ファイルのサンプル値そのもの。Bgra32へ変換するとアルファで割り戻され(10→25)、16bitは
+        // 8bitに落ち、WhiteIsZeroでは白に飽和するので、変換せずに読む(アルファは使わない)
+        bool premultiplied = info is not null
+            && (format == PixelFormats.Pbgra32 || format == PixelFormats.Prgba64);
+        bool sixteenBit = format == PixelFormats.Rgb48 || format == PixelFormats.Rgba64
+            || (premultiplied && format == PixelFormats.Prgba64);
+        BitmapSource source = sixteenBit || format == PixelFormats.Bgra32 || premultiplied ? frame
             : new FormatConvertedBitmap(frame, PixelFormats.Bgra32, null, 0);
         int inputChannels = format == PixelFormats.Rgb48 ? 3 : 4;
 

@@ -133,6 +133,38 @@ public class WideSampleTiffTests
         return page;
     }
 
+    /// <summary>
+    /// 1行5画素の、色(グレーは1チャネル、RGBは3チャネル)+アルファ(+残りは7)の符号なし整数ページ。
+    /// アルファは先頭4画素が100(16bitは1000)、最後の画素が0。追加サンプルすべてに extraSamples を付ける。
+    /// </summary>
+    private static TiffBuilder.Page AlphaPage(
+        int bits, int photometric, int samplesPerPixel, long[] color, int colorChannels, int extraSamples,
+        bool compressed)
+    {
+        const int pixels = 5;
+        long alpha = bits == 8 ? 100 : 1000;
+        var values = new long[pixels * samplesPerPixel];
+        for (int i = 0; i < pixels; i++)
+        {
+            for (int c = 0; c < samplesPerPixel; c++)
+            {
+                values[(i * samplesPerPixel) + c] = c < colorChannels ? color[(i * colorChannels) + c]
+                    : c > colorChannels ? 7
+                    : i == pixels - 1 ? 0 : alpha;
+            }
+        }
+
+        var page = TiffBuilder.GrayPage(pixels, 1, bits, IntegerSamples(bits, values),
+            photometric: photometric, samplesPerPixel: samplesPerPixel);
+        page.Tags[338] = (3, Enumerable.Repeat((long)extraSamples, samplesPerPixel - colorChannels).ToArray());
+        if (compressed)
+        {
+            TiffBuilder.Deflate(page);
+        }
+
+        return page;
+    }
+
     [Fact]
     public void Float32Gray_Normalized_FillsFullRange()
     {
@@ -853,6 +885,91 @@ public class WideSampleTiffTests
         Assert.Equal(photometric == 1 ? new[] { 0, 32768, 65535 } : new[] { 65535, 32768, 0 }, Row(native.Luminance));
         Assert.Equal(Row(native.Luminance), Row(wic.Luminance));
         Assert.Equal(native.ValueNote, wic.ValueNote);
+    }
+
+    [Theory]
+    [InlineData(8, 1, 2, false)]
+    [InlineData(8, 1, 2, true)]
+    [InlineData(8, 1, 4, false)]
+    [InlineData(8, 0, 2, false)] // WhiteIsZero: 以前は全画素65535
+    [InlineData(8, 0, 4, true)]
+    [InlineData(16, 1, 2, false)]
+    [InlineData(16, 1, 3, true)]
+    [InlineData(16, 0, 2, false)]
+    [InlineData(16, 0, 4, true)]
+    public void AssociatedAlphaGray_KeepsSampleValues(int bits, int photometric, int samplesPerPixel, bool compressed)
+    {
+        // 関連アルファ(ExtraSamples=1)のページをWICはPbgra32/Prgba64で返す。以前はこれをBgra32へ変換し、
+        // アルファで割り戻された値(10→25)になり、16bitは8bitに落ち、WhiteIsZeroでは全画素65535だった。
+        // 元のサンプル値のまま、非関連アルファ(ExtraSamples=2)の同じページと同じ結果になること。
+        // 色がアルファより大きい画素・アルファ0の画素も元の値のまま(アルファは値に使わない)
+        long max = (1L << bits) - 1;
+        long[] gray = { 0, 10, 20, bits == 8 ? 200 : 60000, 50 };
+        DecodedImage expected = Load(AlphaPage(bits, photometric, samplesPerPixel, gray, 1, extraSamples: 2, compressed));
+        using RawImage expectedOwned = expected.Luminance;
+        DecodedImage actual = Load(AlphaPage(bits, photometric, samplesPerPixel, gray, 1, extraSamples: 1, compressed));
+        using RawImage actualOwned = actual.Luminance;
+
+        // 8bitはWIC経路の規約どおり v×257、16bitはそのまま(WhiteIsZero は 最大値−v)
+        int[] codes = Array.ConvertAll(gray, v =>
+        {
+            long sample = photometric == 0 ? max - v : v;
+            return (int)(bits == 8 ? sample * 257 : sample);
+        });
+        Assert.Null(actual.Color);
+        Assert.Equal(bits, actual.Luminance.Format.BitDepth);
+        Assert.Equal(codes, Row(actual.Luminance));
+        Assert.Equal(Row(expected.Luminance), Row(actual.Luminance));
+    }
+
+    [Theory]
+    [InlineData(8, 4, false)]
+    [InlineData(8, 4, true)]
+    [InlineData(8, 5, false)]
+    [InlineData(16, 4, false)]
+    [InlineData(16, 4, true)]
+    [InlineData(16, 5, true)]
+    public void AssociatedAlphaRgb_KeepsSampleValues(int bits, int samplesPerPixel, bool compressed)
+    {
+        // RGB+関連アルファも同じく、アルファで割り戻さず(16bitは16bitのまま)、非関連アルファの
+        // 同じページと同じRGBになること
+        long big = bits == 8 ? 200 : 60000;
+        long[] rgb = { 0, 5, 15, 10, 6, 16, 20, 7, 17, big, 1, 2, 50, 60, 70 };
+        DecodedImage expected = Load(AlphaPage(bits, 2, samplesPerPixel, rgb, 3, extraSamples: 2, compressed));
+        using RawImage expectedOwned = expected.Luminance;
+        DecodedImage actual = Load(AlphaPage(bits, 2, samplesPerPixel, rgb, 3, extraSamples: 1, compressed));
+        using RawImage actualOwned = actual.Luminance;
+
+        Assert.NotNull(actual.Color);
+        Assert.Equal(bits, actual.Color!.BitDepth);
+        actual.Color.GetPixel(1, 0, out ushort r, out ushort g, out ushort b);
+        int scale = bits == 8 ? 257 : 1;
+        Assert.Equal((10 * scale, 6 * scale, 16 * scale), ((int)r, (int)g, (int)b));
+        AssertSameColor(expected, actual);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void AssociatedAlphaRgb16_Planar_KeepsSampleValues(bool compressed)
+    {
+        // プレーン分離の16bit RGB+関連アルファも、割り戻さず16bitのまま読む
+        long[] rgba = { 0, 5, 15, 1000, 10, 6, 16, 1000, 60000, 1, 2, 1000, 50, 60, 70, 0 };
+        var page = PlanarPage(4, 1, 16, 1, 4, IntegerSamples(16, rgba));
+        page.Tags[338] = (3, new long[] { 1 });
+        if (compressed)
+        {
+            TiffBuilder.Deflate(page);
+        }
+
+        DecodedImage decoded = Load(page);
+        using RawImage owned = decoded.Luminance;
+
+        Assert.Equal(16, decoded.Color!.BitDepth);
+        decoded.Color.GetPixel(2, 0, out ushort r, out ushort g, out ushort b);
+        Assert.Equal((60000, 1, 2), ((int)r, (int)g, (int)b));
+        decoded.Color.GetPixel(3, 0, out r, out g, out b);
+        Assert.Equal((50, 60, 70), ((int)r, (int)g, (int)b)); // アルファ0でも色は元の値
     }
 
     /// <summary>
