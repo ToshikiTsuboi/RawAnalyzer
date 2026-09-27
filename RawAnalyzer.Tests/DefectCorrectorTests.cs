@@ -47,6 +47,27 @@ public class DefectCorrectorTests
     }
 
     [Fact]
+    public void Correct_ResultCarriesPatternUsedForCorrection()
+    {
+        // RGGBとして読み込んだ後、右パネルでBGGRへ変更してから補正する
+        // (パネルの変更は画像の Format には入らず、指定パターンとして渡される)。
+        // 補正に使ったパターンが結果に引き継がれず、採用時にRGGBへ戻って
+        // 以後のカラー表示・チャネル統計でR/Bが入れ替わっていた(レビュー指摘 #12)
+        const int size = 8;
+        ushort[] codes = ColorPipelineTests.BuildConstantMosaic(
+            size, size, BayerPattern.Bggr, r: 1000, g: 8000, b: 3000);
+        codes[2 * size + 2] = 60000; // (2,2) はBGGRのB画素
+
+        using RawImage image = TestImages.FromCodes(codes, size, size, bayer: BayerPattern.Rggb);
+        var defects = new[] { new DefectPixel(2, 2, 60000, DefectType.Hot) };
+
+        using RawImage result = DefectCorrector.Correct(image, defects, BayerPattern.Bggr);
+
+        Assert.Equal(3000, result.GetPixel(2, 2)); // 同色(B)の近傍で補間
+        Assert.Equal(BayerPattern.Bggr, result.Format.Bayer);
+    }
+
+    [Fact]
     public void Correct_ClusterDefects_ExcludesOtherDefectsFromReference()
     {
         const int size = 7;
@@ -113,5 +134,10 @@ public class DefectCorrectorTests
                 Assert.Equal(image.GetPixel(x, y), result.GetPixel(x, y));
             }
         }
+
+        // 欠陥0件の早期returnでも、指定パターン(パネルで変更した値)を引き継ぐ
+        using RawImage changed = DefectCorrector.Correct(
+            image, Array.Empty<DefectPixel>(), BayerPattern.Grbg);
+        Assert.Equal(BayerPattern.Grbg, changed.Format.Bayer);
     }
 }

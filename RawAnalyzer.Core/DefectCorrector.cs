@@ -25,12 +25,15 @@ public static class DefectCorrector
     /// </summary>
     /// <param name="image">対象画像。</param>
     /// <param name="defects">補正する欠陥画素。</param>
-    /// <param name="pattern">Bayerパターン(Noneなら隣接画素を参照)。</param>
+    /// <param name="pattern">
+    /// Bayerパターン(Noneなら隣接画素を参照)。画面で変更したCFAも指定でき、
+    /// 結果のフォーマットにもこのCFAが付く。
+    /// </param>
     /// <param name="method">補正方法。</param>
     /// <param name="frame">フレーム番号。</param>
     /// <param name="progress">進捗通知(0〜1)。</param>
     /// <param name="cancellationToken">キャンセルトークン。</param>
-    /// <returns>補正済み画像(単一フレーム)。</returns>
+    /// <returns>補正済み画像(単一フレーム、指定CFA)。</returns>
     /// <exception cref="InvalidOperationException">画像が大きすぎてヒープ展開できない場合。</exception>
     public static RawImage Correct(
         RawImage image,
@@ -48,6 +51,16 @@ public static class DefectCorrector
             throw new InvalidOperationException(
                 "1億画素を超える画像の欠陥補正はサポートされていません。");
         }
+
+        // 補正に使ったCFAを結果のフォーマットにする(ビニング・フィルタと同じ規約)。
+        // 画像の Format は読み込み時のままなので、複製するとパネルでの変更が失われる
+        PixelProcessing.ValidatePattern(pattern);
+        RawFormat resultFormat = image.Format with
+        {
+            FrameCount = 1,
+            Hdr = HdrMode.None,
+            Bayer = pattern,
+        };
 
         // 全画素をコピー(巨大画像では数秒かかるためキャンセルと進捗を出す)
         var pixels = new ushort[(long)width * height];
@@ -70,8 +83,7 @@ public static class DefectCorrector
 
         if (defects.Count == 0)
         {
-            return RawImage.FromPixels(
-                image.Format with { FrameCount = 1, Hdr = HdrMode.None }, pixels);
+            return RawImage.FromPixels(resultFormat, pixels);
         }
 
         // 欠陥座標の集合(近傍参照から除外するため)
@@ -114,8 +126,7 @@ public static class DefectCorrector
         }
 
         progress?.Report(1.0);
-        return RawImage.FromPixels(
-            image.Format with { FrameCount = 1, Hdr = HdrMode.None }, pixels);
+        return RawImage.FromPixels(resultFormat, pixels);
     }
 
     private static void CollectNeighbors(

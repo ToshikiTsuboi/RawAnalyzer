@@ -2130,8 +2130,9 @@ public partial class MainWindow : Window
                 reference = IsRawFile(choice.ReferencePath)
                     ? RawLoader.Load(choice.ReferencePath, format with { FrameCount = 1 }, ct)
                     : ImageFileLoader.Load(choice.ReferencePath, ct).Luminance;
+                // 右パネルで変更したBayerは source.Format に入らないため、結果へ明示的に引き継ぐ
                 corrected = ImageCalculator.Apply(
-                    source, reference, choice.Operation, frame, 0, progress, ct);
+                    source, reference, choice.Operation, frame, 0, format.Bayer, progress, ct);
             }, ct));
         reference?.Dispose();
 

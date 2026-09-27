@@ -28,9 +28,13 @@ public static class ImageCalculator
     /// <param name="operation">演算の種類。</param>
     /// <param name="frame">Aのフレーム番号。</param>
     /// <param name="referenceFrame">Bのフレーム番号。</param>
+    /// <param name="pattern">
+    /// 結果に付けるCFA。省略時はAのCFA。画面で変更したCFAも指定可能
+    /// (画素ごとの演算なので計算自体はCFAに依らない)。
+    /// </param>
     /// <param name="progress">進捗通知(0〜1)。</param>
     /// <param name="cancellationToken">キャンセルトークン。</param>
-    /// <returns>演算結果(Aと同フォーマット、単一フレーム)。</returns>
+    /// <returns>演算結果(Aと同フォーマット・指定CFA、単一フレーム)。</returns>
     /// <exception cref="ArgumentException">サイズが一致しない場合。</exception>
     /// <exception cref="InvalidOperationException">結果が大きすぎてヒープ展開できない場合。</exception>
     public static RawImage Apply(
@@ -39,6 +43,7 @@ public static class ImageCalculator
         ImageOperation operation,
         int frame = 0,
         int referenceFrame = 0,
+        BayerPattern? pattern = null,
         IProgress<double>? progress = null,
         CancellationToken cancellationToken = default)
     {
@@ -48,6 +53,10 @@ public static class ImageCalculator
                 $"サイズが一致しません: {source.Width}×{source.Height} と " +
                 $"{reference.Width}×{reference.Height}", nameof(reference));
         }
+
+        // ビニング・フィルタと同じく、処理に使ったCFAを結果のフォーマットにする
+        BayerPattern cfa = pattern ?? source.Format.Bayer;
+        PixelProcessing.ValidatePattern(cfa);
 
         int width = source.Width;
         int height = source.Height;
@@ -126,7 +135,7 @@ public static class ImageCalculator
 
         cancellationToken.ThrowIfCancellationRequested();
         progress?.Report(1.0);
-        RawFormat format = source.Format with { FrameCount = 1, Hdr = HdrMode.None };
+        RawFormat format = source.Format with { FrameCount = 1, Hdr = HdrMode.None, Bayer = cfa };
         return RawImage.FromPixels(format, pixels);
     }
 }

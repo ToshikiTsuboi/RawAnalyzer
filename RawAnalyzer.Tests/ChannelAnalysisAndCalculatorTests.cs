@@ -173,6 +173,26 @@ public class ImageCalculatorTests
     }
 
     [Fact]
+    public void Apply_WithPattern_ResultCarriesGivenBayer()
+    {
+        // RGGBとして読み込んだ後、右パネルでBGGRへ変更してから演算する
+        // (パネルの変更は画像の Format には入らない)。読込時のRGGBが結果へ複製され、
+        // 採用時に最新のBayer指定を上書きしていた(レビュー指摘 #12)
+        ushort[] a = { 1000, 500, 100, 4095 };
+        ushort[] b = { 300, 500, 200, 95 };
+        using RawImage imageA = TestImages.FromCodes(
+            a, 2, 2, bitDepth: 12, bayer: BayerPattern.Rggb);
+        using RawImage imageB = TestImages.FromCodes(b, 2, 2, bitDepth: 12);
+
+        using RawImage result = ImageCalculator.Apply(
+            imageA, imageB, ImageOperation.Subtract, pattern: BayerPattern.Bggr);
+
+        Assert.Equal(BayerPattern.Bggr, result.Format.Bayer);
+        Assert.Equal(12, result.Format.BitDepth);
+        Assert.Equal((1000 - 300) << 4, result.GetPixel(0, 0)); // 画素演算はパターンに依らない
+    }
+
+    [Fact]
     public void AbsoluteDifference_ReturnsMagnitude()
     {
         ushort[] a = { 1000, 100 };
