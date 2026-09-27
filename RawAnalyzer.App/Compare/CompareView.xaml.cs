@@ -35,6 +35,11 @@ public partial class CompareView : UserControl
     private CompareSyncMode _syncMode = CompareSyncMode.FieldOfView;
     private bool _syncing;
 
+    // 等倍同期で、未操作のまま全体表示に追従している基準(FitBaseを参照)と、
+    // その再フィット後の揃え直しをレイアウト確定待ちで予約済みか
+    private ComparePaneView? _fitBase;
+    private bool _fitBaseResyncPending;
+
     // 読み込み中に比較モードを抜けた場合の判定。CloseAllAsyncで進めることで、
     // 完了した資源を「もう要らないもの」として破棄できる
     private int _generation;
@@ -144,6 +149,7 @@ public partial class CompareView : UserControl
         {
             _panes.Clear();
             _active = null;
+            _fitBase = null;
             _closing = false;
             Relayout();
         }
@@ -210,6 +216,7 @@ public partial class CompareView : UserControl
         view.CursorMoved += OnPaneCursorMoved;
         view.CursorLeft += OnPaneCursorLeft;
         view.DisplayChanged += OnPaneDisplayChanged;
+        view.ViewportControl.SizeChanged += (_, _) => OnPaneViewportResized(view);
         _panes.Add(view);
         Relayout();
         view.Attach(pane, cancellationToken);
@@ -266,12 +273,12 @@ public partial class CompareView : UserControl
             return;
         }
 
-        // 基準が未操作で全体表示に追従中なら、新規ペインも全体表示のまま追従させる。
-        // 変換を写すと新規ペインだけ追従が外れ、次のペイン増減で基準は全体表示へ
-        // 戻るのに新規ペインには前の倍率が残ってずれる
-        ComparePaneView? reference = _panes.FirstOrDefault(
+        // 等倍で未操作の基準があればそれに、なければ既存ペインに合わせる。基準が未操作
+        // (全体表示に追従中)なら、視野では新規ペインも全体表示のまま追従し、等倍では
+        // 基準の倍率に揃う(SyncFrom)。新規ペイン自身が基準なら合わせる相手はいない
+        ComparePaneView? reference = FitBase ?? _panes.FirstOrDefault(
             p => !ReferenceEquals(p, view) && p.Pane is not null);
-        if (reference is not null && !reference.IsAutoFit)
+        if (reference is not null && !ReferenceEquals(reference, view))
         {
             SyncFrom(reference, only: view);
         }
@@ -288,11 +295,12 @@ public partial class CompareView : UserControl
             _ => CompareSyncMode.FieldOfView,
         };
 
-        // モードを入れたら、アクティブ(なければ先頭)ペイン基準で即座に揃える
-        // (基準が未操作なら全ペインを全体表示の追従へ揃える。オフへの切替では何も動かさない)
+        // モードを入れたら即座に揃える。基準は等倍で未操作の基準が残っていればそれ
+        // (その倍率に揃えただけの他ペインを基準にすると未操作の扱いが失われる)、
+        // なければアクティブ(なければ先頭)ペイン。オフへの切替では何も動かさない
         if (_syncMode != CompareSyncMode.Off)
         {
-            ComparePaneView? source = _active ?? _panes.FirstOrDefault();
+            ComparePaneView? source = FitBase ?? _active ?? _panes.FirstOrDefault();
             if (source?.Pane is not null)
             {
                 SyncFrom(source);
@@ -306,11 +314,69 @@ public partial class CompareView : UserControl
         {
             SyncFrom(source);
         }
+        else if (!source.IsAutoFit)
+        {
+            // オフ中の操作で未操作ではなくなったので、等倍の基準は引き継がない
+            // (次に同期を入れるときはアクティブのペインを基準にする)
+            _fitBase = null;
+        }
+    }
+
+    /// <summary>
+    /// 等倍同期の基準のうち、未操作で全体表示に追従しているペイン(なければnull)。
+    /// 他ペインはこの倍率に揃えてあり、基準が再フィットしたら揃え直す。
+    /// </summary>
+    private ComparePaneView? FitBase =>
+        _fitBase is { Pane: not null, IsAutoFit: true } fitBase && _panes.Contains(fitBase)
+            ? fitBase
+            : null;
+
+    /// <summary>
+    /// ペインのビューポートのサイズ変化(ペインの増減・ビューのリサイズ)。
+    /// 等倍で未操作の基準が全体表示へ再フィットしたら、他ペインの倍率を揃え直す。
+    /// </summary>
+    /// <param name="view">サイズが変わったペイン。</param>
+    private void OnPaneViewportResized(ComparePaneView view)
+    {
+        if (_syncMode == CompareSyncMode.PixelZoom && ReferenceEquals(view, FitBase))
+        {
+            ResyncFromFitBaseWhenLaidOut();
+        }
+    }
+
+    /// <summary>
+    /// レイアウト確定後に、等倍の未操作の基準から他ペインへ倍率を写し直す。
+    /// </summary>
+    /// <remarks>
+    /// 基準のSizeChangedの時点では他ペインのSizeChanged(表示中心の維持)が済んで
+    /// いないことがあり、先に写すと後からの中心維持で位置がずれる。
+    /// 新規ペインの初期合わせと同じくLayoutUpdatedまで待つ。
+    /// </remarks>
+    private void ResyncFromFitBaseWhenLaidOut()
+    {
+        if (_fitBaseResyncPending)
+        {
+            return;
+        }
+
+        _fitBaseResyncPending = true;
+        EventHandler? handler = null;
+        handler = (_, _) =>
+        {
+            LayoutUpdated -= handler;
+            _fitBaseResyncPending = false;
+            if (!_closing && _syncMode == CompareSyncMode.PixelZoom && FitBase is { } fitBase)
+            {
+                SyncFrom(fitBase);
+            }
+        };
+        LayoutUpdated += handler;
     }
 
     /// <summary>
     /// 指定ペインのビュー状態を、他のペインへ写像して適用する。
-    /// 基準が未操作で全体表示に追従中なら、他ペインも全体表示の追従へ戻す。
+    /// 基準が未操作で全体表示に追従中なら、視野では他ペインも全体表示の追従へ戻し、
+    /// 等倍では倍率を写したうえで基準だけが追従を続ける(<see cref="FitBase"/>)。
     /// </summary>
     /// <param name="source">基準にするペイン。</param>
     /// <param name="only">指定するとこのペインだけに適用する(ペイン追加時の初期合わせ用)。</param>
@@ -331,6 +397,13 @@ public partial class CompareView : UserControl
                 return;
             }
 
+            // 基準が全体表示に追従中(未操作)のとき、視野では変換を写さず追従ごと揃える
+            // (未操作の間は各ペインが自分の全体表示)。変換を写すと写した側だけ追従が外れ、
+            // 次のペイン増減やリサイズで基準だけが全体表示へ戻ってずれる。
+            // 等倍は倍率を揃えるのが目的なので変換を写し、基準だけが追従を続けて、
+            // 基準が再フィットするたびに写し直す(OnPaneViewportResized)
+            bool sourceFits = source.IsAutoFit;
+            _fitBase = sourceFits && _syncMode == CompareSyncMode.PixelZoom ? source : null;
             foreach (ComparePaneView pane in _panes)
             {
                 if (ReferenceEquals(pane, source) || pane.Pane is null
@@ -339,11 +412,7 @@ public partial class CompareView : UserControl
                     continue;
                 }
 
-                // 基準が全体表示に追従中なら、変換は写さず追従ごと揃える(ペイン追加時と
-                // 同じ規約。未操作の間は同期モードによらず各ペインが自分の全体表示)。
-                // 変換を写すと写した側だけ追従が外れ、次のペイン増減やリサイズで
-                // 基準だけが全体表示へ戻って他とずれる
-                if (source.IsAutoFit)
+                if (sourceFits && _syncMode == CompareSyncMode.FieldOfView)
                 {
                     pane.ResumeAutoFit();
                     continue;
@@ -489,9 +558,40 @@ public partial class CompareView : UserControl
             SetActive(_panes.LastOrDefault());
         }
 
+        if (ReferenceEquals(view, _fitBase))
+        {
+            HandOverFitBase(view);
+        }
+
         Relayout();
         RefreshChips();
         await view.DetachAndDisposeAsync();
+    }
+
+    /// <summary>
+    /// 等倍で未操作の基準を閉じるとき、アクティブ(なければ先頭)のペインに基準を引き継ぐ。
+    /// 引き継いだペインは全体表示への追従を再開し、他ペインはレイアウト確定後に
+    /// その倍率へ揃い直す。引き継がないと閉じた基準の倍率のまま全ペインが固まり、
+    /// 以後の増減でも全体表示へ戻らない(オフ中は何も動かさず、基準を手放すだけ)。
+    /// </summary>
+    /// <param name="closing">閉じる基準のペイン(一覧からは除去済み)。</param>
+    private void HandOverFitBase(ComparePaneView closing)
+    {
+        _fitBase = null;
+        if (_syncMode != CompareSyncMode.PixelZoom || !closing.IsAutoFit)
+        {
+            return;
+        }
+
+        ComparePaneView? next = _active?.Pane is not null
+            ? _active
+            : _panes.FirstOrDefault(p => p.Pane is not null);
+        if (next is not null)
+        {
+            _fitBase = next;
+            next.ResumeAutoFit();
+            ResyncFromFitBaseWhenLaidOut();
+        }
     }
 
     private void SetActive(ComparePaneView? view)

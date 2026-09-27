@@ -259,17 +259,15 @@ public class CompareViewUiTests
     });
 
     [Theory]
-    [InlineData(0, 1, false)] // 視野→等倍
-    [InlineData(1, 0, false)] // 等倍→視野
+    [InlineData(1, 0, false)] // 等倍→視野(等倍の基準はA、アクティブはAに揃えたB)
     [InlineData(0, 2, false)] // 視野→オフ
     [InlineData(2, 0, true)] // オフでAだけ拡大→視野
-    [InlineData(2, 1, true)] // オフでAだけ拡大→等倍
     public Task SwitchSyncMode_BaseUntouched_AllPanesKeepFittingAsGridChanges(
         int fromIndex, int toIndex, bool zoomOther) => WpfTestHost.Run(async () =>
     {
-        // 切替の基準(アクティブ=最後に追加したB)が未操作で全体表示に追従中なら、
-        // 切替後も全ペインが全体表示に追従する。基準だけ追従が残ると、次の
-        // ペイン増減で基準だけ再フィットし、基準の変換を写した他ペインとずれる
+        // 視野・オフへの切替で基準が未操作なら、切替後も全ペインが全体表示に追従する。
+        // 基準だけ追従が残ると、次のペイン増減で基準だけ再フィットし、基準の変換を
+        // 写した他ペインとずれる(等倍への切替は SwitchToPixelZoom_… で確かめる)
         using var small = new ImageFixture(480, 320);
         using var large = new ImageFixture(960, 640);
         var view = NewView();
@@ -385,6 +383,93 @@ public class CompareViewUiTests
         }
     });
 
+    [Theory]
+    [InlineData(0, false)] // 視野→等倍
+    [InlineData(2, true)] // オフでAだけ拡大→等倍
+    public Task SwitchToPixelZoom_BaseUntouched_ZoomsStayEqualAsGridAndSizeChange(
+        int fromIndex, bool zoomOther) => WpfTestHost.Run(async () =>
+    {
+        // 等倍は同期中の全ペインの倍率を常に等しく保つ。切替の基準(アクティブ=最後に
+        // 追加したB)が未操作なら、Bは全体表示に追従したまま倍率を他ペインへ写し、
+        // ペインの増減やリサイズでBが再フィットしたらレイアウト確定後に合わせ直す
+        using var small = new ImageFixture(480, 320);
+        using var large = new ImageFixture(960, 640);
+        var view = NewView();
+        try
+        {
+            SelectSync(view, fromIndex);
+            Assert.True(await view.AddPaneFromPathAsync(small.Path));
+            await LayoutAsync(view, 1280, 720);
+            Assert.True(await view.AddPaneFromPathAsync(large.Path));
+            await LayoutAsync(view, 1280, 720);
+            ComparePaneView fitBase = PaneAt(view, 1);
+            if (zoomOther)
+            {
+                ZoomAround(PaneAt(view, 0), 4, 0.6, 0.4); // ホイールでの拡大はアクティブを変えない
+            }
+
+            SelectSync(view, 1);
+            AssertPixelSyncedToFittingBase(view, fitBase);
+
+            Assert.True(await view.AddPaneFromPathAsync(small.Path));
+            await LayoutAsync(view, 1280, 720);
+            AssertPixelSyncedToFittingBase(view, fitBase);
+
+            await ClosePaneAsync(view, 0);
+            await LayoutAsync(view, 1280, 720);
+            AssertPixelSyncedToFittingBase(view, fitBase);
+
+            await LayoutAsync(view, 1000, 600); // ビュー自体のリサイズ(ウィンドウ・全画面の切替)
+            AssertPixelSyncedToFittingBase(view, fitBase);
+
+            // オフへの切替では何も動かず、以後は合わせ直さない(Bだけが全体表示に追従する)
+            ComparePaneView other = PaneAt(view, 1);
+            (double Zoom, double X, double Y) otherView = ViewOf(other);
+            SelectSync(view, 2);
+            AssertKeepsView(otherView, other);
+            AssertFitting(fitBase);
+            Assert.True(await view.AddPaneFromPathAsync(small.Path));
+            await LayoutAsync(view, 1000, 600);
+            AssertKeepsView(otherView, other);
+            AssertFitting(fitBase);
+            AssertFitting(PaneAt(view, 2));
+        }
+        finally
+        {
+            await view.CloseAllAsync();
+        }
+    });
+
+    [Fact]
+    public Task PixelZoom_ClosingUntouchedBase_ActivePaneTakesOverAsBase() => WpfTestHost.Run(async () =>
+    {
+        // 未操作の基準を閉じても未操作の扱いは続く。アクティブのペインが基準を引き継いで
+        // 全体表示に追従し、他ペインはその倍率へ揃い直す(閉じた基準の倍率のまま固まらない)
+        using var small = new ImageFixture(480, 320);
+        using var large = new ImageFixture(960, 640);
+        using var middle = new ImageFixture(720, 480);
+        var view = NewView();
+        try
+        {
+            Assert.True(await view.AddPaneFromPathAsync(small.Path));
+            await LayoutAsync(view, 1280, 720);
+            Assert.True(await view.AddPaneFromPathAsync(large.Path));
+            await LayoutAsync(view, 1280, 720);
+            SelectSync(view, 1); // 基準はアクティブのB
+            Assert.True(await view.AddPaneFromPathAsync(middle.Path)); // アクティブはCへ移る
+            await LayoutAsync(view, 1280, 720);
+            AssertPixelSyncedToFittingBase(view, PaneAt(view, 1));
+
+            await ClosePaneAsync(view, 1);
+            await LayoutAsync(view, 1280, 720);
+            AssertPixelSyncedToFittingBase(view, PaneAt(view, 1));
+        }
+        finally
+        {
+            await view.CloseAllAsync();
+        }
+    });
+
     private static CompareView NewView() => new()
     {
         PaneLoader = async (path, token) => await ComparePane.LoadAsync(path, null, token),
@@ -475,6 +560,13 @@ public class CompareViewUiTests
         {
             Assert.Equal(expected.ViewportControl.Zoom, actual.ViewportControl.Zoom, 10);
         }
+    }
+
+    // 等倍で未操作の基準に揃っている(基準は全体表示で、全ペインが基準と同じ倍率・相対中心)
+    private static void AssertPixelSyncedToFittingBase(CompareView view, ComparePaneView fitBase)
+    {
+        AssertFitting(fitBase);
+        for (int i = 0; i < view.PaneCount; i++) AssertSynced(1, fitBase, PaneAt(view, i));
     }
 
     // 自動の全体表示(FitToView)を挟まずにレイアウトだけ確定させる

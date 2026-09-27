@@ -143,7 +143,7 @@ public partial class ComparePaneView : UserControl
 
     /// <summary>
     /// 全体表示へ戻し、未操作のときと同じくサイズ変化への追従を再開する
-    /// (同期の基準が全体表示に追従中のとき、他ペインをそれに揃えるために使う)。
+    /// (視野同期で他ペインを基準の追従に揃えるときや、等倍同期の基準を引き継ぐときに使う)。
     /// </summary>
     internal void ResumeAutoFit()
     {
