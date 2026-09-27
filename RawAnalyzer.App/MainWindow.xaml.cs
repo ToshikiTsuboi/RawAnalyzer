@@ -3642,6 +3642,10 @@ public partial class MainWindow : Window
                 RawImage image;
                 ColorImage? color = null;
                 int pageCount = 1;
+
+                // 値の対応関係の説明は送りが確定したときに状態へ入れる(送れなかったときに
+                // 表示中の画像と食い違わせない)
+                string? valueNote = null;
                 try
                 {
                     if (isRaw)
@@ -3655,7 +3659,7 @@ public partial class MainWindow : Window
                         image = decoded.Luminance;
                         color = decoded.Color;
                         pageCount = decoded.PageCount;
-                        _valueNote = decoded.ValueNote;
+                        valueNote = decoded.ValueNote;
                     }
                 }
                 catch (Exception)
@@ -3704,11 +3708,18 @@ public partial class MainWindow : Window
                 // それを読んでいた描画が止まってから破棄する
                 // (走行中だとParallel.For内でObjectDisposedExceptionになる)
                 CancelAnalysis();
+
+                // 旧画像の縮小ピラミッド・Bayerピラミッドの生成も打ち切る(TIFFのページ送りと同じ)。
+                // 生成は _loadCts のトークンで走り、結果は差し替え後の画像と照合して捨てられるだけなので、
+                // 止めないと旧画像を破棄するまで、また破棄後も元画像を読まない縮小段が CPU とメモリを使い続ける。
+                // 新しい画像のピラミッドは差し替え後に新しいトークンで作る
+                ReplaceLoadCts(new CancellationTokenSource());
                 RawImage? oldImage = _currentImage;
                 BayerPyramid? oldBayer = _mainBayerPyramid;
                 _currentImage = image;
                 _currentFormat = format;
                 _currentPath = path;
+                _valueNote = valueNote;
                 _tiffStack = pageCount > 1
                     ? new TiffStackSource(path, pageCount, pageNavigationEnabled: false)
                     { BayerOverride = format.Bayer } : null;
