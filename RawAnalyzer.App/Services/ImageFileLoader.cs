@@ -266,9 +266,9 @@ internal static class ImageFileLoader
         if (info.SamplesPerPixel != 1)
         {
             // WICは半精度のRGBを0〜1へ切り詰めてガンマを掛けた整数で返し(元の値に戻せない)、
-            // 16bit符号ありのRGBは復号自体に失敗する
+            // 16bit符号あり・24/64bitのRGBは復号自体に失敗する
             return info.Photometric == 2 && info.SamplesPerPixel is 3 or 4
-                && (IsHalfFloatColor(info) || IsSignedInt16Color(info));
+                && (IsHalfFloatColor(info) || IsSignedInt16Color(info) || info.BitsPerSample is 24 or 64);
         }
 
         return info.IsBigTiff                       // WICはBigTIFFを開けない
@@ -316,6 +316,22 @@ internal static class ImageFileLoader
     private static bool IsSignedInt16Color(TiffSampleInfo info)
     {
         return info.SampleFormat == 2 && info.BitsPerSample == 16 && info.Photometric is not (0 or 1);
+    }
+
+    /// <summary>
+    /// 拒否の理由に添える「非圧縮であれば読めます」。同じ構成の非圧縮ページが自前復号へ回り、
+    /// 実際に復号できる場合だけ返す。非圧縮のページ自身や、非圧縮でも読めない構成には添えない
+    /// (「非圧縮(1)TIFFは未対応です(非圧縮であれば読めます)」のような矛盾した案内を出さない)。
+    /// </summary>
+    /// <param name="info">ページのサンプル形式。</param>
+    /// <returns>添える文言。該当しなければ空文字列。</returns>
+    private static string UncompressedHint(TiffSampleInfo info)
+    {
+        return info.Compression != 1
+            && NeedsNativeDecode(info with { Compression = 1 })
+            && TiffLoader.CanDecodeUncompressed(info)
+            ? "(非圧縮であれば読めます)"
+            : "";
     }
 
     private static DecodedImage? TryDecodeNativeGray(
@@ -425,25 +441,28 @@ internal static class ImageFileLoader
             throw new InvalidDataException("32bitサンプルの水平差分予測(Predictor=2)は未対応です。");
         }
 
+        // 以下はWICでは値が壊れる・復号できない形式。非圧縮なら自前で読める構成にだけ
+        // UncompressedHint で「非圧縮であれば読めます」を添える
+        string compression = TiffLoader.DescribeCompression(info.Compression);
         if (IsHalfFloatColor(info))
         {
             throw new InvalidDataException(
-                "16bit実数(半精度)のカラーTIFFは非圧縮のRGBのみ対応しています" +
-                "(WICは値を0〜1に切り詰め、ガンマ変換した整数で返すため元の値に戻せません)。");
+                $"16bit実数(半精度)の{compression}カラーTIFFは未対応です{UncompressedHint(info)}。" +
+                "WICは値を0〜1に切り詰め、ガンマ変換した整数で返すため元の値に戻せません。");
         }
 
         if (IsSignedInt16Color(info))
         {
             throw new InvalidDataException(
-                "16bit符号あり整数のカラーTIFFは非圧縮のRGB(3〜4サンプル/画素)のみ対応しています" +
-                "(WICはこの形式を復号できません)。");
+                $"16bit符号あり整数の{compression}カラーTIFFは未対応です{UncompressedHint(info)}。" +
+                "WICはこの形式を復号できません。");
         }
 
         if (WicBreaksWhiteIsZero(info))
         {
             throw new InvalidDataException(
-                "WhiteIsZero(Photometric=0)の16bit実数・32bit整数TIFFは、非圧縮の1サンプル/画素のみ" +
-                "対応しています(WICの白黒反転で値が壊れるため)。");
+                $"WhiteIsZero(Photometric=0)の16bit実数・32bit整数の{compression}TIFFは未対応です" +
+                $"{UncompressedHint(info)}。WICの白黒反転では値が壊れます。");
         }
 
         bool bitsOk = info.SampleFormat switch
@@ -456,8 +475,7 @@ internal static class ImageFileLoader
         {
             string kind = info.SampleFormat switch { 2 => "符号あり整数", 3 => "実数", _ => "整数" };
             throw new InvalidDataException(
-                $"{info.BitsPerSample}bit {kind}の{TiffLoader.DescribeCompression(info.Compression)}TIFFは未対応です" +
-                "(非圧縮であれば読めます)。");
+                $"{info.BitsPerSample}bit {kind}の{compression}TIFFは未対応です{UncompressedHint(info)}。");
         }
     }
 

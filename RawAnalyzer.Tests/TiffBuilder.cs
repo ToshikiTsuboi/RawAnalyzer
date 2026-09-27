@@ -195,6 +195,23 @@ internal sealed class TiffBuilder(bool bigEndian = false, bool bigTiff = false)
         return bytes;
     }
 
+    /// <summary>各ストリップ/タイルをzlibで圧縮し、Compression=8(Deflate)にする。</summary>
+    public static void Deflate(Page page)
+    {
+        for (int i = 0; i < page.Blocks.Count; i++)
+        {
+            using var output = new MemoryStream();
+            using (var zlib = new System.IO.Compression.ZLibStream(output, System.IO.Compression.CompressionLevel.Optimal, leaveOpen: true))
+            {
+                zlib.Write(page.Blocks[i]);
+            }
+
+            page.Blocks[i] = output.ToArray();
+        }
+
+        page.Tags[259] = (3, new long[] { 8 });
+    }
+
     public byte[] Build(params Page[] pages)
     {
         _buf.Clear();

@@ -87,7 +87,7 @@ public sealed record TiffSampleInfo(
 /// <remarks>
 /// 役割は3つ。(1) 非圧縮16bitグレーの連続配置を見つけて <see cref="RawLoader"/> に渡す、
 /// (2) WICが正しく扱えない非圧縮ページ(CFA、10/12/14/24/64bit、符号あり、BigTIFF、
-/// ImageJ仮想スタック、16bit実数・16bit符号ありのRGB)を自前で復号する、(3) WICへ渡す前にヘッダを検査して
+/// ImageJ仮想スタック、16bit実数・16bit符号あり・24/64bitのRGB)を自前で復号する、(3) WICへ渡す前にヘッダを検査して
 /// 「黙って壊れる」形式(未知の圧縮など)を弾く材料を返す。
 /// </remarks>
 public static unsafe class TiffLoader
@@ -434,8 +434,8 @@ public static unsafe class TiffLoader
     /// </summary>
     /// <remarks>
     /// WICは16bit実数(半精度)のRGBを、0〜1へ切り詰めてsRGBのガンマを掛けた16bit整数
-    /// (Rgb48/Rgba64)として返すため、1を超える値・負値・線形性が失われる。16bit符号ありの
-    /// RGBは復号自体に失敗する。元のサンプルを直接読んで、32bit実数・整数のRGBと同じく
+    /// (Rgb48/Rgba64)として返すため、1を超える値・負値・線形性が失われる。16bit符号あり・
+    /// 24/64bitのRGBは復号自体に失敗する。元のサンプルを直接読んで、32bit実数・整数のRGBと同じく
     /// RGBの3成分をまとめた値域で写す(チャネル間の比を保つ)。
     /// 4番目のサンプル(アルファ)は値域にも出力にも入れない。
     /// 対象は Photometric=RGB、BitsPerSample 8/16/24/32/64 のうちWICがそのまま読める
@@ -490,6 +490,31 @@ public static unsafe class TiffLoader
         scaling = decodedScaling;
         reason = why;
         return ok;
+    }
+
+    /// <summary>
+    /// このサンプル構成のページを、非圧縮であれば自前で復号できるかを返す。
+    /// </summary>
+    /// <remarks>
+    /// <see cref="TryDecodeUncompressed"/>(グレー/CFA)と <see cref="TryDecodeUncompressedRgb"/>(RGB)が
+    /// 受け付ける Photometric・SamplesPerPixel・BitsPerSample・SampleFormat・画像サイズの組み合わせかを、
+    /// 両者と同じ判定で調べる。圧縮方式・FillOrder・ストリップ/タイルの配置など、個々のページの
+    /// 条件は見ない。圧縮ページを拒否するとき「非圧縮であれば読める」と案内してよいかの判断に使う。
+    /// </remarks>
+    /// <param name="info">ページのサンプル形式。</param>
+    /// <returns>非圧縮であれば自前で復号できる構成ならtrue。</returns>
+    public static bool CanDecodeUncompressed(TiffSampleInfo info)
+    {
+        ArgumentNullException.ThrowIfNull(info);
+        var page = new PageLayout(
+            Width: info.Width, Height: info.Height, Bits: info.BitsPerSample, Spp: info.SamplesPerPixel,
+            Format: info.SampleFormat, Compression: 1, Photometric: info.Photometric, Planar: 1, FillOrder: 1,
+            Tiled: false, TileWidth: 0, TileHeight: 0, RowsPerStrip: info.Height,
+            Offsets: Array.Empty<long>(), Counts: Array.Empty<long>(), Bayer: info.Bayer, Virtual: false,
+            Predictor: 1);
+        return info.Photometric == 2
+            ? IsNativelyDecodableRgb(page, out _)
+            : IsNativelyDecodable(page, out _);
     }
 
     // ------------------------------------------------------------------ ファイルアクセス

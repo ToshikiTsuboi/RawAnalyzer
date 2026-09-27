@@ -277,11 +277,85 @@ public class WideSampleTiffTests
         // 圧縮ページは自前では復号できず、WICの返す値は切り詰め・ガンマ変換済みで元に戻せない
         var page = TiffBuilder.GrayPage(
             1, 1, 16, HalfSamples(0.25f, 0.5f, 0.75f), photometric: 2, sampleFormat: 3, samplesPerPixel: 3);
-        Deflate(page);
+        TiffBuilder.Deflate(page);
         using var file = TempTiff.Write(new TiffBuilder().Build(page));
 
         var ex = Assert.Throws<InvalidDataException>(() => ImageFileLoader.Load(file.Path));
         Assert.Contains("半精度", ex.Message);
+    }
+
+    [Theory]
+    [InlineData(3, false, false)]
+    [InlineData(4, false, false)]
+    [InlineData(3, true, false)]
+    [InlineData(4, true, false)]
+    [InlineData(3, false, true)]
+    public void Float64Rgb_ScalesLikeFloat32Rgb(int samplesPerPixel, bool planar, bool tiled)
+    {
+        // 以前は非圧縮なのに「64bit 実数の非圧縮(1)TIFFは未対応です(非圧縮であれば読めます)」という
+        // 矛盾したエラーで開けなかった。自前で復号し、同じ値の32bit実数RGB(WIC経路)と同じコード・
+        // 同じ換算になること。アルファ(4サンプル目の1000)は値域に入れない
+        const int width = 3;
+        const int height = 2;
+        float[] rgb =
+        {
+            2f, -0.5f, 100f, 0f, 1f, 50f, 0.25f, 0.75f, -2f,
+            8f, 16f, 32f, 3f, 5f, 7f, 0.125f, 64f, -1f,
+        };
+        var samples = new float[width * height * samplesPerPixel];
+        for (int i = 0; i < width * height; i++)
+        {
+            for (int c = 0; c < samplesPerPixel; c++)
+            {
+                samples[(i * samplesPerPixel) + c] = c < 3 ? rgb[(i * 3) + c] : 1000f;
+            }
+        }
+
+        byte[] chunky = DoubleSamples(samples);
+        TiffBuilder.Page page = tiled
+            ? TiledRgbPage(width, height, 64, 3, samplesPerPixel, chunky, 2, 2)
+            : planar
+                ? PlanarRgbPage(width, height, 64, 3, samplesPerPixel, chunky)
+                : TiffBuilder.GrayPage(width, height, 64, chunky,
+                    photometric: 2, sampleFormat: 3, samplesPerPixel: samplesPerPixel);
+        if (samplesPerPixel == 4)
+        {
+            page.Tags[338] = (3, new long[] { 2 });
+        }
+
+        DecodedImage expected = Load(TiffBuilder.GrayPage(
+            width, height, 32, FloatSamples(rgb), photometric: 2, sampleFormat: 3, samplesPerPixel: 3));
+        using RawImage expectedOwned = expected.Luminance;
+        DecodedImage actual = Load(page);
+        using RawImage actualOwned = actual.Luminance;
+
+        AssertSameColor(expected, actual);
+        Assert.Equal("32bit値 -2〜100 → 16bit (1code≈0.00156)", expected.ValueNote);
+        Assert.Equal("64bit値 -2〜100 → 16bit (1code≈0.00156)", actual.ValueNote);
+    }
+
+    [Theory]
+    [InlineData(24, 1)]
+    [InlineData(64, 1)]
+    [InlineData(64, 2)]
+    public void WideIntegerRgb_ScalesLikeInt32Rgb(int bits, int sampleFormat)
+    {
+        // 24bit・64bit整数のRGBもWICは復号できず、自前復号も呼ばれないため非圧縮でも開けなかった
+        // (エラー文は64bit実数と同じく「非圧縮であれば読めます」の矛盾したもの)。
+        // 同じ値の32bit整数RGB(WIC経路)と同じコード・換算になること
+        long[] rgb = sampleFormat == 2
+            ? new long[] { -1000, 0, 1000, 250, -250, 500 }
+            : new long[] { 0, 500, 1000, 250, 750, 125 };
+        DecodedImage expected = Load(TiffBuilder.GrayPage(
+            2, 1, 32, IntegerSamples(32, rgb), photometric: 2, sampleFormat: sampleFormat, samplesPerPixel: 3));
+        using RawImage expectedOwned = expected.Luminance;
+        DecodedImage actual = Load(TiffBuilder.GrayPage(
+            2, 1, bits, IntegerSamples(bits, rgb), photometric: 2, sampleFormat: sampleFormat, samplesPerPixel: 3));
+        using RawImage actualOwned = actual.Luminance;
+
+        AssertSameColor(expected, actual);
+        Assert.StartsWith("32bit値 ", expected.ValueNote);
+        Assert.Equal(expected.ValueNote!.Replace("32bit値", $"{bits}bit値"), actual.ValueNote);
     }
 
     [Theory]
@@ -382,7 +456,7 @@ public class WideSampleTiffTests
             page.Tags[338] = (3, new long[] { 2 });
         }
 
-        Deflate(page);
+        TiffBuilder.Deflate(page);
         using var file = TempTiff.Write(new TiffBuilder().Build(page));
 
         var ex = Assert.Throws<InvalidDataException>(() => ImageFileLoader.Load(file.Path));
@@ -468,7 +542,7 @@ public class WideSampleTiffTests
         // WICはこれらのWhiteIsZeroをビット反転・実数の 1−v で壊して返す。自前で読めない圧縮ページは開かない
         byte[] samples = sampleFormat == 3 ? HalfSamples(0f, 0.5f, 1f) : IntegerSamples(bits, 1, 100, 1000);
         var page = TiffBuilder.GrayPage(3, 1, bits, samples, photometric: 0, sampleFormat: sampleFormat);
-        Deflate(page);
+        TiffBuilder.Deflate(page);
         using var file = TempTiff.Write(new TiffBuilder().Build(page));
 
         var ex = Assert.Throws<InvalidDataException>(() => ImageFileLoader.Load(file.Path));
@@ -601,23 +675,6 @@ public class WideSampleTiffTests
                 Assert.Equal(expected.Luminance.GetPixel(x, y), actual.Luminance.GetPixel(x, y));
             }
         }
-    }
-
-    /// <summary>各ストリップ/タイルをzlibで圧縮し、Compression=8(Deflate)にする。</summary>
-    private static void Deflate(TiffBuilder.Page page)
-    {
-        for (int i = 0; i < page.Blocks.Count; i++)
-        {
-            using var output = new MemoryStream();
-            using (var zlib = new System.IO.Compression.ZLibStream(output, System.IO.Compression.CompressionLevel.Optimal, leaveOpen: true))
-            {
-                zlib.Write(page.Blocks[i]);
-            }
-
-            page.Blocks[i] = output.ToArray();
-        }
-
-        page.Tags[259] = (3, new long[] { 8 });
     }
 
     /// <summary>単一ページのリトルエンディアンTIFFを一時ファイルに書き、本番経路で読み込む。</summary>

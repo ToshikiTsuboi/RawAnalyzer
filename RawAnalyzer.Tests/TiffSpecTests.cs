@@ -422,6 +422,45 @@ public class TiffSpecTests
     }
 
     [Fact]
+    public void UncompressedHint_IsGivenOnlyWhenUncompressedPageOpens()
+    {
+        // 以前は非圧縮の64bit実数RGBに「64bit 実数の非圧縮(1)TIFFは未対応です(非圧縮であれば読めます)」、
+        // 5サンプルの半精度RGBに「非圧縮のRGBのみ対応しています」と、非圧縮のページに非圧縮を案内する
+        // 矛盾した文を出していた。グレー(BlackIsZero/WhiteIsZero、1〜5サンプル)とRGB(3〜5サンプル)の
+        // 全サンプル形式×ビット幅で、(1) 非圧縮のページのエラー文は非圧縮を案内しない、
+        // (2) 圧縮ページのエラー文が非圧縮を案内するなら、同じ構成の非圧縮ページは実際に開ける、を確かめる
+        var failures = new List<string>();
+        foreach (int photometric in new[] { 1, 0, 2 })
+        {
+            foreach (int spp in photometric == 2 ? new[] { 3, 4, 5 } : new[] { 1, 2, 3, 4, 5 })
+            {
+                foreach (int bits in new[] { 8, 16, 24, 32, 64 })
+                {
+                    foreach (int sampleFormat in new[] { 1, 2, 3 })
+                    {
+                        string layout = $"Photometric={photometric} {bits}bit×{spp} SampleFormat={sampleFormat}";
+                        string? uncompressed = LoadError(SamplePage(photometric, spp, bits, sampleFormat, compress: false));
+                        string? compressed = LoadError(SamplePage(photometric, spp, bits, sampleFormat, compress: true));
+
+                        // 非圧縮のページが自分の圧縮方式として「非圧縮(1)」と書くのは案内ではない
+                        if (uncompressed is not null && uncompressed.Replace("非圧縮(1)", "").Contains("非圧縮"))
+                        {
+                            failures.Add($"{layout} 非圧縮: {uncompressed}");
+                        }
+
+                        if (compressed is not null && compressed.Contains("非圧縮") && uncompressed is not null)
+                        {
+                            failures.Add($"{layout} 圧縮: {compressed} ／ 非圧縮も開けない: {uncompressed}");
+                        }
+                    }
+                }
+            }
+        }
+
+        Assert.True(failures.Count == 0, string.Join(Environment.NewLine, failures));
+    }
+
+    [Fact]
     public async Task ComparePane_LabelsFirstPageAndShowsValueNoteInFileName()
     {
         // 2ページの32bit実数TIFF。先頭ページは昇順、2ページ目は降順にして、
@@ -477,6 +516,71 @@ public class TiffSpecTests
         for (int i = 0; i < W * H; i++)
         {
             Assert.Equal((ushort)(i * 65535 / (W * H - 1)), image.GetPixel(i % W, i / W));
+        }
+    }
+
+    /// <summary>
+    /// 2×1画素、指定の Photometric・サンプル数・ビット幅・サンプル形式のページ。追加サンプル
+    /// (グレーの2番目以降、RGBの4番目以降)は非関連アルファとし、値は画素・チャネルごとに変える。
+    /// 実数は16/32/64bitのみIEEE形式で書き、それ以外の幅は整数のビット列を入れる(未対応の組み合わせ)。
+    /// </summary>
+    private static TiffBuilder.Page SamplePage(int photometric, int spp, int bits, int sampleFormat, bool compress)
+    {
+        int bytesPer = bits / 8;
+        var bytes = new byte[2 * spp * bytesPer];
+        for (int i = 0; i < 2 * spp; i++)
+        {
+            Span<byte> sample = bytes.AsSpan(i * bytesPer, bytesPer);
+            int value = (i * 3) + 1;
+            switch (sampleFormat, bits)
+            {
+                case (3, 16):
+                    BinaryPrimitives.WriteHalfLittleEndian(sample, (Half)value);
+                    break;
+                case (3, 32):
+                    BinaryPrimitives.WriteSingleLittleEndian(sample, value);
+                    break;
+                case (3, 64):
+                    BinaryPrimitives.WriteDoubleLittleEndian(sample, value);
+                    break;
+                default:
+                    for (int k = 0; k < bytesPer; k++)
+                    {
+                        sample[k] = (byte)(value >> (8 * k));
+                    }
+
+                    break;
+            }
+        }
+
+        var page = TiffBuilder.GrayPage(
+            2, 1, bits, bytes, photometric: photometric, sampleFormat: sampleFormat, samplesPerPixel: spp);
+        int extra = spp - (photometric == 2 ? 3 : 1);
+        if (extra > 0)
+        {
+            page.Tags[338] = (3, Enumerable.Repeat(2L, extra).ToArray()); // ExtraSamples = unassociated alpha
+        }
+
+        if (compress)
+        {
+            TiffBuilder.Deflate(page);
+        }
+
+        return page;
+    }
+
+    /// <summary>本番経路で読み、開ければnull、開けなければエラー文を返す。</summary>
+    private static string? LoadError(TiffBuilder.Page page)
+    {
+        using var file = TempTiff.Write(new TiffBuilder().Build(page));
+        try
+        {
+            ImageFileLoader.Load(file.Path).Luminance.Dispose();
+            return null;
+        }
+        catch (InvalidDataException ex)
+        {
+            return ex.Message;
         }
     }
 }
