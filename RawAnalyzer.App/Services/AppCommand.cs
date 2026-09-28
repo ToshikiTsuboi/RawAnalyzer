@@ -31,7 +31,26 @@ internal sealed class AppCommand
     public ModifierKeys Modifiers { get; init; } = ModifierKeys.None;
 
     /// <summary>実行可能かどうか(省略時は常に実行可能)。</summary>
+    /// <remarks>
+    /// 前提となる状態(画像・比較モードでないこと・送れるフレーム・ROI)の有無だけを判定する。
+    /// 実行してみないと分からない条件や、状態を取り違えやすい条件(実行中の処理がある・raw 以外での
+    /// フォーマット変更)はここに入れず、実行時に理由をダイアログで示す(パレット・キーとも同じ)。
+    /// </remarks>
     public Func<bool>? CanExecute { get; init; }
+
+    /// <summary>
+    /// 実行できないとき(<see cref="CanExecute"/> が false)に利用者へ示す理由(省略可)。
+    /// </summary>
+    /// <remarks>
+    /// コマンドパレットは実行できないコマンドを薄く表示し、この理由を示す(Enter でも実行せず理由を示す)。
+    /// ショートカットキーからは従来どおり黙って無視し、キーはフォーカス中のコントロールへ渡す
+    /// (1文字キーの打鍵のたびに知らせない。メニュー・ボタンは同じ条件で無効表示にしている)。
+    /// 省略時は <see cref="DefaultDisabledReason"/> を示す。
+    /// </remarks>
+    public Func<string>? DisabledReason { get; init; }
+
+    /// <summary>理由を指定していないコマンドが実行できないときに示す文言。</summary>
+    public const string DefaultDisabledReason = "今の状態では実行できません。";
 
     /// <summary>補足説明(コマンドパレットの2行目)。</summary>
     public string Description { get; init; } = "";
@@ -51,6 +70,19 @@ internal sealed class AppCommand
     /// <summary>実行可能か判定する。</summary>
     /// <returns>実行可能ならtrue。</returns>
     public bool IsEnabled() => CanExecute?.Invoke() ?? true;
+
+    /// <summary>今実行できない理由を返す。</summary>
+    /// <returns>実行できるときはnull。実行できないときは理由(指定がなければ既定の文言)。</returns>
+    public string? GetDisabledReason()
+    {
+        if (IsEnabled())
+        {
+            return null;
+        }
+
+        string? reason = DisabledReason?.Invoke();
+        return string.IsNullOrWhiteSpace(reason) ? DefaultDisabledReason : reason;
+    }
 
     /// <summary>キー組み合わせを表示用文字列にする。</summary>
     /// <param name="key">キー。</param>

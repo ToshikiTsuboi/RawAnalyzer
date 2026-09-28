@@ -19,6 +19,46 @@ public class KeyboardCommandTests
     }
 
     [Fact]
+    public void GetDisabledReason_IsNullWhileExecutable()
+    {
+        // 実行できるコマンドには理由を出さない(理由の関数は呼ばない)
+        var always = new AppCommand { Id = "a", Category = "c", Title = "t", Execute = () => { } };
+        var enabled = new AppCommand
+        {
+            Id = "b",
+            Category = "c",
+            Title = "t",
+            Execute = () => { },
+            CanExecute = () => true,
+            DisabledReason = () => throw new InvalidOperationException("実行できるときに理由を作った"),
+        };
+
+        Assert.Null(always.GetDisabledReason());
+        Assert.Null(enabled.GetDisabledReason());
+    }
+
+    [Theory]
+    [InlineData("画像を開いていないため実行できません。", "画像を開いていないため実行できません。")]
+    [InlineData(null, AppCommand.DefaultDisabledReason)] // 理由を指定していなければ既定の文言
+    [InlineData(" ", AppCommand.DefaultDisabledReason)]  // 空の理由では何も分からないので既定の文言
+    public void GetDisabledReason_ExplainsWhyItCannotRun(string? reason, string expected)
+    {
+        // 以前はコマンドパレットで実行できないコマンドを選んで Enter を押しても何も起きなかった
+        var command = new AppCommand
+        {
+            Id = "save",
+            Category = "ファイル",
+            Title = "保存…",
+            Execute = () => { },
+            CanExecute = () => false,
+            DisabledReason = reason is null ? null : () => reason,
+        };
+
+        Assert.False(command.IsEnabled());
+        Assert.Equal(expected, command.GetDisabledReason());
+    }
+
+    [Fact]
     public void ResolveStartupPath_PicksFirstExistingPath()
     {
         string directory = Path.Combine(
