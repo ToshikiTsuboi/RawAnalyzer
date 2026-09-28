@@ -42,6 +42,20 @@ public class Mp4QualityTests
         return rgb;
     }
 
+    /// <summary>
+    /// 書き出し先の一時ファイル名(呼ぶたびに一意。他のテストと同じ %TEMP%\RawAnalyzerTests の下)。
+    /// </summary>
+    /// <remarks>
+    /// 以前は固定の名前(quality\standard.mp4 など)で、別の作業フォルダのテストが同時に走ると
+    /// 同じファイルを開き合い、「別のプロセスが使用中」で失敗していた。
+    /// </remarks>
+    private static string TempPath()
+    {
+        string dir = Path.Combine(Path.GetTempPath(), "RawAnalyzerTests");
+        Directory.CreateDirectory(dir);
+        return Path.Combine(dir, Guid.NewGuid().ToString("N") + ".mp4");
+    }
+
     private static long WriteAt(string path, int quality)
     {
         using (var writer = new Mp4H264Writer(path, Width, Height, Fps, quality))
@@ -60,10 +74,8 @@ public class Mp4QualityTests
     [Mp4Fact]
     public void HigherQuality_ProducesLargerFile()
     {
-        string dir = Path.Combine(Path.GetTempPath(), "RawAnalyzerTests", "quality");
-        Directory.CreateDirectory(dir);
-        string low = Path.Combine(dir, "standard.mp4");
-        string high = Path.Combine(dir, "nearlossless.mp4");
+        string low = TempPath();
+        string high = TempPath();
         try
         {
             long lowSize = WriteAt(low, VideoQualitySettings.EncoderQuality(VideoQuality.Standard));
@@ -77,13 +89,8 @@ public class Mp4QualityTests
         }
         finally
         {
-            foreach (string path in new[] { low, high })
-            {
-                if (File.Exists(path))
-                {
-                    File.Delete(path);
-                }
-            }
+            File.Delete(low);
+            File.Delete(high);
         }
     }
 }
