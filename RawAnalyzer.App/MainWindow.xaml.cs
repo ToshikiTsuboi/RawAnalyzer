@@ -699,6 +699,7 @@ public partial class MainWindow : Window
         await Viewport.ClearImageAsync();
         _derivedImage?.Dispose();
         _derivedImage = null;
+        _vm.IsHdrViewShown = false;
         _hdrFloatImage = null;
         _hdrFrameParams = null;
 
@@ -2975,15 +2976,31 @@ public partial class MainWindow : Window
     /// <remarks>
     /// 分割・合成は数秒かかり、その間も表示モードは操作できる。元画像の差し替えだけでなく
     /// モード変更も見ないと、ユーザーが選び直した表示を計算結果が後から上書きしてしまう。
+    /// 計算を始めたときのフォーマット(Bayer など派生ビューに効く値)とも照合し、替わっていたら結果を捨てて
+    /// 理由を知らせ、表示モードを Raw 表示へ戻す(計算中は Bayer を選べなくしているので、多重防御。
+    /// 判定は HdrViewReplacement)。
     /// </remarks>
     /// <param name="expectedModeIndex">開始時の表示モード(分割=4、合成=5)。</param>
     /// <param name="source">計算元の画像。</param>
     /// <param name="sourceFrame">計算元のフレーム(<see cref="CaptureHdrSourceFrame"/> の戻り値)。</param>
+    /// <param name="sourceFormat">計算に使ったフォーマット(計算を始めたときの元画像のフォーマット)。</param>
     /// <returns>適用してよければtrue。</returns>
-    private bool CanApplyHdrView(int expectedModeIndex, RawImage source, int sourceFrame)
+    private bool CanApplyHdrView(int expectedModeIndex, RawImage source, int sourceFrame, RawFormat sourceFormat)
     {
-        return DisplayModeCombo.SelectedIndex == expectedModeIndex
-            && IsHdrSourceCurrent(source, sourceFrame);
+        HdrViewReplacement.Refusal refusal = HdrViewReplacement.Check(
+            modeReselected: DisplayModeCombo.SelectedIndex != expectedModeIndex,
+            sourceReplaced: !IsHdrSourceCurrent(source, sourceFrame),
+            sourceFormat, _currentFormat);
+        if (refusal == HdrViewReplacement.Refusal.FormatChanged)
+        {
+            // 表示モードの選択は分割・合成のまま、表示は計算前のまま残っている。そろえて Raw 表示へ戻す
+            string operation = expectedModeIndex == 4 ? "HDR分割" : "HDR合成";
+            MessageBox.Show(this, HdrViewReplacement.Explain(refusal, operation),
+                operation, MessageBoxButton.OK, MessageBoxImage.Information);
+            DisplayModeCombo.SelectedIndex = 0;
+        }
+
+        return refusal == HdrViewReplacement.Refusal.None;
     }
 
     /// <summary>
@@ -3006,6 +3023,40 @@ public partial class MainWindow : Window
     // 合成画像は黒レベル減算済みで合成域のフルスケールを65535へ量子化しているので、合成ビューの表示黒点は0、
     // 表示白点は65535から始める
     private readonly MergedViewLevels _mergedViewLevels = new();
+
+    // HDR分割・合成の計算中(開始から、派生ビューへ差し替えるか採用せずに終えるまで)の数。
+    // 計算は始めたときのフォーマットで行うので、計算中は右パネルの Bayer の選択を無効にする
+    private int _hdrComputations;
+
+    /// <summary>
+    /// HDR分割・合成の計算中に入る。戻り値を using で受けること。抜けると(採用・取り消し・失敗・元画像の
+    /// 差し替えのどれで終えても)計算中でなくなる。
+    /// </summary>
+    /// <returns>計算中を抜けるスコープ。</returns>
+    private HdrComputationScope BeginHdrComputation()
+    {
+        _hdrComputations++;
+        _vm.IsHdrComputing = true;
+        return new HdrComputationScope(this);
+    }
+
+    /// <summary>HDR分割・合成の計算中のスコープ。Disposeで抜ける。</summary>
+    private readonly struct HdrComputationScope : IDisposable
+    {
+        private readonly MainWindow _owner;
+
+        internal HdrComputationScope(MainWindow owner)
+        {
+            _owner = owner;
+        }
+
+        /// <summary>スコープを抜ける。</summary>
+        public void Dispose()
+        {
+            _owner._hdrComputations--;
+            _owner._vm.IsHdrComputing = _owner._hdrComputations > 0;
+        }
+    }
 
     /// <summary>
     /// HDR分割・合成の元にする元画像のフレーム番号を決めて控える。
@@ -3037,11 +3088,15 @@ public partial class MainWindow : Window
         // 計算は待つ間も操作を受け付け、完了すると表示画像を派生ビューへ差し替える。その間は保存・バッチ書き出し・
         // ノイズ測定を始めさせない(始めると、そのダイアログ・進捗表示の中で対象の画像が入れ替わる・破棄される)
         using IDisposable replacing = _imageGate.BeginReplacement();
+
+        // 計算は下で決めるフォーマットで行うので、計算中は右パネルの Bayer を選べなくする。採用されずに終えたら
+        // 戻す(派生ビューへ差し替えたら、派生ビューの表示中として無効のまま)
+        using HdrComputationScope computing = BeginHdrComputation();
         RawImage image = _currentImage!;
         int sourceFrame = CaptureHdrSourceFrame();
 
         // フォーマットパネルで変更したBayerパターンやHDR方式を反映する
-        // (image.Format は読み込み時のまま固定なので _currentFormat を渡す)
+        // (image.Format は読み込み時のまま固定なので _currentFormat を渡す)。適用時にもこのフォーマットのままか照合する
         RawFormat splitFormat = _currentFormat!;
         IReadOnlyList<RawImage> frames;
         try
@@ -3062,7 +3117,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (!CanApplyHdrView(4, image, sourceFrame))
+        if (!CanApplyHdrView(4, image, sourceFrame, splitFormat))
         {
             foreach (RawImage frame in frames)
             {
@@ -3105,7 +3160,7 @@ public partial class MainWindow : Window
             frame.Dispose();
         }
 
-        if (!CanApplyHdrView(4, image, sourceFrame))
+        if (!CanApplyHdrView(4, image, sourceFrame, splitFormat))
         {
             composite.Dispose();
             return;
@@ -3161,6 +3216,9 @@ public partial class MainWindow : Window
 
         // 完了すると表示画像を派生ビューへ差し替える。その間は保存などを始めさせない(HDR分割と同じ)
         using IDisposable replacing = _imageGate.BeginReplacement();
+
+        // 計算中は右パネルの Bayer を選べなくする(HDR分割と同じ。適用時にもこのフォーマットのままか照合する)
+        using HdrComputationScope computing = BeginHdrComputation();
         RawImage image = _currentImage!;
         RawFormat format = _currentFormat!;
         int sourceFrame = CaptureHdrSourceFrame();
@@ -3204,7 +3262,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (!CanApplyHdrView(5, image, sourceFrame))
+        if (!CanApplyHdrView(5, image, sourceFrame, format))
         {
             quantized.Dispose();
             return;
@@ -3278,6 +3336,10 @@ public partial class MainWindow : Window
         _derivedBayerPyramid = null;
         _derivedImage?.Dispose();
         _derivedImage = derived;
+
+        // 派生ビューは計算を始めたときの Bayer で作った画像。表示中は右パネルの Bayer を選べなくする
+        // (変えても派生ビューは古いパターンのままで、右パネルの表示と食い違う)。Raw表示へ戻ると選べる
+        _vm.IsHdrViewShown = true;
 
         // 欠陥検出の結果は検出した画像(元画像、または前の派生ビュー)の座標・画素のもの。
         // 他の差し替え経路と同じく、派生ビューへ差し替えるこのUIターンで検出元を手放し、
@@ -3361,6 +3423,7 @@ public partial class MainWindow : Window
 
         _derivedImage?.Dispose();
         _derivedImage = null;
+        _vm.IsHdrViewShown = false;
 
         // 派生ビューで検出した結果は、ここで破棄する派生画像のもの。HDR表示に入るときに元画像の
         // 結果も破棄しているので、Raw表示へ戻したら検出し直す(他の差し替え経路と同じ規約)。

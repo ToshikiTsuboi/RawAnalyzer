@@ -774,12 +774,15 @@
                                 <DockPanel Margin="0,2">
                                     <TextBlock Style="{StaticResource RowLabel}" Text="Bayer"
                                                VerticalAlignment="Center" />
-                                    <!-- カラー画像には Bayer を適用しないので、表示中は指定させない -->
+                                    <!-- カラー画像には Bayer を適用しないので、表示中は指定させない。HDR分割・合成の
+                                         表示中・計算中も、派生ビューが計算を始めたときの Bayer のまま右パネルと
+                                         食い違うので指定させない(無効の理由はツールチップで示す) -->
                                     <ComboBox x:Name="FmtBayerCombo" DockPanel.Dock="Right"
                                               MinWidth="96" FontSize="11"
                                               IsEnabled="{Binding CanEditBayer}"
                                               SelectionChanged="OnFmtBayerChanged"
-                                              ToolTip="Bayerパターンはここでいつでも変更できます(再読込不要)">
+                                              ToolTip="{Binding BayerEditToolTip}"
+                                              ToolTipService.ShowOnDisabled="True">
                                         <ComboBoxItem Content="RGGB" />
                                         <ComboBoxItem Content="BGGR" />
                                         <ComboBoxItem Content="GRBG" />

@@ -81,6 +81,8 @@ public sealed class MainViewModel : ObservableObject
     private bool _isFullscreen;
     private bool _isColorImage;
     private bool _isRawFile;
+    private bool _isHdrViewShown;
+    private bool _isHdrComputing;
     private bool _leftPanelVisible = true;
     private bool _rightPanelVisible = true;
     private string _fmtBitDepthText = "—";
@@ -241,6 +243,7 @@ public sealed class MainViewModel : ObservableObject
             if (SetProperty(ref _hasImage, value))
             {
                 OnPropertyChanged(nameof(CanEditBayer));
+                OnPropertyChanged(nameof(BayerEditToolTip));
                 OnPropertyChanged(nameof(CanChangeFormat));
                 OnPropertyChanged(nameof(ChangeFormatToolTip));
             }
@@ -648,6 +651,7 @@ public sealed class MainViewModel : ObservableObject
             if (SetProperty(ref _isColorImage, value))
             {
                 OnPropertyChanged(nameof(CanEditBayer));
+                OnPropertyChanged(nameof(BayerEditToolTip));
                 OnPropertyChanged(nameof(ChangeFormatToolTip));
             }
         }
@@ -700,14 +704,54 @@ public sealed class MainViewModel : ObservableObject
             ? FormatChangeAvailability.OpenWithFormatUnavailableReason
             : FormatChangeAvailability.OpenWithFormatDescription;
 
+    /// <summary>HDR分割・合成の派生ビューを表示しているか(右パネルの Bayer の選択を無効にする)。</summary>
+    public bool IsHdrViewShown
+    {
+        get => _isHdrViewShown;
+        set
+        {
+            if (SetProperty(ref _isHdrViewShown, value))
+            {
+                OnPropertyChanged(nameof(CanEditBayer));
+                OnPropertyChanged(nameof(BayerEditToolTip));
+            }
+        }
+    }
+
+    /// <summary>
+    /// HDR分割・合成の計算中か(開始から、派生ビューへ差し替えるか採用せずに終えるまで。右パネルの Bayer の
+    /// 選択を無効にする)。
+    /// </summary>
+    public bool IsHdrComputing
+    {
+        get => _isHdrComputing;
+        set
+        {
+            if (SetProperty(ref _isHdrComputing, value))
+            {
+                OnPropertyChanged(nameof(CanEditBayer));
+                OnPropertyChanged(nameof(BayerEditToolTip));
+            }
+        }
+    }
+
     /// <summary>右パネルの Bayer 指定を操作できるか。</summary>
     /// <remarks>
     /// デコード済みのカラー画像は RGB のまま表示し、Bayer を適用しない(TIFF のページ送り・
     /// ファイル連番の送り・表示モードの選択と同じ規約)。カラー画像で指定できると、表示はカラーのまま
     /// チャネル別統計などが輝度へ Bayer を当ててしまう。指定そのものはカラー画像を挟んでも保持され、
-    /// 次のグレーの画像に付く。
+    /// 次のグレーの画像に付く。HDR分割・合成の派生ビューの表示中と計算中も、派生ビューが計算を始めたときの
+    /// Bayer のまま右パネルと食い違うので操作させない(<see cref="BayerEditAvailability"/>)。
     /// </remarks>
-    public bool CanEditBayer => _hasImage && !_isColorImage;
+    public bool CanEditBayer => BayerEditRefusal == BayerEditAvailability.Refusal.None;
+
+    /// <summary>
+    /// 右パネルの Bayer 指定のツールチップ。操作できないときはその理由、操作できるときは項目の説明。
+    /// </summary>
+    public string BayerEditToolTip => BayerEditAvailability.ToolTip(BayerEditRefusal);
+
+    private BayerEditAvailability.Refusal BayerEditRefusal =>
+        BayerEditAvailability.Check(_hasImage, _isColorImage, _isHdrViewShown, _isHdrComputing);
 
     /// <summary>左パネル(ファイル)を表示するか。</summary>
     public bool LeftPanelVisible
