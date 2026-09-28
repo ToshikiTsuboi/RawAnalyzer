@@ -3219,8 +3219,16 @@ public partial class MainWindow : Window
         StopPlayback();
         _vm.HasSequence = false;
 
-        // 旧派生画像を読んでいる描画・解析を止めてから破棄する
+        // 旧派生画像を読んでいる描画・解析・縮小ピラミッドの生成を止めてから破棄する
         CancelAnalysis();
+        _derivedPyramidBuild.Cancel();
+        if (_derivedImage is not null)
+        {
+            // 分割⇔合成の切替では旧派生画像用のBayerピラミッドの生成も取り消す(Raw表示から入るときは
+            // 派生画像用の生成は走っていない。元画像の縮小ピラミッドの生成はRaw表示へ戻ったときに使うので残す)
+            CancelDerivedBayerPyramidBuild();
+        }
+
         await Viewport.ClearImageAsync();
 
         // 旧派生画像のBayerピラミッドを残すと、EnsureBayerPyramidAsyncが
@@ -3251,28 +3259,45 @@ public partial class MainWindow : Window
         _ = BuildDerivedPyramidAsync(derived);
     }
 
+    // HDR派生画像の縮小ピラミッドの生成。派生画像の差し替え・Raw表示への復帰で旧派生画像用の生成を取り消す
+    private readonly DerivedPyramidBuild _derivedPyramidBuild = new();
+
     private async Task BuildDerivedPyramidAsync(RawImage derived)
     {
-        TilePyramid pyramid;
-        try
-        {
-            pyramid = await TilePyramid.CreateAsync(derived);
-        }
-        catch (OperationCanceledException)
-        {
-            return;
-        }
-
-        if (ReferenceEquals(derived, _derivedImage))
+        // 取り消された・派生画像の破棄と競合した生成は null で終わる(投げっぱなしのタスクから例外を漏らさない)
+        TilePyramid? pyramid = await _derivedPyramidBuild.CreateAsync(derived);
+        if (pyramid is not null && ReferenceEquals(derived, _derivedImage))
         {
             Viewport.SetPyramid(pyramid);
         }
     }
 
+    /// <summary>
+    /// 派生ビューを抜ける・差し替えるときに、旧派生画像用のBayerピラミッドの生成を取り消す。
+    /// </summary>
+    /// <remarks>
+    /// 派生ビューのBayer系表示(HDR合成のBayerカラー・カラー現像・チャネル分割)のBayerピラミッドは、
+    /// EnsureBayerPyramidAsync が表示中の画像・フレームの世代(_loadCts)のトークンで作る。派生ビューの出入りでは
+    /// 世代が進まないので、進めないとRaw表示へ戻っても分割⇔合成を切り替えても旧派生画像を読み続ける
+    /// (結果は表示中の画像との照合で捨てられるだけ)。世代を進めると同じトークンで走る元画像の縮小ピラミッドの
+    /// 生成も取り消されるので、派生画像用の生成が走り得る派生ビューの表示中だけ呼ぶ。
+    /// 通常の読み込みが確定待ちのときは、開く要求(同じ世代のトークン)を取り消さないよう進めない
+    /// (確定で派生画像ごと差し替わり、生成の結果は捨てられる)。
+    /// </remarks>
+    private void CancelDerivedBayerPyramidBuild()
+    {
+        if (!_imageGate.IsLoadPending)
+        {
+            ReplaceLoadCts(new CancellationTokenSource());
+        }
+    }
+
     private async Task RestoreMainImageAsync()
     {
-        // 派生画像を読んでいる描画・解析を止めてから破棄する
+        // 派生画像を読んでいる描画・解析・縮小ピラミッド(Bayerを含む)の生成を止めてから破棄する
         CancelAnalysis();
+        _derivedPyramidBuild.Cancel();
+        CancelDerivedBayerPyramidBuild();
         await Viewport.ClearImageAsync();
         _derivedImage?.Dispose();
         _derivedImage = null;
