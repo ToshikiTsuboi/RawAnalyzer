@@ -90,4 +90,72 @@ public class FormatChangeAvailabilityTests
         Assert.True(vm.CanChangeFormat);
         Assert.Null(vm.ChangeFormatToolTip);
     }
+
+    // ---- ファイル一覧の右クリックメニュー「フォーマットを指定して開く…」 ----
+
+    [Theory]
+    [InlineData("a.raw")]
+    [InlineData("b.BIN")] // 拡張子の大文字小文字は問わない
+    public void OpenWithFormat_RawFile_IsAvailable(string name)
+    {
+        var vm = new MainViewModel { SelectedFile = Entry(name) };
+
+        Assert.True(vm.CanOpenSelectedFileWithFormat);
+        Assert.Equal(FormatChangeAvailability.OpenWithFormatDescription, vm.OpenSelectedFileWithFormatToolTip);
+    }
+
+    [Theory]
+    [InlineData("a.tif")]
+    [InlineData("a.tiff")]
+    [InlineData("a.png")]
+    [InlineData("a.jpg")]
+    public void OpenWithFormat_ImageFile_IsUnavailable_AndTooltipExplainsWhy(string name)
+    {
+        // 以前は押せて、ダイアログを出さずに普通に開いた(フォーマットを指定して開くつもりの利用者が驚く)
+        var vm = new MainViewModel { SelectedFile = Entry(name) };
+
+        Assert.False(vm.CanOpenSelectedFileWithFormat);
+        Assert.Equal(FormatChangeAvailability.OpenWithFormatUnavailableReason, vm.OpenSelectedFileWithFormatToolTip);
+    }
+
+    [Fact]
+    public void OpenWithFormat_FolderOrNoSelection_IsUnavailable()
+    {
+        // フォルダ・未選択では開くファイルがない(以前は押せて何も起きなかった)。画像ファイルの理由は示さない
+        var vm = new MainViewModel();
+        Assert.False(vm.CanOpenSelectedFileWithFormat);
+
+        vm.SelectedFile = new FileEntry("sub", @"C:\data\sub", IsDirectory: true);
+        Assert.False(vm.CanOpenSelectedFileWithFormat);
+        Assert.Equal(FormatChangeAvailability.OpenWithFormatDescription, vm.OpenSelectedFileWithFormatToolTip);
+    }
+
+    [Fact]
+    public void OpenWithFormat_Explanation_SaysImageFilesOpenAsIs()
+    {
+        // 画像ファイルはフォーマットを指定せずにそのまま開くこと、開いた後に指定できるものを示す
+        string text = FormatChangeAvailability.OpenWithFormatUnavailableReason;
+
+        Assert.StartsWith("フォーマットを指定して開けるのは raw(.raw/.bin)だけです。", text);
+        Assert.Contains("「開く」", text);
+        Assert.Contains("右パネルの「Bayer」", text);
+        Assert.Contains("rawで保存", text);
+    }
+
+    [Fact]
+    public void ChangingSelectedFile_NotifiesOpenWithFormatAvailability()
+    {
+        // 右クリックで選び直すたびに、メニュー項目を押せるかと理由が追従する
+        var vm = new MainViewModel { SelectedFile = Entry("a.raw") };
+        var changed = new List<string?>();
+        ((INotifyPropertyChanged)vm).PropertyChanged += (_, e) => changed.Add(e.PropertyName);
+
+        vm.SelectedFile = Entry("a.tif");
+
+        Assert.Contains(nameof(MainViewModel.CanOpenSelectedFileWithFormat), changed);
+        Assert.Contains(nameof(MainViewModel.OpenSelectedFileWithFormatToolTip), changed);
+        Assert.False(vm.CanOpenSelectedFileWithFormat);
+    }
+
+    private static FileEntry Entry(string name) => new(name, @"C:\data\" + name);
 }

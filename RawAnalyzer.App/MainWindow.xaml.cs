@@ -4977,14 +4977,10 @@ public partial class MainWindow : Window
 
     private void OnFileCtxOpenWithFormatClick(object sender, RoutedEventArgs e)
     {
-        if (_vm.SelectedFile is not { IsDirectory: false } entry)
+        // raw 以外(画像ファイル)・フォルダでは項目を無効にしてある(画像ファイルは理由をツールチップで示す)。
+        // 以前は画像ファイルをダイアログなしで普通に開き、フォーマットを指定して開くつもりの利用者を驚かせた
+        if (!_vm.CanOpenSelectedFileWithFormat || _vm.SelectedFile is not { } entry)
         {
-            return;
-        }
-
-        if (!IsRawFile(entry.FullPath))
-        {
-            OpenPath(entry.FullPath);
             return;
         }
 

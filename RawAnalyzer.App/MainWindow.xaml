@@ -366,9 +366,13 @@
                             <ListBox.ContextMenu>
                                 <ContextMenu>
                                     <MenuItem Header="開く" Click="OnFileCtxOpenClick" />
+                                    <!-- raw 以外(画像ファイル)では使えないので無効にし、理由をツールチップで示す
+                                         (「フォーマット変更…」と同じ規約。以前はダイアログを出さずに普通に開いた) -->
                                     <MenuItem Header="フォーマットを指定して開く…"
                                               Click="OnFileCtxOpenWithFormatClick"
-                                              ToolTip="記憶したフォーマットを使わずインポートダイアログを開きます" />
+                                              IsEnabled="{Binding CanOpenSelectedFileWithFormat}"
+                                              ToolTip="{Binding OpenSelectedFileWithFormatToolTip}"
+                                              ToolTipService.ShowOnDisabled="True" />
                                     <MenuItem Header="エクスプローラーで表示"
                                               Click="OnFileCtxRevealClick" />
                                     <MenuItem Header="パスをコピー" Click="OnFileCtxCopyPathClick" />

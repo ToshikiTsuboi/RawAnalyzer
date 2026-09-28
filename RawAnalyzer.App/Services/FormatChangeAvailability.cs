@@ -13,6 +13,10 @@ namespace RawAnalyzer.App.Services;
 /// メニューの「HDR方式の設定 (フォーマット変更)…」と右パネルの「変更…」は無効にしてツールチップで、
 /// キー(F2)・コマンドパレットから実行されたときはメッセージで、同じ理由を示す。
 /// </para>
+/// <para>
+/// ファイル一覧の右クリックメニュー「フォーマットを指定して開く…」も raw でだけ使え、画像ファイルでは
+/// 同じ規約で無効にしてツールチップで理由を示す(以前は画像ファイルをダイアログなしで普通に開いた)。
+/// </para>
 /// </remarks>
 internal static class FormatChangeAvailability
 {
@@ -33,4 +37,27 @@ internal static class FormatChangeAvailability
             : rawOnly + "Bayer は右パネルの「Bayer」で指定できます" +
               "(HDR方式は、rawで保存してから開き直すと指定できます)。";
     }
+
+    /// <summary>
+    /// 「フォーマットを指定して開く…」(ファイル一覧の右クリックメニュー)の説明。使えるときのツールチップ。
+    /// </summary>
+    internal const string OpenWithFormatDescription = "記憶したフォーマットを使わずインポートダイアログを開きます";
+
+    /// <summary>
+    /// ファイル一覧で選んだ画像ファイルに「フォーマットを指定して開く…」を使えない理由(ツールチップ)。
+    /// </summary>
+    /// <remarks>
+    /// 開く前なのでカラーかグレーかは分からない。グレーの画像で指定できるもの(Bayer・HDR方式)は
+    /// <see cref="ExplainUnavailable"/> と同じ案内にする。
+    /// </remarks>
+    internal const string OpenWithFormatUnavailableReason =
+        "フォーマットを指定して開けるのは raw(.raw/.bin)だけです。\n" +
+        "画像ファイル(TIFF・PNG・JPEG など)は寸法・ビット深度などをファイル自身が持つため、「開く」でそのまま開きます。\n" +
+        "グレーの画像は、開いた後に右パネルの「Bayer」で Bayer を指定できます" +
+        "(HDR方式は、rawで保存してから開き直すと指定できます)。";
+
+    /// <summary>ファイルをフォーマットを指定して開けるか(raw(.raw/.bin)だけ)。</summary>
+    /// <param name="path">ファイルのパス。</param>
+    /// <returns>raw ならtrue。</returns>
+    internal static bool CanOpenWithFormat(string path) => Compare.ComparePane.IsRawFile(path);
 }

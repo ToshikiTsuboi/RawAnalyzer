@@ -111,7 +111,15 @@ public sealed class MainViewModel : ObservableObject
     public FileEntry? SelectedFile
     {
         get => _selectedFile;
-        set => SetProperty(ref _selectedFile, value);
+        set
+        {
+            // 右クリックで選び直すたびに、右クリックメニューの「フォーマットを指定して開く…」を合わせる
+            if (SetProperty(ref _selectedFile, value))
+            {
+                OnPropertyChanged(nameof(CanOpenSelectedFileWithFormat));
+                OnPropertyChanged(nameof(OpenSelectedFileWithFormatToolTip));
+            }
+        }
     }
 
     /// <summary>
@@ -644,6 +652,25 @@ public sealed class MainViewModel : ObservableObject
     public string? ChangeFormatToolTip => _hasImage && !_isRawFile
         ? FormatChangeAvailability.ExplainUnavailable(_isColorImage)
         : null;
+
+    /// <summary>
+    /// ファイル一覧の右クリックメニュー「フォーマットを指定して開く…」を使えるか(選択中の項目が raw ファイル)。
+    /// </summary>
+    /// <remarks>
+    /// フォーマットを指定して開けるのは raw だけ。以前は画像ファイル(TIFF 等)でも押せて、ダイアログを出さずに
+    /// 普通に開いた(「フォーマット変更…」と同じ規約で無効にし、理由をツールチップで示す)。フォルダ・未選択も
+    /// 開くファイルがないので使えない。
+    /// </remarks>
+    public bool CanOpenSelectedFileWithFormat =>
+        _selectedFile is { IsDirectory: false } file && FormatChangeAvailability.CanOpenWithFormat(file.FullPath);
+
+    /// <summary>
+    /// 「フォーマットを指定して開く…」のツールチップ。画像ファイルでは使えない理由、それ以外は項目の説明。
+    /// </summary>
+    public string OpenSelectedFileWithFormatToolTip =>
+        _selectedFile is { IsDirectory: false } file && !FormatChangeAvailability.CanOpenWithFormat(file.FullPath)
+            ? FormatChangeAvailability.OpenWithFormatUnavailableReason
+            : FormatChangeAvailability.OpenWithFormatDescription;
 
     /// <summary>右パネルの Bayer 指定を操作できるか。</summary>
     /// <remarks>
