@@ -29,7 +29,8 @@ public class DisplayLevelsTests
     [Fact]
     public void BackTo12Bit_RebasedCodesKeepLevels()
     {
-        // 16bit表示で黒4096 / 白40000にした後、12bitの元画像へ戻る
+        // 16bitの画像で黒4096 / 白40000にした後、12bitの画像へ替わる(ビット深度の異なるTIFFのページ・連番の送り。
+        // HDR合成ビューから元画像へ戻るときは、合成ビューの値ではなく合成ビューへ入る前の値へ戻す: MergedViewLevels)
         (ushort black, ushort white) = DisplayLevels.ToPoints(4096, 40000, bitDepth: 16);
 
         (int blackCode, int whiteCode) = DisplayLevels.ToCodes(black, white, bitDepth: 12);

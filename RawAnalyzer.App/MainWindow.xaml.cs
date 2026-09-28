@@ -702,8 +702,8 @@ public partial class MainWindow : Window
         _hdrFloatImage = null;
         _hdrFrameParams = null;
 
-        // 合成ビューの表示中に開いたら、合成ビューへ入る前の黒点を後で戻さない(表示調整は下で既定へ戻す)
-        _mergedViewBlack.Reset();
+        // 合成ビューの表示中に開いたら、合成ビューへ入る前の黒点・白点を後で戻さない(表示調整は下で既定へ戻す)
+        _mergedViewLevels.Reset();
         _mainPyramid = null;
         _mainBayerPyramid?.Dispose();
         _mainBayerPyramid = null;
@@ -2239,7 +2239,8 @@ public partial class MainWindow : Window
             }
 
             // HDR派生ビューから保存した画像は元ファイルの画素ではない。どの派生ビューか(合成なら合成で減算した黒点・
-            // 露光比・量子化)を書く。合成ビューの表示黒点は減算済みの0から始まり、[適用処理]の黒点とは別物になる
+            // 露光比・量子化)を書く。[適用処理]の黒点/白点は合成ビューの表示黒点・白点(合成画像の値域で黒0・白65535
+            // から始まる)で、合成で減算した黒点とは別物になる
             if (_derivedImage is { } derived && format is not null)
             {
                 sb.AppendLine();
@@ -3001,9 +3002,10 @@ public partial class MainWindow : Window
     // 派生ビューの計算とRaw表示への復帰(表示し直すフレーム)で参照する
     private readonly HdrSourceFrame _hdrSourceFrame = new();
 
-    // HDR合成ビューの表示中に、合成ビューへ入る前(元画像・分割ビュー)の黒点を控える。
-    // 合成画像は黒レベル減算済みなので、合成ビューの表示黒点は0から始める
-    private readonly MergedViewBlackPoint _mergedViewBlack = new();
+    // HDR合成ビューの表示中に、合成ビューへ入る前(元画像・分割ビュー)の黒点・白点を控える。
+    // 合成画像は黒レベル減算済みで合成域のフルスケールを65535へ量子化しているので、合成ビューの表示黒点は0、
+    // 表示白点は65535から始める
+    private readonly MergedViewLevels _mergedViewLevels = new();
 
     /// <summary>
     /// HDR分割・合成の元にする元画像のフレーム番号を決めて控える。
@@ -3287,12 +3289,16 @@ public partial class MainWindow : Window
         _hdrFrameParams = null;
         _vm.HasRoi = false;
 
-        // HDR合成の画像は黒レベル減算済み。元画像の黒点のまま表示すると黒を二重に引くので、合成ビューへ入る前の
-        // 黒点を控えて表示黒点を0にする。合成 → 分割では控えた黒点へ戻す(分割フレームは未減算)。
-        // 合成ビューで動かした黒レベルは合成ビューの表示だけのもので、抜けるときに捨てる
-        _blackPoint = merged ? _mergedViewBlack.Enter(_blackPoint) : _mergedViewBlack.Leave(_blackPoint);
+        // HDR合成の画像は黒レベル減算済みで、合成域のフルスケールを65535へ量子化している。元画像の黒点のまま
+        // 表示すると黒を二重に引き、元画像で下げた白点のままだと合成で取り戻した高輝度を白飛びとして切るので、
+        // 合成ビューへ入る前の黒点・白点を控えて表示黒点を0、表示白点を65535にする。合成 → 分割では控えた
+        // 黒点・白点へ戻す(分割フレームは未減算で元画像と同じ値域)。合成ビューで動かした黒/白レベルは
+        // 合成ビューの表示だけのもので、抜けるときに捨てる(ゲイン・ガンマ・コントラストは共有のまま)
+        (_blackPoint, _whitePoint) = merged
+            ? _mergedViewLevels.Enter(_blackPoint, _whitePoint)
+            : _mergedViewLevels.Leave(_blackPoint, _whitePoint);
 
-        // HDR合成は16bitになる。白点の内部値は保ち、黒/白レベルの上限とコード値を換算し直す
+        // HDR合成は16bitになる。黒/白レベルの上限とコード値を、表示する画像のビット深度で表し直す
         SyncLevelControlsToActiveBitDepth();
         Viewport.SetDisplayMode(ViewportDisplayMode.Raw);
         Viewport.SetImage(derived, derived.Format);
@@ -3367,11 +3373,11 @@ public partial class MainWindow : Window
         _vm.HdrTargetVisible = false;
         _vm.HasRoi = false;
 
-        // 合成ビューから戻るなら、合成ビューへ入る前の元画像の黒点へ戻す(合成画像は黒レベル減算済みで、
-        // 合成ビューで動かした黒レベルは合成ビューの表示だけのもの)。分割ビューからはそのまま
-        _blackPoint = _mergedViewBlack.Leave(_blackPoint);
+        // 合成ビューから戻るなら、合成ビューへ入る前の元画像の黒点・白点へ戻す(合成画像は黒レベル減算済みで
+        // 値域も元画像と別物。合成ビューで動かした黒/白レベルは合成ビューの表示だけのもの)。分割ビューからはそのまま
+        (_blackPoint, _whitePoint) = _mergedViewLevels.Leave(_blackPoint, _whitePoint);
 
-        // HDR合成(16bit)から元画像のビット深度へ戻す(白点の内部値は保つ)
+        // HDR合成(16bit)から元画像のビット深度へ戻す。黒/白レベルのコード値を元画像のビット深度で表し直す
         SyncLevelControlsToActiveBitDepth();
         _derivedBayerPyramid?.Dispose();
         _derivedBayerPyramid = null;
