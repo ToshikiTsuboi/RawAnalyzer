@@ -987,6 +987,7 @@ public partial class MainWindow : Window
 
         RawImage image = ActiveImage;
         int frame = Viewport.Frame;
+        var analyzed = new AnalysisSource(image, frame);
         BayerPattern pattern = ActiveFormat?.Bayer ?? BayerPattern.None;
         bool byChannel = _vm.HistogramByChannel && pattern != BayerPattern.None;
 
@@ -1016,7 +1017,9 @@ public partial class MainWindow : Window
             return; // キャンセル、または解析中に画像が差し替わった
         }
 
-        if (cts.IsCancellationRequested || !ReferenceEquals(image, ActiveImage))
+        // 解析中に画像を差し替えた・フレームを送ったなら、結果は表示中の画像・フレームのものではない
+        // (フレーム送りは画像がそのままなので、画像の照合だけでは前のフレームの統計を表示してしまう)
+        if (cts.IsCancellationRequested || !analyzed.IsCurrent(ActiveImage, Viewport.Frame))
         {
             return;
         }
@@ -1301,6 +1304,7 @@ public partial class MainWindow : Window
         }
 
         int frame = Viewport.Frame;
+        var analyzed = new AnalysisSource(image, frame);
         RegionOfInterest? roi = Viewport.Roi is { PixelCount: > 0 } r ? r : null;
 
         // 射影はROIに表示されている画素だけで取る(チャネル分割では1チャネルの格子)。
@@ -1348,7 +1352,9 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (!ReferenceEquals(image, ActiveImage))
+        // 計算中に画像を差し替えた・フレームを送ったなら、プロファイルは表示中の画像・フレームのものではない
+        // (フレーム送りは画像がそのままなので、画像の照合だけでは前のフレームの値を表示してしまう)
+        if (!analyzed.IsCurrent(ActiveImage, Viewport.Frame))
         {
             return;
         }
@@ -3710,6 +3716,12 @@ public partial class MainWindow : Window
                 // 不一致で使わないので、次に送るまで等倍データから描く)、送りのたびの生成も積み上がって
                 // CPU とメモリを使い続ける。送れなかったときは取り消さない
                 ReplaceLoadCts(new CancellationTokenSource());
+
+                // 旧フレームを読んでいる解析(ヒストグラム・ROI統計・ラインプロファイル・射影)も打ち切る
+                // (ファイル連番・TIFFのページ送りと同じ)。フレーム送りでは画像がそのままなので、取り消さないと
+                // 送った後に届いた前フレームの結果を、画像の照合だけで現フレームの測定値として表示していた
+                // (結果の採用時にもフレームを照合する)。送った後の解析は RefreshAfterSequenceMove が始める
+                CancelAnalysis();
 
                 // Bayerピラミッドも生成元フレーム専用なので、フレームを移したら捨てる。切り離しは送りを決めた
                 // このUIターンで、フレームを移すのと一緒に行う(先に切り離して描画の停止を待つと、その間に
