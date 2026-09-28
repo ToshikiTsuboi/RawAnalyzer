@@ -86,6 +86,59 @@ public static class ImageExport
     }
 
     /// <summary>
+    /// 左から同じ幅で並置した区画(HDR分割の各段など)ごとに表示LUTを替えて、全画素に適用した
+    /// グレー8bitバッファを生成する(行並列)。
+    /// </summary>
+    /// <remarks>
+    /// X座標 x の画素は、区画 min(x / segmentWidth, 区画数 − 1) のLUTで変換する(最後の区画は画像の右端まで)。
+    /// HDR分割表示が段ごとのLUTで描くときと同じ割り当て。
+    /// </remarks>
+    /// <param name="image">対象画像。</param>
+    /// <param name="frame">フレーム番号。</param>
+    /// <param name="segmentLuts">区画ごとの表示LUT(左の区画から)。</param>
+    /// <param name="segmentWidth">区画の幅(画素)。</param>
+    /// <param name="cancellationToken">キャンセルトークン。</param>
+    /// <returns>width×height のグレー8bitバッファ。</returns>
+    /// <exception cref="ArgumentException">区画のLUTが1つもない場合。</exception>
+    /// <exception cref="ArgumentOutOfRangeException">区画の幅が1未満の場合。</exception>
+    public static byte[] RenderGray8(
+        RawImage image, int frame, IReadOnlyList<DisplayLut> segmentLuts, int segmentWidth,
+        CancellationToken cancellationToken = default)
+    {
+        DisplayLut[] luts = ToSegmentArray(segmentLuts, segmentWidth);
+        int width = image.Width;
+        int height = image.Height;
+        EnsureExportable((long)width * height, MaxGray8Pixels, "8bitグレー");
+        var gray = new byte[(long)width * height];
+        Parallel.For(
+            0,
+            height,
+            () => new ushort[width],
+            (y, state, row) =>
+            {
+                if (cancellationToken.IsCancellationRequested)
+                {
+                    state.Stop();
+                    return row;
+                }
+
+                image.CopyRegion(frame, 0, y, width, 1, row);
+                Span<byte> destination = gray.AsSpan(y * width, width);
+                for (int s = 0; s < luts.Length; s++)
+                {
+                    (int x0, int x1) = SegmentColumns(s, luts.Length, segmentWidth, width);
+                    luts[s].Apply(row.AsSpan(x0, x1 - x0), destination[x0..x1]);
+                }
+
+                return row;
+            },
+            _ => { });
+
+        cancellationToken.ThrowIfCancellationRequested();
+        return gray;
+    }
+
+    /// <summary>
     /// カラー現像(バイリニアデモザイク+現像LUT)を全画素に適用した
     /// RGB24バッファを生成する。バンド単位で処理し境界1行を重複させる。
     /// </summary>
@@ -116,13 +169,73 @@ public static class ImageExport
         {
             throw new ArgumentException("出力バッファが小さすぎます。", nameof(destination));
         }
+
+        // 画像全体を1つの区画として現像する
+        DevelopSegments(image, frame, pattern, [luts], width, rgb24, progress, cancellationToken);
+        return rgb24;
+    }
+
+    /// <summary>
+    /// 同じBayerパターンの画像を左から同じ幅で並置した画像(HDR分割の各段など)を、区画ごとに現像LUTを替えて
+    /// カラー現像(バイリニアデモザイク+現像LUT)したRGB24バッファを生成する。
+    /// </summary>
+    /// <remarks>
+    /// 区画の割り当ては <see cref="RenderGray8(RawImage, int, IReadOnlyList{DisplayLut}, int, CancellationToken)"/>
+    /// と同じ。各区画は1枚の画像として、区画の左端を列0とするBayer位相でデモザイクし、隣の区画の画素を補間に使わない
+    /// (露光の違う段を並べた画像では、継ぎ目の列に混ざった隣の段の値が段ごとに違うゲインで増幅され、境目に筋が出る。
+    /// 区画の幅が奇数でも、後ろの区画を並置画像の座標の位相で読み違えない)。
+    /// </remarks>
+    /// <param name="image">対象画像。</param>
+    /// <param name="frame">フレーム番号。</param>
+    /// <param name="pattern">Bayerパターン。</param>
+    /// <param name="segmentLuts">区画ごとの現像LUT(左の区画から)。</param>
+    /// <param name="segmentWidth">区画の幅(画素)。</param>
+    /// <param name="progress">進捗通知(0〜1)。</param>
+    /// <param name="cancellationToken">キャンセルトークン。</param>
+    /// <returns>width×height×3 のRGB24バッファ(R,G,Bの順)。</returns>
+    /// <exception cref="ArgumentException">区画のLUTが1つもない場合。</exception>
+    /// <exception cref="ArgumentOutOfRangeException">区画の幅が1未満の場合。</exception>
+    public static byte[] DevelopRgb24(
+        RawImage image,
+        int frame,
+        BayerPattern pattern,
+        IReadOnlyList<DevelopLuts> segmentLuts,
+        int segmentWidth,
+        IProgress<double>? progress = null,
+        CancellationToken cancellationToken = default)
+    {
+        DevelopLuts[] luts = ToSegmentArray(segmentLuts, segmentWidth);
+        int width = image.Width;
+        int height = image.Height;
+        EnsureExportable((long)width * height, MaxRgb24Pixels, "カラー(RGB24)");
+        var rgb24 = new byte[(long)width * height * 3];
+        DevelopSegments(image, frame, pattern, luts, segmentWidth, rgb24, progress, cancellationToken);
+        return rgb24;
+    }
+
+    /// <summary>
+    /// 区画ごとにデモザイクして現像LUTを当て、RGB24へ書き込む。バンド単位で処理し境界1行を重複させる。
+    /// </summary>
+    private static void DevelopSegments(
+        RawImage image, int frame, BayerPattern pattern, DevelopLuts[] segmentLuts, int segmentWidth,
+        byte[] rgb24, IProgress<double>? progress, CancellationToken cancellationToken)
+    {
+        int width = image.Width;
+        int height = image.Height;
         const int bandRows = 256;
 
         // バンドごとに確保すると1億画素で約800MBのLOH割り当てになる。
-        // 最大バンド高さぶんを一度だけ確保して使い回す
+        // 最大バンド高さ×最も広い区画のぶんを一度だけ確保して使い回す
+        int maxColumns = 0;
+        for (int s = 0; s < segmentLuts.Length; s++)
+        {
+            (int x0, int x1) = SegmentColumns(s, segmentLuts.Length, segmentWidth, width);
+            maxColumns = Math.Max(maxColumns, x1 - x0);
+        }
+
         int maxBandHeight = Math.Min(height, bandRows + 2);
-        var mosaic = new ushort[(long)width * maxBandHeight];
-        var rgb16 = new ushort[(long)width * maxBandHeight * 3];
+        var mosaic = new ushort[(long)maxColumns * maxBandHeight];
+        var rgb16 = new ushort[(long)maxColumns * maxBandHeight * 3];
 
         for (int bandY = 0; bandY < height; bandY += bandRows)
         {
@@ -131,38 +244,85 @@ public static class ImageExport
             int top = Math.Max(0, bandY - 1);
             int bottom = Math.Min(height - 1, bandY + rows);
             int bandHeight = bottom - top + 1;
-
-            for (int y = 0; y < bandHeight; y++)
-            {
-                image.CopyRegion(frame, 0, top + y, width, 1,
-                    mosaic.AsSpan(y * width, width));
-            }
-
-            ColorPipeline.DemosaicBilinear(
-                mosaic, width, bandHeight, 0, top, pattern, rgb16, cancellationToken);
-
             int skip = bandY - top;
-            Parallel.For(0, rows, r =>
+
+            for (int s = 0; s < segmentLuts.Length; s++)
             {
-                int sourceRow = skip + r;
-                long destOffset = ((long)(bandY + r) * width) * 3;
-                int srcOffset = sourceRow * width * 3;
-                for (int x = 0; x < width; x++)
+                (int x0, int x1) = SegmentColumns(s, segmentLuts.Length, segmentWidth, width);
+                int columns = x1 - x0;
+                if (columns == 0)
                 {
-                    int si = srcOffset + x * 3;
-                    long di = destOffset + x * 3;
-                    luts.Convert(rgb16[si], rgb16[si + 1], rgb16[si + 2],
-                        out byte r8, out byte g8, out byte b8);
-                    rgb24[di] = r8;
-                    rgb24[di + 1] = g8;
-                    rgb24[di + 2] = b8;
+                    continue;
                 }
-            });
+
+                for (int y = 0; y < bandHeight; y++)
+                {
+                    image.CopyRegion(frame, x0, top + y, columns, 1,
+                        mosaic.AsSpan(y * columns, columns));
+                }
+
+                // 区画を1枚の画像として、区画の左端を列0とする位相でデモザイクする(隣の区画の画素は補間に使わない)
+                ColorPipeline.DemosaicBilinear(
+                    mosaic, columns, bandHeight, 0, top, pattern, rgb16, cancellationToken);
+
+                DevelopLuts luts = segmentLuts[s];
+                Parallel.For(0, rows, r =>
+                {
+                    int sourceRow = skip + r;
+                    long destOffset = (((long)(bandY + r) * width) + x0) * 3;
+                    int srcOffset = sourceRow * columns * 3;
+                    for (int x = 0; x < columns; x++)
+                    {
+                        int si = srcOffset + x * 3;
+                        long di = destOffset + x * 3;
+                        luts.Convert(rgb16[si], rgb16[si + 1], rgb16[si + 2],
+                            out byte r8, out byte g8, out byte b8);
+                        rgb24[di] = r8;
+                        rgb24[di + 1] = g8;
+                        rgb24[di + 2] = b8;
+                    }
+                });
+            }
 
             progress?.Report((double)(bandY + rows) / height);
         }
+    }
 
-        return rgb24;
+    /// <summary>区画ごとのLUTを検証し、並列処理から読む配列へ写す。</summary>
+    /// <exception cref="ArgumentException">区画のLUTが1つもない場合。</exception>
+    /// <exception cref="ArgumentOutOfRangeException">区画の幅が1未満の場合。</exception>
+    private static T[] ToSegmentArray<T>(IReadOnlyList<T> segmentLuts, int segmentWidth)
+    {
+        if (segmentLuts.Count == 0)
+        {
+            throw new ArgumentException("区画のLUTが1つもありません。", nameof(segmentLuts));
+        }
+
+        if (segmentWidth < 1)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(segmentWidth), segmentWidth, "区画の幅は1以上である必要があります。");
+        }
+
+        var luts = new T[segmentLuts.Count];
+        for (int i = 0; i < luts.Length; i++)
+        {
+            luts[i] = segmentLuts[i];
+        }
+
+        return luts;
+    }
+
+    /// <summary>
+    /// 区画の列範囲 [X0, X1)。最後の区画は画像の右端までを含み、画像の外から始まる区画は空になる。
+    /// </summary>
+    private static (int X0, int X1) SegmentColumns(int segment, int segmentCount, int segmentWidth, int width)
+    {
+        int x0 = (int)Math.Min(width, (long)segment * segmentWidth);
+        int x1 = segment == segmentCount - 1
+            ? width
+            : (int)Math.Min(width, (long)(segment + 1) * segmentWidth);
+        return (x0, x1);
     }
 
     /// <summary>

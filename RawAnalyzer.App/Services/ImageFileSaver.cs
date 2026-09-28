@@ -15,6 +15,8 @@ namespace RawAnalyzer.App.Services;
 /// WIC のエンコーダは全画素を1つのバッファで受け取るため、1億画素を超える TIFF は自前のライタ
 /// (<see cref="TiffWriter"/>)で行単位に書く(PNG/JPEG は保存ダイアログが1億画素を超える画像では選ばせない)。
 /// そこでも RGB 画像は RGB48 のまま書き、WIC で書く場合と同じ画素値にする(画像の大きさで色成分を失わない)。
+/// HDR分割ビューから表示LUTを焼き込むときは、画面と同じく各段をその段の表示調整で焼き込む
+/// (<see cref="HdrSplitAdjustments"/>)。
 /// </remarks>
 internal static class ImageFileSaver
 {
@@ -34,11 +36,16 @@ internal static class ImageFileSaver
     /// <param name="progress">進捗(0〜1)。</param>
     /// <param name="ct">キャンセルトークン。</param>
     /// <param name="streamingPixelThreshold">TIFF を自前のライタで書く画素数の境目(テスト用に下げられる)。</param>
+    /// <param name="split">
+    /// HDR分割ビューから表示LUTを焼き込むときの段ごとの表示調整。8bit 出力では <paramref name="lut"/>
+    /// (スライダーの値=最後に調整した段)に代えて段ごとの表示LUTを、カラー現像では <paramref name="devLuts"/> の
+    /// 表示調整の値に代えて段の値を使う。分割ビューでない、または表示LUTを焼き込まないときは null。
+    /// </param>
     internal static void Save(
         RawImage image, int frame, string path, SaveFormat format, ViewportDisplayMode mode,
         BayerPattern pattern, DisplayLut lut, DevelopLuts devLuts, ColorImage? trueColor,
         IProgress<double> progress, CancellationToken ct,
-        long streamingPixelThreshold = StreamingPixelThreshold)
+        long streamingPixelThreshold = StreamingPixelThreshold, HdrSplitAdjustments? split = null)
     {
         if (format == SaveFormat.Tiff16 && (long)image.Width * image.Height > streamingPixelThreshold)
         {
@@ -56,13 +63,13 @@ internal static class ImageFileSaver
             return;
         }
 
-        SaveWithWic(image, frame, path, format, mode, pattern, lut, devLuts, trueColor, progress, ct);
+        SaveWithWic(image, frame, path, format, mode, pattern, lut, devLuts, trueColor, split, progress, ct);
     }
 
     private static void SaveWithWic(
         RawImage image, int frame, string path, SaveFormat format, ViewportDisplayMode mode,
         BayerPattern pattern, DisplayLut lut, DevelopLuts devLuts, ColorImage? trueColor,
-        IProgress<double> progress, CancellationToken ct)
+        HdrSplitAdjustments? split, IProgress<double> progress, CancellationToken ct)
     {
         int width = image.Width;
         int height = image.Height;
@@ -116,19 +123,27 @@ internal static class ImageFileSaver
                         break;
                     }
 
+                    // HDR分割ビューからは、画面と同じく各段をその段の表示調整で焼き込む
+                    // (段ごとのLUTは保存のこのスレッドで作り、UIスレッドを塞がない)
                     bool color = mode == ViewportDisplayMode.ColorDevelop
                         && pattern != BayerPattern.None;
                     if (color)
                     {
-                        byte[] rgb = ImageExport.DevelopRgb24(
-                            image, frame, pattern, devLuts,
-                            new Progress<double>(p => progress.Report(p * 0.7)), ct);
+                        var developProgress = new Progress<double>(p => progress.Report(p * 0.7));
+                        byte[] rgb = split is null
+                            ? ImageExport.DevelopRgb24(image, frame, pattern, devLuts, developProgress, ct)
+                            : ImageExport.DevelopRgb24(
+                                image, frame, pattern, split.CreateDevelopLuts(devLuts.Parameters),
+                                split.SegmentWidth, developProgress, ct);
                         source = BitmapSource.Create(
                             width, height, 96, 96, PixelFormats.Rgb24, null, rgb, width * 3);
                     }
                     else
                     {
-                        byte[] gray = ImageExport.RenderGray8(image, frame, lut, ct);
+                        byte[] gray = split is null
+                            ? ImageExport.RenderGray8(image, frame, lut, ct)
+                            : ImageExport.RenderGray8(
+                                image, frame, split.CreateDisplayLuts(), split.SegmentWidth, ct);
                         progress.Report(0.7);
                         source = BitmapSource.Create(
                             width, height, 96, 96, PixelFormats.Gray8, null, gray, width);

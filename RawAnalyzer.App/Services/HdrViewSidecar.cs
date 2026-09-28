@@ -5,7 +5,8 @@ using RawAnalyzer.Core;
 namespace RawAnalyzer.App.Services;
 
 /// <summary>
-/// HDR派生ビュー(分割・合成)の表示中に保存したとき、保存の付随テキストへ書く来歴の節を作る。
+/// HDR派生ビュー(分割・合成)の表示中に保存したとき、保存の付随テキストへ書く来歴の節を作る
+/// ([HDR派生ビュー]と、分割ビューから表示LUTを焼き込んだときの[適用処理]の段ごとの表示調整)。
 /// </summary>
 /// <remarks>
 /// <para>
@@ -17,6 +18,10 @@ namespace RawAnalyzer.App.Services;
 /// 合成ビューの表示黒点は減算済みの0から始まるので、[適用処理]の黒点は合成で減算した黒点とは別物になる。
 /// 合成で減算した黒点・露光比・段数は、合成結果(<see cref="HdrImage.Parameters"/>)が持つ計算に使った値を書く
 /// (計算中や計算後に動かしたスライダーの値と取り違えない)。
+/// </para>
+/// <para>
+/// 分割ビューから表示LUTを焼き込んだ画像は、各段をその段の表示調整で焼き込んでいる(<see cref="HdrSplitAdjustments"/>)。
+/// [適用処理]の表示LUTもスライダーの値の1組ではなく段ごとに書く(<see cref="DescribeSplitDisplayLut"/>)。
 /// </para>
 /// </remarks>
 internal static class HdrViewSidecar
@@ -80,6 +85,41 @@ internal static class HdrViewSidecar
             .AppendLine();
         return sb.ToString();
     }
+
+    /// <summary>
+    /// HDR分割ビューから表示LUTを焼き込んで保存したときの、[適用処理]の表示LUTの記録(段ごとの表示調整)。
+    /// </summary>
+    /// <remarks>
+    /// 分割ビューは表示調整を段ごとに持ち、焼き込みも段ごとに行う。スライダーが示すのは最後に調整した段の値だけで、
+    /// それを1組だけ書くと保存した画像と食い違う。値の書式は分割ビューでないときの表示LUTの記録と同じ。
+    /// </remarks>
+    /// <param name="stages">段ごとの表示パラメータ(左の段から。長秒 → 短秒)。</param>
+    /// <returns>「表示LUT: 適用」の行から始まる記録(改行で終わる)。</returns>
+    internal static string DescribeSplitDisplayLut(IReadOnlyList<DisplayParameters> stages)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine("  表示LUT: 適用 (HDR分割の段ごと)");
+        for (int i = 0; i < stages.Count; i++)
+        {
+            DisplayParameters stage = stages[i];
+            sb.Append("    ").Append(StageName(i, stages.Count)).AppendLine(":");
+            sb.Append("      黒点/白点: ").Append(stage.BlackPoint).Append(" / ")
+                .AppendLine(stage.WhitePoint.ToString(Invariant));
+            sb.Append("      ゲイン: ")
+                .Append(DisplayLevels.ToGainDb(stage.Gain).ToString("F1", Invariant))
+                .Append(" dB (×")
+                .Append(stage.Gain.ToString("F3", Invariant))
+                .AppendLine(")");
+            sb.Append("      ガンマ: ").AppendLine(stage.Gamma.ToString("F3", Invariant));
+            sb.Append("      コントラスト: ").AppendLine(stage.Contrast.ToString("F3", Invariant));
+        }
+
+        return sb.ToString();
+    }
+
+    /// <summary>段の名前(表示調整の対象の選択肢と同じ。左端の段が長秒、右端の段が短秒、その間が中秒)。</summary>
+    private static string StageName(int stage, int stages) =>
+        stage == 0 ? "長秒" : stage == stages - 1 ? "短秒" : "中秒";
 
     private static string DescribeImage(RawFormat format) =>
         $"{format.Width}×{format.Height} · {format.BitDepth}bit · Bayer {format.Bayer}";

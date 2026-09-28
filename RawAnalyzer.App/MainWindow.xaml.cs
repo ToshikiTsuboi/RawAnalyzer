@@ -2127,6 +2127,13 @@ public partial class MainWindow : Window
         BayerPattern pattern = choice.ApplyDemosaic ? ActiveFormat!.Bayer : BayerPattern.None;
         var devLuts = DevelopLuts.Create(developParameters);
 
+        // HDR分割ビューは表示調整を段ごとに持ち、段ごとのLUTで描く。表示LUTを焼き込むなら画面と同じく
+        // 各段をその段の表示調整で焼き込む(スライダーの値は最後に調整した段のもの)。
+        // 段ごとの値はここで控え、付随テキストにも同じ値を書く
+        HdrSplitAdjustments? split = choice.ApplyDisplayLut && _hdrFrameParams is { } stageParameters
+            ? new HdrSplitAdjustments(stageParameters.ToArray(), _hdrSegmentWidth)
+            : null;
+
         ProgressWindow result = ProgressWindow.Run(
             this,
             $"保存中: {Path.GetFileName(path)}",
@@ -2143,7 +2150,7 @@ public partial class MainWindow : Window
                     default:
                         // TIFF/PNG/JPEG。1億画素を超えるTIFFは自前ライタで行単位に書く
                         ImageFileSaver.Save(image, frame, path, choice.Format, mode, pattern,
-                            lut, devLuts, colorImage, progress, ct);
+                            lut, devLuts, colorImage, progress, ct, split: split);
                         break;
                 }
             }, ct));
@@ -2157,7 +2164,7 @@ public partial class MainWindow : Window
         {
             if (choice.WriteSidecar)
             {
-                WriteProcessingSidecar(path, choice, developParameters);
+                WriteProcessingSidecar(path, choice, developParameters, split);
             }
 
             // RawSaver はヘッダを出力しないため、保存したrawを開き直したときに
@@ -2188,8 +2195,12 @@ public partial class MainWindow : Window
     }
 
     /// <summary>保存画像に何が適用されたかを記録するテキストを書き出す。</summary>
+    /// <param name="imagePath">保存した画像のパス。</param>
+    /// <param name="choice">保存ダイアログの選択。</param>
+    /// <param name="developParameters">保存に使った現像パラメータ。</param>
+    /// <param name="split">HDR分割ビューから表示LUTを焼き込んだときの段ごとの表示調整(それ以外は null)。</param>
     private void WriteProcessingSidecar(
-        string imagePath, SaveChoice choice, DevelopParameters developParameters)
+        string imagePath, SaveChoice choice, DevelopParameters developParameters, HdrSplitAdjustments? split)
     {
         try
         {
@@ -2254,8 +2265,19 @@ public partial class MainWindow : Window
 
             sb.AppendLine();
             sb.AppendLine("[適用処理]");
-            sb.Append("  表示LUT: ").AppendLine(choice.ApplyDisplayLut ? "適用" : "なし");
-            if (choice.ApplyDisplayLut)
+
+            // HDR分割ビューから焼き込んだ画像は各段をその段の表示調整で焼き込んでいる。スライダーの値は最後に調整した
+            // 段のもので、1組だけ書くと実体と食い違うので段ごとに書く
+            if (split is not null)
+            {
+                sb.Append(HdrViewSidecar.DescribeSplitDisplayLut(split.Stages));
+            }
+            else
+            {
+                sb.Append("  表示LUT: ").AppendLine(choice.ApplyDisplayLut ? "適用" : "なし");
+            }
+
+            if (choice.ApplyDisplayLut && split is null)
             {
                 sb.Append("    黒点/白点: ").Append(_blackPoint).Append(" / ")
                     .AppendLine(_whitePoint.ToString(CultureInfo.InvariantCulture));

@@ -367,6 +367,37 @@ public class SaveTests
         Assert.Equal(allocated, reused);
     }
 
+    [Fact]
+    public void ImageExport_DevelopRgb24_SameAsDemosaicOfWholeImage_AcrossBandSeams()
+    {
+        // HDR分割ビューの段ごとの現像(区画ごとのデモザイク)と処理を共通にしても、分割ビューでない保存の現像結果は
+        // 変えない。256行ずつの帯の継ぎ目(帯の上下1行を重ねて補間する)を含めて、画像全体を一度にデモザイクして
+        // 現像LUTを当てた結果と1バイトも違わないこと
+        const int width = 6;
+        const int height = 300;
+        var format = new RawFormat { Width = width, Height = height, BitDepth = 16, Bayer = BayerPattern.Grbg };
+        var pixels = new ushort[width * height];
+        for (int i = 0; i < pixels.Length; i++)
+        {
+            pixels[i] = (ushort)(((i * 7919) + 13) % 65536);
+        }
+
+        using RawImage image = RawImage.FromPixels(format, pixels);
+        var luts = DevelopLuts.Create(new DevelopParameters(
+            BlackLevel: 2048, GainR: 1.7, GainB: 1.3, WhitePoint: 60000, Gain: 1.2, Contrast: 1.1));
+
+        var rgb16 = new ushort[width * height * 3];
+        ColorPipeline.DemosaicBilinear(pixels, width, height, 0, 0, BayerPattern.Grbg, rgb16);
+        var expected = new byte[width * height * 3];
+        for (int i = 0; i < width * height; i++)
+        {
+            luts.Convert(rgb16[i * 3], rgb16[(i * 3) + 1], rgb16[(i * 3) + 2],
+                out expected[i * 3], out expected[(i * 3) + 1], out expected[(i * 3) + 2]);
+        }
+
+        Assert.Equal(expected, ImageExport.DevelopRgb24(image, 0, BayerPattern.Grbg, luts));
+    }
+
     /// <summary>テスト用: コールバックを同期実行するIProgress。</summary>
     private sealed class SynchronousProgress : IProgress<double>
     {

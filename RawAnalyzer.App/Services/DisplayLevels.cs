@@ -2,7 +2,7 @@ namespace RawAnalyzer.App.Services;
 
 /// <summary>
 /// 黒/白レベルの raw code(UIのスライダー値)と、16bitフルスケールの内部値
-/// (表示LUTの黒点・白点)の換算。
+/// (表示LUTの黒点・白点)の換算。表示ゲインの線形倍率と dB の換算も持つ。
 /// </summary>
 /// <remarks>
 /// 表示LUTは16bit正規化値で黒点・白点を持ち、UIは表示中の画像のビット深度のコード値で示す。
@@ -13,6 +13,16 @@ namespace RawAnalyzer.App.Services;
 /// </remarks>
 internal static class DisplayLevels
 {
+    /// <summary>表示ゲインのスライダーの下限[dB](×0.1)。</summary>
+    internal const double MinGainDb = -20;
+
+    /// <summary>
+    /// 線形の表示ゲインを dB(20·log10(倍率))で表す。ゲインのスライダーと付随テキストで同じ換算を使う。
+    /// </summary>
+    /// <param name="gain">線形の表示ゲイン。</param>
+    /// <returns>dB 値。ゲインが0以下ならスライダーの下限。</returns>
+    internal static double ToGainDb(double gain) => gain > 0 ? 20 * Math.Log10(gain) : MinGainDb;
+
     /// <summary>ビット深度の最大コード値(黒/白レベルの上限)。</summary>
     /// <param name="bitDepth">ビット深度。</param>
     /// <returns>最大コード値。</returns>

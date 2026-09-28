@@ -392,7 +392,7 @@ public sealed class MainViewModel : ObservableObject
     /// </remarks>
     public double GainDb
     {
-        get => _gain > 0 ? 20 * Math.Log10(_gain) : MinGainDb;
+        get => DisplayLevels.ToGainDb(_gain);
         set => Gain = Math.Pow(10, Math.Clamp(value, MinGainDb, MaxGainDb) / 20.0);
     }
 
@@ -400,7 +400,7 @@ public sealed class MainViewModel : ObservableObject
     public string GainNote => $"= ×{_gain:0.###}";
 
     /// <summary>ゲインスライダーの下限[dB](×0.1)。</summary>
-    public double MinGainDb => -20;
+    public double MinGainDb => DisplayLevels.MinGainDb;
 
     /// <summary>ゲインスライダーの上限[dB](×1000)。</summary>
     public double MaxGainDb => 60;

@@ -82,4 +82,45 @@ public class HdrViewSidecarTests
         Assert.DoesNotContain("元画像のフレーム", text);
         Assert.DoesNotContain("黒点", text); // 分割は黒レベルを減算しない
     }
+
+    [Fact]
+    public void SplitDisplayLut_RecordsEachStagesAdjustment_LongToShort()
+    {
+        // 分割ビューから表示LUTを焼き込むと、各段をその段の表示調整で焼き込む。スライダーが示すのは最後に調整した段の
+        // 値だけなので、それを1組だけ[適用処理]へ書くと保存した画像と食い違う。段ごとに、分割ビューでないときと
+        // 同じ書式で書く。2段は長秒・短秒(中秒と取り違えない)
+        DisplayParameters[] stages =
+        [
+            new(BlackPoint: 1024),
+            new(BlackPoint: 1024, WhitePoint: 32767, Gain: 4.0, Gamma: 2.2),
+            new(BlackPoint: 256, WhitePoint: 8191, Gain: 16.0, Contrast: 1.5),
+        ];
+
+        string text = HdrViewSidecar.DescribeSplitDisplayLut(stages);
+        string twoStages = HdrViewSidecar.DescribeSplitDisplayLut([stages[0], stages[2]]);
+
+        string[] expected =
+        [
+            "  表示LUT: 適用 (HDR分割の段ごと)",
+            "    長秒:",
+            "      黒点/白点: 1024 / 65535",
+            "      ゲイン: 0.0 dB (×1.000)",
+            "      ガンマ: 1.000",
+            "      コントラスト: 1.000",
+            "    中秒:",
+            "      黒点/白点: 1024 / 32767",
+            "      ゲイン: 12.0 dB (×4.000)",
+            "      ガンマ: 2.200",
+            "      コントラスト: 1.000",
+            "    短秒:",
+            "      黒点/白点: 256 / 8191",
+            "      ゲイン: 24.1 dB (×16.000)",
+            "      ガンマ: 1.000",
+            "      コントラスト: 1.500",
+        ];
+        Assert.Equal(string.Join(Environment.NewLine, expected) + Environment.NewLine, text);
+        Assert.Contains("    長秒:", twoStages);
+        Assert.Contains("    短秒:" + Environment.NewLine + "      黒点/白点: 256 / 8191", twoStages);
+        Assert.DoesNotContain("中秒", twoStages);
+    }
 }
