@@ -2149,7 +2149,9 @@ public partial class MainWindow : Window
     {
         try
         {
-            RawFormat? format = ActiveFormat;
+            // HDR派生ビュー(分割・合成)の表示中も、入力フォーマットは元ファイルの形式(HDR方式を含む)を書く。
+            // 派生画像の形式と作り方は[HDR派生ビュー]に書く(派生ビューでなければ ActiveFormat と同じ)
+            RawFormat? format = _currentFormat;
             var sb = new StringBuilder();
             sb.AppendLine("RawAnalyzer 保存情報");
             sb.AppendLine("====================");
@@ -2180,6 +2182,18 @@ public partial class MainWindow : Window
                 sb.Append("  HDR: ").Append(format.Hdr).Append(' ')
                     .AppendLine(format.Hdr == HdrMode.None
                         ? "" : $"{format.HdrStages}段 露光比{format.ExposureRatio:F1}");
+            }
+
+            // HDR派生ビューから保存した画像は元ファイルの画素ではない。どの派生ビューか(合成なら合成で減算した黒点・
+            // 露光比・量子化)を書く。合成ビューの表示黒点は減算済みの0から始まり、[適用処理]の黒点とは別物になる
+            if (_derivedImage is { } derived && format is not null)
+            {
+                sb.AppendLine();
+                sb.Append(_hdrFloatImage is { } merged
+                    ? HdrViewSidecar.DescribeMerge(derived.Format, merged, format, _hdrSourceFrame.Frame,
+                        floatRawOutput: choice.Format == SaveFormat.FloatRaw)
+                    : HdrViewSidecar.DescribeSplit(derived.Format, _hdrFrameParams?.Length ?? format.HdrStages,
+                        format, _hdrSourceFrame.Frame));
             }
 
             sb.AppendLine();

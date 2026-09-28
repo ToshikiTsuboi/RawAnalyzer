@@ -22,7 +22,7 @@ public sealed class HdrImage
 {
     internal HdrImage(
         int width, int height, float[] pixels, float fullScale, BayerPattern bayer,
-        int sourceBitDepth)
+        int sourceBitDepth, HdrMergeParameters parameters, int stages)
     {
         Width = width;
         Height = height;
@@ -30,10 +30,21 @@ public sealed class HdrImage
         FullScale = fullScale;
         Bayer = bayer;
         SourceBitDepth = sourceBitDepth;
+        Parameters = parameters;
+        Stages = stages;
     }
 
     /// <summary>元素材のビット深度(情報損失の基準)。</summary>
     public int SourceBitDepth { get; }
+
+    /// <summary>
+    /// 合成に使ったパラメータ(露光比、線形化で減算した黒レベルなど)。
+    /// <see cref="Pixels"/> はこの黒レベルを減算済み。
+    /// </summary>
+    public HdrMergeParameters Parameters { get; }
+
+    /// <summary>合成した露光の段数(長秒→短秒のフレーム数、2〜3)。</summary>
+    public int Stages { get; }
 
     /// <summary>幅(画素数)。</summary>
     public int Width { get; }
@@ -230,7 +241,7 @@ public static class HdrMerger
         cancellationToken.ThrowIfCancellationRequested();
         return new HdrImage(
             width, height, current, currentFullScale, frames[0].Format.Bayer,
-            frames[0].Format.BitDepth);
+            frames[0].Format.BitDepth, parameters, frames.Count);
     }
 
     private static float[] ToLinear(RawImage frame, float black, CancellationToken ct)
