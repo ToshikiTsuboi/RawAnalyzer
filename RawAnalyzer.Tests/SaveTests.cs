@@ -1,4 +1,5 @@
-﻿using RawAnalyzer.Core;
+﻿using RawAnalyzer.App.Services;
+using RawAnalyzer.Core;
 using Xunit;
 
 namespace RawAnalyzer.Tests;
@@ -198,6 +199,44 @@ public class SaveTests
         {
             File.Delete(path);
             File.Delete(source);
+        }
+    }
+
+    [Fact]
+    public void TiffWriter_SaveRgb48_MultipleStrips_ReloadsSameRgb()
+    {
+        // 1億画素を超えるカラー画像のTIFF保存に使う自前ライタ(Codexレビュー 2026-09-29 #7)。
+        // 実際の巨大画像は約1MBごとの多数のストリップになる。RGBは BitsPerSample(16,16,16)と
+        // ストリップのオフセット・バイト数の配列をどちらもIFDの外に置くので、端数のある複数ストリップでも
+        // 配置がずれずに読み戻せること(16bitのRGBはWIC経由で読む)
+        const int width = 12;
+        const int height = 7;
+        ColorImage color = MakeColorImage(width, height);
+        string path = TempPath(".tif");
+        try
+        {
+            TiffWriter.SaveRgb48(color, path, rowsPerStripOverride: 2);
+
+            Assert.True(TiffLoader.TryReadSampleInfo(path, out TiffSampleInfo? info));
+            Assert.Equal(
+                (16, 3, 2, 1),
+                (info!.BitsPerSample, info.SamplesPerPixel, info.Photometric, info.Compression));
+            DecodedImage decoded = ImageFileLoader.Load(path);
+            using RawImage luminance = decoded.Luminance;
+            Assert.NotNull(decoded.Color);
+            for (int y = 0; y < height; y++)
+            {
+                for (int x = 0; x < width; x++)
+                {
+                    color.GetPixel(x, y, out ushort r, out ushort g, out ushort b);
+                    decoded.Color.GetPixel(x, y, out ushort readR, out ushort readG, out ushort readB);
+                    Assert.Equal((r, g, b), (readR, readG, readB));
+                }
+            }
+        }
+        finally
+        {
+            File.Delete(path);
         }
     }
 

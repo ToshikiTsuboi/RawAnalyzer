@@ -3,8 +3,8 @@
 namespace RawAnalyzer.Core;
 
 /// <summary>
-/// 16bit非圧縮グレースケールTIFF(リトルエンディアン、ストリップ形式)の書き出し。
-/// 行単位のストリーミングで巨大画像にも対応する(TiffLoaderで再読込可能)。
+/// 16bit非圧縮TIFF(リトルエンディアン、ストリップ形式)の書き出し。グレースケールとRGB(RGB48)に対応する。
+/// 行単位のストリーミングで巨大画像にも対応する(グレーはTiffLoader、RGBはWICで再読込可能)。
 /// </summary>
 public static class TiffWriter
 {
@@ -12,10 +12,16 @@ public static class TiffWriter
     // (ImageWidth/Length, BitsPerSample, Compression, Photometric,
     //  StripOffsets, SamplesPerPixel, RowsPerStrip, StripByteCounts,
     //  XResolution, YResolution, ResolutionUnit)
-    private const int EntryCount = 12;
+    private const int GrayEntryCount = 12;
+
+    // RGBは上の一式(RGBの必須フィールドも同じ)に PlanarConfiguration(1=チャンキー)を加える
+    private const int RgbEntryCount = GrayEntryCount + 1;
 
     // XResolution/YResolutionのRATIONAL値(8byte×2)をIFD直後に置く
     private const int RationalBytes = 16;
+
+    /// <summary>1行ぶんのサンプル(グレーは1画素1サンプル、RGBは R,G,B の3サンプル)を取り出す。</summary>
+    private delegate void RowReader(int y, Span<ushort> samples);
 
     /// <summary>
     /// 画像の1フレームを16bitグレースケールTIFFとして保存する。
@@ -38,42 +44,67 @@ public static class TiffWriter
         int? rowsPerStripOverride = null)
     {
         int width = image.Width;
-        int height = image.Height;
-        long rowBytes = (long)width * 2;
-        int rowsPerStrip = rowsPerStripOverride
-            ?? Math.Max(1, (int)((1 << 20) / rowBytes));
-        rowsPerStrip = Math.Clamp(rowsPerStrip, 1, height);
-        int stripCount = (height + rowsPerStrip - 1) / rowsPerStrip;
+        Save(
+            path, Layout.Create(width, image.Height, samplesPerPixel: 1, rowsPerStripOverride),
+            (y, samples) => image.CopyRegion(frame, 0, y, width, 1, samples),
+            progress, cancellationToken, "raw形式を使用してください。");
+    }
 
-        int ifdSize = 2 + EntryCount * 12 + 4;
-        int arraysOffset = 8 + ifdSize + RationalBytes;
-        int arraysSize = stripCount > 1 ? stripCount * 8 : 0;
-        long dataOffset = arraysOffset + arraysSize;
-        long totalSize = dataOffset + rowBytes * height;
-        if (totalSize > uint.MaxValue)
+    /// <summary>
+    /// カラー画像を16bit RGB(RGB48、チャンキー)の非圧縮TIFFとして保存する。
+    /// 画素値は内部表現(16bitフルスケール)をそのまま書き出す(8bitから読み込んだ画像も読込時の16bit値のまま)。
+    /// WICのTIFFエンコーダへRGB48で渡した場合と同じ画素値になり、全画素のバッファを確保せずに行単位で書く。
+    /// </summary>
+    /// <param name="image">保存するカラー画像。</param>
+    /// <param name="path">出力先パス。</param>
+    /// <param name="progress">進捗通知(0〜1)。</param>
+    /// <param name="cancellationToken">キャンセルトークン。キャンセル時は既存ファイルを残したまま中断する。</param>
+    /// <param name="rowsPerStripOverride">ストリップあたりの行数の明示指定(既定は約1MB単位)。</param>
+    /// <exception cref="NotSupportedException">データが4GBを超えTIFFの32bitオフセットで表現できない場合。</exception>
+    /// <exception cref="OperationCanceledException">キャンセルされた場合。</exception>
+    public static void SaveRgb48(
+        ColorImage image,
+        string path,
+        IProgress<double>? progress = null,
+        CancellationToken cancellationToken = default,
+        int? rowsPerStripOverride = null)
+    {
+        int width = image.Width;
+        Save(
+            path, Layout.Create(width, image.Height, samplesPerPixel: 3, rowsPerStripOverride),
+            (y, samples) => image.CopyRow(y, 0, width, samples),
+            progress, cancellationToken, "");
+    }
+
+    private static void Save(
+        string path, Layout layout, RowReader readRow, IProgress<double>? progress,
+        CancellationToken cancellationToken, string oversizeAdvice)
+    {
+        if (layout.TotalSize > uint.MaxValue)
         {
             throw new NotSupportedException(
-                "TIFFの32bitオフセット上限(4GB)を超えるため保存できません。raw形式を使用してください。");
+                "TIFFの32bitオフセット上限(4GB)を超えるため保存できません。" + oversizeAdvice);
         }
 
         // 一時ファイルへ書いてから置き換える。直接開くと、失敗した時点で
         // 上書き対象だった既存ファイルまで失われる
         AtomicFileWriter.Write(path, stream =>
         {
-            WriteHeaderAndIfd(
-                stream, width, height, rowsPerStrip, stripCount, arraysOffset, dataOffset, rowBytes);
+            WriteHeaderAndIfd(stream, layout);
 
-            // 画素データ(リトルエンディアン)
-            var pixelRow = new ushort[width];
-            var byteRow = new byte[width * 2];
+            // 画素データ(リトルエンディアン。RGBは画素ごとに R,G,B の順)
+            int height = layout.Height;
+            int samplesPerRow = layout.Width * layout.SamplesPerPixel;
+            var sampleRow = new ushort[samplesPerRow];
+            var byteRow = new byte[samplesPerRow * 2];
             for (int y = 0; y < height; y++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                image.CopyRegion(frame, 0, y, width, 1, pixelRow);
-                for (int x = 0; x < width; x++)
+                readRow(y, sampleRow);
+                for (int i = 0; i < samplesPerRow; i++)
                 {
                     BinaryPrimitives.WriteUInt16LittleEndian(
-                        byteRow.AsSpan(x * 2, 2), pixelRow[x]);
+                        byteRow.AsSpan(i * 2, 2), sampleRow[i]);
                 }
 
                 stream.Write(byteRow, 0, byteRow.Length);
@@ -85,37 +116,52 @@ public static class TiffWriter
         });
     }
 
-    private static void WriteHeaderAndIfd(
-        FileStream stream, int width, int height, int rowsPerStrip, int stripCount,
-        int arraysOffset, long dataOffset, long rowBytes)
+    private static void WriteHeaderAndIfd(FileStream stream, Layout layout)
     {
-        var header = new byte[arraysOffset + (stripCount > 1 ? stripCount * 8 : 0)];
+        bool rgb = layout.SamplesPerPixel > 1;
+        int height = layout.Height;
+        int rowsPerStrip = layout.RowsPerStrip;
+        int stripCount = layout.StripCount;
+        int arraysOffset = layout.ArraysOffset;
+        long dataOffset = layout.DataOffset;
+        long rowBytes = layout.RowBytes;
+        var header = new byte[dataOffset];
         header[0] = (byte)'I';
         header[1] = (byte)'I';
         WriteU16(header, 2, 42);
         WriteU32(header, 4, 8);
 
-        WriteU16(header, 8, EntryCount);
+        WriteU16(header, 8, (ushort)layout.EntryCount);
         int entry = 10;
-        entry = WriteEntry(header, entry, 256, 4, 1, (uint)width);
+        entry = WriteEntry(header, entry, 256, 4, 1, (uint)layout.Width);
         entry = WriteEntry(header, entry, 257, 4, 1, (uint)height);
-        entry = WriteEntry(header, entry, 258, 3, 1, 16);
+
+        // RGBの BitsPerSample(16,16,16)は6byteでエントリに収まらないため外部参照
+        entry = rgb
+            ? WriteEntry(header, entry, 258, 3, (uint)layout.SamplesPerPixel, (uint)layout.BitsOffset)
+            : WriteEntry(header, entry, 258, 3, 1, 16);
         entry = WriteEntry(header, entry, 259, 3, 1, 1);
-        entry = WriteEntry(header, entry, 262, 3, 1, 1);
+        entry = WriteEntry(header, entry, 262, 3, 1, rgb ? 2u : 1u);
         entry = stripCount == 1
             ? WriteEntry(header, entry, 273, 4, 1, (uint)dataOffset)
             : WriteEntry(header, entry, 273, 4, (uint)stripCount, (uint)arraysOffset);
-        entry = WriteEntry(header, entry, 277, 3, 1, 1);
+        entry = WriteEntry(header, entry, 277, 3, 1, (uint)layout.SamplesPerPixel);
         entry = WriteEntry(header, entry, 278, 4, 1, (uint)rowsPerStrip);
         entry = stripCount == 1
             ? WriteEntry(header, entry, 279, 4, 1, (uint)(rowBytes * height))
             : WriteEntry(header, entry, 279, 4, (uint)stripCount,
                 (uint)(arraysOffset + stripCount * 4));
 
-        // TIFF6.0でグレースケール必須の解像度タグ(72dpi固定。RATIONALは外部参照)
-        int rationalOffset = arraysOffset - RationalBytes;
+        // TIFF6.0でグレースケール・RGBとも必須の解像度タグ(72dpi固定。RATIONALは外部参照)
+        int rationalOffset = layout.RationalOffset;
         entry = WriteEntry(header, entry, 282, 5, 1, (uint)rationalOffset);
         entry = WriteEntry(header, entry, 283, 5, 1, (uint)(rationalOffset + 8));
+        if (rgb)
+        {
+            // PlanarConfiguration = 1(チャンキー: 画素ごとに R,G,B)
+            entry = WriteEntry(header, entry, 284, 3, 1, 1);
+        }
+
         entry = WriteEntry(header, entry, 296, 3, 1, 2);
         WriteU32(header, entry, 0);
 
@@ -123,6 +169,14 @@ public static class TiffWriter
         WriteU32(header, rationalOffset + 4, 1);
         WriteU32(header, rationalOffset + 8, 72);
         WriteU32(header, rationalOffset + 12, 1);
+
+        if (rgb)
+        {
+            for (int sample = 0; sample < layout.SamplesPerPixel; sample++)
+            {
+                WriteU16(header, layout.BitsOffset + (sample * 2), 16);
+            }
+        }
 
         if (stripCount > 1)
         {
@@ -138,6 +192,36 @@ public static class TiffWriter
         }
 
         stream.Write(header, 0, header.Length);
+    }
+
+    /// <summary>
+    /// ファイル上の配置。ヘッダ → IFD → 解像度のRATIONAL → (RGB)BitsPerSampleの値 →
+    /// (複数ストリップ)各ストリップのオフセット・バイト数の配列 → 画素 の順に置く。
+    /// </summary>
+    private readonly record struct Layout(
+        int Width, int Height, int SamplesPerPixel, int RowsPerStrip, int StripCount,
+        int EntryCount, int RationalOffset, int BitsOffset, int ArraysOffset, long DataOffset,
+        long RowBytes)
+    {
+        public long TotalSize => DataOffset + (RowBytes * Height);
+
+        public static Layout Create(int width, int height, int samplesPerPixel, int? rowsPerStripOverride)
+        {
+            long rowBytes = (long)width * samplesPerPixel * 2;
+            int rowsPerStrip = rowsPerStripOverride
+                ?? Math.Max(1, (int)((1 << 20) / rowBytes));
+            rowsPerStrip = Math.Clamp(rowsPerStrip, 1, height);
+            int stripCount = (height + rowsPerStrip - 1) / rowsPerStrip;
+
+            int entryCount = samplesPerPixel == 1 ? GrayEntryCount : RgbEntryCount;
+            int rationalOffset = 8 + 2 + (entryCount * 12) + 4;
+            int bitsOffset = rationalOffset + RationalBytes;
+            int arraysOffset = bitsOffset + (samplesPerPixel == 1 ? 0 : samplesPerPixel * 2);
+            long dataOffset = arraysOffset + (stripCount > 1 ? (long)stripCount * 8 : 0);
+            return new Layout(
+                width, height, samplesPerPixel, rowsPerStrip, stripCount,
+                entryCount, rationalOffset, bitsOffset, arraysOffset, dataOffset, rowBytes);
+        }
     }
 
     private static void WriteU16(byte[] buffer, int offset, ushort value)

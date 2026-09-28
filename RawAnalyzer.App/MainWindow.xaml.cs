@@ -2071,22 +2071,9 @@ public partial class MainWindow : Window
                     case SaveFormat.Raw:
                         RawSaver.Save(image, path, choice.Packing, choice.Endianness, progress, ct);
                         break;
-                    case SaveFormat.Tiff16:
-                        if ((long)image.Width * image.Height
-                            > RawLoader.DefaultInMemoryPixelThreshold)
-                        {
-                            // 巨大画像は自前ライタで行単位ストリーミング
-                            TiffWriter.SaveGray16(image, frame, path, progress, ct);
-                        }
-                        else
-                        {
-                            SaveWithWic(image, frame, path, choice.Format, mode, pattern,
-                                lut, devLuts, colorImage, progress, ct);
-                        }
-
-                        break;
                     default:
-                        SaveWithWic(image, frame, path, choice.Format, mode, pattern,
+                        // TIFF/PNG/JPEG。1億画素を超えるTIFFは自前ライタで行単位に書く
+                        ImageFileSaver.Save(image, frame, path, choice.Format, mode, pattern,
                             lut, devLuts, colorImage, progress, ct);
                         break;
                 }
@@ -2243,100 +2230,6 @@ public partial class MainWindow : Window
         {
             // 付随情報の保存失敗は本体の保存結果に影響させない
         }
-    }
-
-    private static void SaveWithWic(
-        RawImage image, int frame, string path, SaveFormat format, ViewportDisplayMode mode,
-        BayerPattern pattern, DisplayLut lut, DevelopLuts devLuts, ColorImage? trueColor,
-        IProgress<double> progress, CancellationToken ct)
-    {
-        int width = image.Width;
-        int height = image.Height;
-        BitmapSource source;
-        switch (format)
-        {
-            case SaveFormat.Tiff16:
-            case SaveFormat.Png16:
-                {
-                    // 読み込んだRGB画像は輝度化せずチャネルを保って書き出す
-                    if (trueColor is not null)
-                    {
-                        ushort[] rgb48 = ImageExport.RenderColorRgb48(trueColor, ct);
-                        progress.Report(0.7);
-                        source = BitmapSource.Create(
-                            trueColor.Width, trueColor.Height, 96, 96, PixelFormats.Rgb48, null,
-                            rgb48, trueColor.Width * 6);
-                        break;
-                    }
-
-                    {
-                        var pixels = new ushort[(long)width * height];
-                        for (int y = 0; y < height; y++)
-                        {
-                            ct.ThrowIfCancellationRequested();
-                            image.CopyRegion(frame, 0, y, width, 1, pixels.AsSpan(y * width, width));
-                            if ((y & 511) == 0)
-                            {
-                                progress.Report(0.5 * y / height);
-                            }
-                        }
-
-                        source = BitmapSource.Create(
-                            width, height, 96, 96, PixelFormats.Gray16, null, pixels, width * 2);
-                    }
-
-                    break;
-                }
-
-            default:
-                {
-                    // 8bit系は選択された処理を焼き込む
-                    if (trueColor is not null)
-                    {
-                        // 読み込んだRGB画像はデモザイクせずLUTだけ適用する
-                        byte[] rgb = ImageExport.RenderColorRgb24(trueColor, lut, ct);
-                        progress.Report(0.7);
-                        source = BitmapSource.Create(
-                            trueColor.Width, trueColor.Height, 96, 96, PixelFormats.Rgb24, null,
-                            rgb, trueColor.Width * 3);
-                        break;
-                    }
-
-                    bool color = mode == ViewportDisplayMode.ColorDevelop
-                        && pattern != BayerPattern.None;
-                    if (color)
-                    {
-                        byte[] rgb = ImageExport.DevelopRgb24(
-                            image, frame, pattern, devLuts,
-                            new Progress<double>(p => progress.Report(p * 0.7)), ct);
-                        source = BitmapSource.Create(
-                            width, height, 96, 96, PixelFormats.Rgb24, null, rgb, width * 3);
-                    }
-                    else
-                    {
-                        byte[] gray = ImageExport.RenderGray8(image, frame, lut, ct);
-                        progress.Report(0.7);
-                        source = BitmapSource.Create(
-                            width, height, 96, 96, PixelFormats.Gray8, null, gray, width);
-                    }
-
-                    break;
-                }
-        }
-
-        ct.ThrowIfCancellationRequested();
-        BitmapEncoder encoder = format switch
-        {
-            SaveFormat.Tiff16 => new TiffBitmapEncoder { Compression = TiffCompressOption.None },
-            SaveFormat.Jpeg8 => new JpegBitmapEncoder { QualityLevel = 95 },
-            _ => new PngBitmapEncoder(),
-        };
-        encoder.Frames.Add(BitmapFrame.Create(source));
-
-        // 一時ファイルへ書き切ってから置換する。直接書くと、失敗・キャンセル時に
-        // 上書き対象だった既存ファイルを失う
-        AtomicFileWriter.Write(path, encoder.Save);
-        progress.Report(1.0);
     }
 
     // ---- 画像演算 (ダーク減算/フラット補正) ----
