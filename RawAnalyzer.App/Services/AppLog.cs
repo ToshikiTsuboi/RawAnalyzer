@@ -13,17 +13,52 @@ internal static class AppLog
 {
     private const long MaxFileBytes = 4L * 1024 * 1024;
     private static readonly object Gate = new();
-    private static readonly string LogDirectory = Path.Combine(
+
+    /// <summary>既定の保存フォルダ(%AppData%/RawAnalyzer/logs)。アプリ本体は常にここへ書く。</summary>
+    internal static readonly string DefaultDirectory = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
         "RawAnalyzer",
         "logs");
 
+    // 出力先のフォルダ。アプリ本体は既定のまま変えない(テストだけが RedirectTo で差し替える)。
+    // 読み書きは Gate の中で行う
+    private static string _directory = DefaultDirectory;
+
     /// <summary>現在の出力先ログファイルのパス。</summary>
-    public static string CurrentFilePath =>
-        Path.Combine(LogDirectory, $"rawanalyzer-{DateTime.Now:yyyyMMdd}.log");
+    public static string CurrentFilePath => FilePathIn(DirectoryPath);
 
     /// <summary>ログの保存フォルダ。</summary>
-    public static string DirectoryPath => LogDirectory;
+    public static string DirectoryPath
+    {
+        get
+        {
+            lock (Gate)
+            {
+                return _directory;
+            }
+        }
+    }
+
+    /// <summary>
+    /// 出力先のフォルダを差し替える。テストが利用者の実際のログへ書かないようにするためのもので、
+    /// アプリ本体からは呼ばない。
+    /// </summary>
+    /// <remarks>
+    /// ログは1ファイルが4MBを超えると今日のログを .1 へ移し、前の .1 を消す。テストから既定の出力先
+    /// (%AppData%/RawAnalyzer/logs)へ書くと、テストを繰り返し流すだけで利用者の実際のログを押し出して消してしまう。
+    /// テストはテストのコードより先に(モジュール初期化子で)一時フォルダへ向ける。
+    /// </remarks>
+    /// <param name="directory">出力先のフォルダ。なければ最初の書き込みで作る。</param>
+    /// <exception cref="ArgumentException">フォルダが空の場合。</exception>
+    internal static void RedirectTo(string directory)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(directory);
+        string fullPath = Path.GetFullPath(directory);
+        lock (Gate)
+        {
+            _directory = fullPath;
+        }
+    }
 
     /// <summary>情報レベルのメッセージを記録する。</summary>
     /// <param name="message">記録する本文。</param>
@@ -76,6 +111,10 @@ internal static class AppLog
         }
     }
 
+    /// <summary>フォルダ内の今日のログファイルのパス。</summary>
+    private static string FilePathIn(string directory) =>
+        Path.Combine(directory, $"rawanalyzer-{DateTime.Now:yyyyMMdd}.log");
+
     private static void Write(string level, string message)
     {
         string line = $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} [{level}] " +
@@ -85,8 +124,8 @@ internal static class AppLog
         {
             lock (Gate)
             {
-                Directory.CreateDirectory(LogDirectory);
-                string path = CurrentFilePath;
+                Directory.CreateDirectory(_directory);
+                string path = FilePathIn(_directory);
                 var info = new FileInfo(path);
                 if (info.Exists && info.Length > MaxFileBytes)
                 {
