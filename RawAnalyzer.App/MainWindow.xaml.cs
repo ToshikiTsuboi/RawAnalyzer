@@ -701,6 +701,9 @@ public partial class MainWindow : Window
         _derivedImage = null;
         _hdrFloatImage = null;
         _hdrFrameParams = null;
+
+        // 合成ビューの表示中に開いたら、合成ビューへ入る前の黒点を後で戻さない(表示調整は下で既定へ戻す)
+        _mergedViewBlack.Reset();
         _mainPyramid = null;
         _mainBayerPyramid?.Dispose();
         _mainBayerPyramid = null;
@@ -2891,6 +2894,10 @@ public partial class MainWindow : Window
     // 派生ビューの計算とRaw表示への復帰(表示し直すフレーム)で参照する
     private readonly HdrSourceFrame _hdrSourceFrame = new();
 
+    // HDR合成ビューの表示中に、合成ビューへ入る前(元画像・分割ビュー)の黒点を控える。
+    // 合成画像は黒レベル減算済みなので、合成ビューの表示黒点は0から始める
+    private readonly MergedViewBlackPoint _mergedViewBlack = new();
+
     /// <summary>
     /// HDR分割・合成の元にする元画像のフレーム番号を決めて控える。
     /// </summary>
@@ -2995,7 +3002,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (!await ApplyDerivedViewAsync(composite, image, sourceFrame))
+        if (!await ApplyDerivedViewAsync(composite, image, sourceFrame, merged: false))
         {
             return;
         }
@@ -3048,6 +3055,10 @@ public partial class MainWindow : Window
         RawImage image = _currentImage!;
         RawFormat format = _currentFormat!;
         int sourceFrame = CaptureHdrSourceFrame();
+
+        // 元画像(分割ビューからの切替では分割フレーム。どちらも未減算)の黒点を減算して合成する。
+        // 計算中に黒レベルを動かしても、合成に使う値はここで決める(UIの状態を計算のスレッドから読まない)
+        ushort mergeBlackPoint = _blackPoint;
         HdrImage merged;
         RawImage quantized;
         try
@@ -3058,7 +3069,7 @@ public partial class MainWindow : Window
                 try
                 {
                     HdrImage result = HdrMerger.Merge(frames, new HdrMergeParameters(
-                        format.ExposureRatio, _blackPoint));
+                        format.ExposureRatio, mergeBlackPoint));
                     return (result, result.ToRawImage16());
                 }
                 finally
@@ -3090,7 +3101,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (!await ApplyDerivedViewAsync(quantized, image, sourceFrame))
+        if (!await ApplyDerivedViewAsync(quantized, image, sourceFrame, merged: true))
         {
             return;
         }
@@ -3121,8 +3132,12 @@ public partial class MainWindow : Window
     /// <param name="derived">派生画像。適用しなかったときは破棄する。</param>
     /// <param name="source">計算元の画像。</param>
     /// <param name="sourceFrame">計算元のフレーム(<see cref="CaptureHdrSourceFrame"/> の戻り値)。</param>
+    /// <param name="merged">
+    /// HDR合成の画像(黒レベル減算済み)か。falseはHDR分割の画像(各フレームは黒レベル未減算)。
+    /// </param>
     /// <returns>派生ビューへ差し替えた場合はtrue。</returns>
-    private async Task<bool> ApplyDerivedViewAsync(RawImage derived, RawImage source, int sourceFrame)
+    private async Task<bool> ApplyDerivedViewAsync(
+        RawImage derived, RawImage source, int sourceFrame, bool merged)
     {
         StopPlayback();
         _vm.HasSequence = false;
@@ -3165,7 +3180,12 @@ public partial class MainWindow : Window
         _hdrFrameParams = null;
         _vm.HasRoi = false;
 
-        // HDR合成は16bitになる。表示LUTの内部値は保ち、黒/白レベルの上限とコード値を換算し直す
+        // HDR合成の画像は黒レベル減算済み。元画像の黒点のまま表示すると黒を二重に引くので、合成ビューへ入る前の
+        // 黒点を控えて表示黒点を0にする。合成 → 分割では控えた黒点へ戻す(分割フレームは未減算)。
+        // 合成ビューで動かした黒レベルは合成ビューの表示だけのもので、抜けるときに捨てる
+        _blackPoint = merged ? _mergedViewBlack.Enter(_blackPoint) : _mergedViewBlack.Leave(_blackPoint);
+
+        // HDR合成は16bitになる。白点の内部値は保ち、黒/白レベルの上限とコード値を換算し直す
         SyncLevelControlsToActiveBitDepth();
         Viewport.SetDisplayMode(ViewportDisplayMode.Raw);
         Viewport.SetImage(derived, derived.Format);
@@ -3236,7 +3256,11 @@ public partial class MainWindow : Window
         _vm.HdrTargetVisible = false;
         _vm.HasRoi = false;
 
-        // HDR合成(16bit)から元画像のビット深度へ戻す(表示LUTの内部値は保つ)
+        // 合成ビューから戻るなら、合成ビューへ入る前の元画像の黒点へ戻す(合成画像は黒レベル減算済みで、
+        // 合成ビューで動かした黒レベルは合成ビューの表示だけのもの)。分割ビューからはそのまま
+        _blackPoint = _mergedViewBlack.Leave(_blackPoint);
+
+        // HDR合成(16bit)から元画像のビット深度へ戻す(白点の内部値は保つ)
         SyncLevelControlsToActiveBitDepth();
         _derivedBayerPyramid?.Dispose();
         _derivedBayerPyramid = null;
