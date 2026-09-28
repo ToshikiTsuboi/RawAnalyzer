@@ -3002,11 +3002,24 @@ public partial class MainWindow : Window
     /// </remarks>
     /// <param name="expectedModeIndex">開始時の表示モード(分割=4、合成=5)。</param>
     /// <param name="source">計算元の画像。</param>
+    /// <param name="sourceFrame">計算元のフレーム(<see cref="CaptureHdrSourceFrame"/> の戻り値)。</param>
     /// <returns>適用してよければtrue。</returns>
-    private bool CanApplyHdrView(int expectedModeIndex, RawImage source)
+    private bool CanApplyHdrView(int expectedModeIndex, RawImage source, int sourceFrame)
     {
         return DisplayModeCombo.SelectedIndex == expectedModeIndex
-            && ReferenceEquals(source, _currentImage);
+            && IsHdrSourceCurrent(source, sourceFrame);
+    }
+
+    /// <summary>
+    /// HDR派生ビューの計算元(元画像とフレーム)が、いまも表示中の元画像・フレームか判定する。
+    /// </summary>
+    /// <param name="source">計算元の画像。</param>
+    /// <param name="sourceFrame">計算元のフレーム(<see cref="CaptureHdrSourceFrame"/> の戻り値)。</param>
+    /// <returns>計算を始めたときと同じならtrue。</returns>
+    private bool IsHdrSourceCurrent(RawImage source, int sourceFrame)
+    {
+        return ReferenceEquals(source, _currentImage)
+            && _hdrSourceFrame.IsCurrent(sourceFrame, Viewport.Frame, derivedViewShown: _derivedImage is not null);
     }
 
     // HDR派生ビュー(分割・合成)の元にした元画像のフレーム。
@@ -3029,7 +3042,9 @@ public partial class MainWindow : Window
 
     private async Task EnterHdrSplitAsync()
     {
-        if (RejectWhileOpening("HDR分割表示"))
+        // 読み込み中・縮小表示の作成中・他の処理(HDR分割・合成の計算を含む)の実行中は始めない。
+        // ビニング・フィルタ・欠陥検出/補正・画像演算と同じく理由を示し、表示モードの選択も戻す
+        if (RejectWhileBusy("HDR分割表示"))
         {
             DisplayModeCombo.SelectedIndex = 0;
             return;
@@ -3062,7 +3077,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (!CanApplyHdrView(4, image))
+        if (!CanApplyHdrView(4, image, sourceFrame))
         {
             foreach (RawImage frame in frames)
             {
@@ -3105,13 +3120,17 @@ public partial class MainWindow : Window
             frame.Dispose();
         }
 
-        if (!CanApplyHdrView(4, image))
+        if (!CanApplyHdrView(4, image, sourceFrame))
         {
             composite.Dispose();
             return;
         }
 
-        await ApplyDerivedViewAsync(composite);
+        if (!await ApplyDerivedViewAsync(composite, image, sourceFrame))
+        {
+            return;
+        }
+
         _hdrSegmentWidth = subWidth;
         _hdrFrameParams = new DisplayParameters[stages];
         DisplayParameters current = CurrentDisplayParameters();
@@ -3144,7 +3163,9 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (RejectWhileOpening("HDR合成表示"))
+        // 読み込み中・縮小表示の作成中・他の処理(HDR分割・合成の計算を含む)の実行中は始めない。
+        // ビニング・フィルタ・欠陥検出/補正・画像演算と同じく理由を示し、表示モードの選択も戻す
+        if (RejectWhileBusy("HDR合成表示"))
         {
             DisplayModeCombo.SelectedIndex = 0;
             return;
@@ -3191,13 +3212,17 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (!CanApplyHdrView(5, image))
+        if (!CanApplyHdrView(5, image, sourceFrame))
         {
             quantized.Dispose();
             return;
         }
 
-        await ApplyDerivedViewAsync(quantized);
+        if (!await ApplyDerivedViewAsync(quantized, image, sourceFrame))
+        {
+            return;
+        }
+
         _hdrFloatImage = merged;
 
         // 派生ビュー適用時点ではまだ合成結果を持っていないのでバッジを出し直す
@@ -3214,7 +3239,18 @@ public partial class MainWindow : Window
             $"HDR合成表示 (フルスケール {merged.FullScale:F0}, ゲイン=露出{lossNote})";
     }
 
-    private async Task ApplyDerivedViewAsync(RawImage derived)
+    /// <summary>
+    /// HDR分割・合成の計算結果(派生画像)を派生ビューとして表示する。
+    /// </summary>
+    /// <remarks>
+    /// 呼び出し側は <see cref="CanApplyHdrView"/> で適用してよいか判定してから呼ぶ。旧派生画像を読んでいる
+    /// 描画の停止を待つ間に元画像・元フレームが替わっていたら、結果を破棄して派生ビューへ差し替えない。
+    /// </remarks>
+    /// <param name="derived">派生画像。適用しなかったときは破棄する。</param>
+    /// <param name="source">計算元の画像。</param>
+    /// <param name="sourceFrame">計算元のフレーム(<see cref="CaptureHdrSourceFrame"/> の戻り値)。</param>
+    /// <returns>派生ビューへ差し替えた場合はtrue。</returns>
+    private async Task<bool> ApplyDerivedViewAsync(RawImage derived, RawImage source, int sourceFrame)
     {
         StopPlayback();
         _vm.HasSequence = false;
@@ -3230,6 +3266,15 @@ public partial class MainWindow : Window
         }
 
         await Viewport.ClearImageAsync();
+
+        // 適用の直前に、計算元の元画像・フレームのままか確かめ直す。描画の停止を待つ間に替わっていたら
+        // (差し替えた側が表示し直している)、結果は表示中の画像のものではないので捨てる。
+        // 表示モードの選び直しはここでは見ない(元画像を表示し直さないので、断るとビューポートが空のまま残る)
+        if (!IsHdrSourceCurrent(source, sourceFrame))
+        {
+            derived.Dispose();
+            return false;
+        }
 
         // 旧派生画像のBayerピラミッドを残すと、EnsureBayerPyramidAsyncが
         // 非nullを見て早期returnし、新しい派生画像のピラミッドが二度と作られない
@@ -3257,6 +3302,7 @@ public partial class MainWindow : Window
         UpdateProcessingBadge();
         RefreshHistogram(roi: null);
         _ = BuildDerivedPyramidAsync(derived);
+        return true;
     }
 
     // HDR派生画像の縮小ピラミッドの生成。派生画像の差し替え・Raw表示への復帰で旧派生画像用の生成を取り消す
@@ -4098,8 +4144,9 @@ public partial class MainWindow : Window
     /// <remarks>
     /// <see cref="RejectWhileOpening"/> は読み込みの確定待ちだけを断る(保存などは縮小表示の
     /// 作成中や他の操作の内側でも始められる)。実行中の処理すべてを断る操作(結果で表示中の画像を
-    /// 差し替えるビニング・フィルタ・画像演算・欠陥補正と、実行中の処理の完了で結果が表示中の画像の
-    /// ものでなくなる欠陥検出)は、何が実行中かを同じ形のダイアログで知らせる(黙って無視しない)。
+    /// 差し替えるビニング・フィルタ・画像演算・欠陥補正、実行中の処理の完了で結果が表示中の画像の
+    /// ものでなくなる欠陥検出、結果で派生ビューを表示するHDR分割・合成)は、何が実行中かを
+    /// 同じ形のダイアログで知らせる(黙って無視しない)。
     /// </remarks>
     /// <param name="operation">操作名(「ビニング」など)。</param>
     /// <returns>拒否した場合はtrue。</returns>

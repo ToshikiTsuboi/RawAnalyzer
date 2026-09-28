@@ -57,4 +57,50 @@ public class HdrSourceFrameTests
 
         Assert.Equal(0, source.ResolveRestoreFrame(frameCount));
     }
+
+    [Fact]
+    public void EnteringFromRawView_SourceFrameStillShown_IsCurrent()
+    {
+        // Raw表示のフレーム2から分割・合成を計算し、適用の直前もフレーム2を表示している
+        var source = new HdrSourceFrame();
+        int sourceFrame = source.Capture(viewportFrame: 2, derivedViewShown: false);
+
+        Assert.True(source.IsCurrent(sourceFrame, viewportFrame: 2, derivedViewShown: false));
+    }
+
+    [Fact]
+    public void EnteringFromRawView_ViewportMovedToAnotherFrame_IsNotCurrent()
+    {
+        // 計算の間に元画像の表示フレームが替わった。結果は表示中のフレームの撮影ではなく、
+        // Raw表示へ戻るときも別のフレームへ戻ってしまうので適用しない
+        var source = new HdrSourceFrame();
+        int sourceFrame = source.Capture(viewportFrame: 2, derivedViewShown: false);
+
+        Assert.False(source.IsCurrent(sourceFrame, viewportFrame: 3, derivedViewShown: false));
+    }
+
+    [Fact]
+    public void SplitMergeSwitch_ComparesCapturedFrameInsteadOfDerivedViewport()
+    {
+        // 分割表示(ビューポートは派生画像のフレーム0)から合成へ切り替える。元画像のフレームは控えた2のまま
+        var source = new HdrSourceFrame();
+        source.Capture(viewportFrame: 2, derivedViewShown: false);
+        int sourceFrame = source.Capture(viewportFrame: 0, derivedViewShown: true);
+
+        Assert.True(source.IsCurrent(sourceFrame, viewportFrame: 0, derivedViewShown: true));
+        Assert.False(source.IsCurrent(sourceFrame: 0, viewportFrame: 0, derivedViewShown: true));
+    }
+
+    [Fact]
+    public void CapturedFrameReplacedByAnotherEntry_IsNotCurrent()
+    {
+        // フレーム2から始めた計算の適用前に、別のHDR表示の開始がフレーム5を控え直した。
+        // Raw表示へ戻るときの戻り先は5になるので、表示がフレーム2へ戻っていてもフレーム2の結果は適用しない
+        var source = new HdrSourceFrame();
+        int sourceFrame = source.Capture(viewportFrame: 2, derivedViewShown: false);
+        source.Capture(viewportFrame: 5, derivedViewShown: false);
+
+        Assert.False(source.IsCurrent(sourceFrame, viewportFrame: 0, derivedViewShown: true));
+        Assert.False(source.IsCurrent(sourceFrame, viewportFrame: 2, derivedViewShown: false));
+    }
 }

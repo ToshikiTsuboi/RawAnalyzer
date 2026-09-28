@@ -38,6 +38,25 @@ internal sealed class HdrSourceFrame
     }
 
     /// <summary>
+    /// 分割・合成の結果を適用する直前に、計算の元にしたフレームがいまも元画像のフレームかを確かめる。
+    /// </summary>
+    /// <remarks>
+    /// 表示中の元画像のフレーム(派生ビューの表示中は控えているフレーム)であり、かつRaw表示へ戻るときの
+    /// 戻り先(控えているフレーム)でもあること。どちらかが替わっていたら、結果は表示中の撮影のものではないか、
+    /// Raw表示へ戻ったときに別のフレームを見せることになる。
+    /// </remarks>
+    /// <param name="sourceFrame">計算を始めたときに <see cref="Capture"/> が返したフレーム。</param>
+    /// <param name="viewportFrame">ビューポートの表示フレーム。</param>
+    /// <param name="derivedViewShown">
+    /// 派生ビューを表示中か。表示中はビューポートが派生画像を指すので、控えているフレームだけで判定する。
+    /// </param>
+    /// <returns>いまも元画像のフレームならtrue。</returns>
+    internal bool IsCurrent(int sourceFrame, int viewportFrame, bool derivedViewShown)
+    {
+        return Frame == sourceFrame && (derivedViewShown || viewportFrame == sourceFrame);
+    }
+
+    /// <summary>
     /// Raw表示へ戻るときに表示する元画像のフレーム番号を返す。
     /// </summary>
     /// <param name="frameCount">元画像のフレーム数。</param>
