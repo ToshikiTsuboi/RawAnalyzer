@@ -169,23 +169,22 @@ public partial class MainWindow : Window
     private int _mainPyramidFrame;
     private int _mainBayerPyramidFrame;
 
-    // 欠陥検出リストの座標系はこの画像・フレームでのみ有効。
-    // 別画像(HDR派生ビュー・ファイル送り後)へ適用すると無関係な画素を壊すため、
-    // 補正時に一致を検証する
-    private RawImage? _defectSourceImage;
-    private int _defectSourceFrame;
+    // 欠陥検出リストはこの画像・フレーム・Bayerパターンでのみ有効。
+    // 別画像(HDR派生ビュー・ファイル送り後)や別のパターンへ適用すると無関係な画素を壊すため、
+    // 結果の採用時と補正時に一致を検証する(右パネルでパターンを変えたら破棄する)
+    private DefectDetectionSource? _defectSource;
 
     /// <summary>
     /// 欠陥検出の検出元画像への参照を手放す。
     /// </summary>
     /// <remarks>
     /// 表示画像を差し替えたら検出結果は流用できない(補正適用時は
-    /// ReferenceEquals で弾かれる)。参照を残すと破棄済み画像のヒープ側画素配列
+    /// <see cref="DefectDetectionSource.IsCurrent"/> で弾かれる)。参照を残すと破棄済み画像のヒープ側画素配列
     /// (最大約200MB)が回収されないため、差し替えのたびに明示的に切る。
     /// </remarks>
     private void ClearDefectSource()
     {
-        _defectSourceImage = null;
+        _defectSource = null;
     }
     private DisplayParameters[]? _hdrFrameParams;
     private int _hdrSegmentWidth;
@@ -4468,7 +4467,10 @@ public partial class MainWindow : Window
             _defectWindow.CorrectionRequested += OnDefectCorrectionRequested;
             _defectWindow.Closed += (_, _) =>
             {
+                // 一覧はウィンドウと一緒に消えるので、検出元も手放す(開き直したウィンドウは未実行から始まる。
+                // 残すと Bayer パターンの変更で、何も表示していないウィンドウに破棄の案内を出してしまう)
                 _defectWindow = null;
+                ClearDefectSource();
                 Viewport.SetDefectMarkers(null);
             };
             _defectWindow.Show();
@@ -4502,6 +4504,9 @@ public partial class MainWindow : Window
         // Bayerはチャネル感度差で混合σが膨らみ閾値が値域外へ出るため、チャネル別に判定する
         BayerPattern pattern = ActiveFormat?.Bayer ?? BayerPattern.None;
 
+        // このリストは「この画像・このフレーム・このBayerパターン」でのみ有効(採用時と補正時に検証する)
+        var source = new DefectDetectionSource(image, frame, pattern);
+
         // 巨大画像では数十秒かかるため、進捗表示とキャンセルを付ける
         DefectDetectionResult? result = null;
         ProgressWindow progress = ProgressWindow.Run(
@@ -4521,8 +4526,10 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (progress.WasCanceled || result is null
-            || _defectWindow is null || !ReferenceEquals(image, ActiveImage))
+        // 検出中に表示中の画像・フレーム・Bayerパターンが替わっていたら、結果は表示中の画像を
+        // いまの条件で検出したものではないので採用しない(旧条件の一覧で補正させない)
+        if (progress.WasCanceled || result is null || _defectWindow is null
+            || !source.IsCurrent(ActiveImage, Viewport.Frame, ActiveFormat?.Bayer ?? BayerPattern.None))
         {
             _defectWindow?.ResetRunButton();
             return;
@@ -4532,10 +4539,7 @@ public partial class MainWindow : Window
         // 一覧・移動・コピー・CSV は使えるようにし、断られるだけの補正ボタンは有効にせず理由を示す
         _defectWindow.ShowResult(result, maxCode,
             correctionUnavailableReason: _derivedImage is not null ? HdrDefectCorrectionRefusal : null);
-
-        // このリストの座標は「この画像・このフレーム」でのみ有効(補正時に検証する)
-        _defectSourceImage = image;
-        _defectSourceFrame = frame;
+        _defectSource = source;
         Viewport.SetDefectMarkers(result.Defects);
     }
 
@@ -4752,14 +4756,16 @@ public partial class MainWindow : Window
 
         // HDR分割ビューで検出→Raw表示へ戻す→補正、やファイル送り後の適用は
         // 座標系/データが異なるのに配列範囲内に収まるため、例外にならず
-        // 健全画素を黙って上書きしてしまう。検出時の画像・フレームと一致しない
+        // 健全画素を黙って上書きしてしまう。右パネルでBayerパターンを変えた後の適用も、
+        // 前のパターンで欠陥とした画素を新しいパターンの近傍で書き換える(変えた時点で一覧は
+        // 破棄するが、ここでも確かめる)。検出時の画像・フレーム・パターンと一致しない
         // リストの適用は拒否する
-        if (!ReferenceEquals(_defectSourceImage, _currentImage)
-            || _defectSourceFrame != Viewport.Frame)
+        if (_defectSource is null
+            || !_defectSource.IsCurrent(_currentImage, Viewport.Frame, _currentFormat.Bayer))
         {
             MessageBox.Show(this,
-                "この検出結果は現在表示中の画像・フレームのものではないため適用できません。" +
-                "再度「検出実行」を行ってください。",
+                "この検出結果は現在表示中の画像・フレーム・Bayerパターンで検出したものではないため" +
+                "適用できません。再度「検出実行」を行ってください。",
                 "欠陥画素補正", MessageBoxButton.OK, MessageBoxImage.Information);
             _defectWindow?.ResetRunButton();
             return;
@@ -4776,6 +4782,8 @@ public partial class MainWindow : Window
 
         using BusyScope busy = EnterBusy();
         RawImage source = _currentImage;
+
+        // 近傍は検出と同じパターンで選ぶ(上で一致を確かめた)
         BayerPattern pattern = _currentFormat.Bayer;
         int frame = Viewport.Frame;
         int count = detection.Defects.Count;
@@ -4864,6 +4872,19 @@ public partial class MainWindow : Window
         if (_derivedImage is null && _currentImage is not null)
         {
             Viewport.UpdateFormat(_currentFormat);
+        }
+
+        // 欠陥検出の結果は検出したときのパターンのもの(閾値はパターンのチャネル別の統計で決まり、
+        // 補正はパターンで選んだ近傍から補う)。表示中の画像のパターンが替わったら、他の差し替え経路と
+        // 同じく検出元を手放し、マーカーと欠陥ウィンドウの一覧も破棄して検出し直すよう案内する。
+        // 残すと前のパターンで欠陥とした正常な画素を、新しいパターンの近傍で補正できてしまう。
+        // HDR表示中は表示中の画像(派生ビュー)のパターンは替わらないので、その検出結果は残す
+        if (_defectSource is { } defectSource
+            && !defectSource.IsCurrent(ActiveImage, Viewport.Frame, ActiveFormat?.Bayer ?? BayerPattern.None))
+        {
+            ClearDefectSource();
+            Viewport.SetDefectMarkers(null);
+            _defectWindow?.DiscardResult(DefectPixelWindow.BayerChangedNotice);
         }
 
         if (_correctionLabel is null && _currentPath is not null && IsRawFile(_currentPath))
