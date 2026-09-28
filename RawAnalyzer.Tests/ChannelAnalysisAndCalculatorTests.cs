@@ -94,25 +94,38 @@ public class ChannelAnalysisTests
     }
 
     [Fact]
-    public void ComputeChannelAnalysis_OddAlignedRoi_CoversWholeRegion()
+    public void ComputeChannelAnalysis_OddAlignedRoi_CountsExactlyTheRoi()
     {
-        // 内側へ切り詰めると roi=(1,1,4,4) が16画素中4画素になり、
-        // 各チャネル1サンプル(σ=0)という無意味な統計になっていた。
-        // 外側スナップで全チャネルが複数サンプルを持つこと。
-        const int size = 8;
-        ushort[] mosaic = ColorPipelineTests.BuildConstantMosaic(
-            size, size, BayerPattern.Rggb, 100, 200, 300);
-        using RawImage image = TestImages.FromCodes(mosaic, size, size);
+        // 奇数座標を境界に持つ roi=(1,1,4,4) も、その16画素だけを絶対座標の偶奇でチャネルへ振り分ける。
+        // 内側へ切り詰めると4画素(各チャネル1サンプル・σ=0)、以前のように外側の2x2境界へ広げると
+        // 36画素になり、ROIの外を集計して同時に表示するROI統計と食い違っていた
+        var roi = new RegionOfInterest(1, 1, 4, 4);
+        using RawImage image = TestImages.FromCodes(MosaicInsideRoi(8, roi), 8, 8);
 
         ChannelAnalysisResult result = ImageAnalysis.ComputeChannelAnalysis(
-            image, 0, BayerPattern.Rggb, new RegionOfInterest(1, 1, 4, 4));
+            image, 0, BayerPattern.Rggb, roi);
 
-        // x:0..5, y:0..5 の3x3ブロック = 36画素(各チャネル9サンプル)
-        Assert.Equal(36, result.Total.SampleCount);
-        foreach (ChannelHistogram channel in result.Channels)
-        {
-            Assert.Equal(9, channel.Statistics.SampleCount);
-        }
+        Assert.Equal(16, result.Total.SampleCount);
+        Assert.False(result.Total.IsSampled);
+        Assert.Equal(300, result.Total.Statistics.Max);
+        AssertChannelsSeparated(result, expectedCount: 4);
+    }
+
+    [Fact]
+    public void ComputeChannelAnalysis_SampledOddAlignedRoi_StaysInsideRoi()
+    {
+        // 大きなROIは2x2ブロック単位で間引く(アプリでは1千万画素超のROI)。間引いてもROIの外は数えず、
+        // 全チャネルを含めて各チャネルの値を取り違えない
+        var roi = new RegionOfInterest(1, 3, 61, 59);
+        using RawImage image = TestImages.FromCodes(MosaicInsideRoi(64, roi), 64, 64);
+
+        ChannelAnalysisResult result = ImageAnalysis.ComputeChannelAnalysis(
+            image, 0, BayerPattern.Rggb, roi, maxSamples: 400);
+
+        Assert.True(result.Total.IsSampled);
+        Assert.True(result.Total.SampleCount < roi.PixelCount);
+        Assert.Equal(300, result.Total.Statistics.Max);
+        AssertChannelsSeparated(result, expectedCount: null);
     }
 
     [Fact]
@@ -145,6 +158,51 @@ public class ChannelAnalysisTests
 
         Assert.Empty(result.Channels);
         Assert.Equal(256, result.Total.SampleCount);
+    }
+
+    /// <summary>
+    /// ROIの中は RGGB の R=100 / Gr=200 / Gb=250 / B=300、外は65535 のモザイク。
+    /// ROIの外が1画素でも混ざれば最大値に、チャネルを取り違えれば平均・σに出る。
+    /// </summary>
+    private static ushort[] MosaicInsideRoi(int size, RegionOfInterest roi)
+    {
+        var codes = new ushort[size * size];
+        for (int y = 0; y < size; y++)
+        {
+            for (int x = 0; x < size; x++)
+            {
+                bool inside = x >= roi.X && x < roi.X + roi.Width
+                    && y >= roi.Y && y < roi.Y + roi.Height;
+                codes[y * size + x] = inside
+                    ? ChannelValue(BayerHelper.GetChannel(BayerPattern.Rggb, x, y))
+                    : ushort.MaxValue;
+            }
+        }
+
+        return codes;
+    }
+
+    private static ushort ChannelValue(BayerChannel channel) => channel switch
+    {
+        BayerChannel.R => 100,
+        BayerChannel.Gr => 200,
+        BayerChannel.Gb => 250,
+        _ => 300,
+    };
+
+    private static void AssertChannelsSeparated(ChannelAnalysisResult result, long? expectedCount)
+    {
+        Assert.Equal(4, result.Channels.Count);
+        foreach (ChannelHistogram channel in result.Channels)
+        {
+            Assert.Equal(ChannelValue(channel.Channel), channel.Statistics.Mean, 10);
+            Assert.Equal(0, channel.Statistics.Sigma, 10);
+            Assert.True(channel.Statistics.SampleCount > 0);
+            if (expectedCount is { } count)
+            {
+                Assert.Equal(count, channel.Statistics.SampleCount);
+            }
+        }
     }
 }
 

@@ -209,14 +209,15 @@ public static class NoiseAnalysis
             return Array.Empty<NoiseMoments>();
         }
 
-        // ImageAnalysis.ComputeChannelAnalysis は roi を外側の2x2境界へ広げるので使わない。
-        // 差分(時間ノイズ)は roi そのものを集計するため、空間統計だけ広げると
+        // 差分(時間ノイズ)と同じ roi の画素だけを集計する。空間統計だけ roi を広げると
         // σ_FPN = √(σ_total² − σ_temporal²) が別々の画素集合の分散の差になる
-        // (6×6 RGGB・roi=(1,1,4,4) では16画素のはずが36画素になり、roi外の1画素で
-        // 存在しないFPNが数百LSB出ていた)。Bayerチャネルは画素の絶対座標の偶奇で決まるので、
-        // 2x2に揃えなくても roi の画素をそのまま振り分けられる。4つの偶奇クラスが
-        // R/Gr/Gb/Bに1対1で対応するため、プール分散はパターンの種類に依らない。
-        // 測定用途なのでサンプリングせず全画素から取る
+        // (以前ここで使っていた ImageAnalysis.ComputeChannelAnalysis は roi を外側の2x2境界へ広げており、
+        // 6×6 RGGB・roi=(1,1,4,4) では16画素のはずが36画素になり、roi外の1画素で
+        // 存在しないFPNが数百LSB出ていた。同関数もいまは roi の画素だけを同じ偶奇の規則で数えるが、
+        // 測定値の定義は整数の和・二乗和から求めるので、ヒストグラムを作らないこちらで集計する)。
+        // Bayerチャネルは画素の絶対座標の偶奇で決まるので、2x2に揃えなくても roi の画素をそのまま
+        // 振り分けられる。4つの偶奇クラスがR/Gr/Gb/Bに1対1で対応するため、プール分散はパターンの
+        // 種類に依らない。測定用途なのでサンプリングせず全画素から取る
         int shift = 16 - image.Format.BitDepth;
         object gate = new();
         var classes = new NoiseMoments[4];

@@ -346,13 +346,14 @@ public static class ImageAnalysis
 
     /// <summary>
     /// Bayerチャネル別のヒストグラムと統計を計算する(全体分も同時に返す)。
-    /// 領域は2x2ブロック単位で走査し、サンプリング時も全チャネルを均等に含める。
+    /// 領域の画素だけを、画素の絶対座標の偶奇でチャネルへ振り分ける(2x2境界へ広げも削りもしない)。
+    /// サンプリング時は絶対座標の2x2ブロック単位で間引き、全チャネルを均等に含める。
     /// </summary>
     /// <param name="image">対象画像。</param>
     /// <param name="frame">フレーム番号。</param>
     /// <param name="pattern">Bayerパターン(Noneの場合チャネル別は空)。</param>
-    /// <param name="region">対象領域。nullなら全体。</param>
-    /// <param name="maxSamples">サンプリングに切り替える画素数閾値。</param>
+    /// <param name="region">対象領域。nullなら全体。画像範囲へクランプし、この領域の画素だけを集計する。</param>
+    /// <param name="maxSamples">サンプリングに切り替える画素数閾値。0以下なら常に全画素。</param>
     /// <param name="cancellationToken">キャンセルトークン。</param>
     /// <returns>全体+チャネル別の解析結果。</returns>
     public static ChannelAnalysisResult ComputeChannelAnalysis(
@@ -369,16 +370,22 @@ public static class ImageAnalysis
         int shift = 16 - bitDepth;
         int binCount = 1 << bitDepth;
 
-        // 2x2ブロック整列。内側へ切り詰めるとROIが小さいとき大半の画素が捨てられ
-        // (例: roi=(1,1,4,4) で16画素中4画素、各チャネル1サンプル→σ=0)、
-        // 統計が意味をなさなくなる。外側へスナップして必ずROI全体を含める
-        // (各辺で最大1画素はみ出す)。
-        int x0 = roi.X & ~1;
-        int y0 = roi.Y & ~1;
-        int x1 = Math.Min(image.Width, (roi.X + roi.Width + 1) & ~1);
-        int y1 = Math.Min(image.Height, (roi.Y + roi.Height + 1) & ~1);
-        int blocksX = Math.Max(0, (x1 - x0) / 2);
-        int blocksY = Math.Max(0, (y1 - y0) / 2);
+        // 領域の画素だけを集計する。Bayerチャネルは画素の絶対座標の偶奇で決まるので
+        // (NoiseAnalysis の空間統計と同じ規則)、2x2に揃えなくても領域の画素をそのまま振り分けられる。
+        // 以前は奇数座標を境界に持つ領域を外側の2x2境界へ広げており(内側へ切り詰めて roi=(1,1,4,4) が
+        // 16画素中4画素・各チャネル1サンプルになるのを避けるため)、同じ roi が36画素になって、同時に表示する
+        // ROI 統計(元の矩形)とは別の画素集合からヒストグラム・中央値・飽和率を出していた。
+        // 走査の単位は絶対座標の2x2ブロック(R/Gr/Gb/Bの1組)とし、ブロックのうち領域内の画素だけを数える。
+        // 間引くときもブロック単位で選ぶので、全チャネルが同じブロックから同数ずつ入る(領域の端で欠けた
+        // ブロックを除く)。画像サイズが奇数の最終行・列も、欠けたブロックとして同じ走査で数える
+        int blockLeft = roi.X & ~1;
+        int blockTop = roi.Y & ~1;
+        int blocksX = roi.PixelCount > 0 ? (roi.X + roi.Width - blockLeft + 1) / 2 : 0;
+        int blocksY = roi.PixelCount > 0 ? (roi.Y + roi.Height - blockTop + 1) / 2 : 0;
+
+        // 各ブロックの左(偶数X)の画素が、読み込んだ行(領域の列だけ)の何番目か。
+        // 領域の左端が奇数なら、先頭ブロックの左の画素は領域外(-1)
+        int firstEvenColumn = blockLeft - roi.X;
 
         var channelBins = new long[4][];
         var sums = new long[4];
@@ -395,9 +402,10 @@ public static class ImageAnalysis
 
         var totalBins = new long[binCount];
 
-        long totalPixels = 4L * blocksX * blocksY;
-        int strideBlocks = totalPixels > maxSamples
-            ? (int)Math.Ceiling(Math.Sqrt((double)totalPixels / maxSamples))
+        // 間引きの刻みはブロック単位(各軸 strideBlocks ブロックごとに1ブロック)。
+        // 集計数は領域の画素数の約 1/strideBlocks² になる
+        int strideBlocks = maxSamples > 0 && roi.PixelCount > maxSamples
+            ? (int)Math.Ceiling(Math.Sqrt((double)roi.PixelCount / maxSamples))
             : 1;
         bool sampled = strideBlocks > 1;
 
@@ -420,7 +428,7 @@ public static class ImageAnalysis
 
         if (blocksX > 0 && blocksY > 0)
         {
-            int rowWidth = blocksX * 2;
+            int roiBottom = roi.Y + roi.Height;
             int rowSteps = (blocksY + strideBlocks - 1) / strideBlocks;
 
             // ブロック行単位で並列化する。チャネル別ビンはスレッドごとに要るので
@@ -434,29 +442,19 @@ public static class ImageAnalysis
                 partition =>
                 {
                     var local = new ChannelAccumulator(binCount);
-                    var rowTop = new ushort[rowWidth];
-                    var rowBottom = new ushort[rowWidth];
+                    var row = new ushort[roi.Width];
                     for (int step = partition; step < rowSteps; step += partitions)
                     {
                         cancellationToken.ThrowIfCancellationRequested();
-                        int y = y0 + (step * strideBlocks * 2);
-                        image.CopyRegion(frame, x0, y, rowWidth, 1, rowTop);
-                        image.CopyRegion(frame, x0, y + 1, rowWidth, 1, rowBottom);
-                        for (int bx = 0; bx < blocksX; bx += strideBlocks)
+                        int top = blockTop + (step * strideBlocks * 2);
+
+                        // ブロックの上下2行のうち領域内の行だけ読む(領域の上端・下端が奇数なら片方)
+                        for (int y = Math.Max(top, roi.Y); y < Math.Min(top + 2, roiBottom); y++)
                         {
-                            int xi = bx * 2;
-                            local.Add(
-                                rowTop[xi] >> shift,
-                                parityToChannel[((y & 1) * 2) + ((x0 + xi) & 1)]);
-                            local.Add(
-                                rowTop[xi + 1] >> shift,
-                                parityToChannel[((y & 1) * 2) + ((x0 + xi + 1) & 1)]);
-                            local.Add(
-                                rowBottom[xi] >> shift,
-                                parityToChannel[(((y + 1) & 1) * 2) + ((x0 + xi) & 1)]);
-                            local.Add(
-                                rowBottom[xi + 1] >> shift,
-                                parityToChannel[(((y + 1) & 1) * 2) + ((x0 + xi + 1) & 1)]);
+                            image.CopyRegion(frame, roi.X, y, roi.Width, 1, row);
+                            local.AddBlockRow(
+                                row, firstEvenColumn, blocksX, strideBlocks, shift,
+                                parityToChannel[(y & 1) * 2], parityToChannel[((y & 1) * 2) + 1]);
                         }
                     }
 
@@ -467,63 +465,6 @@ public static class ImageAnalysis
             {
                 local.MergeInto(totalBins, channelBins, sums, sumSqs, mins, maxs, counts);
             }
-        }
-
-        // 画像サイズが奇数だと画像境界へのクランプで(x1-x0)や(y1-y0)が奇数になり、
-        // 2x2ブロックに入らない最終列/行が黙って統計から抜けるため、別途走査する
-        int oddColumnX = ((x1 - x0) & 1) == 1 ? x1 - 1 : -1;
-        int oddRowY = ((y1 - y0) & 1) == 1 ? y1 - 1 : -1;
-        if (oddColumnX >= 0 && blocksY > 0)
-        {
-            var pair = new ushort[2];
-            for (int by = 0; by < blocksY; by += strideBlocks)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                int y = y0 + by * 2;
-                image.CopyRegion(frame, oddColumnX, y, 1, 2, pair);
-                Accumulate(pair[0], parityToChannel[(y & 1) * 2 + (oddColumnX & 1)]);
-                Accumulate(pair[1], parityToChannel[((y + 1) & 1) * 2 + (oddColumnX & 1)]);
-            }
-        }
-
-        if (oddRowY >= 0 && blocksX > 0)
-        {
-            var lastRow = new ushort[blocksX * 2];
-            image.CopyRegion(frame, x0, oddRowY, lastRow.Length, 1, lastRow);
-            for (int bx = 0; bx < blocksX; bx += strideBlocks)
-            {
-                int xi = bx * 2;
-                Accumulate(lastRow[xi], parityToChannel[(oddRowY & 1) * 2 + ((x0 + xi) & 1)]);
-                Accumulate(
-                    lastRow[xi + 1], parityToChannel[(oddRowY & 1) * 2 + ((x0 + xi + 1) & 1)]);
-            }
-        }
-
-        if (oddColumnX >= 0 && oddRowY >= 0)
-        {
-            var corner = new ushort[1];
-            image.CopyRegion(frame, oddColumnX, oddRowY, 1, 1, corner);
-            Accumulate(corner[0], parityToChannel[(oddRowY & 1) * 2 + (oddColumnX & 1)]);
-        }
-
-        void Accumulate(ushort value, int channel)
-        {
-            int code = value >> shift;
-            totalBins[code]++;
-            channelBins[channel][code]++;
-            sums[channel] += code;
-            sumSqs[channel] += (ulong)((long)code * code);
-            if (code < mins[channel])
-            {
-                mins[channel] = code;
-            }
-
-            if (code > maxs[channel])
-            {
-                maxs[channel] = code;
-            }
-
-            counts[channel]++;
         }
 
         // 全体統計をチャネル合算から求める
@@ -909,6 +850,38 @@ public static class ImageAnalysis
             }
 
             Counts[channel]++;
+        }
+
+        /// <summary>
+        /// 領域の列だけを読み込んだ1行のうち、選んだ2x2ブロックの列にある画素を集計する。
+        /// 領域の左端・右端で欠けたブロックは、領域内の画素だけを数える。
+        /// </summary>
+        /// <param name="row">領域の列だけを読み込んだ1行。</param>
+        /// <param name="firstEvenColumn">
+        /// 先頭ブロックの左(偶数X)の画素の、<paramref name="row"/> 上の位置(領域外なら-1)。
+        /// </param>
+        /// <param name="blocksX">領域にかかるブロックの列数。</param>
+        /// <param name="strideBlocks">間引きの刻み(ブロック数。1なら全ブロック)。</param>
+        /// <param name="shift">16bit正規化値を raw code へ戻す右シフト量。</param>
+        /// <param name="evenChannel">この行の偶数Xの画素のチャネル番号。</param>
+        /// <param name="oddChannel">この行の奇数Xの画素のチャネル番号。</param>
+        internal void AddBlockRow(
+            ushort[] row, int firstEvenColumn, int blocksX, int strideBlocks, int shift,
+            int evenChannel, int oddChannel)
+        {
+            for (int bx = 0; bx < blocksX; bx += strideBlocks)
+            {
+                int i = firstEvenColumn + (bx * 2);
+                if (i >= 0)
+                {
+                    Add(row[i] >> shift, evenChannel);
+                }
+
+                if (i + 1 < row.Length)
+                {
+                    Add(row[i + 1] >> shift, oddChannel);
+                }
+            }
         }
 
         /// <summary>集計結果を全体の配列へ合算する。</summary>

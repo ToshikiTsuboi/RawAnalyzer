@@ -138,6 +138,39 @@ public class RoiAnalysisTests
     }
 
     [Fact]
+    public void RawLayout_OddAlignedRoi_ByChannel_CountsOnlyRoiPixels()
+    {
+        // レビューの再現。6×6 RGGB、ROI=(1,1,4,4) の中は1000、外は65535。チャネル別の表示でも
+        // ヒストグラム(中央値・飽和率の元)と各チャネルは同時に出す ROI 統計と同じ16画素から集計する。
+        // 以前は2x2境界へ外側に広げた36画素を集計し、中央値65535・飽和55.56%(ROI 統計は最小・最大とも1000)
+        var codes = new ushort[36];
+        Array.Fill(codes, (ushort)65535);
+        for (int y = 1; y <= 4; y++)
+        {
+            for (int x = 1; x <= 4; x++)
+            {
+                codes[y * 6 + x] = 1000;
+            }
+        }
+
+        using RawImage image = TestImages.FromCodes(codes, 6, 6, 16, BayerPattern.Rggb);
+        RoiAnalysisTarget target = RoiAnalysis.Resolve(
+            new RegionOfInterest(1, 1, 4, 4), channelSplitLayout: false, 6, 6, BayerPattern.Rggb);
+
+        RoiHistogram result = RoiAnalysis.ComputeHistogram(
+            image, 0, target, BayerPattern.Rggb, byChannel: true, CancellationToken.None);
+        HistogramMetrics metrics = ImageAnalysis.ComputeHistogramMetrics(result.Histogram);
+
+        Assert.Equal(new RegionStatistics(1000, 0, 1000, 1000, 16), result.RoiStatistics);
+        Assert.Equal(16, result.Histogram.SampleCount);
+        Assert.Equal(16, result.Histogram.Bins[1000]);
+        Assert.Equal(1000, metrics.Median);
+        Assert.Equal(0, metrics.SaturatedPercent);
+        Assert.All(result.Channels!, channel =>
+            Assert.Equal(new RegionStatistics(1000, 0, 1000, 1000, 4), channel.Statistics));
+    }
+
+    [Fact]
     public void ChannelTarget_Projections_UseOnlyDisplayedPixels()
     {
         // 値 = y*8+x の 8×4。分割表示の右上象限(Gr)の2×2 → 元画像 x=1,3 / y=0,2
