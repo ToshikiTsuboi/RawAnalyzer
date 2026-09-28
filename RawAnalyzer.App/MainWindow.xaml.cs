@@ -706,7 +706,30 @@ public partial class MainWindow : Window
         await BuildPyramidAsync(image, cts.Token);
     }
 
-    private async Task BuildPyramidAsync(RawImage image, CancellationToken ct, int frame = 0)
+    // 進行中の縮小ピラミッド(グレー・Bayer)の生成。同じ画像・フレーム・世代の生成を重ねて始めない
+    private readonly PyramidBuildCoalescer _pyramidBuilds = new();
+    private readonly PyramidBuildCoalescer _bayerPyramidBuilds = new();
+
+    /// <summary>
+    /// 縮小ピラミッドを作り、生成元の画像・フレーム・世代のままなら取り付ける。
+    /// </summary>
+    /// <remarks>
+    /// 同じ画像・フレーム・世代(トークン)の生成が進行中なら新たに始めず、その完了を待つ。
+    /// 送り後の作り直し(RefreshAfterSequenceMove)は取り付け済みかどうかしか見ないので、生成中に
+    /// 同じフレームの作り直しを重ねて求めると(再生中に「次」を押して停止するなど)、同じ全走査が
+    /// 二重に走っていた。フレームの送り・画像の差し替えは世代を進めるので、旧世代の生成には相乗りしない。
+    /// </remarks>
+    /// <param name="image">生成元の画像。</param>
+    /// <param name="ct">表示中の画像・フレームの世代のトークン。</param>
+    /// <param name="frame">生成元のフレーム番号。</param>
+    /// <returns>取り付け(または結果の破棄)の完了を表すタスク。</returns>
+    private Task BuildPyramidAsync(RawImage image, CancellationToken ct, int frame = 0)
+    {
+        return _pyramidBuilds.RunAsync(
+            image, frame, ct, () => BuildPyramidCoreAsync(image, ct, frame));
+    }
+
+    private async Task BuildPyramidCoreAsync(RawImage image, CancellationToken ct, int frame)
     {
         TilePyramid pyramid;
         try
@@ -760,6 +783,26 @@ public partial class MainWindow : Window
 
         // 表示中の画像・フレームの世代(_loadCts)のトークンで作る。フレームの送り・画像の差し替えで取り消される
         CancellationToken ct = _loadCts?.Token ?? default;
+
+        // 生成中はまだ取り付けていないので、上の確認だけでは表示モードの切替(Bayerカラー→現像など)で
+        // 同じピラミッドの生成を重ねて始め、後から終わった方が先に取り付けた方を描画中に破棄していた。
+        // 同じ画像・フレーム・世代の生成が進行中なら新たに始めず、その完了(取り付け)を待つ
+        await _bayerPyramidBuilds.RunAsync(
+            image, frame, ct, () => BuildBayerPyramidAsync(image, format, derived, frame, ct));
+    }
+
+    /// <summary>
+    /// Bayerピラミッドを作り、生成元の画像・フレーム・世代のままなら取り付ける。
+    /// </summary>
+    /// <param name="image">生成元の画像(元画像、またはHDR派生ビューの画像)。</param>
+    /// <param name="format">Bayerパターンを含むフォーマット。</param>
+    /// <param name="derived">生成元がHDR派生ビューの画像か。</param>
+    /// <param name="frame">生成元のフレーム番号。</param>
+    /// <param name="ct">表示中の画像・フレームの世代のトークン。</param>
+    /// <returns>取り付け(または結果の破棄)の完了を表すタスク。</returns>
+    private async Task BuildBayerPyramidAsync(
+        RawImage image, RawFormat format, bool derived, int frame, CancellationToken ct)
+    {
         BayerPyramid bayer;
         try
         {
