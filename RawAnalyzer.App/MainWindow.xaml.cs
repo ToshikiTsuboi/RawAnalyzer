@@ -3345,8 +3345,10 @@ public partial class MainWindow : Window
             return;
         }
 
+        // 推定中に右パネルでBayerパターンを変えたら、ゲインは変える前のパターンで R・B として平均したもの
+        // (RGGB→BGGR では R と B のゲインが入れ替わる)。表示中の画像の条件と違う推定は適用しない
         if (!ReferenceEquals(image, ActiveImage) || frame != Viewport.Frame
-            || blackLevel != _blackPoint)
+            || pattern != ActiveFormat?.Bayer || blackLevel != _blackPoint)
         {
             return;
         }
