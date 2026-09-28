@@ -142,4 +142,39 @@ public class ImageOperationGateTests
         using IDisposable inner = gate.EnterOperation();
         Assert.NotEqual(afterOuter, gate.ActivityStamp);
     }
+
+    [Fact]
+    public void BeginReplacement_IsPendingUntilDisposed_AndOnlyWhileReplacing()
+    {
+        // HDR分割・合成の計算のように、完了時に表示画像を差し替えるモーダルでない処理の途中か。
+        // 保存・バッチ書き出し・ノイズ測定はこの間は始めない(レビュー指摘: HDR合成の計算中に保存を始めると、
+        // 保存ダイアログの中で派生ビューへ差し替わり、ダイアログを作った画像と別の画像を保存していた)
+        var gate = new ImageOperationGate();
+
+        // 処理結果へ差し替えた後の縮小表示の作成を待つ操作や、読み込みの確定待ちは「差し替え待ち」ではない
+        // (保存などはこれまでどおり始められる。読み込みは IsLoadPending で別に断る)
+        using (gate.EnterOperation())
+        using (gate.BeginLoad())
+        {
+            Assert.False(gate.IsReplacementPending);
+        }
+
+        IDisposable operation = gate.EnterOperation(); // HDR分割・合成の操作そのもの
+        IDisposable replacement = gate.BeginReplacement();
+        IDisposable nested = gate.BeginReplacement();
+        Assert.True(gate.IsReplacementPending);
+        Assert.False(gate.IsLoadPending);
+
+        // 二重の Dispose で外側の分まで抜けない
+        nested.Dispose();
+        nested.Dispose();
+        Assert.True(gate.IsReplacementPending);
+
+        replacement.Dispose();
+        Assert.False(gate.IsReplacementPending);
+        Assert.True(gate.IsOperationRunning); // 差し替えを終えた後も操作は続き得る(縮小表示の作成など)
+
+        operation.Dispose();
+        Assert.False(gate.IsOperationRunning);
+    }
 }

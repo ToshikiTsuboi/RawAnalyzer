@@ -45,6 +45,20 @@ public class BusyNoticeTests
     }
 
     [Fact]
+    public void ForImageUse_RejectsWhileLoadingOrReplacingImage_AllowsWhileFinishing()
+    {
+        // 保存・バッチ書き出し・ノイズ測定は、ダイアログ・進捗表示の間も開始時の画像を対象にし続ける。
+        // その間に表示画像を差し替える処理の途中なら断る(レビュー指摘: HDR合成の計算中に保存を始めると、
+        // 保存ダイアログの中で派生ビューへ差し替わり、ダイアログを作った画像と別の画像を保存していた)
+        Assert.Equal(BusyReason.Loading, BusyNotice.ForImageUse(loadPending: true, replacementPending: false));
+        Assert.Equal(BusyReason.Loading, BusyNotice.ForImageUse(loadPending: true, replacementPending: true));
+        Assert.Equal(BusyReason.Operation, BusyNotice.ForImageUse(loadPending: false, replacementPending: true));
+
+        // 読み込み確定後の縮小表示(ピラミッド)の作成中などは、これまでどおり始められる
+        Assert.Null(BusyNotice.ForImageUse(loadPending: false, replacementPending: false));
+    }
+
+    [Fact]
     public void ForSequence_DistinguishesReasons()
     {
         // 送りは続けて起こるのでステータスバーに出す。理由ごとに文言を変える

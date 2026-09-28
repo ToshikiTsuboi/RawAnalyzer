@@ -1961,7 +1961,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (RejectWhileOpening("保存"))
+        if (RejectWhileImageReplacing("保存"))
         {
             return;
         }
@@ -1969,10 +1969,14 @@ public partial class MainWindow : Window
         // ダイアログ表示中も再生タイマーは動くため、ここから保存完了まで差し替えを止める
         using BusyScope busy = EnterBusy();
 
+        // 保存ダイアログはこの画像(とHDR合成の結果)に合わせて作る
+        RawImage target = ActiveImage;
+        HdrImage? targetFloat = _hdrFloatImage;
+
         // WIC 経路は表示中の1フレームのみ扱うため、判定も1フレームの画素数で行う
         var dialog = new SaveDialog(
-            (long)ActiveImage.Width * ActiveImage.Height,
-            allowFloatRaw: _hdrFloatImage is not null,
+            (long)target.Width * target.Height,
+            allowFloatRaw: targetFloat is not null,
             hasBayer: ActiveFormat?.Bayer is not (null or BayerPattern.None))
         {
             Owner = this,
@@ -1999,6 +2003,16 @@ public partial class MainWindow : Window
         };
         if (fileDialog.ShowDialog(this) != true)
         {
+            return;
+        }
+
+        // ダイアログ(入れ子ポンプ)の間に表示中の画像が替わっていたら、ダイアログを作った画像とは別の画像を
+        // 保存することになる(替える処理の途中は上で断っているが、保存する直前にも確かめる)
+        if (!ReferenceEquals(target, ActiveImage) || !ReferenceEquals(targetFloat, _hdrFloatImage))
+        {
+            MessageBox.Show(this, "保存の準備中に表示中の画像が替わったため、保存を中止しました。" +
+                "表示中の画像を確かめてから、もう一度保存してください。", "RawAnalyzer",
+                MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
 
@@ -2359,9 +2373,14 @@ public partial class MainWindow : Window
             return false;
         }
 
-        // 旧画像を読んでいる解析タスクを止めてから破棄する
+        // 旧画像を読んでいる解析タスクを止めてから破棄する。描画の停止を待つ間も操作を受け付けるので、
+        // 差し替えるまでは保存などを始めさせない(そのダイアログの中で対象の画像を差し替え・破棄してしまう)
         CancelAnalysis();
-        await Viewport.ClearImageAsync();
+        using (_imageGate.BeginReplacement())
+        {
+            await Viewport.ClearImageAsync();
+        }
+
         if (RejectProcessedImage(source, processed, label))
         {
             return false;
@@ -2486,7 +2505,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (RejectWhileOpening("バッチ書き出し"))
+        if (RejectWhileImageReplacing("バッチ書き出し"))
         {
             return;
         }
@@ -2898,6 +2917,10 @@ public partial class MainWindow : Window
 
         // 再生タイマーの連番送りと競合すると、Split中の画像が背後で破棄される
         using BusyScope busy = EnterBusy();
+
+        // 計算は待つ間も操作を受け付け、完了すると表示画像を派生ビューへ差し替える。その間は保存・バッチ書き出し・
+        // ノイズ測定を始めさせない(始めると、そのダイアログ・進捗表示の中で対象の画像が入れ替わる・破棄される)
+        using IDisposable replacing = _imageGate.BeginReplacement();
         RawImage image = _currentImage!;
         int sourceFrame = CaptureHdrSourceFrame();
 
@@ -3019,6 +3042,9 @@ public partial class MainWindow : Window
 
         // 再生タイマーの連番送りと競合すると、Split/Merge中の画像が背後で破棄される
         using BusyScope busy = EnterBusy();
+
+        // 完了すると表示画像を派生ビューへ差し替える。その間は保存などを始めさせない(HDR分割と同じ)
+        using IDisposable replacing = _imageGate.BeginReplacement();
         RawImage image = _currentImage!;
         RawFormat format = _currentFormat!;
         int sourceFrame = CaptureHdrSourceFrame();
@@ -3186,11 +3212,16 @@ public partial class MainWindow : Window
 
     private async Task RestoreMainImageAsync()
     {
-        // 派生画像を読んでいる描画・解析・縮小ピラミッド(Bayerを含む)の生成を止めてから破棄する
+        // 派生画像を読んでいる描画・解析・縮小ピラミッド(Bayerを含む)の生成を止めてから破棄する。
+        // 描画の停止を待つ間も操作を受け付けるので、差し替えるまでは保存などを始めさせない
         CancelAnalysis();
         _derivedPyramidBuild.Cancel();
         CancelDerivedBayerPyramidBuild();
-        await Viewport.ClearImageAsync();
+        using (_imageGate.BeginReplacement())
+        {
+            await Viewport.ClearImageAsync();
+        }
+
         _derivedImage?.Dispose();
         _derivedImage = null;
 
@@ -3969,22 +4000,26 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// 通常の読み込みが確定待ちなら、表示画像を使う操作を始めずに理由を知らせる。
+    /// 表示画像の差し替えを待っている間(通常の読み込みの確定待ち、HDR分割・合成の計算など完了時に
+    /// 表示画像を差し替えるモーダルでない処理の途中)なら、表示画像を使う操作を始めずに理由を知らせる。
     /// </summary>
     /// <remarks>
-    /// 確定待ちの間に操作を始めると、操作のダイアログ・進捗表示(Dispatcher の入れ子ポンプ)の
-    /// 中で読み込みが確定し、操作の対象画像が背後で差し替え・破棄される。
+    /// 保存・バッチ書き出し・ノイズ測定は、ダイアログ・進捗表示(Dispatcher の入れ子ポンプ)の間も開始時の
+    /// 画像を対象にし続ける。差し替えを待っている間に始めると、その中で差し替えが走り、操作のために作った
+    /// 画面と別の画像を処理したり(HDR合成の計算中に保存を始めると派生ビューを保存していた)、処理中の画像が
+    /// 破棄されたりする。縮小表示の作成中や、差し替えを終えた処理の後始末の間は始められる(BusyNotice.ForImageUse)。
     /// </remarks>
     /// <param name="operation">操作名(「保存」など)。</param>
     /// <returns>拒否した場合はtrue。</returns>
-    private bool RejectWhileOpening(string operation)
+    private bool RejectWhileImageReplacing(string operation)
     {
-        if (!_imageGate.IsLoadPending)
+        if (BusyNotice.ForImageUse(_imageGate.IsLoadPending, _imageGate.IsReplacementPending)
+            is not { } reason)
         {
             return false;
         }
 
-        MessageBox.Show(this, BusyNotice.ForOperation(BusyReason.Loading, operation),
+        MessageBox.Show(this, BusyNotice.ForOperation(reason, operation),
             "RawAnalyzer", MessageBoxButton.OK, MessageBoxImage.Information);
         return true;
     }
@@ -3993,8 +4028,8 @@ public partial class MainWindow : Window
     /// 実行中(読み込み・操作・縮小表示の作成)なら、画像を処理する操作を始めずに理由を知らせる。
     /// </summary>
     /// <remarks>
-    /// <see cref="RejectWhileOpening"/> は読み込みの確定待ちだけを断る(保存などは縮小表示の
-    /// 作成中や他の操作の内側でも始められる)。実行中の処理すべてを断る操作(結果で表示中の画像を
+    /// <see cref="RejectWhileImageReplacing"/> は表示画像の差し替えを待っている間だけを断る(保存などは縮小表示の
+    /// 作成中や、差し替えを終えた他の操作の内側でも始められる)。実行中の処理すべてを断る操作(結果で表示中の画像を
     /// 差し替えるビニング・フィルタ・画像演算・欠陥補正、実行中の処理の完了で結果が表示中の画像の
     /// ものでなくなる欠陥検出、結果で派生ビューを表示するHDR分割・合成)は、何が実行中かを
     /// 同じ形のダイアログで知らせる(黙って無視しない)。
@@ -4586,7 +4621,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (RejectWhileOpening("ノイズ測定"))
+        if (RejectWhileImageReplacing("ノイズ測定"))
         {
             _noiseWindow?.ResetRunButton();
             return;

@@ -16,6 +16,11 @@ namespace RawAnalyzer.App.Services;
 /// 読み込みは実行中の操作が終わるまで確定を待つ(<see cref="WhenOperationsIdleAsync"/>)。
 /// </para>
 /// <para>
+/// 操作のうち、完了時に表示画像を差し替えるモーダルでない処理(HDR分割・合成の計算など)は、差し替えまでの
+/// 途中も別に数える(<see cref="IsReplacementPending"/>)。表示画像を対象にし続ける保存・バッチ書き出し・
+/// ノイズ測定は、読み込みの確定待ちと同じくこの間も始めない(差し替えを終えた処理結果の縮小表示の作成中などは始めてよい)。
+/// </para>
+/// <para>
 /// ファイル連番の送りは逆に操作・読み込みへ譲る(操作の終了を待たず、送りをやめる)。
 /// 次のファイルを読んでいる間に操作・読み込みが始まっていないことを
 /// <see cref="ActivityStamp"/> で確かめ、差し替えは表示と状態の交換を同じUIターンで済ませる。
@@ -26,6 +31,7 @@ internal sealed class ImageOperationGate
 {
     private int _operationDepth;
     private int _pendingLoads;
+    private int _pendingReplacements;
     private int _activityStamp;
     private TaskCompletionSource? _idle;
 
@@ -70,6 +76,31 @@ internal sealed class ImageOperationGate
         _pendingLoads++;
         _activityStamp++;
         return new Scope(() => _pendingLoads--);
+    }
+
+    /// <summary>
+    /// 完了時に表示画像を差し替える、モーダルでない処理の途中か(入れ子を含む)。
+    /// </summary>
+    /// <remarks>
+    /// HDR分割・合成の計算から派生ビューの表示まで、処理結果・Raw表示へ差し替える前に旧画像の描画の停止を
+    /// 待つ間など。この間も利用者は操作できるので、表示画像を対象にし続ける操作(保存・バッチ書き出し・
+    /// ノイズ測定)を始めると、そのダイアログ・進捗表示の中で差し替えが走り、操作の対象が入れ替わる・
+    /// 破棄される。読み込みの確定待ち(<see cref="IsLoadPending"/>)とは別に数える。
+    /// </remarks>
+    internal bool IsReplacementPending => _pendingReplacements > 0;
+
+    /// <summary>
+    /// 完了時に表示画像を差し替える処理の開始を登録する。差し替えた(または差し替えずに終えた)ら
+    /// 戻り値を Dispose する(二重の Dispose は無視する)。
+    /// </summary>
+    /// <remarks>
+    /// 操作としては数えない(読み込みの確定を待たせる操作かどうかは <see cref="EnterOperation"/> で別に決める)。
+    /// </remarks>
+    /// <returns>登録を外すスコープ。</returns>
+    internal IDisposable BeginReplacement()
+    {
+        _pendingReplacements++;
+        return new Scope(() => _pendingReplacements--);
     }
 
     /// <summary>
