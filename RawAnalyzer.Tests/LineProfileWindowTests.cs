@@ -306,6 +306,55 @@ public class LineProfileWindowTests
         }
     });
 
+    [Fact]
+    public Task OutsideImage_ClearsPreviousProfileAndKeepsPointAndDirection() => WpfTestHost.Run(() =>
+    {
+        // 送り・差し替えの後は同じ基準点で計算し直すが、寸法の違う画像では基準点が範囲外になり得る。
+        // 前の画像の断面・射影・統計を残すと送った先の画像の値と誤読されるので、範囲外であることを示して
+        // データを空にする(コピー・CSVにも出さない)。基準点・方向・縦軸の設定は保ち、範囲内の画像へ
+        // 戻れば同じ点・同じ方向で出し直せるようにする
+        var window = NewWindow();
+        try
+        {
+            ((RadioButton)window.FindName("VerticalRadio")).IsChecked = true;
+            var projection = (CheckBox)window.FindName("ProjectionCheck");
+            projection.IsChecked = true;
+            var mode = (ComboBox)window.FindName("YScaleCombo");
+            mode.SelectedIndex = 2;
+            ((TextBox)window.FindName("YMinimumBox")).Text = "100";
+            ((TextBox)window.FindName("YMaximumBox")).Text = "300";
+            ((Button)window.FindName("ApplyYScaleButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+
+            window.ShowOutsideImage(1000, 2, 640, 480, 1023);
+
+            Assert.Null(window.BuildTable(','));
+            var canvas = (Canvas)window.FindName("PlotCanvas");
+            Assert.Empty(canvas.Children.OfType<System.Windows.Shapes.Path>());
+            string stats = ((TextBlock)window.FindName("StatsText")).Text;
+            Assert.Contains("範囲外", stats);
+            Assert.Contains("640×480", stats);
+            Assert.Contains("範囲外", window.Title);
+            Assert.False(projection.IsEnabled);
+            Assert.False(projection.IsChecked);
+            Assert.True(window.IsOutsideImage);
+            Assert.Equal((1000, 2), window.CurrentPoint);
+            Assert.False(window.IsHorizontal);
+            CaptureIfRequested(window, "profile-outside");
+
+            window.SetProfiles(new double[] { 1, 2 }, new double[] { 7, 8, 9 },
+                Array.Empty<double>(), Array.Empty<double>(), null, 1000, 2, 1023);
+            Assert.False(window.IsOutsideImage);
+            Assert.False(window.IsHorizontal);
+            Assert.StartsWith("y,value" + Environment.NewLine + "0,7", window.BuildTable(','));
+            Assert.DoesNotContain("範囲外", ((TextBlock)window.FindName("StatsText")).Text);
+            Assert.Equal(new ProfileAxisRange(100, 300), window.AxisRange);
+        }
+        finally
+        {
+            window.Close();
+        }
+    });
+
     private static void CaptureElementIfRequested(FrameworkElement element, string name, int width, int height)
     {
         string? directory = Environment.GetEnvironmentVariable("RAWANALYZER_UI_SNAPSHOTS");

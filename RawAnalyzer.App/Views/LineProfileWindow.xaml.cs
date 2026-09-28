@@ -30,6 +30,9 @@ public partial class LineProfileWindow : Window
 
     private int _pointX;
     private int _pointY;
+
+    // 基準点が表示中の画像の範囲外のとき、その画像の寸法(断面を出しているときは null)
+    private (int Width, int Height)? _outsideImage;
     private int _maxCode = 65535;
     private ProfileAxisRange _axisRange = ProfileAxisRange.Full(65535);
     private ProfileAxisRange? _manualRange;
@@ -118,6 +121,9 @@ public partial class LineProfileWindow : Window
     /// <summary>現在のプロファイル基準点。</summary>
     public (int X, int Y) CurrentPoint => (_pointX, _pointY);
 
+    /// <summary>基準点が表示中の画像の範囲外で、断面を出していないか。</summary>
+    public bool IsOutsideImage => _outsideImage is not null;
+
     /// <summary>
     /// プロファイルデータを設定して再描画する。
     /// </summary>
@@ -126,8 +132,8 @@ public partial class LineProfileWindow : Window
     /// <param name="horizontalProjection">ROI内の水平射影(ROIなしなら空)。</param>
     /// <param name="verticalProjection">ROI内の垂直射影(ROIなしなら空)。</param>
     /// <param name="roi">対象ROI(なければnull)。</param>
-    /// <param name="pointX">クリック画素X。</param>
-    /// <param name="pointY">クリック画素Y。</param>
+    /// <param name="pointX">基準点X(元画像の座標。クリックした点、送り・差し替えの後は同じ点)。</param>
+    /// <param name="pointY">基準点Y(元画像の座標)。</param>
     /// <param name="maxCode">ビット深度の最大raw code。</param>
     public void SetProfiles(
         double[] rowProfile,
@@ -139,9 +145,47 @@ public partial class LineProfileWindow : Window
         int pointY,
         int maxCode)
     {
+        ApplyData(rowProfile, columnProfile, horizontalProjection, verticalProjection, roi,
+            pointX, pointY, maxCode, outsideImage: null);
+    }
+
+    /// <summary>
+    /// 基準点が表示中の画像の範囲外で、断面を出せないことを示す(前の断面・射影・統計は消す)。
+    /// </summary>
+    /// <remarks>
+    /// フレーム・ページ・ファイルの送りや表示画像の差し替えの後は同じ基準点で計算し直すが、寸法の違う画像では
+    /// 基準点が範囲外になり得る。前の画像の断面を残すと送った先の画像の値と誤読されるので、データを空にして
+    /// 範囲外であることを示す。基準点・方向・縦軸の設定は保ち、範囲内の画像へ戻れば同じ点・同じ方向で出し直せる。
+    /// </remarks>
+    /// <param name="pointX">基準点X(元画像の座標)。</param>
+    /// <param name="pointY">基準点Y(元画像の座標)。</param>
+    /// <param name="imageWidth">表示中の画像の幅。</param>
+    /// <param name="imageHeight">表示中の画像の高さ。</param>
+    /// <param name="maxCode">表示中の画像のビット深度の最大raw code。</param>
+    public void ShowOutsideImage(int pointX, int pointY, int imageWidth, int imageHeight, int maxCode)
+    {
+        ApplyData(Array.Empty<double>(), Array.Empty<double>(), Array.Empty<double>(), Array.Empty<double>(),
+            null, pointX, pointY, maxCode, (imageWidth, imageHeight));
+    }
+
+    private void ApplyData(
+        double[] rowProfile,
+        double[] columnProfile,
+        double[] horizontalProjection,
+        double[] verticalProjection,
+        RegionOfInterest? roi,
+        int pointX,
+        int pointY,
+        int maxCode,
+        (int Width, int Height)? outsideImage)
+    {
         int previousCount = CurrentData.Length;
         int previousOffset = CoordinateOffset;
         EndPan();
+
+        // 射影の選択を外すと方向の切替として通知され、MainWindow が基準点へマーカーを置き直す。
+        // 通知より前に範囲内・外と基準点を新しい値にしておく(範囲外の点にマーカーを出さない)
+        _outsideImage = outsideImage;
         _rowProfile = rowProfile;
         _columnProfile = columnProfile;
         _horizontalProjection = horizontalProjection;
@@ -242,17 +286,24 @@ public partial class LineProfileWindow : Window
         MiddleLabel.Text = middle.ToString("G8", CultureInfo.CurrentCulture);
         MiddleLabel.ToolTip = middle.ToString("G17", CultureInfo.CurrentCulture) + axisHint;
         if (_ready && !ManualScale) UpdateScaleInputs();
-        StatsText.Text = stats.Count == 0
+        StatsText.Text = _outsideImage is { } outside
+            ? $"基準点 (x={_pointX}, y={_pointY}) は表示中の画像 ({outside.Width}×{outside.Height}) の範囲外です。" +
+              "範囲内の画像へ送るか、画像上をクリックし直してください。"
+            : stats.Count == 0
             ? "—"
             : $"N={stats.Count}   平均 {stats.Mean:F2}   最小 {stats.Min:F0}   " +
               $"最大 {stats.Max:F0}   中央値 {stats.Median:F1}   σ {stats.Sigma:F2}   " +
               $"P-P {stats.Max - stats.Min:F0}";
 
-        string origin = projection && _roi is { } r
+        string origin = _outsideImage is not null
+            ? $"範囲外 (x={_pointX}, y={_pointY})"
+            : projection && _roi is { } r
             ? $"ROI({r.X},{r.Y} {r.Width}×{r.Height}) 平均射影"
             : horizontal ? $"行 y={_pointY} (x={_pointX}基準)" : $"列 x={_pointX} (y={_pointY}基準)";
         InfoText.Text = $"{(horizontal ? "水平" : "垂直")}  {origin}";
-        Title = projection
+        Title = _outsideImage is not null
+            ? $"ラインプロファイル — 範囲外 (x={_pointX}, y={_pointY})"
+            : projection
             ? $"ラインプロファイル — {(horizontal ? "水平" : "垂直")}射影 (ROI平均)"
             : horizontal
                 ? $"ラインプロファイル — 行 y={_pointY}"
@@ -354,6 +405,13 @@ public partial class LineProfileWindow : Window
 
     private void OnCopyStatsClick(object sender, RoutedEventArgs e)
     {
+        // データがない(基準点が範囲外など)ときは、0 を並べた統計を実測値のようにコピーしない
+        // (データのコピー・CSV保存と同じ)
+        if (CurrentData.Length == 0)
+        {
+            return;
+        }
+
         ProfileStatistics stats = CurrentStatistics;
         var sb = new StringBuilder();
         sb.AppendLine("metric\tvalue");

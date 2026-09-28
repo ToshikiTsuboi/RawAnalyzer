@@ -131,9 +131,11 @@ public partial class MainWindow
         ClearDefectSource();
         Viewport.SetDefectMarkers(null);
         _defectWindow?.DiscardResult();
+
+        // 開いているラインプロファイル窓は閉じない。送りの後(再生中は止めたとき)に RefreshAfterSequenceMove が
+        // 同じ基準点で計算し直し、寸法の違うページで範囲外になったら範囲外であることを示す
         if (sizeChanged)
         {
-            _profileWindow?.Close();
             _lastCursorInside = false;
         }
 

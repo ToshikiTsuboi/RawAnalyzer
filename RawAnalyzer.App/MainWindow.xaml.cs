@@ -784,6 +784,10 @@ public partial class MainWindow : Window
 
         RefreshHistogram(roi: null);
 
+        // 開いているラインプロファイル窓は、ヒストグラムと同じく開いた画像で計算し直す(同じ基準点・方向)。
+        // 以前は前の画像の断面を出し続けていた(マーカーだけが消える)
+        RefreshLineProfile();
+
         // 差し替えを終えたので、以降の操作は新しい画像を対象に始めてよい
         // (ピラミッド生成は差し替え後の画像を検証してから取り付ける。二重の Dispose は無視される)
         pendingLoad.Dispose();
@@ -1290,15 +1294,49 @@ public partial class MainWindow : Window
         return true;
     }
 
-    private async void OnProfilePointClicked(object? sender, CursorPixelEventArgs e)
+    private void OnProfilePointClicked(object? sender, CursorPixelEventArgs e)
     {
-        if (ActiveImage is null || ActiveFormat is null)
+        if (ActiveImage is not { } image
+            || !TryMapToSourceCoordinates(image, e.X, e.Y, out int sourceX, out int sourceY))
         {
             return;
         }
 
-        RawImage image = ActiveImage;
-        if (!TryMapToSourceCoordinates(image, e.X, e.Y, out int sourceX, out int sourceY))
+        _ = ShowLineProfileAsync(sourceX, sourceY, fromClick: true);
+    }
+
+    /// <summary>
+    /// 表示画像を送った・差し替えた後に、開いているラインプロファイル窓を同じ基準点・方向で計算し直す。
+    /// </summary>
+    /// <remarks>
+    /// ヒストグラム・ROI統計と同じ扱い。フレーム・ページ・ファイルの送り(再生中は止めたとき。
+    /// <see cref="RefreshAfterSequenceMove"/>)と、別ファイルを開く・処理結果での差し替え・HDR表示の出入りの後に
+    /// 呼ぶ。射影は送った後(差し替えた後)のROIで求める。基準点は元画像の座標のまま使い、寸法の違う画像で
+    /// 範囲外になったら前の断面を残さず範囲外であることを示す。窓を閉じていれば何もしない。
+    /// </remarks>
+    private void RefreshLineProfile()
+    {
+        if (_profileWindow is not { } window)
+        {
+            return;
+        }
+
+        (int x, int y) = window.CurrentPoint;
+        _ = ShowLineProfileAsync(x, y, fromClick: false);
+    }
+
+    /// <summary>
+    /// 表示中の画像・フレームで、基準点を通る断面と表示中のROIの射影を計算し、ラインプロファイル窓に出す。
+    /// </summary>
+    /// <param name="sourceX">基準点の元画像X座標。</param>
+    /// <param name="sourceY">基準点の元画像Y座標。</param>
+    /// <param name="fromClick">
+    /// 画像上のクリックからか。クリックなら窓を開いて前面に出す。送り・差し替えの後の計算し直しでは、
+    /// 計算中に窓が閉じられていたら開き直さない。
+    /// </param>
+    private async Task ShowLineProfileAsync(int sourceX, int sourceY, bool fromClick)
+    {
+        if (ActiveImage is not { } image)
         {
             return;
         }
@@ -1317,30 +1355,17 @@ public partial class MainWindow : Window
             ChannelRoiTarget channel => channel.DisplayRoi,
             _ => null,
         };
-        double[] row;
-        double[] column;
-        double[] horizontalProjection = Array.Empty<double>();
-        double[] verticalProjection = Array.Empty<double>();
 
         // 全面ROIの巨大画像では射影に時間がかかる。次のクリックや
         // 画像切替で確実に打ち切れるようにトークンを渡す
         var cts = new CancellationTokenSource();
         ReplaceProfileCts(cts);
         CancellationToken token = cts.Token;
+        LineProfileData? data;
         try
         {
-            (row, column, horizontalProjection, verticalProjection) = await Task.Run(() =>
-            {
-                double[] rowValues = Array.ConvertAll(
-                    ImageAnalysis.ExtractRowProfile(image, frame, sourceY), v => (double)v);
-                double[] columnValues = Array.ConvertAll(
-                    ImageAnalysis.ExtractColumnProfile(image, frame, sourceX), v => (double)v);
-
-                // 水平・垂直を別々に呼ぶとROIを2回走査することになる
-                (double[] hp, double[] vp) =
-                    RoiAnalysis.ComputeProjections(image, frame, target, token);
-                return (rowValues, columnValues, hp, vp);
-            }, token);
+            data = await Task.Run(
+                () => LineProfileData.Compute(image, frame, sourceX, sourceY, target, token), token);
         }
         catch (Exception)
         {
@@ -1361,10 +1386,16 @@ public partial class MainWindow : Window
 
         if (_profileWindow is null)
         {
+            if (!fromClick)
+            {
+                return;
+            }
+
             _profileWindow = new LineProfileWindow { Owner = this };
             _profileWindow.DirectionChanged += horizontal =>
             {
-                if (_profileWindow is { } window)
+                // 基準点が範囲外で断面を出していないときは、マーカーを出さない
+                if (_profileWindow is { IsOutsideImage: false } window)
                 {
                     // マーカーはプロファイルと同じ元画像の列・行で渡す
                     // (表示のどこに並ぶかはビューポートが表示モードに合わせて写す)
@@ -1381,13 +1412,26 @@ public partial class MainWindow : Window
         }
 
         int maxCode = (1 << ActiveFormat!.BitDepth) - 1;
-        _profileWindow.SetProfiles(
-            row, column, horizontalProjection, verticalProjection, projectionRoi,
-            sourceX, sourceY, maxCode);
+        if (data is null)
+        {
+            // 寸法の違う画像へ送った・差し替えたため、基準点が範囲外になった
+            _profileWindow.ShowOutsideImage(sourceX, sourceY, image.Width, image.Height, maxCode);
+            Viewport.ClearProfileMarker();
+        }
+        else
+        {
+            _profileWindow.SetProfiles(
+                data.Row, data.Column, data.HorizontalProjection, data.VerticalProjection, projectionRoi,
+                sourceX, sourceY, maxCode);
 
-        // 表示座標(e.X, e.Y)で渡すと、分割⇔非分割の切替後にプロファイルと別の行・列を指す
-        Viewport.SetProfileMarker(sourceX, sourceY, _profileWindow.IsHorizontal);
-        _profileWindow.Activate();
+            // 表示座標(e.X, e.Y)で渡すと、分割⇔非分割の切替後にプロファイルと別の行・列を指す
+            Viewport.SetProfileMarker(sourceX, sourceY, _profileWindow.IsHorizontal);
+        }
+
+        if (fromClick)
+        {
+            _profileWindow.Activate();
+        }
     }
 
     // ---- 表示調整 (LUT) ----
@@ -2442,7 +2486,6 @@ public partial class MainWindow : Window
         _channelHistograms = null;
         _vm.HasRoi = false;
         _lastCursorInside = false;
-        _profileWindow?.Close();
         // 演算結果の16bit化や寸法変更に合わせてUIを更新する。
         // 表示LUTの内部値は維持し、コード値だけ新しいビット深度へ換算する。
         _updatingSliders = true;
@@ -2478,6 +2521,10 @@ public partial class MainWindow : Window
         UpdateSequenceUi();
 
         RefreshHistogram(roi: null);
+
+        // 開いているラインプロファイル窓は閉じずに、ヒストグラムと同じく処理結果で計算し直す
+        // (同じ基準点・方向。ビニングで縮んで範囲外になったら、範囲外であることを示す)
+        RefreshLineProfile();
         _mainPyramid = null;
         await BuildPyramidAsync(processed, _loadCts?.Token ?? CancellationToken.None);
         if (display.ComboIndex != 0 && ReferenceEquals(processed, _currentImage))
@@ -3221,6 +3268,10 @@ public partial class MainWindow : Window
         UpdateNoiseWindowSource();
         UpdateProcessingBadge();
         RefreshHistogram(roi: null);
+
+        // 開いているラインプロファイル窓も、ヒストグラムと同じく派生ビューの画像で計算し直す
+        // (同じ基準点・方向。派生ビューの寸法で範囲外なら範囲外であることを示す)
+        RefreshLineProfile();
         _ = BuildDerivedPyramidAsync(derived);
         return true;
     }
@@ -3307,6 +3358,9 @@ public partial class MainWindow : Window
         UpdateProcessingBadge();
         DetectSequence();
         RefreshHistogram(roi: null);
+
+        // 派生ビューで出していたラインプロファイルも、元画像(HDR表示の元にしたフレーム)で計算し直す
+        RefreshLineProfile();
     }
 
     private DisplayParameters CurrentDisplayParameters()
@@ -3975,6 +4029,10 @@ public partial class MainWindow : Window
         }
 
         RefreshHistogram(Viewport.Roi is { PixelCount: > 0 } roi ? roi : null);
+
+        // ラインプロファイル窓も、送った先の画像・フレームで同じ基準点・方向と送った後のROIで計算し直す
+        // (送りで取り消した計算は結果を出さないので、開いたままだと送る前の断面が残る)
+        RefreshLineProfile();
     }
 
     private void OnPlayToggleChanged(object sender, RoutedEventArgs e)
