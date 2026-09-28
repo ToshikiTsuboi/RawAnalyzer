@@ -28,6 +28,9 @@ public partial class MainWindow : Window
 
     private readonly MainViewModel _vm = new();
     private readonly FormatPresetStore _presetStore = new();
+
+    // サイズ別フォーマット記憶(format-history.json)。raw の読み込みに成功するたびに記録・保存する
+    private readonly FormatMemory _formatMemory = new(new FormatHistoryStore());
     private readonly RecentFilesStore _recentFiles = new();
     private int _recentMenuGeneration;
     private int _folderGeneration;
@@ -44,6 +47,14 @@ public partial class MainWindow : Window
     private RawImage? _currentImage;
     private RawFormat? _currentFormat;
     private string? _currentPath;
+
+    // 表示中の raw ファイルを読んだフォーマット(右パネルでの Bayer の変更を含み、ビニングなどの処理は含まない)。
+    // F2 の初期値と、開き直したときに記憶を訂正する元のフォーマットに使う。raw 以外では null
+    private RawFormat? _openedRawFormat;
+
+    // 表示中のファイルを同じサイズの記憶から推定して開いたことの通知(比較モードを抜けたら表示し直す)
+    private string _mainFormatNotice = "";
+    private string _mainFormatNoticeToolTip = "";
     private CancellationTokenSource? _loadCts;
     private CancellationTokenSource? _analysisCts;
 
@@ -348,6 +359,23 @@ public partial class MainWindow : Window
         return required <= fileSize ? format : null;
     }
 
+    /// <summary>
+    /// 表示中のファイルを同じサイズの記憶から推定して開いたことをステータスバーに示す(空文字で消す)。
+    /// </summary>
+    /// <remarks>
+    /// 画像情報(ImageInfoText)とは別の欄に出すので、読み込み後の画像情報や保存完了などの一時メッセージで
+    /// 消えず、別のファイルを表示するまで見える。
+    /// </remarks>
+    /// <param name="text">通知の文。</param>
+    /// <param name="toolTip">通知のツールチップ(推定したフォーマットと直し方)。</param>
+    private void SetMainFormatNotice(string text, string toolTip = "")
+    {
+        _mainFormatNotice = text;
+        _mainFormatNoticeToolTip = toolTip;
+        _vm.FormatNoticeText = text;
+        _vm.FormatNoticeToolTip = toolTip;
+    }
+
     // ---- ファイル読込 ----
 
     private const string OpenImageFilter =
@@ -495,10 +523,7 @@ public partial class MainWindow : Window
     {
         if (_currentPath is not null && IsRawFile(_currentPath))
         {
-            // ビニング後の縮小寸法を元ファイルの寸法として提案しない。
-            RawFormat? initial = _correctionLabel is null ? _currentFormat
-                : TryGetRememberedFormat(_currentPath, SafeFileSize(_currentPath));
-            OpenPath(_currentPath, initial);
+            ChangeCurrentRawFormat(_currentPath);
             return;
         }
 
@@ -512,13 +537,46 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>
+    /// 表示中の raw をフォーマットを指定し直して開き直す(F2)。開き直せたら、元のフォーマットが同じサイズの
+    /// 記憶にあれば新しいフォーマットで置き換える(誤って自動で開いたものを直すと、次からは直した方で開く)。
+    /// </summary>
+    /// <param name="path">表示中の raw ファイル。</param>
+    private void ChangeCurrentRawFormat(string path)
+    {
+        // ビニング後の縮小寸法を元ファイルの寸法として提案しない。
+        RawFormat? initial = _correctionLabel is null ? _currentFormat
+            : _openedRawFormat ?? TryGetRememberedFormat(path, SafeFileSize(path));
+        OpenPathChoosingFormat(path, initial, correctFrom: initial);
+    }
+
     /// <summary>フォーマット指定が必要な生バイナリ(.raw/.bin)かどうか。</summary>
     private static bool IsRawFile(string path)
     {
         return Compare.ComparePane.IsRawFile(path);
     }
 
-    private async void OpenPath(string path, RawFormat? initialFormat = null)
+    /// <summary>
+    /// ファイルを開く。raw は同じパスの記憶 → 同じサイズの記憶(自動適用がちょうど1つ)の順に使い、
+    /// なければダイアログで指定する(<see cref="RawOpenPlanner"/>)。
+    /// </summary>
+    /// <param name="path">開くファイル。</param>
+    private void OpenPath(string path)
+    {
+        OpenPathCore(path, chooseFormat: false, initialFormat: null, correctFrom: null);
+    }
+
+    /// <summary>raw をフォーマットを指定し直して開く(記憶を使わず必ずダイアログを出す)。</summary>
+    /// <param name="path">開く raw ファイル。</param>
+    /// <param name="initialFormat">ダイアログの初期値(null なら候補一覧の先頭)。</param>
+    /// <param name="correctFrom">開き直す前のフォーマット(同じサイズの記憶にあれば置き換える)。</param>
+    private void OpenPathChoosingFormat(string path, RawFormat? initialFormat, RawFormat? correctFrom)
+    {
+        OpenPathCore(path, chooseFormat: true, initialFormat, correctFrom);
+    }
+
+    private async void OpenPathCore(
+        string path, bool chooseFormat, RawFormat? initialFormat, RawFormat? correctFrom)
     {
         // 読み込み中に再生タイマーや保留中の連番送りが画像を差し替えないようにする
         using BusyScope busy = EnterLoadBusy();
@@ -530,20 +588,23 @@ public partial class MainWindow : Window
         int generation = ++_openGeneration;
 
         RawFormat? format = null;
+        RawFormatOrigin? origin = null;
+        bool? autoOpenChoice = null;
         if (IsRawFile(path))
         {
-            // 同じファイルを開き直すときは記憶したフォーマットでダイアログをスキップ
-            // (「変更…」から開いた場合 initialFormat が渡されるためダイアログを出す)
-            RawFormat? remembered = initialFormat is null
-                ? TryGetRememberedFormat(path, SafeFileSize(path))
-                : null;
-            if (remembered is not null)
+            // 同じファイルを開き直すときは記憶したフォーマットでダイアログをスキップし、なければ同じサイズ・
+            // 拡張子のファイルの記憶(自動適用がちょうど1つ)で開く。それ以外はダイアログ(候補一覧の先頭が初期値)。
+            // フォーマットを指定し直すとき(F2 など)は記憶を使わず、渡された初期値でダイアログを出す
+            long size = SafeFileSize(path);
+            RawOpenPlan plan = RawOpenPlanner.Plan(
+                path, size, chooseFormat ? null : TryGetRememberedFormat(path, size),
+                _formatMemory.History, _currentFormat, initialFormat, chooseFormat);
+            origin = plan.Origin;
+            format = plan.Format;
+            if (format is null)
             {
-                format = remembered;
-            }
-            else
-            {
-                var dialog = new RawImportDialog(path, _presetStore, initialFormat ?? _currentFormat)
+                var dialog = new RawImportDialog(
+                    path, _presetStore, plan.DialogInitial, _formatMemory, _currentFormat)
                 {
                     Owner = this,
                 };
@@ -553,6 +614,7 @@ public partial class MainWindow : Window
                 }
 
                 format = dialog.Result;
+                autoOpenChoice = dialog.AutoOpenNextTime;
             }
         }
 
@@ -675,13 +737,33 @@ public partial class MainWindow : Window
         UpdateNoiseWindowSource();
         _recentFiles.Add(path);
         RebuildRecentMenu();
+        long fileSize = SafeFileSize(path);
+        bool guessedFromSize = origin == RawFormatOrigin.SizeMemory;
         if (IsRawFile(path))
         {
-            RememberFileFormat(path, image.Format);
+            // 同じパスの記憶は従来どおり記録する。ただし同じサイズの記憶から推定して開いたときは記録しない
+            // (推定した形式をこのファイルの記憶として固定すると、同じサイズの記憶を後から F2 で直しても
+            // このファイルだけ古い形式で開き続ける。一覧を次々に開いて上限の50件を使い切ることもない)
+            if (!guessedFromSize)
+            {
+                RememberFileFormat(path, image.Format);
+            }
+
+            // 同じサイズ・拡張子の記憶へ記録する(F2 で開き直したときは元の形式を置き換える)
+            _formatMemory.RememberLoaded(path, fileSize, image.Format, autoOpenChoice, correctFrom);
+            _openedRawFormat = image.Format;
+        }
+        else
+        {
+            _openedRawFormat = null;
         }
 
+        // 読み込み後の画像情報とは別の欄に出し、このファイルを表示している間は見えるようにする
+        SetMainFormatNotice(
+            guessedFromSize ? RawOpenPlanner.AutoOpenNotice : "",
+            guessedFromSize ? RawOpenPlanner.AutoOpenToolTip(path, fileSize, image.Format) : "");
+
         UpdateFormatPanel(image.Format);
-        long fileSize = SafeFileSize(path);
         _vm.ImageInfoText =
             $"{image.Width}×{image.Height} · {image.Format.BitDepth}bit"
             + (color is not null ? " · RGB" : "")
@@ -1735,6 +1817,10 @@ public partial class MainWindow : Window
         CompareArea.Visibility = Visibility.Collapsed;
         _compareMode = false;
         _vm.IsCompareMode = false;
+
+        // 比較ペインの推定の通知から、表示中のファイルの通知へ戻す
+        _vm.FormatNoticeText = _mainFormatNotice;
+        _vm.FormatNoticeToolTip = _mainFormatNoticeToolTip;
     }
 
     /// <summary>ファイル選択ダイアログを出して比較ペイン資源を用意する。</summary>
@@ -1752,8 +1838,8 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// 指定パスから比較ペイン資源を読み込む。rawは記憶フォーマットを使い、
-    /// なければインポートダイアログで確認する。
+    /// 指定パスから比較ペイン資源を読み込む。rawは通常の「開く」と同じく、同じパスの記憶 →
+    /// 同じサイズの記憶(自動適用がちょうど1つ)の順に使い、なければインポートダイアログで確認する。
     /// </summary>
     /// <param name="path">対象ファイル。</param>
     /// <param name="cancellationToken">キャンセルトークン。</param>
@@ -1764,12 +1850,20 @@ public partial class MainWindow : Window
         try
         {
             RawFormat? format = null;
+            RawFormatOrigin? origin = null;
+            bool? autoOpenChoice = null;
             if (Compare.ComparePane.IsRawFile(path))
             {
-                format = TryGetRememberedFormat(path, SafeFileSize(path));
+                long size = SafeFileSize(path);
+                RawOpenPlan plan = RawOpenPlanner.Plan(
+                    path, size, TryGetRememberedFormat(path, size), _formatMemory.History,
+                    _currentFormat);
+                origin = plan.Origin;
+                format = plan.Format;
                 if (format is null)
                 {
-                    var dialog = new RawImportDialog(path, _presetStore, _currentFormat)
+                    var dialog = new RawImportDialog(
+                        path, _presetStore, plan.DialogInitial, _formatMemory, _currentFormat)
                     {
                         Owner = this,
                     };
@@ -1779,11 +1873,28 @@ public partial class MainWindow : Window
                     }
 
                     format = dialog.Result;
+                    autoOpenChoice = dialog.AutoOpenNextTime;
                     RememberFileFormat(path, format);
                 }
             }
 
-            return await Compare.ComparePane.LoadAsync(path, format, cancellationToken);
+            Compare.ComparePane pane = await Compare.ComparePane.LoadAsync(
+                path, format, cancellationToken);
+            if (format is not null)
+            {
+                // 読み込めたら同じサイズ・拡張子の記憶へ記録する(同じパスの記憶は従来どおりダイアログの確定時)
+                long loadedSize = SafeFileSize(path);
+                _formatMemory.RememberLoaded(path, loadedSize, format, autoOpenChoice);
+
+                // 比較ペインは F2 で開き直せないので、直し方を添えて知らせる(比較モードを抜けたら戻す)
+                if (origin == RawFormatOrigin.SizeMemory && _compareMode)
+                {
+                    _vm.FormatNoticeText = RawOpenPlanner.CompareAutoOpenNotice(path);
+                    _vm.FormatNoticeToolTip = RawOpenPlanner.AutoOpenToolTip(path, loadedSize, format);
+                }
+            }
+
+            return pane;
         }
         catch (OperationCanceledException)
         {
@@ -3929,6 +4040,11 @@ public partial class MainWindow : Window
                 _currentImage = image;
                 _currentFormat = format;
                 _currentPath = path;
+
+                // 送り先は表示中のフォーマットで読んだ(記憶から推定したのではない)ので、推定の通知は消す。
+                // 送りでは同じサイズの記憶へ記録しない(開いたときに記録済みのフォーマットで読むだけ)
+                _openedRawFormat = isRaw ? format : null;
+                SetMainFormatNotice("");
                 _valueNote = valueNote;
                 _tiffStack = pageCount > 1
                     ? new TiffStackSource(path, pageCount, pageNavigationEnabled: false)
@@ -4940,6 +5056,7 @@ public partial class MainWindow : Window
             return;
         }
 
+        RawFormat previous = _currentFormat;
         _currentFormat = format;
         if (_derivedImage is null && _currentImage is not null)
         {
@@ -4949,6 +5066,11 @@ public partial class MainWindow : Window
         if (_correctionLabel is null && _currentPath is not null && IsRawFile(_currentPath))
         {
             RememberFileFormat(_currentPath, _currentFormat);
+
+            // 同じサイズの記憶にこのファイルの元の形式があれば直す(F2 で開き直したときと同じく、
+            // 次に同じサイズのファイルを記憶から開くときは直した Bayer で開く)
+            _formatMemory.Correct(_currentPath, SafeFileSize(_currentPath), previous, _currentFormat);
+            _openedRawFormat = _currentFormat;
         }
 
         // チャネル別統計はパターンに依存するため作り直す。
@@ -5065,10 +5187,18 @@ public partial class MainWindow : Window
             return;
         }
 
-        // 記憶フォーマットをスキップして必ずダイアログを表示する
-        RawFormat? initial = TryGetRememberedFormat(
-            entry.FullPath, SafeFileSize(entry.FullPath)) ?? _currentFormat;
-        OpenPath(entry.FullPath, initial ?? new RawFormat { Width = 1920, Height = 1080 });
+        // 表示中の raw なら F2 と同じ(開き直せたら同じサイズの記憶の元の形式を置き換える)
+        if (_currentPath is not null && IsRawFile(_currentPath)
+            && string.Equals(entry.FullPath, _currentPath, StringComparison.OrdinalIgnoreCase))
+        {
+            ChangeCurrentRawFormat(_currentPath);
+            return;
+        }
+
+        // 記憶フォーマットをスキップして必ずダイアログを表示する。初期値は同じパスの記憶
+        // (なければ候補一覧の先頭 → 表示中の画像のフォーマット → ダイアログ既定の推定)
+        RawFormat? initial = TryGetRememberedFormat(entry.FullPath, SafeFileSize(entry.FullPath));
+        OpenPathChoosingFormat(entry.FullPath, initial, correctFrom: null);
     }
 
     private void OnFileCtxRevealClick(object sender, RoutedEventArgs e)

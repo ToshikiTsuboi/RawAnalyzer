@@ -21,6 +21,19 @@
     <StackPanel>
         <TextBlock x:Name="FileNameText" Margin="16,12,16,0" FontWeight="SemiBold"
                    Foreground="#FFD8D8D4" TextTrimming="CharacterEllipsis" />
+
+        <!-- ファイルサイズにちょうど合う形式の候補(記憶・表示中の画像・ファイル名・解像度表)。選ぶと全項目に入る -->
+        <StackPanel Margin="16,10,16,0">
+            <TextBlock Text="候補 (ファイルサイズに合う形式)" />
+            <ComboBox x:Name="CandidateCombo" SelectionChanged="OnCandidateSelected">
+                <ComboBox.ItemTemplate>
+                    <DataTemplate>
+                        <TextBlock Text="{Binding}" TextTrimming="CharacterEllipsis" MaxWidth="370" />
+                    </DataTemplate>
+                </ComboBox.ItemTemplate>
+            </ComboBox>
+        </StackPanel>
+
         <Grid Margin="16,10,16,0">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*" />
@@ -99,6 +112,17 @@
             <Button x:Name="GuessButton" DockPanel.Dock="Right" Content="サイズ推定"
                     Padding="8,2" FontSize="11" Click="OnGuessClick" />
             <TextBlock x:Name="SizeNoteText" FontSize="11" VerticalAlignment="Center"
+                       TextWrapping="Wrap" Margin="0,0,8,0" />
+        </DockPanel>
+
+        <!-- サイズ別の記憶(同じサイズ・拡張子のファイルを次から自動で開くか、そのサイズの記憶の削除) -->
+        <CheckBox x:Name="AutoOpenCheck" Margin="16,8,16,0" IsChecked="True"
+                  Content="同じサイズのファイルは次回からこの形式で開く"
+                  ToolTip="オンで開くと、同じサイズ・同じ拡張子のファイルを次からダイアログなしでこの形式で開きます。&#x0a;オフでも形式は記憶し、候補には出します(自動では開きません)。&#x0a;自動で開いた形式は F2 で開き直して変更できます。" />
+        <DockPanel Margin="16,6,16,8">
+            <Button x:Name="ForgetSizeButton" DockPanel.Dock="Right" Content="このサイズの記憶を削除"
+                    Padding="8,2" FontSize="11" Click="OnForgetSizeClick" />
+            <TextBlock x:Name="MemoryNoteText" FontSize="11" VerticalAlignment="Center"
                        TextWrapping="Wrap" Margin="0,0,8,0" />
         </DockPanel>
 

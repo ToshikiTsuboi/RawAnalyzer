@@ -102,6 +102,21 @@ public class FormatHistoryTests
     }
 
     [Fact]
+    public void Record_FormatThatCannotOpenAtThatSize_IsRejected()
+    {
+        // 記憶はどれもそのサイズで開けるもの(自動で開くときにそのまま使う)
+        var history = new FormatHistory();
+        Assert.Throws<ArgumentException>(() => history.Record(Size - 2, ".raw", Fmt(), null, T0));
+        Assert.Throws<ArgumentException>(
+            () => history.Record(Size, ".raw", Fmt() with { BitDepth = 11 }, null, T0));
+        history.Record(Size, ".raw", Fmt(), null, T0);
+
+        Assert.Throws<ArgumentException>(() => history.Replace(
+            Size, ".raw", Fmt(), Fmt(bitDepth: 16) with { FrameCount = 2 }, true, T0));
+        Assert.Equal(Fmt(), Assert.Single(history.Entries).Format);
+    }
+
+    [Fact]
     public void Record_OverLimit_DropsLeastRecentlyUsed()
     {
         var history = new FormatHistory();

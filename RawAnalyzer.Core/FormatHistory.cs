@@ -179,11 +179,15 @@ public sealed class FormatHistory
     /// </param>
     /// <param name="lastUsedUtc">最終使用日時(UTC)。</param>
     /// <exception cref="ArgumentOutOfRangeException">ファイルサイズが負の場合。</exception>
+    /// <exception cref="ArgumentException">
+    /// フォーマットがそのサイズのファイルでは開けない場合(<see cref="CanOpen"/>)。
+    /// </exception>
     public void Record(
         long fileSize, string extension, RawFormat format, bool? autoOpen, DateTime lastUsedUtc)
     {
         ArgumentNullException.ThrowIfNull(format);
         ArgumentOutOfRangeException.ThrowIfNegative(fileSize);
+        ThrowIfCannotOpen(format, fileSize);
         string key = NormalizeExtension(extension);
         int index = IndexOf(fileSize, key, format);
         bool flag = autoOpen
@@ -205,12 +209,16 @@ public sealed class FormatHistory
     /// </param>
     /// <param name="lastUsedUtc">最終使用日時(UTC)。</param>
     /// <returns>置き換えたら true。<paramref name="original"/> の記憶がなければ何もせず false。</returns>
+    /// <exception cref="ArgumentException">
+    /// 訂正後のフォーマットがそのサイズのファイルでは開けない場合(<see cref="CanOpen"/>)。
+    /// </exception>
     public bool Replace(
         long fileSize, string extension, RawFormat original, RawFormat replacement,
         bool? autoOpen, DateTime lastUsedUtc)
     {
         ArgumentNullException.ThrowIfNull(original);
         ArgumentNullException.ThrowIfNull(replacement);
+        ThrowIfCannotOpen(replacement, fileSize);
         string key = NormalizeExtension(extension);
         int index = IndexOf(fileSize, key, original);
         if (index < 0)
@@ -241,8 +249,9 @@ public sealed class FormatHistory
     /// <param name="format">フォーマット。</param>
     /// <param name="fileSize">ファイルサイズ(バイト)。</param>
     /// <returns>開けるなら true。</returns>
-    internal static bool CanOpen(RawFormat format, long fileSize)
+    public static bool CanOpen(RawFormat format, long fileSize)
     {
+        ArgumentNullException.ThrowIfNull(format);
         try
         {
             format.Validate();
@@ -251,6 +260,17 @@ public sealed class FormatHistory
         catch (ArgumentException)
         {
             return false;
+        }
+    }
+
+    /// <summary>記憶はどれもそのサイズで開けるものに限る(自動で開くときにそのまま使えるように)。</summary>
+    private static void ThrowIfCannotOpen(RawFormat format, long fileSize)
+    {
+        if (!CanOpen(format, fileSize))
+        {
+            throw new ArgumentException(
+                $"フォーマット({format.Width}×{format.Height})はサイズ {fileSize} バイトのファイルでは開けません。",
+                nameof(format));
         }
     }
 

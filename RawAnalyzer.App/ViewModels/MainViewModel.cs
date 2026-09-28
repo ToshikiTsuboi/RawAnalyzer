@@ -38,6 +38,8 @@ public sealed class MainViewModel : ObservableObject
     private bool _isProcessed;
     private string _processingStateText = "";
     private string _processingStateTooltip = "";
+    private string _formatNoticeText = "";
+    private string _formatNoticeToolTip = "";
     private string _cursorStatusText = "";
     private string _zoomStatusText = "";
     private string _zoomPercentText = "—";
@@ -305,6 +307,32 @@ public sealed class MainViewModel : ObservableObject
         get => _processingStateTooltip;
         set => SetProperty(ref _processingStateTooltip, value);
     }
+
+    /// <summary>
+    /// 同じサイズのファイルの記憶から推定して開いたことの通知(空なら出さない)。
+    /// 画像情報とは別の欄に出し、読み込み後の画像情報や一時メッセージで消えないようにする。
+    /// </summary>
+    public string FormatNoticeText
+    {
+        get => _formatNoticeText;
+        set
+        {
+            if (SetProperty(ref _formatNoticeText, value ?? ""))
+            {
+                OnPropertyChanged(nameof(HasFormatNotice));
+            }
+        }
+    }
+
+    /// <summary>推定の通知のツールチップ(推定したフォーマットと直し方)。</summary>
+    public string FormatNoticeToolTip
+    {
+        get => _formatNoticeToolTip;
+        set => SetProperty(ref _formatNoticeToolTip, value ?? "");
+    }
+
+    /// <summary>推定の通知を出すか。</summary>
+    public bool HasFormatNotice => _formatNoticeText.Length > 0;
 
     /// <summary>ステータスバー中央のカーソル位置情報。</summary>
     public string CursorStatusText

@@ -231,6 +231,14 @@
                 <TextBlock Text="{Binding ImageInfoText}" FontFamily="Consolas" FontSize="11"
                            Foreground="{StaticResource TextDim}" Margin="0,0,24,0" />
 
+                <!-- 同じサイズのファイルの記憶から推定して開いたこと。画像情報は読み込みの後や一時メッセージで
+                     書き換わるので別の欄に出し、別のファイルを表示するまで見えるようにする -->
+                <TextBlock Text="{Binding FormatNoticeText}" ToolTip="{Binding FormatNoticeToolTip}"
+                           FontSize="11" Foreground="{StaticResource AccentBrush}" Margin="0,0,24,0"
+                           VerticalAlignment="Center"
+                           Visibility="{Binding HasFormatNotice,
+                                        Converter={StaticResource BoolToVis}}" />
+
                 <!-- NAS等の低速ストレージからの読み込みで進捗が分かるようにする -->
                 <StackPanel Orientation="Horizontal" Margin="0,0,24,0"
                             Visibility="{Binding IsLoading,

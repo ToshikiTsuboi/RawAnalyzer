@@ -11,6 +11,7 @@ namespace RawAnalyzer.App.Views;
 /// <summary>
 /// Rawファイルの読込フォーマットを指定するダイアログ(ImageJ Raw import相当)。
 /// ファイルサイズ整合チェックとプリセット選択・保存を備える。
+/// ファイルサイズに合う形式の候補一覧と、サイズ別の記憶(次回から自動で開くか・記憶の削除)も扱う。
 /// </summary>
 public partial class RawImportDialog : Window
 {
@@ -20,9 +21,14 @@ public partial class RawImportDialog : Window
 
     private readonly string _filePath;
     private readonly long _fileSize;
+    private readonly string _extension;
     private readonly FormatPresetStore _presetStore;
+    private readonly FormatMemory? _formatMemory;
+    private readonly RawFormat? _displayedFormat;
     private Dictionary<string, RawFormat> _presets;
+    private IReadOnlyList<FormatCandidate> _candidates = Array.Empty<FormatCandidate>();
     private bool _initializing = true;
+    private bool _syncingCandidates;
 
     /// <summary>
     /// ファイルサイズを取得する。取得できない場合は -1(サイズ不明)。
@@ -50,13 +56,25 @@ public partial class RawImportDialog : Window
     /// <summary>ダイアログを生成する。</summary>
     /// <param name="filePath">開こうとしているRawファイルのパス。</param>
     /// <param name="presetStore">プリセットストア。</param>
-    /// <param name="initialFormat">初期値として表示するフォーマット(nullなら既定+サイズ推定)。</param>
-    public RawImportDialog(string filePath, FormatPresetStore presetStore, RawFormat? initialFormat = null)
+    /// <param name="initialFormat">
+    /// 初期値として表示するフォーマット(nullなら候補一覧の先頭、候補もなければ既定+サイズ推定)。
+    /// </param>
+    /// <param name="formatMemory">
+    /// サイズ別フォーマット記憶。候補一覧・「次回からこの形式で開く」の初期値・記憶の削除に使う
+    /// (nullなら記憶なしで候補を作り、削除はできない)。
+    /// </param>
+    /// <param name="displayedFormat">表示中の画像のフォーマット(候補一覧に使う)。</param>
+    internal RawImportDialog(
+        string filePath, FormatPresetStore presetStore, RawFormat? initialFormat = null,
+        FormatMemory? formatMemory = null, RawFormat? displayedFormat = null)
     {
         InitializeComponent();
         _filePath = filePath;
         _fileSize = SafeFileSize(filePath);
+        _extension = FormatHistory.ExtensionOf(filePath);
         _presetStore = presetStore;
+        _formatMemory = formatMemory;
+        _displayedFormat = displayedFormat;
         _presets = new Dictionary<string, RawFormat>(LoadPresetsSafe());
 
         FileNameText.Text = Path.GetFileName(filePath);
@@ -85,15 +103,30 @@ public partial class RawImportDialog : Window
         HdrStagesCombo.Items.Add("3段");
 
         RefreshPresetCombo();
+        RefreshCandidates();
 
-        RawFormat format = initialFormat ?? GuessInitialFormat();
+        RawFormat format = initialFormat
+            ?? (_candidates.Count > 0 ? _candidates[0].Format : GuessInitialFormat());
         ApplyFormat(format);
+
+        // 初期値が自動適用オフの記憶なら、その状態から始める(既定はオン)
+        AutoOpenCheck.IsChecked = RememberedEntry(format)?.AutoOpen ?? true;
+        UpdateMemoryNote(removed: null);
         _initializing = false;
         UpdateSizeNote();
     }
 
     /// <summary>「開く」で確定されたフォーマット。</summary>
     public RawFormat? Result { get; private set; }
+
+    /// <summary>
+    /// 「同じサイズのファイルは次回からこの形式で開く」の選択。確定後に呼び出し側が記憶へ反映する
+    /// (オフでもフォーマットは記憶し、候補には出す)。
+    /// </summary>
+    public bool AutoOpenNextTime => AutoOpenCheck.IsChecked == true;
+
+    /// <summary>候補一覧の中身(先頭ほど有力。一覧の2行目以降に対応する)。</summary>
+    internal IReadOnlyList<FormatCandidate> Candidates => _candidates;
 
     private IReadOnlyDictionary<string, RawFormat> LoadPresetsSafe()
     {
@@ -236,6 +269,7 @@ public partial class RawImportDialog : Window
     private void UpdateSizeNote()
     {
         RawFormat? format = TryBuildFormat(out string error);
+        SyncCandidateSelection(format);
         if (format is null)
         {
             SizeNoteText.Text = $"✕ {error}";
@@ -275,6 +309,123 @@ public partial class RawImportDialog : Window
         }
 
         PresetCombo.SelectedIndex = 0;
+    }
+
+    /// <summary>
+    /// 候補一覧を作り直す(先頭の行は案内。候補がなければ一覧を無効にする)。
+    /// </summary>
+    private void RefreshCandidates()
+    {
+        _candidates = FormatCandidates.Build(
+            _fileSize, _extension, _filePath, _formatMemory?.History ?? new FormatHistory(),
+            _displayedFormat);
+        _syncingCandidates = true;
+        try
+        {
+            CandidateCombo.Items.Clear();
+            CandidateCombo.Items.Add(_candidates.Count > 0
+                ? $"候補から選ぶ…({_candidates.Count} 件)"
+                : "候補なし(ファイルサイズに合う形式が見つかりません)");
+            foreach (FormatCandidate candidate in _candidates)
+            {
+                CandidateCombo.Items.Add(FormatCandidateText.Display(candidate));
+            }
+
+            CandidateCombo.SelectedIndex = 0;
+            CandidateCombo.IsEnabled = _candidates.Count > 0;
+            CandidateCombo.ToolTip =
+                "ファイルサイズにちょうど合う形式を、同じサイズの記憶 → 表示中の画像 → 記憶から推定 → " +
+                "ファイル名の「幅x高さ」 → 解像度表 の順に並べます。選ぶと全項目に入ります。";
+        }
+        finally
+        {
+            _syncingCandidates = false;
+        }
+    }
+
+    /// <summary>入力中の値と同じ候補を一覧で選択状態にする(なければ先頭の案内の行)。</summary>
+    /// <param name="current">入力中の値(不正なら null)。</param>
+    private void SyncCandidateSelection(RawFormat? current)
+    {
+        int index = 0;
+        for (int i = 0; current is not null && i < _candidates.Count; i++)
+        {
+            if (_candidates[i].Format == current)
+            {
+                index = i + 1;
+                break;
+            }
+        }
+
+        _syncingCandidates = true;
+        CandidateCombo.SelectedIndex = index;
+        _syncingCandidates = false;
+    }
+
+    private void OnCandidateSelected(object sender, SelectionChangedEventArgs e)
+    {
+        if (_initializing || _syncingCandidates || CandidateCombo.SelectedIndex <= 0
+            || CandidateCombo.SelectedIndex > _candidates.Count)
+        {
+            return;
+        }
+
+        // プリセットの選択と同じく、全項目にその形式を入れる
+        _initializing = true;
+        ApplyFormat(_candidates[CandidateCombo.SelectedIndex - 1].Format);
+        _initializing = false;
+        UpdateSizeNote();
+    }
+
+    /// <summary>このファイルのキー(サイズ・拡張子)でフォーマットが記憶されていればその記憶。</summary>
+    private FormatHistoryEntry? RememberedEntry(RawFormat format)
+    {
+        return _formatMemory is null || _fileSize < 0
+            ? null
+            : _formatMemory.History.Find(_fileSize, _extension, format);
+    }
+
+    /// <summary>このサイズの記憶の件数(と削除した件数)を示し、削除ボタンの有効・無効を決める。</summary>
+    /// <param name="removed">削除した件数(削除の直後だけ)。</param>
+    private void UpdateMemoryNote(int? removed)
+    {
+        int count = _formatMemory is null || _fileSize < 0
+            ? 0
+            : _formatMemory.History.Find(_fileSize, _extension).Count;
+        string key = _fileSize < 0
+            ? "サイズ不明"
+            : $"{_fileSize.ToString("N0", CultureInfo.InvariantCulture)} バイト・" +
+              (_extension.Length > 0 ? _extension : "拡張子なし");
+        ForgetSizeButton.IsEnabled = count > 0;
+        ForgetSizeButton.ToolTip = $"このサイズ({key})のファイルを開いたときの形式の記憶をすべて削除します";
+        MemoryNoteText.ToolTip = $"キー: {key}";
+        if (removed is { } n)
+        {
+            MemoryNoteText.Text = $"✓ このサイズの記憶 {n} 件を削除しました";
+            MemoryNoteText.Foreground = OkBrush;
+        }
+        else
+        {
+            MemoryNoteText.Text = count > 0
+                ? $"このサイズの記憶: {count} 件"
+                : "このサイズの記憶はありません";
+            MemoryNoteText.ClearValue(TextBlock.ForegroundProperty);
+        }
+    }
+
+    private void OnForgetSizeClick(object sender, RoutedEventArgs e)
+    {
+        if (_formatMemory is null || _fileSize < 0)
+        {
+            return;
+        }
+
+        int removed = _formatMemory.Forget(_fileSize, _extension);
+
+        // 入力中の値はそのまま残し、候補一覧だけを作り直す
+        RefreshCandidates();
+        SyncCandidateSelection(TryBuildFormat(out _));
+        UpdateMemoryNote(removed);
     }
 
     private void OnFieldChanged(object sender, RoutedEventArgs e)
