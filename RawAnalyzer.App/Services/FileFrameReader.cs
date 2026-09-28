@@ -5,8 +5,9 @@ using RawAnalyzer.Core;
 namespace RawAnalyzer.App.Services;
 
 // Imageは次のMoveNextまたは列挙子のDisposeまで有効。TIFFは常に1ページ分だけ所有する。
+// SourcePath は読んだファイル(書き出しを断る理由にどのファイルの何枚目かを示すため)。
 internal readonly record struct FileFrame(
-    RawImage Image, ColorImage? Color, int Frame, int Index, int Count, bool IsTiffPage);
+    RawImage Image, ColorImage? Color, int Frame, int Index, int Count, bool IsTiffPage, string SourcePath);
 
 internal static class FileFrameReader
 {
@@ -18,7 +19,7 @@ internal static class FileFrameReader
             for (int frame = 0; frame < image.FrameCount; frame++)
             {
                 ct.ThrowIfCancellationRequested();
-                yield return new FileFrame(image, null, frame, frame, image.FrameCount, false);
+                yield return new FileFrame(image, null, frame, frame, image.FrameCount, false, path);
             }
 
             yield break;
@@ -40,7 +41,7 @@ internal static class FileFrameReader
             }
 
             ct.ThrowIfCancellationRequested();
-            yield return new FileFrame(image, decoded.Color, 0, page, count, count > 1);
+            yield return new FileFrame(image, decoded.Color, 0, page, count, count > 1, path);
         }
     }
 }

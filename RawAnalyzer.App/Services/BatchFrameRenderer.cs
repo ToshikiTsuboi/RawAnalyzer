@@ -16,6 +16,7 @@ namespace RawAnalyzer.App.Services;
 /// ビット深度が異なることがあるため、現像LUTは書き出す画像のビット深度ごとに1回だけ作って使い回す
 /// (表示中の画像のLUTを使い回すと、飽和した12bitのページを16bitの白点未満とみなし、WBと行列で着色する)。
 /// 表示LUTは16bitの内部値の領域で作るので、ビット深度によらず同じものを使う。
+/// 1枚の画素数が上限(既定は1億画素)を超えるものは焼き込まずに断る(<see cref="EnsureWithinPixelLimit"/>)。
 /// 1つの書き出しの中で順に呼ぶ(スレッドセーフではない)。
 /// </remarks>
 internal sealed class BatchFrameRenderer
@@ -24,6 +25,7 @@ internal sealed class BatchFrameRenderer
     private readonly DisplayLut _lut;
     private readonly DevelopParameters _developParameters;
     private readonly Dictionary<int, DevelopLuts> _developLuts = new();
+    private readonly long _maxPixels;
 
     // MP4 のフレームごとに確保すると LOH を圧迫するので使い回す
     private byte[]? _gray;
@@ -35,14 +37,52 @@ internal sealed class BatchFrameRenderer
     /// 現像パラメータ。<see cref="DevelopParameters.SourceBitDepth"/> は使わず、書き出す画像のビット深度に置き換える。
     /// </param>
     /// <param name="lut">表示LUT。</param>
-    internal BatchFrameRenderer(BayerPattern pattern, DevelopParameters developParameters, DisplayLut lut)
+    /// <param name="maxPixels">1枚の画素数の上限(既定は1億画素。テストでは巨大な画像を作らずに試すため下げる)。</param>
+    internal BatchFrameRenderer(
+        BayerPattern pattern, DevelopParameters developParameters, DisplayLut lut,
+        long maxPixels = RawLoader.DefaultInMemoryPixelThreshold)
     {
         _pattern = pattern;
         _lut = lut;
         _developParameters = developParameters;
+        _maxPixels = maxPixels;
     }
 
     private bool Develops => _pattern != BayerPattern.None;
+
+    /// <summary>
+    /// 1枚の画素数が上限(既定は1億画素)以下か確かめ、超えていれば書き出しを断る。
+    /// </summary>
+    /// <remarks>
+    /// PNG/JPEG・動画は1枚を丸ごと8bitのバッファへ焼き込む。書き出しの開始前には表示中の画像の寸法で判定するが、
+    /// 寸法の異なるTIFFのページ・連番のファイルに上限を超えるものがあると、そのまま焼き込もうとしてメモリ不足や
+    /// ImageExport の上限で止まる。1枚ごとに、どのファイルの何枚目(ページ)で寸法がいくつか、TIFF16(上限なし)
+    /// なら書き出せることを示して断る。焼き込む各メソッドの先頭でも確かめる。
+    /// </remarks>
+    /// <param name="entry">書き出す1枚。</param>
+    /// <exception cref="NotSupportedException">上限を超える場合。</exception>
+    internal void EnsureWithinPixelLimit(FileFrame entry)
+    {
+        int width = entry.Image.Width;
+        int height = entry.Image.Height;
+        long pixels = (long)width * height;
+        if (pixels <= _maxPixels)
+        {
+            return;
+        }
+
+        string name = Path.GetFileName(entry.SourcePath);
+        string subject = entry.Count <= 1 ? $"{name} は"
+            : entry.IsTiffPage ? $"{name} の{entry.Index + 1}ページ目は"
+            : $"{name} の{entry.Index + 1}枚目は";
+        throw new NotSupportedException(
+            $"{subject} {width}×{height} ({pixels:N0}画素) で{DescribePixels(_maxPixels)}を超えるため、" +
+            "PNG・JPEG・動画へは書き出せません。16bit TIFF なら書き出せます。");
+    }
+
+    /// <summary>上限の画素数の表記(1億の倍数は「1億画素」、それ以外は桁区切り)。</summary>
+    private static string DescribePixels(long pixels) =>
+        pixels > 0 && pixels % 100_000_000 == 0 ? $"{pixels / 100_000_000}億画素" : $"{pixels:N0}画素";
 
     /// <summary>MP4 用に1枚ぶんの RGB24 を作る。</summary>
     /// <remarks>返す配列は使い回すので、次の呼び出しで上書きされる。</remarks>
@@ -51,6 +91,7 @@ internal sealed class BatchFrameRenderer
     /// <returns>width×height×3 の RGB24(長さはフレームぴったり)。</returns>
     internal byte[] RenderRgb24(FileFrame entry, CancellationToken ct)
     {
+        EnsureWithinPixelLimit(entry);
         if (entry.Color is { } trueColor)
         {
             EnsureBuffers((long)trueColor.Width * trueColor.Height);
@@ -130,6 +171,7 @@ internal sealed class BatchFrameRenderer
 
     private BitmapSource Bake(FileFrame entry, bool forceRgb, CancellationToken ct)
     {
+        EnsureWithinPixelLimit(entry);
         if (entry.Color is { } trueColor)
         {
             // デコード済みのカラー画像は現像せず、表示LUTだけを焼き込む

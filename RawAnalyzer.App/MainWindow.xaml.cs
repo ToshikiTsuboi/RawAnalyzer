@@ -2631,7 +2631,8 @@ public partial class MainWindow : Window
         }
 
         BatchChoice choice = dialog.Result;
-        // バッチも1フレーム単位で現像するため、判定はフレーム画素数で行う
+        // バッチも1フレーム単位で現像するため、判定はフレーム画素数で行う。開始前は表示中の画像で判定し、
+        // 寸法の異なるページ・連番のファイルは書き出しの実行中に1枚ごとに判定して中止する(BatchFrameRenderer)
         if (choice.Format != BatchFormat.Tiff16
             && (long)format.Width * format.Height > RawLoader.DefaultInMemoryPixelThreshold)
         {
@@ -2712,6 +2713,15 @@ public partial class MainWindow : Window
                         foreach (FileFrame entry in FileFrameReader.Read(file, format, ct))
                         {
                             RawImage image = entry.Image;
+
+                            // PNG/JPEG・動画は1枚ごとに1億画素を超えないか確かめ、超えたらどのファイルの何枚目かと
+                            // TIFF16 なら書き出せることを示して中止する(焼き込みでも確かめるが、動画では寸法違いの
+                            // 理由より先に示す)。TIFF16 は従来どおり上限なし
+                            if (choice.Format != BatchFormat.Tiff16)
+                            {
+                                renderer.EnsureWithinPixelLimit(entry);
+                            }
+
                             if (video && (image.Width != width || image.Height != height))
                             {
                                 throw new NotSupportedException(

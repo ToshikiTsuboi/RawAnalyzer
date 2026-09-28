@@ -77,6 +77,45 @@ public class BatchFrameRendererTests
         Assert.All(saturatedPage, v => Assert.InRange((int)v, 255 - tolerance, 255));
     }
 
+    [Theory]
+    [InlineData(Output.Png)]
+    [InlineData(Output.AviJpeg)]
+    [InlineData(Output.Mp4Rgb24)]
+    public void PageOverPixelLimit_IsRefusedWithFilePageAndSize(Output output)
+    {
+        // 開始前の1億画素の判定は表示中の画像の寸法だけなので、寸法の異なるページ・連番のファイルに上限を
+        // 超えるものがあると、そのまま1枚を丸ごと8bitへ焼き込もうとしてメモリ不足や ImageExport の上限で
+        // 止まっていた。1枚ごとに判定し、どのファイルの何ページ目で寸法がいくつか、TIFF16 なら書き出せることを
+        // 示して断る。巨大な画像を作らずに試せるよう、上限を 4×4=16画素へ下げる(ちょうど上限の1ページ目は通す)
+        using TempTiff file = TempTiff.Write(new TiffBuilder().Build(
+            TiffBuilder.GrayPage(4, 4, 16, TiffBuilder.SampleBytes(new ushort[16], 16)),
+            TiffBuilder.GrayPage(5, 4, 16, TiffBuilder.SampleBytes(new ushort[20], 16))));
+        var renderer = new BatchFrameRenderer(
+            BayerPattern.None, new DevelopParameters(), DisplayLut.Create(new DisplayParameters()), maxPixels: 16);
+
+        var rendered = new List<int>();
+        NotSupportedException? refused = null;
+        foreach (FileFrame entry in FileFrameReader.Read(file.Path, new RawFormat { Width = 1, Height = 1 }))
+        {
+            try
+            {
+                Render(renderer, entry, output);
+                rendered.Add(entry.Index);
+            }
+            catch (NotSupportedException ex)
+            {
+                refused = ex;
+            }
+        }
+
+        Assert.Equal(new[] { 0 }, rendered);
+        Assert.NotNull(refused);
+        Assert.Contains(Path.GetFileName(file.Path), refused.Message);
+        Assert.Contains("2ページ目", refused.Message);
+        Assert.Contains("5×4", refused.Message);
+        Assert.Contains("TIFF", refused.Message);
+    }
+
     private static byte[] Render(BatchFrameRenderer renderer, FileFrame entry, Output output)
     {
         switch (output)
