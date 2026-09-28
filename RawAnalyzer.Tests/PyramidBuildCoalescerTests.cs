@@ -7,10 +7,17 @@ namespace RawAnalyzer.Tests;
 /// 縮小ピラミッドの生成を同じ画像・フレーム・世代について1本にまとめる PyramidBuildCoalescer の検証
 /// (MainWindow の BuildPyramidAsync / EnsureBayerPyramidAsync が頼る規約)。
 /// </summary>
+/// <remarks>
+/// PyramidBuildCoalescer は UI スレッド専用(排他制御はしない)。MainWindow では生成の完了後の後始末も
+/// UI スレッドへ戻って1つずつ走る。テストも UI スレッド(WpfTestHost)で動かす。xUnit の既定の同期
+/// コンテキストは複数のスレッドで継続を走らせるので、同じ完了を待つ複数の生成の後始末が同時に走り、
+/// 進行中の一覧(List)を壊して間欠的に失敗していた(ArgumentOutOfRangeException・件数の食い違い)。
+/// </remarks>
+[Collection("WPF UI")]
 public class PyramidBuildCoalescerTests
 {
     [Fact]
-    public async Task SameImageFrameAndGeneration_JoinsRunningBuildInsteadOfStartingAnother()
+    public Task SameImageFrameAndGeneration_JoinsRunningBuildInsteadOfStartingAnother() => WpfTestHost.Run(async () =>
     {
         // Bayerカラーの生成中に現像へ切り替える(同じ画像・フレーム・世代のピラミッドを重ねて求める)。
         // 以前は2本目の全走査を始め、後から終わった方が先に取り付けた方を描画中に破棄していた
@@ -41,10 +48,10 @@ public class PyramidBuildCoalescerTests
         await first.WaitAsync(TimeSpan.FromSeconds(10));
         Assert.Equal(1, started);
         Assert.Equal(0, builds.RunningCount);
-    }
+    });
 
     [Fact]
-    public async Task NewGeneration_DoesNotJoinBuildOfCanceledGeneration()
+    public Task NewGeneration_DoesNotJoinBuildOfCanceledGeneration() => WpfTestHost.Run(async () =>
     {
         // フレームを移して戻る・画像を差し替えると世代(読み込みのトークン)が進み、旧世代の生成は
         // 取り消されて完了時に結果を捨てる。同じ画像・フレームでも旧世代の生成に相乗りせず新しく始める
@@ -86,10 +93,10 @@ public class PyramidBuildCoalescerTests
         oldBuild.SetResult();
         await old.WaitAsync(TimeSpan.FromSeconds(10));
         Assert.Equal(0, builds.RunningCount);
-    }
+    });
 
     [Fact]
-    public async Task DifferentImageOrFrame_StartsSeparateBuild()
+    public Task DifferentImageOrFrame_StartsSeparateBuild() => WpfTestHost.Run(async () =>
     {
         // 生成元の画像(元画像とHDR派生ビュー)・フレームが違えば別のピラミッド
         var builds = new PyramidBuildCoalescer();
@@ -111,13 +118,14 @@ public class PyramidBuildCoalescerTests
         Assert.Equal(3, started);
         Assert.Equal(3, builds.RunningCount);
 
+        // 3本が同じ完了を待つ(後始末は UI スレッドで1つずつ走る)
         pending.SetResult();
         await Task.WhenAll(mainFrame0, mainFrame1, derivedFrame0).WaitAsync(TimeSpan.FromSeconds(10));
         Assert.Equal(0, builds.RunningCount);
-    }
+    });
 
     [Fact]
-    public async Task FinishedBuild_IsReleased_AndNextRequestStartsAgain()
+    public Task FinishedBuild_IsReleased_AndNextRequestStartsAgain() => WpfTestHost.Run(async () =>
     {
         // 完了した生成は手放す(生成元の画像を持ち続けない)。その後の要求は、取り付け済みかどうかを
         // 見る呼び出し側が必要と判断したものなので、新しく始める
@@ -145,10 +153,10 @@ public class PyramidBuildCoalescerTests
 
         Assert.Equal(2, started);
         Assert.Equal(0, builds.RunningCount);
-    }
+    });
 
     [Fact]
-    public async Task FailedBuild_IsReleased_AndFailureReachesJoinedWaiter()
+    public Task FailedBuild_IsReleased_AndFailureReachesJoinedWaiter() => WpfTestHost.Run(async () =>
     {
         // 生成が失敗しても進行中の扱いを残さない(以後の要求が失敗した生成を待ち続けない)
         var builds = new PyramidBuildCoalescer();
@@ -163,10 +171,10 @@ public class PyramidBuildCoalescerTests
         await Assert.ThrowsAsync<InvalidOperationException>(() => first.WaitAsync(TimeSpan.FromSeconds(10)));
         await Assert.ThrowsAsync<InvalidOperationException>(() => joined.WaitAsync(TimeSpan.FromSeconds(10)));
         Assert.Equal(0, builds.RunningCount);
-    }
+    });
 
     [Fact]
-    public async Task SynchronouslyThrowingStart_IsReleased()
+    public Task SynchronouslyThrowingStart_IsReleased() => WpfTestHost.Run(async () =>
     {
         var builds = new PyramidBuildCoalescer();
         var image = new object();
@@ -175,5 +183,5 @@ public class PyramidBuildCoalescerTests
 
         await Assert.ThrowsAsync<InvalidOperationException>(() => failed.WaitAsync(TimeSpan.FromSeconds(10)));
         Assert.Equal(0, builds.RunningCount);
-    }
+    });
 }
