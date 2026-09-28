@@ -17,11 +17,44 @@ namespace RawAnalyzer.App.Services;
 /// そのときも段の表示調整を現像の黒点/白点・ゲイン・ガンマ・コントラストへ当て、画面で段ごとに合わせた明るさを保つ。
 /// WB・カラーマトリクスは段によらず共通。
 /// </para>
+/// <para>
+/// 表示LUTを焼き込まないときも各段は別の画像として焼き込み(表示調整は恒等)、デモザイクで隣の段の画素を補間に
+/// 混ぜない(<see cref="ForSave"/>)。
+/// </para>
 /// </remarks>
 /// <param name="Stages">段ごとの表示パラメータ(左の段から。長秒 → 短秒)。</param>
 /// <param name="SegmentWidth">各段の幅(並置画像の画素数)。</param>
 internal sealed record HdrSplitAdjustments(IReadOnlyList<DisplayParameters> Stages, int SegmentWidth)
 {
+    /// <summary>
+    /// HDR分割ビューから保存するときに使う、段ごとの表示調整を控える。
+    /// </summary>
+    /// <remarks>
+    /// 並置画像の各段は別の画像なので、表示LUTを焼き込まないときも段ごとに焼き込む(デモザイクで隣の段の画素を
+    /// 補間に混ぜない)。そのときの表示調整は各段とも恒等にする(焼き込まないと選んだ表示調整を当てない)。
+    /// 段ごとの値は写しを取り、保存と付随テキストに同じ値を使う。
+    /// </remarks>
+    /// <param name="stages">分割ビューの段ごとの表示パラメータ。分割ビューでなければ null。</param>
+    /// <param name="segmentWidth">各段の幅(並置画像の画素数)。</param>
+    /// <param name="applyDisplayLut">表示LUTを焼き込むか。</param>
+    /// <returns>保存に使う段ごとの表示調整。分割ビューでなければ null。</returns>
+    internal static HdrSplitAdjustments? ForSave(
+        IReadOnlyList<DisplayParameters>? stages, int segmentWidth, bool applyDisplayLut)
+    {
+        if (stages is null)
+        {
+            return null;
+        }
+
+        var copy = new DisplayParameters[stages.Count];
+        for (int i = 0; i < copy.Length; i++)
+        {
+            copy[i] = applyDisplayLut ? stages[i] : new DisplayParameters();
+        }
+
+        return new HdrSplitAdjustments(copy, segmentWidth);
+    }
+
     /// <summary>画面(分割ビューの段ごとの表示LUT)と同じ、段ごとの表示LUTを作る。</summary>
     /// <returns>段ごとの表示LUT(左の段から)。</returns>
     internal DisplayLut[] CreateDisplayLuts()

@@ -2128,11 +2128,10 @@ public partial class MainWindow : Window
         var devLuts = DevelopLuts.Create(developParameters);
 
         // HDR分割ビューは表示調整を段ごとに持ち、段ごとのLUTで描く。表示LUTを焼き込むなら画面と同じく
-        // 各段をその段の表示調整で焼き込む(スライダーの値は最後に調整した段のもの)。
-        // 段ごとの値はここで控え、付随テキストにも同じ値を書く
-        HdrSplitAdjustments? split = choice.ApplyDisplayLut && _hdrFrameParams is { } stageParameters
-            ? new HdrSplitAdjustments(stageParameters.ToArray(), _hdrSegmentWidth)
-            : null;
+        // 各段をその段の表示調整で焼き込む(スライダーの値は最後に調整した段のもの)。焼き込まないときも各段は
+        // 別の画像として焼き込む。段ごとの値はここで控え、付随テキストにも同じ値を書く
+        HdrSplitAdjustments? split = HdrSplitAdjustments.ForSave(
+            _hdrFrameParams, _hdrSegmentWidth, choice.ApplyDisplayLut);
 
         ProgressWindow result = ProgressWindow.Run(
             this,
@@ -2198,7 +2197,7 @@ public partial class MainWindow : Window
     /// <param name="imagePath">保存した画像のパス。</param>
     /// <param name="choice">保存ダイアログの選択。</param>
     /// <param name="developParameters">保存に使った現像パラメータ。</param>
-    /// <param name="split">HDR分割ビューから表示LUTを焼き込んだときの段ごとの表示調整(それ以外は null)。</param>
+    /// <param name="split">HDR分割ビューから保存したときの段ごとの表示調整(分割ビューでなければ null)。</param>
     private void WriteProcessingSidecar(
         string imagePath, SaveChoice choice, DevelopParameters developParameters, HdrSplitAdjustments? split)
     {
@@ -2266,18 +2265,19 @@ public partial class MainWindow : Window
             sb.AppendLine();
             sb.AppendLine("[適用処理]");
 
-            // HDR分割ビューから焼き込んだ画像は各段をその段の表示調整で焼き込んでいる。スライダーの値は最後に調整した
-            // 段のもので、1組だけ書くと実体と食い違うので段ごとに書く
-            if (split is not null)
+            // HDR分割ビューから表示LUTを焼き込んだ画像は各段をその段の表示調整で焼き込んでいる。スライダーの値は
+            // 最後に調整した段のもので、1組だけ書くと実体と食い違うので段ごとに書く
+            HdrSplitAdjustments? stageAdjustments = choice.ApplyDisplayLut ? split : null;
+            if (stageAdjustments is not null)
             {
-                sb.Append(HdrViewSidecar.DescribeSplitDisplayLut(split.Stages));
+                sb.Append(HdrViewSidecar.DescribeSplitDisplayLut(stageAdjustments.Stages));
             }
             else
             {
                 sb.Append("  表示LUT: ").AppendLine(choice.ApplyDisplayLut ? "適用" : "なし");
             }
 
-            if (choice.ApplyDisplayLut && split is null)
+            if (choice.ApplyDisplayLut && stageAdjustments is null)
             {
                 sb.Append("    黒点/白点: ").Append(_blackPoint).Append(" / ")
                     .AppendLine(_whitePoint.ToString(CultureInfo.InvariantCulture));

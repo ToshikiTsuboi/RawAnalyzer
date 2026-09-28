@@ -15,8 +15,8 @@ namespace RawAnalyzer.App.Services;
 /// WIC のエンコーダは全画素を1つのバッファで受け取るため、1億画素を超える TIFF は自前のライタ
 /// (<see cref="TiffWriter"/>)で行単位に書く(PNG/JPEG は保存ダイアログが1億画素を超える画像では選ばせない)。
 /// そこでも RGB 画像は RGB48 のまま書き、WIC で書く場合と同じ画素値にする(画像の大きさで色成分を失わない)。
-/// HDR分割ビューから表示LUTを焼き込むときは、画面と同じく各段をその段の表示調整で焼き込む
-/// (<see cref="HdrSplitAdjustments"/>)。
+/// HDR分割ビューからは各段を別の画像として焼き込み、表示LUTを焼き込むときは画面と同じく各段をその段の
+/// 表示調整で焼き込む(<see cref="HdrSplitAdjustments"/>)。
 /// </remarks>
 internal static class ImageFileSaver
 {
@@ -37,9 +37,10 @@ internal static class ImageFileSaver
     /// <param name="ct">キャンセルトークン。</param>
     /// <param name="streamingPixelThreshold">TIFF を自前のライタで書く画素数の境目(テスト用に下げられる)。</param>
     /// <param name="split">
-    /// HDR分割ビューから表示LUTを焼き込むときの段ごとの表示調整。8bit 出力では <paramref name="lut"/>
-    /// (スライダーの値=最後に調整した段)に代えて段ごとの表示LUTを、カラー現像では <paramref name="devLuts"/> の
-    /// 表示調整の値に代えて段の値を使う。分割ビューでない、または表示LUTを焼き込まないときは null。
+    /// HDR分割ビューから保存するときの段ごとの表示調整(<see cref="HdrSplitAdjustments.ForSave"/>。表示LUTを
+    /// 焼き込まないときは各段とも恒等)。8bit 出力では <paramref name="lut"/>(スライダーの値=最後に調整した段)に
+    /// 代えて段ごとの表示LUTを、カラー現像では <paramref name="devLuts"/> の表示調整の値に代えて段の値を使い、
+    /// 段ごとに現像する。分割ビューでなければ null。
     /// </param>
     internal static void Save(
         RawImage image, int frame, string path, SaveFormat format, ViewportDisplayMode mode,

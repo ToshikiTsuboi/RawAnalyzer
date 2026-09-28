@@ -94,7 +94,8 @@ public class ImageFileSaverTests
             ImageFileSaver.Save(
                 composite, 0, path, SaveFormat.Png8, ViewportDisplayMode.Raw, BayerPattern.None,
                 sliderLut, DevelopLuts.Create(new DevelopParameters()), null, new Progress<double>(),
-                CancellationToken.None, split: new HdrSplitAdjustments(stages, stageWidth));
+                CancellationToken.None,
+                split: HdrSplitAdjustments.ForSave(stages, stageWidth, applyDisplayLut: true));
             byte[] saved = DecodePixels(path, PixelFormats.Gray8);
 
             // 分割ビューの画面: 段ごとの表示LUT(MainWindow の ApplySplitLuts と同じ作り方)で等倍に描く
@@ -120,14 +121,16 @@ public class ImageFileSaverTests
     }
 
     [Theory]
-    [InlineData(4)]
-    [InlineData(3)]
-    public void Png8_HdrSplitView_Demosaic_DevelopsEachStageAloneWithItsAdjustment(int stageWidth)
+    [InlineData(4, true)]
+    [InlineData(3, true)]
+    [InlineData(4, false)]
+    public void Png8_HdrSplitView_Demosaic_DevelopsEachStageAlone(int stageWidth, bool applyDisplayLut)
     {
         // 分割ビューの画面はRaw表示だけ(カラー現像などを選ぶと分割ビューを抜ける)だが、保存ではデモザイクも選べ、
         // BayerのHDRでは既定で選ばれる。そのときも各段の現像に段の表示調整を当て(WB・マトリクスは共通)、
-        // 隣の段の画素を補間に混ぜない。混ぜると短秒に掛けた大きなゲインが継ぎ目の列に入った長秒の値を増幅し、
-        // 段の境目に筋が出る。各段を単独で現像して左から並べた結果と一致することを確かめる
+        // 隣の段の画素を補間に混ぜない。混ぜると継ぎ目の列に露光比ぶん明るさの違う隣の段の値が入り、短秒側に明るい
+        // 筋が出る(短秒に掛けた大きなゲインでさらに増幅される)。表示LUTを焼き込まないときも段ごとに現像し、表示調整は
+        // 当てない。各段を単独で現像して左から並べた結果と一致することを確かめる
         // (段の幅が奇数だと並置画像の座標では後ろの段のBayer位相がずれるが、各段は同じ位相で撮られた別の画像)
         const int height = 4;
         var stageFormat = new RawFormat
@@ -162,23 +165,26 @@ public class ImageFileSaverTests
             Matrix: new ColorMatrix(1.2, -0.1, -0.1, -0.1, 1.2, -0.1, -0.1, -0.1, 1.2),
             SourceBitDepth: 12);
 
-        // 保存に渡す現像LUTは、スライダーの値(最後に調整した段)から作ったもの(MainWindow の ExecuteSave と同じ)
-        DevelopLuts sliderLuts = DevelopLuts.Create(WithDisplay(common, stages[^1]));
+        // 保存に渡すLUTと段ごとの表示調整は MainWindow の ExecuteSave と同じく作る(スライダーの値は最後に調整した
+        // 段のもの。表示LUTを焼き込まないなら表示調整は恒等)
+        DisplayParameters slider = applyDisplayLut ? stages[^1] : new DisplayParameters();
         string path = TempPath(".png");
         try
         {
             ImageFileSaver.Save(
                 composite, 0, path, SaveFormat.Png8, ViewportDisplayMode.ColorDevelop, BayerPattern.Rggb,
-                DisplayLut.Create(stages[^1]), sliderLuts, null, new Progress<double>(), CancellationToken.None,
-                split: new HdrSplitAdjustments(stages, stageWidth));
+                DisplayLut.Create(slider), DevelopLuts.Create(WithDisplay(common, slider)), null,
+                new Progress<double>(), CancellationToken.None,
+                split: HdrSplitAdjustments.ForSave(stages, stageWidth, applyDisplayLut));
             byte[] saved = DecodePixels(path, PixelFormats.Rgb24);
 
             var expected = new byte[width * height * 3];
             for (int stage = 0; stage < stages.Length; stage++)
             {
                 using RawImage alone = TestImages.FromCodes(stage == 0 ? longCodes : shortCodes, stageFormat);
+                DisplayParameters display = applyDisplayLut ? stages[stage] : new DisplayParameters();
                 byte[] developed = ImageExport.DevelopRgb24(
-                    alone, 0, BayerPattern.Rggb, DevelopLuts.Create(WithDisplay(common, stages[stage])));
+                    alone, 0, BayerPattern.Rggb, DevelopLuts.Create(WithDisplay(common, display)));
                 for (int y = 0; y < height; y++)
                 {
                     Array.Copy(developed, y * stageWidth * 3, expected,
