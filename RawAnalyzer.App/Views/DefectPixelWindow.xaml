@@ -40,8 +40,11 @@
                         ToolTip="同色近傍から補間して欠陥画素を置き換えます(元ファイルは変更されません)" />
             </StackPanel>
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                <Button Content="コピー (Excel用)" Click="OnCopyClick" Margin="0,0,8,0" />
-                <Button Content="CSVで保存…" Click="OnSaveCsvClick" Margin="0,0,8,0" />
+                <!-- 表示中の検出結果の一覧を書き出す。未実行・破棄した後は書き出すものがないので押せない -->
+                <Button x:Name="CopyButton" Content="コピー (Excel用)" Click="OnCopyClick" Margin="0,0,8,0"
+                        IsEnabled="False" />
+                <Button x:Name="SaveCsvButton" Content="CSVで保存…" Click="OnSaveCsvClick" Margin="0,0,8,0"
+                        IsEnabled="False" />
                 <Button Content="閉じる" IsCancel="True" Click="OnCloseClick" />
             </StackPanel>
         </DockPanel>

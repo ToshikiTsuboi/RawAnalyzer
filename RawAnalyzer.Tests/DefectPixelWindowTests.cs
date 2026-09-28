@@ -181,7 +181,84 @@ public class DefectPixelWindowTests
         window.Close();
     });
 
+    [Fact]
+    public Task ExportButtons_AreEnabledOnlyWhileADetectionResultIsShown() => WpfTestHost.Run(() =>
+    {
+        // 「コピー」「CSVで保存…」は表示中の一覧を書き出す。以前は一覧がなくても(未実行・破棄した後)
+        // 押せて、押しても何も起きなかった
+        var window = new DefectPixelWindow();
+        var copy = (Button)window.FindName("CopyButton");
+        var save = (Button)window.FindName("SaveCsvButton");
+
+        // 未実行
+        Assert.False(copy.IsEnabled);
+        Assert.False(save.IsEnabled);
+        Assert.Null(window.BuildTable(','));
+
+        window.ShowResult(DetectTwoDefects(), 4095);
+        Assert.True(copy.IsEnabled);
+        Assert.True(save.IsEnabled);
+
+        // 画像の差し替えで破棄した後
+        window.DiscardResult();
+        Assert.False(copy.IsEnabled);
+        Assert.False(save.IsEnabled);
+        Assert.Null(window.BuildTable(','));
+
+        // 検出し直せば再び使え、補正の後に一覧を破棄したときも使えなくなる
+        window.ShowResult(DetectTwoDefects(), 4095);
+        Assert.True(copy.IsEnabled);
+        window.DiscardResult(DefectPixelWindow.CorrectionAppliedNotice(2, "メディアン"));
+        Assert.False(copy.IsEnabled);
+        Assert.False(save.IsEnabled);
+
+        // 検出・補正の失敗やキャンセルで操作可能へ戻しても、破棄した一覧は書き出させない
+        window.ResetRunButton();
+        Assert.False(copy.IsEnabled);
+        Assert.False(save.IsEnabled);
+
+        // HDR表示中の検出結果(補正はできない)も一覧は書き出せる
+        window.ShowResult(DetectTwoDefects(), 4095, correctionUnavailableReason: HdrReason);
+        Assert.True(copy.IsEnabled);
+        Assert.True(save.IsEnabled);
+        window.Close();
+    });
+
+    [Fact]
+    public Task ExportButtons_ZeroDefects_ExportHeaderOnlyTable() => WpfTestHost.Run(() =>
+    {
+        // 0 件も検出結果。見出しだけの表をコピー・保存でき、「検出して 0 件」を未実行(ファイルなし)と
+        // 区別して、欠陥がある場合と同じ形式で残せる。補正するものはないので補正は押せない
+        var window = new DefectPixelWindow();
+        var list = (ListView)window.FindName("DefectList");
+
+        window.ShowResult(DetectNoDefects(), 4095);
+
+        Assert.Empty(list.Items);
+        Assert.True(((Button)window.FindName("CopyButton")).IsEnabled);
+        Assert.True(((Button)window.FindName("SaveCsvButton")).IsEnabled);
+        Assert.False(((Button)window.FindName("CorrectButton")).IsEnabled);
+        Assert.Equal("x,y,raw_code,type", window.BuildTable(',')!.TrimEnd());
+        window.Close();
+    });
+
     private const string HdrReason = "HDR表示中は欠陥補正できません。Raw表示に戻してから検出し直して補正してください。";
+
+    /// <summary>欠陥を埋め込んでいない12bitの平坦な画像から検出した結果(0 件)。</summary>
+    private static DefectDetectionResult DetectNoDefects()
+    {
+        const int size = 32;
+        var codes = new ushort[size * size];
+        for (int i = 0; i < codes.Length; i++)
+        {
+            codes[i] = (ushort)(1000 + (i % 2)); // σ>0にするためのディザ
+        }
+
+        using RawImage image = TestImages.FromCodes(codes, size, size, bitDepth: 12);
+        DefectDetectionResult result = DefectPixelDetector.Detect(image);
+        Assert.Empty(result.Defects);
+        return result;
+    }
 
     /// <summary>白点1・黒点1を埋め込んだ12bitの平坦な画像から検出した結果。</summary>
     private static DefectDetectionResult DetectTwoDefects()

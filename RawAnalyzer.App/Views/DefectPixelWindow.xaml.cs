@@ -59,7 +59,7 @@ public partial class DefectPixelWindow : Window
     public void ShowResult(
         DefectDetectionResult result, int maxCode, string? correctionUnavailableReason = null)
     {
-        _result = result;
+        SetResult(result);
         _resultShown = true;
         _correctable = correctionUnavailableReason is null;
         var sb = new StringBuilder();
@@ -167,14 +167,31 @@ public partial class DefectPixelWindow : Window
         $"欠陥画素 {count} 個を{methodLabel}補間で補正しました(補正前の一覧は破棄しました)。\n" +
         "補正後の画像を確かめるには「検出実行」で検出し直してください。";
 
-    /// <summary>一覧を消し、補正を押せない「未実行」の状態にして案内を出す。</summary>
+    /// <summary>一覧を消し、補正・コピー・CSV保存を押せない「未実行」の状態にして案内を出す。</summary>
     /// <param name="notice">一覧の上に出す案内。</param>
     private void ClearResult(string notice)
     {
-        _result = null;
+        SetResult(null);
         DefectList.ItemsSource = null;
         CorrectButton.IsEnabled = false;
         SummaryText.Text = notice;
+    }
+
+    /// <summary>
+    /// 表示する検出結果を差し替え、それを書き出す「コピー」「CSVで保存…」を押せるかを合わせる。
+    /// </summary>
+    /// <remarks>
+    /// 結果の表示(<see cref="ShowResult"/>)と破棄(<see cref="ClearResult"/>)はここを通すので、ボタンと
+    /// 書き出す表(<see cref="BuildTable"/>)の有無がずれない。以前は一覧がなくても(未実行・破棄した後)
+    /// 押せて、押しても何も起きなかった。0 件も検出結果として書き出せる(見出しだけの表で、「検出して 0 件」
+    /// を未実行と区別して欠陥がある場合と同じ形式で残せる)。
+    /// </remarks>
+    /// <param name="result">表示する検出結果。破棄したときはnull。</param>
+    private void SetResult(DefectDetectionResult? result)
+    {
+        _result = result;
+        CopyButton.IsEnabled = result is not null;
+        SaveCsvButton.IsEnabled = result is not null;
     }
 
     /// <summary>実行失敗・キャンセル時にボタンを操作可能な状態へ戻す。</summary>
