@@ -9,7 +9,11 @@ namespace RawAnalyzer.Core;
 /// </summary>
 public sealed class FormatPresetStore
 {
-    private static readonly JsonSerializerOptions SerializerOptions = new()
+    /// <summary>
+    /// プリセットの JSON 書式(列挙型は文字列、HDR 方式の旧名は読み込み時に写す。いずれも型側の変換器)。
+    /// サイズ別フォーマット記憶(<see cref="FormatHistoryStore"/>)も同じ書式で保存する。
+    /// </summary>
+    internal static readonly JsonSerializerOptions SerializerOptions = new()
     {
         WriteIndented = true,
     };
