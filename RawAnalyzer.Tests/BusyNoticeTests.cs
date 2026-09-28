@@ -22,6 +22,26 @@ public class BusyNoticeTests
     }
 
     [Fact]
+    public void ForBusy_WaitingForImageReplacementOutsideBusyScope_IsOperation()
+    {
+        // Raw表示へ戻る処理は busy スコープの外で、派生画像を読む描画の停止を待ってから派生画像を破棄する。
+        // 以前は busy スコープの内側だけを断っていたので、その間に欠陥検出などを始めると、直後に破棄される
+        // 派生画像を読んで失敗し得た。理由は「他の処理の実行中」とする
+        Assert.Equal(BusyReason.Operation, BusyNotice.ForBusy(
+            inBusyScope: false, loadPending: false, operationRunning: false, replacementPending: true));
+
+        // busy スコープの内側は従来どおりの分類。どちらでもなければ断らない
+        Assert.Equal(BusyReason.Loading, BusyNotice.ForBusy(
+            inBusyScope: true, loadPending: true, operationRunning: true, replacementPending: false));
+        Assert.Equal(BusyReason.Operation, BusyNotice.ForBusy(
+            inBusyScope: true, loadPending: false, operationRunning: true, replacementPending: true));
+        Assert.Equal(BusyReason.Finishing, BusyNotice.ForBusy(
+            inBusyScope: true, loadPending: false, operationRunning: false, replacementPending: false));
+        Assert.Null(BusyNotice.ForBusy(
+            inBusyScope: false, loadPending: false, operationRunning: false, replacementPending: false));
+    }
+
+    [Fact]
     public void ForOperation_WhileLoading_MatchesExistingOpeningMessage()
     {
         // 読み込みの確定待ちで保存などを断るときの既存の文言と同じにする

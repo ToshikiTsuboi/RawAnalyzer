@@ -4071,31 +4071,32 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// 実行中(読み込み・操作・縮小表示の作成)なら、画像を処理する操作を始めずに理由を知らせる。
+    /// 実行中(読み込み・操作・縮小表示の作成、表示画像の差し替え待ち)なら、画像を処理する操作を始めずに理由を知らせる。
     /// </summary>
     /// <remarks>
     /// <see cref="RejectWhileImageReplacing"/> は表示画像の差し替えを待っている間だけを断る(保存などは縮小表示の
     /// 作成中や、差し替えを終えた他の操作の内側でも始められる)。実行中の処理すべてを断る操作(結果で表示中の画像を
     /// 差し替えるビニング・フィルタ・画像演算・欠陥補正、実行中の処理の完了で結果が表示中の画像の
     /// ものでなくなる欠陥検出、結果で派生ビューを表示するHDR分割・合成)は、何が実行中かを
-    /// 同じ形のダイアログで知らせる(黙って無視しない)。
+    /// 同じ形のダイアログで知らせる(黙って無視しない)。busy スコープの外の差し替え待ち(Raw表示へ戻るときの
+    /// 描画の停止待ち)も断る(BusyNotice.ForBusy)。その間に始めると、直後に破棄される派生画像を処理してしまう。
     /// </remarks>
     /// <param name="operation">操作名(「ビニング」など)。</param>
     /// <returns>拒否した場合はtrue。</returns>
     private bool RejectWhileBusy(string operation)
     {
-        if (_busyDepth == 0)
+        if (CurrentBusyReason() is not { } reason)
         {
             return false;
         }
 
-        MessageBox.Show(this, BusyNotice.ForOperation(CurrentBusyReason(), operation),
+        MessageBox.Show(this, BusyNotice.ForOperation(reason, operation),
             "RawAnalyzer", MessageBoxButton.OK, MessageBoxImage.Information);
         return true;
     }
 
     /// <summary>
-    /// 実行中(読み込み・操作・縮小表示の作成)でフレームを送れないとき、理由をステータスバーに出す。
+    /// 実行中(読み込み・操作・縮小表示の作成、表示画像の差し替え待ち)でフレームを送れないとき、理由をステータスバーに出す。
     /// </summary>
     /// <remarks>
     /// 送り(ボタン・キー・スライダー・再生)は続けて起こり得るので、ダイアログではなく
@@ -4105,18 +4106,21 @@ public partial class MainWindow : Window
     /// <returns>実行中で送れない場合はtrue。</returns>
     private bool NotifySequenceBusy()
     {
-        if (_busyDepth == 0)
+        if (CurrentBusyReason() is not { } reason)
         {
             return false;
         }
 
-        _vm.ImageInfoText = BusyNotice.ForSequence(CurrentBusyReason());
+        _vm.ImageInfoText = BusyNotice.ForSequence(reason);
         return true;
     }
 
-    /// <summary>実行中(<see cref="_busyDepth"/> が正)である理由。</summary>
-    private BusyReason CurrentBusyReason() =>
-        BusyNotice.Classify(_imageGate.IsLoadPending, _imageGate.IsOperationRunning);
+    /// <summary>
+    /// 実行中(<see cref="_busyDepth"/> が正、または表示画像の差し替え待ち)である理由。実行中でなければ null。
+    /// </summary>
+    private BusyReason? CurrentBusyReason() =>
+        BusyNotice.ForBusy(_busyDepth > 0, _imageGate.IsLoadPending, _imageGate.IsOperationRunning,
+            _imageGate.IsReplacementPending);
 
     /// <summary>重い処理の実行中スコープ。Disposeで抜ける。</summary>
     private readonly struct BusyScope : IDisposable

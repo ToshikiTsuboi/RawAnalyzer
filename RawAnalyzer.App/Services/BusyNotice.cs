@@ -46,6 +46,32 @@ internal static class BusyNotice
     }
 
     /// <summary>
+    /// 実行中の処理すべてを断る操作(ビニング・フィルタ・画像演算・欠陥検出/補正・HDR分割/合成)と
+    /// フレームの送りについて、いま受け付けない理由を見分ける。
+    /// </summary>
+    /// <remarks>
+    /// MainWindow の busy スコープの内側に加えて、busy スコープの外で表示画像の差し替えを待っている間
+    /// (Raw表示へ戻るときに、派生画像を読む描画の停止を待ってから派生画像を破棄するまで)も断る。
+    /// その間に始めた欠陥検出などは、直後に破棄される派生画像を読んで失敗する。
+    /// 差し替え待ちは他の処理として数える(busy スコープの外なら「他の処理の実行中」)。
+    /// </remarks>
+    /// <param name="inBusyScope">busy スコープの内側か(読み込み・操作・縮小表示の作成の途中)。</param>
+    /// <param name="loadPending">通常の読み込みが確定待ちか。</param>
+    /// <param name="operationRunning">表示画像を使う操作の実行中か。</param>
+    /// <param name="replacementPending">完了時に表示画像を差し替える処理の途中か。</param>
+    /// <returns>受け付けない理由。受け付けてよければ null。</returns>
+    internal static BusyReason? ForBusy(
+        bool inBusyScope, bool loadPending, bool operationRunning, bool replacementPending)
+    {
+        if (!inBusyScope && !replacementPending)
+        {
+            return null;
+        }
+
+        return Classify(loadPending, operationRunning || replacementPending);
+    }
+
+    /// <summary>
     /// 表示中の画像を対象にし続ける操作(保存・バッチ書き出し・ノイズ測定)を、いま始めてはいけない理由を見分ける。
     /// </summary>
     /// <remarks>
