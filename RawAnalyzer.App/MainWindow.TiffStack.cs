@@ -150,10 +150,10 @@ public partial class MainWindow
 
         // 表示モードはファイル連番の送りと同じ規約でそろえる。カラーのページは RGB のまま表示し
         // (選択は Raw 表示・操作不可)、グレーのページでは成立する選択を保つ。
-        // 以前はカラーのページを Raw 表示にしており、2ページ目以降や送りで戻った先頭ページがグレーになった
+        // 以前はカラーのページを Raw 表示にしており、2ページ目以降や送りで戻った先頭ページがグレーになった。
+        // カラー現像のまま送ったら、現像LUTもページのビット深度で作り直す(ApplyDisplayModeToNewImage)
         ApplyDisplayModeToNewImage(decoded.Color is not null, format.Bayer);
         Viewport.SetLut(BuildLut());
-        UpdateDevelopLuts();
         Title = $"RawAnalyzer — {Path.GetFileName(_currentPath)}{TiffPageNote}";
         _vm.ImageInfoText = $"{image.Width}×{image.Height} · {format.BitDepth}bit"
             + (decoded.Color is null ? "" : " · RGB") + TiffPageNote + ValueNoteSuffix;

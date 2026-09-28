@@ -116,8 +116,9 @@ public partial class MainWindow : Window
     private ushort _whitePoint = 65535;
     private bool _updatingSliders;
 
-    // 現像LUTがパラメータ変更で古くなっているか(カラー現像表示に入るまで再生成を遅延)
-    private bool _developLutsDirty = true;
+    // ビューポートへ渡した現像LUTと、それを作ったパラメータ(表示中の画像のビット深度を含む)。
+    // カラー現像で描く前に現在のパラメータと照合し、違えば作り直す(カラー現像表示に入るまで再生成を遅延)
+    private readonly DevelopLutCache _developLutCache = new();
     private DispatcherTimer? _developLutTimer;
 
     // シーケンス再生
@@ -780,7 +781,6 @@ public partial class MainWindow : Window
         Viewport.SetImage(image, image.Format);
         Viewport.SetColorImage(color);
         Viewport.SetLut(BuildLut());
-        UpdateDevelopLuts();
         DetectSequence();
 
         RefreshHistogram(roi: null);
@@ -1506,13 +1506,12 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// 現像LUTの再生成を予約する。カラー現像表示中でなければダーティ印だけ付け、
-    /// 実際の生成(65536×3回のMath.Powを含む)はモード切替まで遅らせる。
+    /// 現像LUTの再生成を予約する。カラー現像表示中でなければ何もせず、実際の生成
+    /// (65536×3回のMath.Powを含む)はカラー現像表示に入るとき(<see cref="EnsureDevelopLuts"/> の照合)まで遅らせる。
     /// 表示中でもスライダー連続操作で毎ティック作り直さないよう間引く。
     /// </summary>
     private void UpdateDevelopLuts()
     {
-        _developLutsDirty = true;
         if (Viewport.DisplayMode != ViewportDisplayMode.ColorDevelop)
         {
             return;
@@ -1534,17 +1533,21 @@ public partial class MainWindow : Window
         return timer;
     }
 
-    /// <summary>遅延していた現像LUT生成を確定させる(モード切替・保存直前)。</summary>
+    /// <summary>
+    /// 現像LUTを現在のパラメータ(表示中の画像のビット深度を含む)と照合し、違えば作り直してビューポートへ渡す
+    /// (カラー現像表示に入るとき・カラー現像のまま画像を差し替えたとき・間引きの後)。
+    /// </summary>
+    /// <remarks>
+    /// 作り直しの印に頼ると、印を立て忘れた経路(HDR派生ビューへの出入りでビット深度が変わる)で旧ビット深度の
+    /// LUTのまま描き、白飛びの判定を誤る(DevelopLutCache)。
+    /// </remarks>
     private void EnsureDevelopLuts()
     {
         _developLutTimer?.Stop();
-        if (!_developLutsDirty)
+        if (_developLutCache.Refresh(CurrentDevelopParameters()) is { } luts)
         {
-            return;
+            Viewport.SetDevelopLuts(luts);
         }
-
-        _developLutsDirty = false;
-        Viewport.SetDevelopLuts(DevelopLuts.Create(CurrentDevelopParameters()));
     }
 
     // ---- カラーマトリクス ----
@@ -2449,7 +2452,6 @@ public partial class MainWindow : Window
         DisplayModeSelection.Choice display =
             ApplyDisplayModeToNewImage(color is not null, processed.Format.Bayer);
         Viewport.SetLut(BuildLut());
-        UpdateDevelopLuts();
 
         // 加工結果はディスク上のファイルと一致しないためシーケンス再生は無効化
         StopPlayback();
@@ -2851,6 +2853,13 @@ public partial class MainWindow : Window
         if (DisplayModeCombo.SelectedIndex != display.ComboIndex)
         {
             DisplayModeCombo.SelectedIndex = display.ComboIndex;
+        }
+
+        // 現像LUTは白飛びの判定に表示中の画像のビット深度を使う。カラー現像で表示するなら、このUIターンで
+        // 照合して作り直す(間引きのタイマーを待つと、その間はビット深度の違う旧画像のLUTで新しい画像を描く)
+        if (display.ViewportMode == ViewportDisplayMode.ColorDevelop)
+        {
+            EnsureDevelopLuts();
         }
 
         if (Viewport.DisplayMode != display.ViewportMode)
@@ -3872,8 +3881,8 @@ public partial class MainWindow : Window
                     _histogram = null;
                     _channelHistograms = null;
 
-                    // 現像LUTは白飛びの判定に素材のビット深度を使う。カラー現像のまま送るので作り直す
-                    UpdateDevelopLuts();
+                    // 現像LUT(白飛びの判定に素材のビット深度を使う)は、カラー現像のまま送った場合に
+                    // 上の ApplyDisplayModeToNewImage が新しいビット深度で作り直している
                 }
 
                 // ノイズ測定ウィンドウの対象名・飽和コード・ROI の有無を新しい画像へ合わせる
