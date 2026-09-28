@@ -3696,7 +3696,10 @@ public partial class MainWindow : Window
     {
         _updatingSequenceUi = true;
         int count = SequenceCount;
-        _vm.HasSequence = count > 1;
+
+        // HDR分割・合成の派生ビューの表示中は送りのUIを有効にしない。送りの件数は派生ビューの間も残るので、
+        // 派生ビューより前に始まった送りの後始末(ShowSequenceIndexAsync の finally)から呼ばれても有効に戻さない
+        _vm.HasSequence = SequenceNavigation.IsAvailable(count, derivedViewShown: _derivedImage is not null);
         _vm.SequenceMax = Math.Max(0, count - 1);
         _vm.SequenceIndex = _sequenceIndex;
         _vm.SequenceLabel = count > 1 ? $"{_sequenceIndex + 1} / {count}"
@@ -3714,13 +3717,17 @@ public partial class MainWindow : Window
 
         int count = SequenceCount;
 
+        // HDR分割・合成の派生ビューの表示中は送らない(送りのUIも無効)。ファイル連番では派生ビューを残したまま
+        // 元画像だけがビューポートへ入り、フレーム送りでは派生ビューのBayerピラミッドがビューポートから外れる
+        bool available = SequenceNavigation.IsAvailable(count, derivedViewShown: _derivedImage is not null);
+
         // 重い処理の実行中は画像を差し替えない(処理対象が背後で破棄されるため)。
         // スライダーが先に動いてしまっているので、表示中のフレームへ戻す
-        if (count <= 1 || _sequenceBusy || _busyDepth > 0)
+        if (!available || _sequenceBusy || _busyDepth > 0)
         {
             // 実行中で送れないときは黙って戻さず、理由をステータスバーに出す
             // (前の送りの完了待ちは連続操作で普通に起こるので知らせない)
-            if (count > 1)
+            if (available)
             {
                 NotifySequenceBusy();
             }
@@ -3824,9 +3831,11 @@ public partial class MainWindow : Window
 
                 // await中にモーダル(保存・測定・演算)が開いていたら差し替えない。
                 // モーダルのディスパッチャポンプ内でここが再開すると、処理対象の
-                // 画像を背後で破棄してしまう
+                // 画像を背後で破棄してしまう。HDR分割・合成の派生ビューの表示中も差し替えない
+                // (派生ビューを残したまま元画像だけが入れ替わる。派生ビューはHDR表示の開始で
+                // ActivityStamp が進むので通常はその判定で譲るが、確定の前提として確かめる)
                 if (_busyDepth > 0 || activity != _imageGate.ActivityStamp
-                    || !ReferenceEquals(expectedFormat, _currentFormat))
+                    || !ReferenceEquals(expectedFormat, _currentFormat) || _derivedImage is not null)
                 {
                     image.Dispose();
                     return;
