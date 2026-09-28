@@ -2663,9 +2663,6 @@ public partial class MainWindow : Window
     private void ExecuteBatch(
         IReadOnlyList<string> targets, RawFormat format, BatchChoice choice)
     {
-        BayerPattern pattern = format.Bayer;
-        bool color = pattern != BayerPattern.None;
-
         // 「表示調整を焼き込む」オフなら黒/白点・ゲイン・ガンマ・コントラストを
         // ニュートラルにする。WB・マトリクス・デモザイクの現像段は残す
         // (どう写っているかの色は保ちつつ、見え方の調整だけ外す)
@@ -2685,7 +2682,8 @@ public partial class MainWindow : Window
             };
         }
 
-        var devLuts = DevelopLuts.Create(developParameters);
+        // 現像LUTはページ・ファイルごとのビット深度で作る(白飛びの判定がビット深度で決まる)
+        var renderer = new BatchFrameRenderer(format.Bayer, developParameters, lut);
         int width = format.Width;
         int height = format.Height;
         bool video = choice.Format is BatchFormat.AviMjpeg or BatchFormat.Mp4H264;
@@ -2707,7 +2705,6 @@ public partial class MainWindow : Window
                 int jpegQuality = VideoQualitySettings.JpegQuality(choice.Quality);
                 AviMjpegWriter? avi = null;
                 Mp4H264Writer? mp4 = null;
-                var frameBuffers = new FrameBuffers();
                 try
                 {
                     if (choice.Format == BatchFormat.AviMjpeg)
@@ -2732,8 +2729,6 @@ public partial class MainWindow : Window
                         foreach (FileFrame entry in FileFrameReader.Read(file, format, ct))
                         {
                             RawImage image = entry.Image;
-                            ColorImage? trueColor = entry.Color;
-                            int frame = entry.Frame;
                             if (video && (image.Width != width || image.Height != height))
                             {
                                 throw new NotSupportedException(
@@ -2747,15 +2742,11 @@ public partial class MainWindow : Window
                                 ct.ThrowIfCancellationRequested();
                                 if (avi is not null)
                                 {
-                                    avi.AddFrame(EncodeJpegFrame(
-                                        image, frame, color, pattern, devLuts, lut,
-                                        trueColor, jpegQuality, ct));
+                                    avi.AddFrame(renderer.EncodeJpeg(entry, jpegQuality, ct));
                                 }
                                 else
                                 {
-                                    mp4!.AddFrameRgb24(RenderRgb24Frame(
-                                        image, frame, color, pattern, devLuts, lut,
-                                        trueColor, ct, frameBuffers));
+                                    mp4!.AddFrameRgb24(renderer.RenderRgb24(entry, ct));
                                 }
                             }
                             else
@@ -2767,18 +2758,18 @@ public partial class MainWindow : Window
                                 if (choice.Format == BatchFormat.Tiff16)
                                 {
                                     TiffWriter.SaveGray16(
-                                        image, frame,
+                                        image, entry.Frame,
                                         Path.Combine(choice.OutputFolder, stem + ".tif"),
                                         null, ct);
                                 }
                                 else
                                 {
                                     bool jpeg = choice.Format == BatchFormat.Jpeg8;
-                                    SaveBakedImage(
-                                        image, frame, color, pattern, devLuts, lut,
+                                    renderer.Save(
+                                        entry,
                                         Path.Combine(choice.OutputFolder,
                                             stem + (jpeg ? ".jpg" : ".png")),
-                                        jpeg, trueColor, ct);
+                                        jpeg, ct);
                                 }
                             }
 
@@ -2822,155 +2813,6 @@ public partial class MainWindow : Window
                 ? $"動画書き出し完了: {Path.GetFileName(videoPath)}"
                 : $"バッチ書き出し完了: {targets.Count}件 → {choice.OutputFolder}";
         }
-    }
-
-    /// <summary>
-    /// 1フレームぶんのRGB24バッファを生成する(MP4エンコード用)。
-    /// カラー画像はLUTのみ、Bayerは現像、モノクロはLUT適用後にRGBへ展開する。
-    /// </summary>
-    /// <summary>
-    /// モノクロ経路で使い回すバッファ。フレームごとに確保するとLOHを圧迫する。
-    /// </summary>
-    private sealed class FrameBuffers
-    {
-        internal byte[]? Gray;
-        internal byte[]? Rgb;
-
-        /// <summary>
-        /// 必要な大きさのバッファを用意する(同じ大きさなら使い回す)。
-        /// </summary>
-        /// <remarks>
-        /// 動画ライタは「長さがフレームぴったり」であることを要求するので、
-        /// 余りのある使い回しはせず、長さが違えば作り直す。
-        /// </remarks>
-        /// <param name="pixels">1フレームの画素数。</param>
-        internal void Ensure(long pixels)
-        {
-            if (Gray is null || Gray.LongLength != pixels)
-            {
-                Gray = new byte[pixels];
-            }
-
-            if (Rgb is null || Rgb.LongLength != pixels * 3)
-            {
-                Rgb = new byte[pixels * 3];
-            }
-        }
-    }
-
-    private static byte[] RenderRgb24Frame(
-        RawImage image, int frame, bool color, BayerPattern pattern,
-        DevelopLuts devLuts, DisplayLut lut, ColorImage? trueColor, CancellationToken ct,
-        FrameBuffers? buffers = null)
-    {
-        buffers ??= new FrameBuffers();
-        if (trueColor is not null)
-        {
-            buffers.Ensure((long)trueColor.Width * trueColor.Height);
-            ImageExport.RenderColorRgb24(trueColor, lut, buffers.Rgb!, ct);
-            return buffers.Rgb!;
-        }
-
-        long pixels = (long)image.Width * image.Height;
-        buffers.Ensure(pixels);
-        if (color)
-        {
-            return ImageExport.DevelopRgb24(
-                image, frame, pattern, devLuts, null, ct, buffers.Rgb);
-        }
-
-        byte[] gray = buffers.Gray!;
-        byte[] rgb = buffers.Rgb!;
-        ImageExport.RenderGray8(image, frame, lut, gray, ct);
-        for (long i = 0; i < pixels; i++)
-        {
-            byte v = gray[i];
-            rgb[i * 3] = v;
-            rgb[(i * 3) + 1] = v;
-            rgb[(i * 3) + 2] = v;
-        }
-
-        return rgb;
-    }
-
-    /// <summary>デコード済みカラー画像に表示LUTを焼き込んでRGB24を作る。</summary>
-    private static BitmapSource BakeColorFrame(
-        ColorImage color, DisplayLut lut, CancellationToken ct)
-    {
-        byte[] rgb = ImageExport.RenderColorRgb24(color, lut, ct);
-        return BitmapSource.Create(
-            color.Width, color.Height, 96, 96, PixelFormats.Rgb24, null, rgb,
-            color.Width * 3);
-    }
-
-    private static BitmapSource BakeFrame(
-        RawImage image, int frame, bool color, BayerPattern pattern,
-        DevelopLuts devLuts, DisplayLut lut, bool forceRgb, CancellationToken ct)
-    {
-        int width = image.Width;
-        int height = image.Height;
-        if (color)
-        {
-            byte[] rgb = ImageExport.DevelopRgb24(image, frame, pattern, devLuts, null, ct);
-            return BitmapSource.Create(
-                width, height, 96, 96, PixelFormats.Rgb24, null, rgb, width * 3);
-        }
-
-        byte[] gray = ImageExport.RenderGray8(image, frame, lut, ct);
-        if (!forceRgb)
-        {
-            return BitmapSource.Create(
-                width, height, 96, 96, PixelFormats.Gray8, null, gray, width);
-        }
-
-        // MJPEGはグレースケールJPEG非対応のプレーヤがあるためRGB化する
-        var rgbGray = new byte[(long)width * height * 3];
-        Parallel.For(0, height, y =>
-        {
-            int rowOffset = y * width;
-            for (int x = 0; x < width; x++)
-            {
-                byte v = gray[rowOffset + x];
-                long o = ((long)rowOffset + x) * 3;
-                rgbGray[o] = v;
-                rgbGray[o + 1] = v;
-                rgbGray[o + 2] = v;
-            }
-        });
-        return BitmapSource.Create(
-            width, height, 96, 96, PixelFormats.Rgb24, null, rgbGray, width * 3);
-    }
-
-    private static byte[] EncodeJpegFrame(
-        RawImage image, int frame, bool color, BayerPattern pattern,
-        DevelopLuts devLuts, DisplayLut lut, ColorImage? trueColor, int jpegQuality,
-        CancellationToken ct)
-    {
-        BitmapSource source = trueColor is not null
-            ? BakeColorFrame(trueColor, lut, ct)
-            : BakeFrame(image, frame, color, pattern, devLuts, lut, forceRgb: true, ct);
-        var encoder = new JpegBitmapEncoder { QualityLevel = jpegQuality };
-        encoder.Frames.Add(BitmapFrame.Create(source));
-        using var stream = new MemoryStream();
-        encoder.Save(stream);
-        return stream.ToArray();
-    }
-
-    private static void SaveBakedImage(
-        RawImage image, int frame, bool color, BayerPattern pattern, DevelopLuts devLuts,
-        DisplayLut lut, string path, bool jpeg, ColorImage? trueColor, CancellationToken ct)
-    {
-        BitmapSource source = trueColor is not null
-            ? BakeColorFrame(trueColor, lut, ct)
-            : BakeFrame(image, frame, color, pattern, devLuts, lut, forceRgb: false, ct);
-        BitmapEncoder encoder = jpeg
-            ? new JpegBitmapEncoder { QualityLevel = 95 }
-            : new PngBitmapEncoder();
-        encoder.Frames.Add(BitmapFrame.Create(source));
-
-        // 途中で失敗しても壊れたファイルを出力フォルダに残さない
-        // (同名の前回出力も、書き切るまでは差し替えない)
-        AtomicFileWriter.Write(path, encoder.Save);
     }
 
     // ---- 表示モード・ホワイトバランス ----
