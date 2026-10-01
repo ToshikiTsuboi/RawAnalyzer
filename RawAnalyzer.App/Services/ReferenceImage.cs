@@ -1,3 +1,4 @@
+using System.Globalization;
 using RawAnalyzer.Core;
 
 namespace RawAnalyzer.App.Services;
@@ -32,5 +33,82 @@ internal static class ReferenceImage
     internal static long ExpectedRawSize(RawFormat readFormat)
     {
         return readFormat.HeaderOffset + readFormat.FrameSizeInBytes;
+    }
+
+    /// <summary>
+    /// 参照画像を読み込む(raw は <paramref name="rawReadFormat"/> の先頭フレーム、画像ファイルは先頭ページの輝度)。
+    /// </summary>
+    /// <remarks>
+    /// 32bit実数・32bit整数・符号あり・24/64bit・半精度の TIFF は、1ファイル(1ページ)ごとに自分の値域から
+    /// 16bitコードへ写す。対象と参照の係数が違うと、同じ16bitのコードが別の値を表すので、差分・減算・比が
+    /// 黙って誤る(ビット深度は同じ16なので寸法・ビット深度の検査では見分けられない)。係数が違えば読み込んだ
+    /// 参照を破棄して理由を示して断る。raw と16bit以下の整数の画像ファイルは等倍(係数なし)として扱う。
+    /// </remarks>
+    /// <param name="path">参照画像のパス。</param>
+    /// <param name="isRaw">raw ファイルとして読むか。</param>
+    /// <param name="rawReadFormat">raw の参照を読むフォーマット(<see cref="RawReadFormat"/>)。</param>
+    /// <param name="targetScaling">対象(A)の値の対応(32bit TIFF などを16bitへ写した係数)。等倍ならnull。</param>
+    /// <param name="cancellationToken">キャンセルトークン。</param>
+    /// <returns>参照画像(呼び出し側が破棄する)。</returns>
+    /// <exception cref="InvalidOperationException">対象と参照の値の対応が違う場合。</exception>
+    internal static RawImage Load(
+        string path, bool isRaw, RawFormat rawReadFormat, SampleScaling? targetScaling,
+        CancellationToken cancellationToken)
+    {
+        RawImage image;
+        SampleScaling? scaling = null;
+        if (isRaw)
+        {
+            image = RawLoader.Load(path, rawReadFormat, cancellationToken);
+        }
+        else
+        {
+            DecodedImage decoded = ImageFileLoader.Load(path, cancellationToken);
+            image = decoded.Luminance;
+            scaling = decoded.Scaling;
+        }
+
+        string? mismatch = ScalingMismatch(targetScaling, scaling);
+        if (mismatch is not null)
+        {
+            image.Dispose();
+            throw new InvalidOperationException(mismatch);
+        }
+
+        return image;
+    }
+
+    /// <summary>
+    /// 対象と参照の値の対応(16bitコードが表す元の値)が違うなら、組み合わせられない理由を返す。
+    /// </summary>
+    /// <param name="target">対象(A)の係数。等倍ならnull。</param>
+    /// <param name="reference">参照(B)の係数。等倍ならnull。</param>
+    /// <returns>違うなら理由。同じならnull。</returns>
+    internal static string? ScalingMismatch(SampleScaling? target, SampleScaling? reference)
+    {
+        // 係数は両端の値(コード0とコード65535が表す値)で決まる。値域の内訳(最小・非数の数)は問わない
+        bool same = target is null
+            ? reference is null
+            : reference is not null && target.Offset == reference.Offset && target.Upper == reference.Upper;
+        if (same)
+        {
+            return null;
+        }
+
+        return $"参照画像の値の対応({Describe(reference)})が対象({Describe(target)})と違うため、" +
+            "同じ16bitのコードが別の値を表し、2枚を組み合わせた結果が正しくなりません。\n" +
+            "32bit実数などのTIFFは1枚(1ページ)ごとの値域で16bitへ写します。値域の上限・下限が同じ2枚" +
+            "(またはraw・16bit以下の整数の画像同士)を指定してください。";
+    }
+
+    private static string Describe(SampleScaling? scaling)
+    {
+        if (scaling is null)
+        {
+            return "等倍のコード";
+        }
+
+        CultureInfo culture = CultureInfo.CurrentCulture;
+        return $"値 {scaling.Offset.ToString("G6", culture)}〜{scaling.Upper.ToString("G6", culture)} → 16bit";
     }
 }

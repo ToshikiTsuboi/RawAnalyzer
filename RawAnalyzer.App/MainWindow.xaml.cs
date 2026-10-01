@@ -111,6 +111,10 @@ public partial class MainWindow : Window
     // 32bit実数などを16bitへ写したときの対応関係。画像情報欄へ添える
     private string? _valueNote;
 
+    // その係数(等倍ならnull)。画像演算・ノイズ測定で参照画像の係数と照合する。処理結果でも引き継ぐ
+    // (フィルタ・欠陥補正・演算はコードの値域で行い対応を変えない。寸法の変わるビニングの結果は参照と組み合わせられない)
+    private SampleScaling? _valueScaling;
+
     /// <summary>画像情報欄へ添える、値の対応関係の説明。</summary>
     private string ValueNoteSuffix => _valueNote is null ? "" : $" · {_valueNote}";
     private ColorImage? _colorImage;
@@ -692,6 +696,7 @@ public partial class MainWindow : Window
         ColorImage? color = null;
         int pageCount = 1;
         string? valueNote = null;
+        SampleScaling? valueScaling = null;
         try
         {
             if (IsRawFile(path))
@@ -707,6 +712,7 @@ public partial class MainWindow : Window
                 color = decoded.Color;
                 pageCount = decoded.PageCount;
                 valueNote = decoded.ValueNote;
+                valueScaling = decoded.Scaling;
             }
         }
         catch (OperationCanceledException)
@@ -804,6 +810,7 @@ public partial class MainWindow : Window
         _sequenceBayerOverride = image.Format.Bayer;
         _tiffPageIndex = 0;
         _valueNote = valueNote;
+        _valueScaling = valueScaling;
         _histogram = null;
         _vm.HasRoi = false;
         ClearCursorReadout();
@@ -2496,6 +2503,7 @@ public partial class MainWindow : Window
         RawImage source = _currentImage!;
         RawFormat format = _currentFormat!;
         RawFormat rawReadFormat = ReferenceImage.RawReadFormat(format, _openedRawFormat);
+        SampleScaling? targetScaling = _valueScaling;
         int frame = Viewport.Frame;
 
         RawImage? corrected = null;
@@ -2507,9 +2515,9 @@ public partial class MainWindow : Window
             {
                 // 読み込み段階からキャンセルを効かせる
                 // (NAS等では参照の読み込みだけで数十秒かかることがある)
-                reference = IsRawFile(choice.ReferencePath)
-                    ? RawLoader.Load(choice.ReferencePath, rawReadFormat, ct)
-                    : ImageFileLoader.Load(choice.ReferencePath, ct).Luminance;
+                // 32bit TIFF などを値域で写した参照は、対象と係数が同じときだけ使う(違えば理由を示して断る)
+                reference = ReferenceImage.Load(
+                    choice.ReferencePath, IsRawFile(choice.ReferencePath), rawReadFormat, targetScaling, ct);
                 // 右パネルで変更したBayerは source.Format に入らないため、結果へ明示的に引き継ぐ
                 corrected = ImageCalculator.Apply(
                     source, reference, choice.Operation, frame, 0, format.Bayer, progress, ct);
@@ -4168,6 +4176,7 @@ public partial class MainWindow : Window
                 // 値の対応関係の説明は送りが確定したときに状態へ入れる(送れなかったときに
                 // 表示中の画像と食い違わせない)
                 string? valueNote = null;
+                SampleScaling? valueScaling = null;
 
                 // 読み込みは取り消せるようにする。読む間に別ファイルを開く・操作を始める・ウィンドウを閉じると
                 // 結果は下で捨てるが、取り消さないと大きなファイルの読み込み(ネットワーク上の raw の一時コピー、
@@ -4184,6 +4193,7 @@ public partial class MainWindow : Window
                     color = decoded.Color;
                     pageCount = decoded.PageCount;
                     valueNote = decoded.ValueNote;
+                    valueScaling = decoded.Scaling;
                 }
                 catch (OperationCanceledException)
                 {
@@ -4267,6 +4277,7 @@ public partial class MainWindow : Window
                 _openedRawFormat = isRaw ? format : null;
                 SetMainFormatNotice("");
                 _valueNote = valueNote;
+                _valueScaling = valueScaling;
                 _tiffStack = pageCount > 1
                     ? new TiffStackSource(path, pageCount, pageNavigationEnabled: false)
                     { BayerOverride = format.Bayer } : null;
@@ -5038,6 +5049,7 @@ public partial class MainWindow : Window
 
         using BusyScope busy = EnterBusy();
         int frame = Viewport.Frame;
+        SampleScaling? targetScaling = _valueScaling;
 
         // 2枚目は常に先頭フレーム・先頭ページを読む。対象Aと同一ファイルの先頭を表示中に
         // 指定すると完全に同一のデータ同士になり、σ_temporal=0という
@@ -5084,9 +5096,11 @@ public partial class MainWindow : Window
                     return;
                 }
 
-                using RawImage reference = IsRawFile(request.ReferencePath)
-                    ? RawLoader.Load(request.ReferencePath, format with { FrameCount = 1 }, ct)
-                    : ImageFileLoader.Load(request.ReferencePath, ct).Luminance;
+                // 32bit TIFF などを値域で写した2枚目は、対象と係数が同じときだけ使う(違えば理由を示して断る。
+                // ビット深度はどちらも16なので MeasurePair の検査では見分けられない)
+                using RawImage reference = ReferenceImage.Load(
+                    request.ReferencePath, IsRawFile(request.ReferencePath), format with { FrameCount = 1 },
+                    targetScaling, ct);
                 measurement = RoiAnalysis.MeasureNoise(
                     image, reference, frame, target, format.Bayer,
                     request.SaturationCode, ct);

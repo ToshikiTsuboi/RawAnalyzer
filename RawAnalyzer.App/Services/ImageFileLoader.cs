@@ -23,6 +23,15 @@ public sealed record DecodedImage(RawImage Luminance, ColorImage? Color)
     /// 32bit実数などを16bitへ写した際の対応関係(表示用)。等倍で読めた場合はnull。
     /// </summary>
     public string? ValueNote { get; init; }
+
+    /// <summary>
+    /// 32bit実数などを16bitへ写した際の係数(<see cref="ValueNote"/> の元)。等倍で読めた場合はnull。
+    /// </summary>
+    /// <remarks>
+    /// 係数は1ファイル(1ページ)ごとの値域から決まるので、2枚を組み合わせる演算・測定では
+    /// 両者の係数が同じか確かめるのに使う(コードが同じ値を表すとは限らない)。
+    /// </remarks>
+    public SampleScaling? Scaling { get; init; }
 }
 
 /// <summary>
@@ -416,6 +425,7 @@ internal static class ImageFileLoader
                 PageCount = info.PageCount,
                 PageIndex = pageIndex,
                 ValueNote = scaling?.Describe(info.BitsPerSample),
+                Scaling = scaling,
             };
         }
         catch
@@ -445,6 +455,7 @@ internal static class ImageFileLoader
                 PageCount = info.PageCount,
                 PageIndex = pageIndex,
                 ValueNote = scaling!.Describe(info.BitsPerSample),
+                Scaling = scaling,
             };
         }
         catch
@@ -705,6 +716,7 @@ internal static class ImageFileLoader
             return new DecodedImage(RawImage.FromPixels(rawFormat, codes), null)
             {
                 ValueNote = note,
+                Scaling = scaling,
             };
         }
 
@@ -713,7 +725,7 @@ internal static class ImageFileLoader
         try
         {
             ct.ThrowIfCancellationRequested();
-            return new DecodedImage(luminance, color) { ValueNote = note };
+            return new DecodedImage(luminance, color) { ValueNote = note, Scaling = scaling };
         }
         catch
         {

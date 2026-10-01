@@ -133,6 +133,7 @@ public partial class MainWindow
         _colorImage = decoded.Color;
         _vm.IsColorImage = decoded.Color is not null;
         _valueNote = decoded.ValueNote;
+        _valueScaling = decoded.Scaling;
         _tiffPageIndex = index;
         _sequenceIndex = index;
         _histogram = null;
