@@ -1,4 +1,5 @@
 ﻿using System.IO;
+using RawAnalyzer.Core;
 
 namespace RawAnalyzer.App.Services;
 
@@ -23,6 +24,29 @@ internal static class OutputPaths
             + Path.GetExtension(finalPath);
         string? directory = Path.GetDirectoryName(finalPath);
         return string.IsNullOrEmpty(directory) ? name : Path.Combine(directory, name);
+    }
+
+    /// <summary>
+    /// 一時ファイル(<see cref="BuildPartialPath"/>)へ書き出す処理を実行し、失敗・取り消し(例外)で終わったら
+    /// 一時ファイルを消してから例外を投げ直す。
+    /// </summary>
+    /// <remarks>
+    /// 書き出しと同じく UI スレッドの外で呼ぶ(出力先はネットワーク上のことがあり、切断していれば実在の確認・削除も
+    /// タイムアウトまで戻らない)。書き切れたら一時ファイルは処理の中で最終パスへ置き換わっているので触らない。
+    /// </remarks>
+    /// <param name="partialPath">一時ファイルのパス。null なら片付けない。</param>
+    /// <param name="write">書き出し(書き切れたら一時ファイルを最終パスへ置き換える)。</param>
+    internal static void RunDeletingPartialOnFailure(string? partialPath, Action write)
+    {
+        try
+        {
+            write();
+        }
+        catch when (partialPath is not null)
+        {
+            AtomicFileWriter.TryDelete(partialPath);
+            throw;
+        }
     }
 
     /// <summary>

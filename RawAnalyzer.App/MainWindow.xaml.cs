@@ -2942,10 +2942,13 @@ public partial class MainWindow : Window
         // 焼き込み結果へ置き換えないよう、元ファイルと同じパスへは書かずに中止する
         var sourceGuard = new BatchSourceGuard(targets);
 
+        // 中断・エラー時は動画の一時ファイルだけを片付ける(最終パスは書き切るまで触っていないので、同名の既存動画は
+        // そのまま残る)。片付けも書き出しと同じく UI スレッドの外で行う。以前は進捗表示を閉じた後に UI スレッドで
+        // File.Exists と削除を行い、出力先(既定は元画像のそばで NAS のことが多い)の切断で失敗したときに固まった
         ProgressWindow result = ProgressWindow.Run(
             this,
             $"バッチ書き出し中 ({targets.Count}件)",
-            (progress, ct) => Task.Run(() =>
+            (progress, ct) => Task.Run(() => OutputPaths.RunDeletingPartialOnFailure(video ? videoTempPath : null, () =>
             {
                 Directory.CreateDirectory(choice.OutputFolder);
                 int jpegQuality = VideoQualitySettings.JpegQuality(choice.Quality);
@@ -3041,14 +3044,7 @@ public partial class MainWindow : Window
                     // 書き切れたときだけ最終パスへ置き換える
                     File.Move(videoTempPath, videoPath, overwrite: true);
                 }
-            }, ct));
-
-        // 中断・エラー時は一時ファイルだけを片付ける。最終パスは書き切るまで
-        // 触っていないので、同名の既存動画はそのまま残る
-        if (video && File.Exists(videoTempPath))
-        {
-            AtomicFileWriter.TryDelete(videoTempPath);
-        }
+            }), ct));
 
         if (result.Error is not null)
         {
