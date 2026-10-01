@@ -25,6 +25,33 @@ public class NumericInputTests
         Assert.False(NumericInput.TryParseFinite("NaN", out _));
     }
 
+    [Theory]
+    [InlineData("１２８", 128)] // IME がオンのまま打った全角数字
+    [InlineData("　１２８　", 128)] // 全角スペース
+    [InlineData("１．５", 1.5)]
+    [InlineData("１。５", 1.5)] // かな入力で "." キーは句点になる
+    [InlineData("－５", -5)] // 全角ハイフンマイナス
+    [InlineData("ー５", -5)] // かな入力で "-" キーは長音符になる
+    [InlineData("−0.25", -0.25)] // U+2212 MINUS SIGN
+    [InlineData("4,095", 4095)] // 3桁区切り
+    [InlineData("１，０００", 1000)]
+    [InlineData("-1,234,567.5", -1234567.5)]
+    public void TryParseFinite_AcceptsFullWidthAndThousandsSeparators(string text, double expected)
+    {
+        Assert.True(NumericInput.TryParseFinite(text, out double value));
+        Assert.Equal(expected, value, 10);
+    }
+
+    [Theory]
+    [InlineData("1,5")] // 小数点のつもりかもしれない。15 と誤読しない
+    [InlineData("12,34")]
+    [InlineData("1,0000")]
+    [InlineData(",100")]
+    public void TryParseFinite_RejectsMisplacedSeparators(string text)
+    {
+        Assert.False(NumericInput.TryParseFinite(text, out _));
+    }
+
     [Fact]
     public void TryParseFinite_AcceptsNegativeMatrixCoefficients()
     {

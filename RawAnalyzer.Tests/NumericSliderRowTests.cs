@@ -100,6 +100,18 @@ public class NumericSliderRowTests
         Assert.Equal(256, row.Value, 10);
     });
 
+    [Fact]
+    public Task ValueBox_AcceptsFullWidthDigits() => WpfTestHost.Run(() =>
+    {
+        // IME がオンのままだと数字は全角で入る。黙って元の値へ戻さずに受け付ける
+        var row = NewRow(decimals: 0, step: 1, maximum: 4095);
+        row.Value = 100;
+        row.ValueBox.Text = "１２８";
+        Assert.True(PressKey(row.ValueBox, Key.Enter));
+        Assert.Equal(128, row.Value, 10);
+        Assert.Equal("128", row.ValueBox.Text);
+    });
+
     private static NumericSliderRow NewRow(int decimals, double step, double maximum) => new()
     {
         Minimum = 0,

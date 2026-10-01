@@ -3,6 +3,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using RawAnalyzer.App.Services;
 
 namespace RawAnalyzer.App.Controls;
 
@@ -358,11 +359,10 @@ public partial class NumericSliderRow : UserControl
 
     private void CommitText()
     {
-        // TryParse は "NaN" / "Infinity" も通す。Math.Clamp(NaN,..) は NaN のままなので
+        // 解釈は NumericInput に揃える(有限値だけを通し、IME の全角数字や3桁区切りも受け付ける)。
+        // TryParse 単独では "NaN" / "Infinity" も通り、Math.Clamp(NaN,..) は NaN のままなので
         // そのまま Value に入るとスライダーとLUTが壊れる
-        if (double.TryParse(
-                ValueBox.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out double parsed)
-            && double.IsFinite(parsed))
+        if (NumericInput.TryParseFinite(ValueBox.Text, out double parsed))
         {
             Value = Quantize(parsed);
         }
