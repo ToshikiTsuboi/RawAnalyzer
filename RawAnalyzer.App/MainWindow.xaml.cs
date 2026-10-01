@@ -1251,7 +1251,9 @@ public partial class MainWindow : Window
 
     private void OnHistogramRefreshClick(object sender, RoutedEventArgs e)
     {
-        RefreshHistogram(Viewport.Roi);
+        // 画像の外(余白)だけをドラッグしたROIは画素数0のまま残る。ROI変更時と同じく「ROIなし」として画像全体で
+        // 集計する(そのまま渡すと「ROIが画像の範囲外です」で画像全体の統計とヒストグラムを消していた)
+        RefreshHistogram(Viewport.Roi is { PixelCount: > 0 } roi ? roi : null);
     }
 
     private void OnViewportRoiChanged(object? sender, EventArgs e)
