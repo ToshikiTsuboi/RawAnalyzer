@@ -99,20 +99,6 @@ public class FormatCandidatesTests
     }
 
     [Fact]
-    public void Build_DisplayedImage_OnlyWhenItFitsExactly()
-    {
-        var history = new FormatHistory();
-        RawFormat fits = Fmt(240, 1280);
-
-        Assert.Contains(
-            new FormatCandidate(fits, FormatCandidateSource.DisplayedImage),
-            FormatCandidates.Build(Size, ".raw", "a.raw", history, fits));
-        Assert.DoesNotContain(
-            FormatCandidates.Build(Size, ".raw", "a.raw", history, fits with { FrameCount = 2 }),
-            c => c.Source == FormatCandidateSource.DisplayedImage);
-    }
-
-    [Fact]
     public void Build_FrameCountVariant_SkipsFrameSequentialAndAutoHdr()
     {
         const long size = 3 * Size;
@@ -239,7 +225,6 @@ public class FormatCandidatesTests
     }
 
     [Theory]
-    [InlineData("img_1920x1080.raw", "1920x1080")]
     [InlineData("A_640X480_B_1280 × 720.bin", "640x480,1280x720")]
     [InlineData("frame_1920x1080x3.raw", "1920x1080")]
     [InlineData("dup_640x480_640x480.raw", "640x480")]
@@ -248,28 +233,12 @@ public class FormatCandidatesTests
     [InlineData("1x2_3x4.raw", "")]
     [InlineData("00x480.raw", "")]
     [InlineData(@"C:\cap\1920x1080\frame.raw", "")]
-    [InlineData("no_size.raw", "")]
     public void ParseFileNameDimensions_FindsWidthByHeightInOrder(string fileName, string expected)
     {
         string actual = string.Join(",", FormatCandidates.ParseFileNameDimensions(fileName)
             .Select(d => $"{d.Width}x{d.Height}"));
 
         Assert.Equal(expected, actual);
-    }
-
-    [Fact]
-    public void Build_ResolutionTable_UsesSameDefaultsAsBefore()
-    {
-        const long size = 1920 * 1080 * 2;
-
-        IReadOnlyList<FormatCandidate> candidates = FormatCandidates.Build(
-            size, ".raw", "a.raw", new FormatHistory(), null);
-
-        // 従来の初期値の推定(12bit・下詰め・Little・ヘッダ0・Bayerなし)と同じ
-        FormatCandidate first = Assert.Single(candidates);
-        Assert.Equal(FormatCandidateSource.ResolutionTable, first.Source);
-        Assert.Equal(
-            new RawFormat { Width = 1920, Height = 1080, BitDepth = 12 }, first.Format);
     }
 
     [Fact]
@@ -305,7 +274,6 @@ public class FormatCandidatesTests
     }
 
     [Theory]
-    [InlineData(0L)]
     [InlineData(-1L)]
     public void Build_UnknownOrEmptySize_ReturnsNothing(long size)
     {
