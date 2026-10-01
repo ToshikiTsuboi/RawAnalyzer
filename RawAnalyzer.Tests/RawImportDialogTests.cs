@@ -56,10 +56,33 @@ public class RawImportDialogTests : IDisposable
     }
 
     private RawImportDialog CreateDialog(
-        string path, FormatMemory? memory, RawFormat? initial = null, RawFormat? displayed = null)
+        string path, FormatMemory? memory, RawFormat? initial = null, RawFormat? displayed = null,
+        long? size = null)
     {
+        // サイズは呼び出し側が UI スレッドの外で取って渡す(テストではここで取る)
         return new RawImportDialog(
-            path, new FormatPresetStore(Path.Combine(_directory, "settings")), initial, memory, displayed);
+            path, size ?? new FileInfo(path).Length, new FormatPresetStore(Path.Combine(_directory, "settings")),
+            initial, memory, displayed);
+    }
+
+    [Fact]
+    public Task FileSize_IsTheOnePassedIn_WithoutTouchingTheFile()
+    {
+        // 残課題 2026-10-02 I1。ダイアログはコンストラクタ(UI スレッド)で FileInfo.Length を取っていたので、切断した
+        // NAS の raw を開くと SMB のタイムアウトまでウィンドウが固まった。サイズは呼び出し側が UI スレッドの外で
+        // 取って渡し、ダイアログはファイルに触れない(ここではファイルを作らずに渡したサイズで照合されることを見る)
+        return WpfTestHost.Run(() =>
+        {
+            string path = Path.Combine(_directory, "unreachable.raw");
+            FormatMemory memory = CreateMemory();
+
+            RawImportDialog dialog = CreateDialog(path, memory, initial: Fmt(640, 480, bitDepth: 16), size: FileSize);
+
+            Assert.False(File.Exists(path));
+            Assert.Equal(FormatCandidates.Build(FileSize, ".raw", path, memory.History, null), dialog.Candidates);
+            Assert.StartsWith("✓", Find<TextBlock>(dialog, "SizeNoteText").Text);
+            Assert.True(Find<Button>(dialog, "OpenButton").IsEnabled);
+        });
     }
 
     private static T Find<T>(Window window, string name)
@@ -311,7 +334,8 @@ public class RawImportDialogTests : IDisposable
         string path = Path.Combine(_directory, "missing.raw");
         return WpfTestHost.Run(() =>
         {
-            RawImportDialog dialog = CreateDialog(path, null, initial: Fmt(640, 480));
+            // 呼び出し側はサイズを取得できなかったら -1 を渡す
+            RawImportDialog dialog = CreateDialog(path, null, initial: Fmt(640, 480), size: -1);
             string note = Find<TextBlock>(dialog, "SizeNoteText").Text;
 
             Assert.StartsWith("⚠", note);

@@ -161,6 +161,10 @@ public partial class MainWindow : Window
     // ファイルを開く要求(OpenPath)の数。フォーマット指定ダイアログを出す前に数える(世代とは別)
     private int _openRequests;
 
+    // ウィンドウを閉じた。UI スレッドの外での確認(ファイルサイズ・実在)を待つ間に閉じられたら、ダイアログを出さない
+    // (閉じたウィンドウを Owner にできない)
+    private bool _closed;
+
     private SequenceMode _sequenceMode;
     private List<string> _sequenceFiles = new();
     private int _sequenceIndex;
@@ -279,6 +283,7 @@ public partial class MainWindow : Window
         Closing += (_, _) => SaveWindowPlacement();
         Closed += async (_, _) =>
         {
+            _closed = true;
             ReplaceLoadCts(null);
             CancelAnalysis();
             _profileWindow?.Close();
@@ -682,7 +687,7 @@ public partial class MainWindow : Window
         string path, bool chooseFormat, RawFormat? initialFormat, RawFormat? correctFrom)
     {
         // フォルダの一覧を待ってから開く要求(ドロップなど)は、待つ間にこの要求が来たら開かない
-        _openRequests++;
+        int openRequest = ++_openRequests;
 
         // 読み込み中に再生タイマーや保留中の連番送りが画像を差し替えないようにする
         using BusyScope busy = EnterLoadBusy();
@@ -699,8 +704,16 @@ public partial class MainWindow : Window
         {
             // 同じファイルを開き直すときは記憶したフォーマットでダイアログをスキップし、なければ同じサイズ・
             // 拡張子のファイルの記憶(自動適用がちょうど1つ)で開く。それ以外はダイアログ(候補一覧の先頭が初期値)。
-            // フォーマットを指定し直すとき(F2 など)は記憶を使わず、渡された初期値でダイアログを出す
-            long size = SafeFileSize(path);
+            // フォーマットを指定し直すとき(F2 など)は記憶を使わず、渡された初期値でダイアログを出す。
+            // サイズは UI スレッドの外で取り、ダイアログへも渡す(切断した NAS の raw では FileInfo が SMB の
+            // タイムアウトまで戻らず、ダイアログを出す前にウィンドウが固まっていた)。取る間に別のファイルを開く要求が
+            // 来た・ウィンドウを閉じたら、後から来た方を優先してこのファイルは開かない(ダイアログも出さない)
+            long size = await Task.Run(() => SafeFileSize(path));
+            if (openRequest != _openRequests || _closed)
+            {
+                return;
+            }
+
             RawOpenPlan plan = RawOpenPlanner.Plan(
                 path, size, chooseFormat ? null : TryGetRememberedFormat(path, size),
                 _formatMemory.History, _currentFormat, initialFormat, chooseFormat);
@@ -709,7 +722,7 @@ public partial class MainWindow : Window
             if (format is null)
             {
                 var dialog = new RawImportDialog(
-                    path, _presetStore, plan.DialogInitial, _formatMemory, _currentFormat)
+                    path, size, _presetStore, plan.DialogInitial, _formatMemory, _currentFormat)
                 {
                     Owner = this,
                 };
@@ -744,17 +757,21 @@ public partial class MainWindow : Window
         int pageCount = 1;
         string? valueNote = null;
         SampleScaling? valueScaling = null;
+
+        // 画像情報・サイズ別の記憶に使う読み込み後のサイズも、読み込みと一緒に UI スレッドの外で取る
+        long fileSize;
         try
         {
             if (IsRawFile(path))
             {
-                image = await Task.Run(
-                    () => RawLoader.Load(path, format!, cts.Token, loadProgress), cts.Token);
+                (image, fileSize) = await Task.Run(
+                    () => (RawLoader.Load(path, format!, cts.Token, loadProgress), SafeFileSize(path)), cts.Token);
             }
             else
             {
-                DecodedImage decoded = await Task.Run(
-                    () => ImageFileLoader.Load(path, cts.Token, loadProgress), cts.Token);
+                DecodedImage decoded;
+                (decoded, fileSize) = await Task.Run(
+                    () => (ImageFileLoader.Load(path, cts.Token, loadProgress), SafeFileSize(path)), cts.Token);
                 image = decoded.Luminance;
                 color = decoded.Color;
                 pageCount = decoded.PageCount;
@@ -870,7 +887,6 @@ public partial class MainWindow : Window
         UpdateNoiseWindowSource();
         _recentFiles.Add(path);
         RebuildRecentMenu();
-        long fileSize = SafeFileSize(path);
         bool guessedFromSize = origin == RawFormatOrigin.SizeMemory;
         if (IsRawFile(path))
         {
@@ -2050,7 +2066,9 @@ public partial class MainWindow : Window
             bool? autoOpenChoice = null;
             if (Compare.ComparePane.IsRawFile(path))
             {
-                long size = SafeFileSize(path);
+                // サイズは UI スレッドの外で取る(通常の「開く」と同じ)。取る間に比較モードを抜けたら打ち切る
+                long size = await Task.Run(() => SafeFileSize(path), cancellationToken);
+                cancellationToken.ThrowIfCancellationRequested();
                 RawOpenPlan plan = RawOpenPlanner.Plan(
                     path, size, TryGetRememberedFormat(path, size), _formatMemory.History,
                     _currentFormat);
@@ -2059,7 +2077,7 @@ public partial class MainWindow : Window
                 if (format is null)
                 {
                     var dialog = new RawImportDialog(
-                        path, _presetStore, plan.DialogInitial, _formatMemory, _currentFormat)
+                        path, size, _presetStore, plan.DialogInitial, _formatMemory, _currentFormat)
                     {
                         Owner = this,
                     };
@@ -2078,8 +2096,9 @@ public partial class MainWindow : Window
                 path, format, cancellationToken);
             if (format is not null)
             {
-                // 読み込めたら同じサイズ・拡張子の記憶へ記録する(同じパスの記憶は従来どおりダイアログの確定時)
-                long loadedSize = SafeFileSize(path);
+                // 読み込めたら同じサイズ・拡張子の記憶へ記録する(同じパスの記憶は従来どおりダイアログの確定時)。
+                // サイズは UI スレッドの外で取る。読み込んだペインを返せなくなるので、ここでは打ち切らない
+                long loadedSize = await Task.Run(() => SafeFileSize(path));
                 _formatMemory.RememberLoaded(path, loadedSize, format, autoOpenChoice);
 
                 // 比較ペインは F2 で開き直せないので、直し方を添えて知らせる(比較モードを抜けたら戻す)

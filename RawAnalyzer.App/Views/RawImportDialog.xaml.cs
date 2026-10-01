@@ -35,31 +35,12 @@ public partial class RawImportDialog : Window
     private RawFormat? _presetFormat;
     private bool _syncingPresets;
 
-    /// <summary>
-    /// ファイルサイズを取得する。取得できない場合は -1(サイズ不明)。
-    /// </summary>
-    /// <remarks>
-    /// コンストラクタで例外を投げると、呼び出し側の「読み込みに失敗しました」
-    /// ではなく未処理例外ダイアログになってしまう。
-    /// </remarks>
-    /// <param name="path">対象ファイル。</param>
-    /// <returns>バイト数。不明なら -1。</returns>
-    private static long SafeFileSize(string path)
-    {
-        try
-        {
-            return new FileInfo(path).Length;
-        }
-        catch (Exception ex) when (
-            ex is IOException or UnauthorizedAccessException or ArgumentException
-                or NotSupportedException)
-        {
-            return -1;
-        }
-    }
-
     /// <summary>ダイアログを生成する。</summary>
     /// <param name="filePath">開こうとしているRawファイルのパス。</param>
+    /// <param name="fileSize">
+    /// ファイルサイズ(バイト)。取得できなければ -1(照合できないことを示す)。ダイアログはファイルに触れないので、
+    /// 呼び出し側が UI スレッドの外で取って渡す(切断したネットワーク上のファイルでもダイアログの表示で固まらない)。
+    /// </param>
     /// <param name="presetStore">プリセットストア。</param>
     /// <param name="initialFormat">
     /// 初期値として表示するフォーマット(nullなら候補一覧の先頭、候補もなければ既定+サイズ推定)。
@@ -70,12 +51,12 @@ public partial class RawImportDialog : Window
     /// </param>
     /// <param name="displayedFormat">表示中の画像のフォーマット(候補一覧に使う)。</param>
     internal RawImportDialog(
-        string filePath, FormatPresetStore presetStore, RawFormat? initialFormat = null,
+        string filePath, long fileSize, FormatPresetStore presetStore, RawFormat? initialFormat = null,
         FormatMemory? formatMemory = null, RawFormat? displayedFormat = null)
     {
         InitializeComponent();
         _filePath = filePath;
-        _fileSize = SafeFileSize(filePath);
+        _fileSize = fileSize < 0 ? -1 : fileSize;
         _extension = FormatHistory.ExtensionOf(filePath);
         _presetStore = presetStore;
         _formatMemory = formatMemory;
