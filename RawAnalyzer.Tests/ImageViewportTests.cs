@@ -477,6 +477,48 @@ public class ImageViewportTests
         }
     });
 
+    [Theory]
+    [InlineData(ViewportDisplayMode.BayerColor, 4)]
+    [InlineData(ViewportDisplayMode.ColorDevelop, 4)]
+    [InlineData(ViewportDisplayMode.ChannelSplit, 1)] // ゼブラを描くので、飽和が平均で薄まらないよう等倍データから
+    public Task ZebraOn_UsesBayerPyramidInModesThatDoNotDrawZebra(
+        ViewportDisplayMode mode, int expectedFactor) => WpfTestHost.Run(async () =>
+    {
+        // ゼブラを描くのはグレー系の描画(Raw・チャネル分割)だけで、Bayerカラー・カラー現像では描かない。
+        // 以前はゼブラONならこの2モードでも縮小レベルを使わず等倍データから描いていたため、縞は出ないのに
+        // 見え方(平均から最近傍の間引きへ)と負荷(全体表示で可視幅の等倍の行を読む)だけが変わった
+        const int size = 64;
+        var format = new RawFormat { Width = size, Height = size, BitDepth = 16, Bayer = BayerPattern.Rggb };
+        using RawImage image = TestImages.FromCodes(new ushort[size * size], format);
+        using BayerPyramid pyramid = BayerPyramid.Create(image, format, maxLevelPixels: long.MaxValue);
+        var viewport = new ImageViewport();
+        viewport.Measure(new Size(240, 180));
+        viewport.Arrange(new Rect(0, 0, 240, 180));
+        viewport.SetImage(image, format);
+        viewport.SetBayerPyramid(pyramid);
+        viewport.SetDisplayMode(mode);
+        viewport.SetZebra(true);
+
+        var shown = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+        viewport.ViewportStateChanged += (_, e) =>
+        {
+            if (e.Zoom == 0.25)
+            {
+                shown.TrySetResult(e.RenderedFactor); // CenterOn の描画は品質パス
+            }
+        };
+
+        try
+        {
+            viewport.CenterOn(size / 2, size / 2, 0.25);
+            Assert.Equal(expectedFactor, await shown.Task.WaitAsync(TimeSpan.FromSeconds(10)));
+        }
+        finally
+        {
+            await viewport.ClearImageAsync();
+        }
+    });
+
     [Fact]
     public Task DetachBayerPyramidThenSetFrameInSameTurn_DrawsNewFrameAndNeverUsesDetachedPyramid() =>
         WpfTestHost.Run(async () =>

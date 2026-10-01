@@ -1484,7 +1484,11 @@ public sealed class ImageViewport : FrameworkElement
             int colorFrame = _frame;
             int coordinateFactor = 1;
             BayerPyramid? bayer = _bayerPyramidFrame == _frame ? _bayerPyramid : null;
-            if (bayer is not null && !_zebraEnabled)
+
+            // ゼブラの判定は実画素値で行う(縮小レベルの平均では飽和画素が薄まる)。ゼブラを描くのは
+            // グレー系のチャネル分割だけで、Bayerカラー・カラー現像は描かないので縮小レベルを使い続ける
+            bool zebraDrawn = _zebraEnabled && _displayMode == ViewportDisplayMode.ChannelSplit;
+            if (bayer is not null && !zebraDrawn)
             {
                 int factor = SelectFactorForRender(bayer.SelectFactor(_zoom), fast, bayer.GetLevel);
                 if (factor > 1 && bayer.GetLevel(factor) is { } level)
