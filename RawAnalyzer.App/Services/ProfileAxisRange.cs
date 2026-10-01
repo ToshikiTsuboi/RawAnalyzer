@@ -24,15 +24,15 @@ internal readonly record struct ProfileAxisRange(double Minimum, double Maximum)
     internal static bool TryParse(string minimum, string maximum, CultureInfo culture, out ProfileAxisRange range)
     {
         range = default;
-        if (!TryNumber(minimum, culture, out double min) || !TryNumber(maximum, culture, out double max)
+        if (!TryParseLimit(minimum, culture, out double min) || !TryParseLimit(maximum, culture, out double max)
             || !(min < max) || !double.IsFinite(max - min)) return false;
         range = new ProfileAxisRange(min, max);
         return true;
     }
 
     // 表示の言語の書き方(de-DE の "1,5" など)で読めなければ、他の数値入力欄と同じく NumericInput で読む
-    // (IME がオンのまま打った全角の数字・記号と3桁区切りも受け付ける)
-    private static bool TryNumber(string text, CultureInfo culture, out double number) =>
+    // (IME がオンのまま打った全角の数字・記号と3桁区切りも受け付ける)。入力欄ごとの不正の表示にも使う
+    internal static bool TryParseLimit(string text, CultureInfo culture, out double number) =>
         (double.TryParse(text, NumberStyles.Float, culture, out number) && double.IsFinite(number))
         || NumericInput.TryParseFinite(text, out number);
 

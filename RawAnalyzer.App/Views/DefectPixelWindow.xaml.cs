@@ -7,6 +7,7 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Media3D;
 using Microsoft.Win32;
+using RawAnalyzer.App.Controls;
 using RawAnalyzer.App.Services;
 using RawAnalyzer.Core;
 
@@ -18,6 +19,8 @@ namespace RawAnalyzer.App.Views;
 /// </summary>
 public partial class DefectPixelWindow : Window
 {
+    private const string InvalidSigmaMessage = "σ係数は正の数値で指定してください。";
+
     private DefectDetectionResult? _result;
 
     // 検出結果(またはそれを破棄した案内)を表示したことがあるか。まだなら破棄する一覧はなく、
@@ -235,11 +238,18 @@ public partial class DefectPixelWindow : Window
         CorrectButton.IsEnabled = _correctable && _result is { Defects.Count: > 0 };
     }
 
+    private void OnSigmaTextChanged(object sender, TextChangedEventArgs e)
+    {
+        // 以前は「検出実行」を押すまで何も示さなかった。ファイル一覧の絞り込み欄と同じく、打った時点で
+        // 赤枠とツールチップの理由で示す(実行時の確認は従来どおり)
+        InputFeedback.Check(SigmaBox, NumericInput.TryParsePositive(SigmaBox.Text, out _), InvalidSigmaMessage);
+    }
+
     private void OnRunClick(object sender, RoutedEventArgs e)
     {
         if (!NumericInput.TryParsePositive(SigmaBox.Text, out double sigma))
         {
-            MessageBox.Show(this, "σ係数は正の数値で指定してください。", "欠陥画素検出",
+            MessageBox.Show(this, InvalidSigmaMessage, "欠陥画素検出",
                 MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }

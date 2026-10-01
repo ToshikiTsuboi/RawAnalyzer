@@ -154,4 +154,24 @@ public class NoiseMeasureDialogTests
         Assert.Equal("4095", Saturation(dialog).Text);
         dialog.Close();
     });
+
+    [Theory]
+    [InlineData("abc")]
+    [InlineData("0")]
+    [InlineData("-100")]
+    [InlineData("")]
+    public Task InvalidSaturation_IsMarkedWhileTyping(string text) => WpfTestHost.Run(() =>
+    {
+        // 以前は「測定実行」を押すまで何も示さなかった。ファイル一覧の絞り込み欄と同じく、打った時点で
+        // 赤枠とツールチップの理由で示す(実行時の確認は従来どおり)
+        NoiseMeasureDialog dialog = Open(4095);
+        FieldFeedback.AssertValid(Saturation(dialog));
+
+        Saturation(dialog).Text = text;
+        Assert.Equal("飽和信号レベルは正の数値で指定してください。", FieldFeedback.AssertInvalid(Saturation(dialog)));
+
+        Saturation(dialog).Text = "３９００"; // 全角も他の数値欄と同じく読む
+        FieldFeedback.AssertValid(Saturation(dialog));
+        dialog.Close();
+    });
 }

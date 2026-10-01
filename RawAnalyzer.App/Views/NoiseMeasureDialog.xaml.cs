@@ -2,7 +2,9 @@
 using System.IO;
 using System.Text;
 using System.Windows;
+using System.Windows.Controls;
 using Microsoft.Win32;
+using RawAnalyzer.App.Controls;
 using RawAnalyzer.App.Services;
 using RawAnalyzer.Core;
 
@@ -131,6 +133,14 @@ public partial class NoiseMeasureDialog : Window
             // チェックが残ったままだと「ROI内のみ」表示で全画面測定になる
             RoiCheck.IsChecked = false;
         }
+    }
+
+    private void OnSaturationTextChanged(object sender, TextChangedEventArgs e)
+    {
+        // 以前は「測定実行」を押すまで何も示さなかった。ファイル一覧の絞り込み欄と同じく、打った時点で
+        // 赤枠とツールチップの理由で示す(実行時の確認は従来どおり)
+        InputFeedback.Check(SaturationBox, NumericInput.TryParsePositive(SaturationBox.Text, out _),
+            "飽和信号レベルは正の数値で指定してください。");
     }
 
     /// <summary>「測定実行」が押されたときに発火する。</summary>

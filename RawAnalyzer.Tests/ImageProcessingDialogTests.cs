@@ -87,6 +87,44 @@ public class ImageProcessingDialogTests
         });
     }
 
+    [Fact]
+    public Task Dialog_InvalidNumber_MarksTheFieldWithReason()
+    {
+        // 以前は下の説明欄に理由を出すだけで、どの欄が悪いのかは欄の見た目では分からなかった。
+        // ファイル一覧の絞り込み欄と同じく、その欄を赤枠にしてツールチップに理由を出す
+        return WpfTestHost.Run(() =>
+        {
+            var dialog = new ImageProcessingDialog("test.raw", 19, 11, BayerPattern.Rggb, false, true);
+            var operation = (ComboBox)dialog.FindName("OperationCombo");
+            var sigma = (TextBox)dialog.FindName("SigmaBox");
+            var amount = (TextBox)dialog.FindName("AmountBox");
+            operation.SelectedIndex = 4;
+            FieldFeedback.AssertValid(sigma);
+            FieldFeedback.AssertValid(amount);
+
+            sigma.Text = "abc";
+            Assert.Equal("σは有限の数値で指定してください。", FieldFeedback.AssertInvalid(sigma));
+            FieldFeedback.AssertValid(amount);
+
+            sigma.Text = "20";
+            Assert.Equal("σは0.1〜10の有限値です。", FieldFeedback.AssertInvalid(sigma));
+
+            sigma.Text = "1.3";
+            amount.Text = "6";
+            FieldFeedback.AssertValid(sigma);
+            Assert.Equal("強度は0〜5の有限値です。", FieldFeedback.AssertInvalid(amount));
+
+            amount.Text = "1.5";
+            FieldFeedback.AssertValid(amount);
+
+            sigma.Text = "NaN";
+            FieldFeedback.AssertInvalid(sigma);
+            operation.SelectedIndex = 5; // Sobel は σ を使わない(欄も隠れる)ので知らせない
+            FieldFeedback.AssertValid(sigma);
+            dialog.Close();
+        });
+    }
+
     [Theory]
     [InlineData("SigmaBox", "20", "σは0.1〜10の有限値です。")]
     [InlineData("AmountBox", "6", "強度は0〜5の有限値です。")]

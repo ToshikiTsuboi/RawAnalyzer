@@ -7,6 +7,7 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Shapes;
 using Microsoft.Win32;
+using RawAnalyzer.App.Controls;
 using RawAnalyzer.App.Services;
 using RawAnalyzer.Core;
 
@@ -90,7 +91,29 @@ public partial class LineProfileWindow : Window
             CultureInfo.CurrentCulture, out _);
         ApplyYScaleButton.IsEnabled = ManualScale && valid;
         YScaleErrorText.Visibility = ManualScale && !valid ? Visibility.Visible : Visibility.Collapsed;
+        MarkInvalidScaleInputs();
         return valid;
+    }
+
+    /// <summary>
+    /// 手動の縦軸の欄のうち悪いほうを、ファイル一覧の絞り込み欄と同じく赤枠とツールチップの理由で示す。
+    /// </summary>
+    /// <remarks>
+    /// 以前は欄の下の説明だけで、どちらの欄が悪いのかは欄の見た目で分からなかった。読めない欄はその欄に、
+    /// 「最小 ＜ 最大」になっていないときは最大の欄に出す。手動でないときは欄を使わない(無効)ので知らせない。
+    /// </remarks>
+    private void MarkInvalidScaleInputs()
+    {
+        const string NotNumber = "有限の数値で指定してください。現在の表示範囲は変更していません。";
+        bool minValid = ProfileAxisRange.TryParseLimit(YMinimumBox.Text, CultureInfo.CurrentCulture, out double min);
+        bool maxValid = ProfileAxisRange.TryParseLimit(YMaximumBox.Text, CultureInfo.CurrentCulture, out double max);
+        string? maxError = !maxValid ? NotNumber
+            : !minValid ? null
+            : !(min < max) ? "最小値より大きい値を指定してください。現在の表示範囲は変更していません。"
+            : !double.IsFinite(max - min) ? "最小と最大の差が大きすぎます。現在の表示範囲は変更していません。"
+            : null;
+        InputFeedback.SetError(YMinimumBox, ManualScale && !minValid ? NotNumber : null);
+        InputFeedback.SetError(YMaximumBox, ManualScale ? maxError : null);
     }
 
     private void OnYLimitsTextChanged(object sender, TextChangedEventArgs e)

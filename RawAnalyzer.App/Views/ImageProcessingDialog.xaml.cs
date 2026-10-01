@@ -1,4 +1,6 @@
 using System.Windows;
+using System.Windows.Controls;
+using RawAnalyzer.App.Controls;
 using RawAnalyzer.App.Services;
 using RawAnalyzer.Core;
 
@@ -76,8 +78,8 @@ public partial class ImageProcessingDialog : Window
         };
         int radius = kind == ImageFilterKind.Sobel ? 1 : KernelCombo.SelectedIndex + 1;
         double sigma = kind is ImageFilterKind.Gaussian or ImageFilterKind.UnsharpMask
-            ? ParseNumber(SigmaBox.Text, "σ") : 1;
-        double amount = kind == ImageFilterKind.UnsharpMask ? ParseNumber(AmountBox.Text, "強度") : 1;
+            ? ParseNumber(SigmaBox, "σ") : 1;
+        double amount = kind == ImageFilterKind.UnsharpMask ? ParseNumber(AmountBox, "強度") : 1;
         var options = new ImageFilterOptions(kind, radius, sigma, amount);
         options.Validate();
         string name = kind switch
@@ -104,16 +106,25 @@ public partial class ImageProcessingDialog : Window
         return new(factor, mode, options, label);
     }
 
-    private static double ParseNumber(string text, string name)
+    private static double ParseNumber(TextBox box, string name)
     {
         // 他の数値入力欄と同じく、IME がオンのまま打った全角の数字・記号も読む
-        if (!NumericInput.TryParseFinite(text, out double value))
+        if (!NumericInput.TryParseFinite(box.Text, out double value))
         {
-            throw new FormatException($"{name}は有限の数値で指定してください。");
+            throw new FieldFormatException(box, $"{name}は有限の数値で指定してください。");
         }
 
         return value;
     }
+
+    /// <summary>説明に出した不正の原因の欄。欄に結び付かない不正(画素数の上限など)なら null。</summary>
+    private TextBox? InvalidField(Exception ex) => ex switch
+    {
+        FieldFormatException field => field.Field,
+        ArgumentException { ParamName: nameof(ImageFilterOptions.Sigma) } => SigmaBox,
+        ArgumentException { ParamName: nameof(ImageFilterOptions.Amount) } => AmountBox,
+        _ => null,
+    };
 
     private bool UpdatePreview()
     {
@@ -123,6 +134,11 @@ public partial class ImageProcessingDialog : Window
         KernelPanel.Visibility = !binning && OperationCombo.SelectedIndex != 5 ? Visibility.Visible : Visibility.Collapsed;
         SigmaPanel.Visibility = gaussian ? Visibility.Visible : Visibility.Collapsed;
         AmountPanel.Visibility = OperationCombo.SelectedIndex == 4 ? Visibility.Visible : Visibility.Collapsed;
+
+        // 不正な欄は、ファイル一覧の絞り込み欄と同じく赤枠とツールチップの理由で示す(以前は下の説明だけで、
+        // どの欄が悪いのかは欄の見た目で分からなかった)。使わない(隠れた)欄は読まないので知らせない
+        InputFeedback.SetError(SigmaBox, null);
+        InputFeedback.SetError(AmountBox, null);
         try
         {
             ImageProcessingChoice choice = ReadChoice();
@@ -156,6 +172,11 @@ public partial class ImageProcessingDialog : Window
             PreviewText.Text = "設定を確認してください。";
             PolicyText.Text = "";
             ErrorText.Text = UserMessage(ex);
+            if (InvalidField(ex) is { } field)
+            {
+                InputFeedback.SetError(field, ErrorText.Text);
+            }
+
             RunButton.IsEnabled = false;
             return false;
         }
@@ -189,5 +210,11 @@ public partial class ImageProcessingDialog : Window
             Result = ReadChoice();
             DialogResult = true;
         }
+    }
+
+    /// <summary>欄の数値が読めないことを示す例外。どの欄かを持つ。</summary>
+    private sealed class FieldFormatException(TextBox field, string message) : FormatException(message)
+    {
+        public TextBox Field { get; } = field;
     }
 }

@@ -71,6 +71,26 @@ public class DefectPixelWindowTests
         window.Close();
     });
 
+    [Theory]
+    [InlineData("abc")]
+    [InlineData("0")]
+    [InlineData("-3")]
+    public Task InvalidSigma_IsMarkedWhileTyping(string text) => WpfTestHost.Run(() =>
+    {
+        // 以前は「検出実行」を押すまで何も示さなかった。ファイル一覧の絞り込み欄と同じく、打った時点で
+        // 赤枠とツールチップの理由で示す(実行時の確認は従来どおり)
+        var window = new DefectPixelWindow();
+        var sigma = (TextBox)window.FindName("SigmaBox");
+        FieldFeedback.AssertValid(sigma);
+
+        sigma.Text = text;
+        Assert.Equal("σ係数は正の数値で指定してください。", FieldFeedback.AssertInvalid(sigma));
+
+        sigma.Text = "５．５";
+        FieldFeedback.AssertValid(sigma);
+        window.Close();
+    });
+
     [Fact]
     public Task CorrectionApplied_DiscardsListAndAsksToDetectAgain_UntilImageChangesAgain() => WpfTestHost.Run(() =>
     {

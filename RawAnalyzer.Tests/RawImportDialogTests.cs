@@ -193,6 +193,51 @@ public class RawImportDialogTests : IDisposable
     }
 
     [Fact]
+    public Task InvalidFields_AreEachMarkedWithReason()
+    {
+        // 以前はサイズ欄に最初の1件の「幅が不正です」を出すだけで、欄の見た目ではどこが悪いか分からず、
+        // 2つ目以降の不正は1つ目を直すまで見えなかった。不正な欄をすべて、ファイル一覧の絞り込み欄と同じく
+        // 赤枠とツールチップの理由で示す
+        string path = CreateFile("invalid_fields.raw", FileSize);
+        return WpfTestHost.Run(() =>
+        {
+            RawImportDialog dialog = CreateDialog(path, null, initial: Fmt(640, 480));
+            var note = Find<TextBlock>(dialog, "SizeNoteText");
+            var width = Find<TextBox>(dialog, "WidthBox");
+            var height = Find<TextBox>(dialog, "HeightBox");
+            var frames = Find<TextBox>(dialog, "FrameCountBox");
+            var ratio = Find<TextBox>(dialog, "ExposureRatioBox");
+            FieldFeedback.AssertValid(width);
+            FieldFeedback.AssertValid(height);
+
+            width.Text = "abc";
+            height.Text = "0";
+            frames.Text = "1.5";
+            ratio.Text = "-2";
+
+            string widthReason = FieldFeedback.AssertInvalid(width);
+            Assert.Contains("幅は1以上の整数", widthReason);
+            Assert.Contains("高さは1以上の整数", FieldFeedback.AssertInvalid(height));
+            Assert.Contains("フレーム数は1以上の整数", FieldFeedback.AssertInvalid(frames));
+            Assert.Contains("露光比は正の数値", FieldFeedback.AssertInvalid(ratio));
+            FieldFeedback.AssertValid(Find<TextBox>(dialog, "HeaderOffsetBox"));
+            Assert.Equal($"✕ {widthReason}", note.Text); // サイズ欄には最初の理由
+            Assert.False(Find<Button>(dialog, "OpenButton").IsEnabled);
+
+            width.Text = "640";
+            height.Text = "480";
+            frames.Text = "1";
+            ratio.Text = "16";
+            FieldFeedback.AssertValid(width);
+            FieldFeedback.AssertValid(height);
+            FieldFeedback.AssertValid(frames);
+            FieldFeedback.AssertValid(ratio);
+            Assert.StartsWith("✓", note.Text);
+            dialog.Close();
+        });
+    }
+
+    [Fact]
     public Task EditingAfterPreset_ReturnsPresetListToGuideRowSoReselectingRestoresIt()
     {
         // 全体レビュー 2026-10-01 B92。プリセットを選んだあと幅を書き換えても一覧はそのプリセット名のまま残り、

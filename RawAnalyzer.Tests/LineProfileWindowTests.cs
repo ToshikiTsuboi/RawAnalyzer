@@ -97,6 +97,46 @@ public class LineProfileWindowTests
     });
 
     [Fact]
+    public Task ManualScale_InvalidLimit_MarksTheFieldWithReason() => WpfTestHost.Run(() =>
+    {
+        // 以前は欄の下に「有限の数値で「最小 ＜ 最大」を…」と出すだけで、どちらの欄が悪いのかは欄の見た目で
+        // 分からなかった。ファイル一覧の絞り込み欄と同じく、悪い欄を赤枠にしてツールチップに理由を出す
+        var window = NewWindow();
+        try
+        {
+            var mode = (ComboBox)window.FindName("YScaleCombo");
+            var min = (TextBox)window.FindName("YMinimumBox");
+            var max = (TextBox)window.FindName("YMaximumBox");
+            mode.SelectedIndex = 2;
+            object maxHelp = max.ToolTip;
+            FieldFeedback.AssertValid(min);
+            FieldFeedback.AssertValid(max);
+
+            min.Text = "abc";
+            Assert.Contains("有限の数値", FieldFeedback.AssertInvalid(min));
+            FieldFeedback.AssertValid(max);
+
+            min.Text = "2000";
+            max.Text = "1000";
+            FieldFeedback.AssertValid(min);
+            Assert.Contains("最小値より大きい値", FieldFeedback.AssertInvalid(max));
+
+            max.Text = "3000";
+            FieldFeedback.AssertValid(max);
+            Assert.Equal(maxHelp, max.ToolTip);
+
+            min.Text = "NaN";
+            FieldFeedback.AssertInvalid(min);
+            mode.SelectedIndex = 0; // 手動でなければ欄は使わない(無効になる)ので知らせない
+            FieldFeedback.AssertValid(min);
+        }
+        finally
+        {
+            window.Close();
+        }
+    });
+
+    [Fact]
     public Task ManualScale_PersistsAcrossDirectionProjectionAndDataUpdates() => WpfTestHost.Run(() =>
     {
         var window = NewWindow();

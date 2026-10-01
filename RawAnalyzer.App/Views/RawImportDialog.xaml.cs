@@ -3,6 +3,7 @@ using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
+using RawAnalyzer.App.Controls;
 using RawAnalyzer.App.Services;
 using RawAnalyzer.Core;
 
@@ -213,46 +214,36 @@ public partial class RawImportDialog : Window
 
     private RawFormat? TryBuildFormat(out string error)
     {
-        error = "";
-        if (!NumericInput.TryParseInteger(WidthBox.Text, out int width) || width <= 0)
+        // 不正な欄はすべて、ファイル一覧の絞り込み欄と同じく赤枠とツールチップの理由で示し、サイズ欄には最初の
+        // 理由を出す。以前はサイズ欄に最初の1件の「幅が不正です」を出すだけで、欄の見た目ではどこが悪いか
+        // 分からず、2つ目以降の不正は1つ目を直すまで見えなかった
+        string? firstError = null;
+        void Check(TextBox box, bool valid, string reason)
         {
-            error = "幅が不正です";
-            return null;
+            if (!InputFeedback.Check(box, valid, reason))
+            {
+                firstError ??= reason;
+            }
         }
 
-        if (!NumericInput.TryParseInteger(HeightBox.Text, out int height) || height <= 0)
+        Check(WidthBox, NumericInput.TryParseInteger(WidthBox.Text, out int width) && width > 0,
+            "幅は1以上の整数で指定してください");
+        Check(HeightBox, NumericInput.TryParseInteger(HeightBox.Text, out int height) && height > 0,
+            "高さは1以上の整数で指定してください");
+        Check(HeaderOffsetBox,
+            NumericInput.TryParseInteger(HeaderOffsetBox.Text, out long headerOffset) && headerOffset >= 0,
+            "ヘッダオフセットは0以上の整数(バイト)で指定してください");
+        Check(FrameCountBox, NumericInput.TryParseInteger(FrameCountBox.Text, out int frameCount) && frameCount > 0,
+            "フレーム数は1以上の整数で指定してください");
+        Check(ExposureRatioBox, NumericInput.TryParsePositive(ExposureRatioBox.Text, out double exposureRatio),
+            "露光比は正の数値で指定してください");
+        Check(HdrLineBlockBox, NumericInput.TryParseInteger(HdrLineBlockBox.Text, out int lineBlock) && lineBlock >= 0,
+            "ライン単位は0以上の整数で指定してください(0でBayer有無から自動判定)");
+        Check(HdrRowOffsetBox, NumericInput.TryParseInteger(HdrRowOffsetBox.Text, out int rowOffset),
+            "行オフセットは整数で指定してください");
+        error = firstError ?? "";
+        if (firstError is not null)
         {
-            error = "高さが不正です";
-            return null;
-        }
-
-        if (!NumericInput.TryParseInteger(HeaderOffsetBox.Text, out long headerOffset) || headerOffset < 0)
-        {
-            error = "ヘッダオフセットが不正です";
-            return null;
-        }
-
-        if (!NumericInput.TryParseInteger(FrameCountBox.Text, out int frameCount) || frameCount <= 0)
-        {
-            error = "フレーム数が不正です";
-            return null;
-        }
-
-        if (!NumericInput.TryParsePositive(ExposureRatioBox.Text, out double exposureRatio))
-        {
-            error = "露光比が不正です";
-            return null;
-        }
-
-        if (!NumericInput.TryParseInteger(HdrLineBlockBox.Text, out int lineBlock) || lineBlock < 0)
-        {
-            error = "ライン単位が不正です(0以上)";
-            return null;
-        }
-
-        if (!NumericInput.TryParseInteger(HdrRowOffsetBox.Text, out int rowOffset))
-        {
-            error = "行オフセットが不正です";
             return null;
         }
 

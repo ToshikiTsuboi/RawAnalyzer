@@ -10,7 +10,8 @@
             <TextBlock Text="閾値: mean ±" Foreground="#FF9A9A95" FontSize="12"
                        VerticalAlignment="Center" />
             <TextBox x:Name="SigmaBox" Text="6.0" Width="52" Margin="6,0"
-                     TextAlignment="Right" VerticalAlignment="Center" />
+                     TextAlignment="Right" VerticalAlignment="Center"
+                     TextChanged="OnSigmaTextChanged" />
             <TextBlock Text="σ" Foreground="#FF9A9A95" FontSize="12"
                        VerticalAlignment="Center" Margin="0,0,14,0" />
             <CheckBox x:Name="HotCheck" Content="白点" IsChecked="True"
