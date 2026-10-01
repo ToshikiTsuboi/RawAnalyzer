@@ -207,16 +207,10 @@ public partial class MainWindow : Window
         Viewport.ProfilePointClicked += OnProfilePointClicked;
         Viewport.WhiteBalancePicked += OnWhiteBalancePicked;
         // ショートカットはコマンド表(MainWindow.Commands.cs)から一括で捌く。
-        // Escだけはビューポートの画素カーソル解除を優先するため個別に扱う
+        // Escだけはビューポートの画素カーソル解除を優先するため個別に扱う(バブルの KeyDown で、
+        // フォーカス中のコントロールが使わなかったときだけフルスクリーンを解除する)
         PreviewKeyDown += OnWindowPreviewKeyDown;
-        PreviewKeyDown += (_, e) =>
-        {
-            if (!e.Handled && e.Key == Key.Escape && _vm.IsFullscreen)
-            {
-                _vm.IsFullscreen = false;
-                e.Handled = true;
-            }
-        };
+        FullscreenEscape.Attach(this, () => _vm.IsFullscreen, () => _vm.IsFullscreen = false);
         RebuildRecentMenu();
         InitFolderTree();
         CompareArea.PanePicker = PickComparePaneAsync;
