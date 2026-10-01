@@ -168,13 +168,21 @@ public static class HistogramTools
     /// <summary>
     /// ヒストグラムを表計算ソフトへ貼り付け可能なテキストにする。
     /// </summary>
+    /// <remarks>
+    /// 大きな画像・領域のヒストグラムは間引いて集計するので(<see cref="HistogramResult.IsSampled"/>)、count は
+    /// 画素数ではなくサンプル数になる。<paramref name="populationCount"/> がサンプル数(ビンの合計)より多いときは、
+    /// 表の前に「# sampled: …」の1行でサンプル数・対象の画素数・おおよその間引き率を書く(表の列は変えない)。
+    /// </remarks>
     /// <param name="bins">全体のヒストグラム。</param>
     /// <param name="separator">区切り文字(タブまたはカンマ)。</param>
     /// <param name="channels">Bayerチャネル別ヒストグラム(R,Gr,Gb,Bの順)。nullなら出力しない。</param>
+    /// <param name="populationCount">
+    /// 集計の対象とした画素数(間引く前。ROIならROIの画素数)。0以下なら間引きの注記を書かない。
+    /// </param>
     /// <returns>ヘッダ付きのテキスト。</returns>
     /// <exception cref="ArgumentException">チャネル別ビンの長さが一致しない場合。</exception>
     public static string BuildTable(
-        long[] bins, char separator, IReadOnlyList<ChannelHistogram>? channels = null)
+        long[] bins, char separator, IReadOnlyList<ChannelHistogram>? channels = null, long populationCount = 0)
     {
         bool byChannel = channels is { Count: 4 };
         if (byChannel)
@@ -190,6 +198,21 @@ public static class HistogramTools
         }
 
         var builder = new StringBuilder();
+        long sampleCount = 0;
+        foreach (long count in bins)
+        {
+            sampleCount += count;
+        }
+
+        if (sampleCount > 0 && populationCount > sampleCount)
+        {
+            double ratio = (double)populationCount / sampleCount;
+            builder.Append("# sampled: count is the number of sampled pixels (")
+                .Append(sampleCount.ToString(CultureInfo.InvariantCulture)).Append(" of ")
+                .Append(populationCount.ToString(CultureInfo.InvariantCulture)).Append(" pixels, about 1/")
+                .Append(ratio.ToString("F1", CultureInfo.InvariantCulture)).AppendLine(")");
+        }
+
         builder.Append("raw_code").Append(separator).Append("count")
             .Append(separator).Append("cumulative");
         if (byChannel)

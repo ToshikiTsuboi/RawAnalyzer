@@ -250,6 +250,26 @@ public class HistogramToolsTests
     }
 
     [Fact]
+    public void BuildTable_Sampled_PrependsNoteThatCountsAreSamples()
+    {
+        // 回帰テスト: 1000万画素を超えると間引いて集計するので、count は画素数ではなくサンプル数になる。
+        // 画面は sampled バッジで示すが、CSV・コピーの表には何も書かれず、1200万画素で実際の約1/9 の値を
+        // 画素数として読ませていた。間引いたときだけ先頭にサンプル数と対象の画素数を書く(表の列は変えない)
+        long[] bins = MakeBins(2, (0, 3), (1, 1));
+
+        string sampled = HistogramTools.BuildTable(bins, ',', populationCount: 36);
+        string[] lines = sampled.TrimEnd().Split(Environment.NewLine);
+
+        Assert.Equal("# sampled: count is the number of sampled pixels (4 of 36 pixels, about 1/9.0)", lines[0]);
+        Assert.Equal("raw_code,count,cumulative", lines[1]);
+        Assert.Equal("0,3,3", lines[2]);
+
+        // 全画素を集計したとき(対象の画素数=サンプル数、または対象を渡さないとき)は従来どおり表だけ
+        Assert.Equal(HistogramTools.BuildTable(bins, ','), HistogramTools.BuildTable(bins, ',', populationCount: 4));
+        Assert.StartsWith("raw_code,", HistogramTools.BuildTable(bins, ','));
+    }
+
+    [Fact]
     public void BuildTable_ChannelBinLengthMismatch_Throws()
     {
         long[] bins = MakeBins(4, (0, 1));

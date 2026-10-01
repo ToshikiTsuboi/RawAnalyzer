@@ -11,6 +11,21 @@ namespace RawAnalyzer.Tests;
 public class RoiAnalysisTests
 {
     [Fact]
+    public void PopulationCount_IsPixelCountOfAnalyzedSet()
+    {
+        // ヒストグラムの表(CSV)に書く「対象の画素数」。ROIなしは1フレームの全画素
+        Assert.Equal(4000L * 3000, RoiAnalysis.PopulationCount(new WholeImageTarget(), 4000, 3000));
+        Assert.Equal(
+            12L, RoiAnalysis.PopulationCount(new SourceRoiTarget(new RegionOfInterest(1, 2, 3, 4)), 4000, 3000));
+        Assert.Equal(
+            6L,
+            RoiAnalysis.PopulationCount(
+                new ChannelRoiTarget(new ChannelRegion(0, 0, 2, 3), BayerChannel.R, new RegionOfInterest(0, 0, 2, 3)),
+                4000, 3000));
+        Assert.Equal(0L, RoiAnalysis.PopulationCount(new UnsupportedRoiTarget("x"), 4000, 3000));
+    }
+
+    [Fact]
     public void ChannelSplit_RoiOnRTile_ReportsOnlyRPixels()
     {
         // 4×4 RGGB、R=1000 / G=2000 / B=4000。分割表示の左上2×2はRの4画素(すべて1000)。

@@ -103,6 +103,9 @@ public partial class MainWindow : Window
     }
     private HistogramResult? _histogram;
     private IReadOnlyList<ChannelHistogram>? _channelHistograms;
+
+    // _histogram の集計の対象とした画素数(間引く前)。表(CSV・コピー)に間引いたサンプル数であることを書く
+    private long _histogramPopulation;
     private string? _correctionLabel;
 
     // 32bit実数などを16bitへ写したときの対応関係。画像情報欄へ添える
@@ -1065,6 +1068,7 @@ public partial class MainWindow : Window
         HistogramResult result = analysis.Histogram;
         RegionStatistics? exactStats = analysis.RoiStatistics;
         _histogram = result;
+        _histogramPopulation = RoiAnalysis.PopulationCount(target, image.Width, image.Height);
         _channelHistograms = analysis.Channels;
         UpdateChannelStatsPanel();
         bool statsSampled = exactStats is { } s && s.SampleCount < RoiAnalysis.PixelCount(target);
@@ -1810,7 +1814,7 @@ public partial class MainWindow : Window
     {
         return _histogram is null
             ? null
-            : HistogramTools.BuildTable(_histogram.Bins, separator, _channelHistograms);
+            : HistogramTools.BuildTable(_histogram.Bins, separator, _channelHistograms, _histogramPopulation);
     }
 
     private void OnHistogramCopyClick(object sender, RoutedEventArgs e)

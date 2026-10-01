@@ -99,6 +99,19 @@ internal static class RoiAnalysis
         return target is SourceRoiTarget or ChannelRoiTarget;
     }
 
+    /// <summary>
+    /// ヒストグラムの集計の対象とした画素数(間引く前)。ROIなしは1フレームの全画素、対応づけ不能は0。
+    /// ヒストグラムの表(CSV・コピー)に、count が間引いたサンプル数であることを書くのに使う。
+    /// </summary>
+    /// <param name="target">集計対象。</param>
+    /// <param name="imageWidth">画像の幅。</param>
+    /// <param name="imageHeight">画像の高さ。</param>
+    /// <returns>画素数。</returns>
+    internal static long PopulationCount(RoiAnalysisTarget target, int imageWidth, int imageHeight)
+    {
+        return target is WholeImageTarget ? (long)imageWidth * imageHeight : PixelCount(target);
+    }
+
     /// <summary>ROIとして集計する画素数(ROIなし・対応づけ不能は0)。</summary>
     /// <param name="target">集計対象。</param>
     /// <returns>画素数。</returns>
