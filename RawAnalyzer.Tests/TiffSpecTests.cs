@@ -102,6 +102,44 @@ public class TiffSpecTests
         Assert.Equal(BayerPattern.Rggb, layout!.Bayer);
     }
 
+    [Theory]
+    [InlineData(16)]
+    [InlineData(12)]
+    [InlineData(8)]
+    public void SampleFormatUndefined_IsReadAsUnsignedLikeSampleFormat1(int bits)
+    {
+        // SampleFormat=4(未定義)はTIFF 6.0の勧めどおり、タグがないとき(符号なし整数)と同じに読む。16bitは
+        // 値域換算の経路に入って 0〜最大値 → 0〜65535 に引き伸ばされ、SampleFormat=1 と違う値で開いていた
+        // (全体レビュー 2026-10-01 B97)。8bit はもとから ×257 のまま
+        int max = bits == 8 ? 255 : 4095;
+        int[] values = Enumerable.Range(0, W * H).Select(i => i * max / ((W * H) - 1)).ToArray();
+        byte[] samples = bits switch
+        {
+            16 => TiffBuilder.SampleBytes(values.Select(v => (ushort)v).ToArray(), 16),
+            8 => TiffBuilder.SampleBytes(values.Select(v => (ushort)v).ToArray(), 8),
+            _ => TiffBuilder.PackRows(values, W, bits),
+        };
+        using var unsigned = TempTiff.Write(new TiffBuilder().Build(TiffBuilder.GrayPage(W, H, bits, samples)));
+        using var undefined = TempTiff.Write(new TiffBuilder().Build(TiffBuilder.GrayPage(W, H, bits, samples, sampleFormat: 4)));
+
+        DecodedImage expected = ImageFileLoader.Load(unsigned.Path);
+        using RawImage expectedImage = expected.Luminance;
+        DecodedImage actual = ImageFileLoader.Load(undefined.Path);
+        using RawImage actualImage = actual.Luminance;
+
+        Assert.Null(actual.ValueNote);
+        Assert.Equal(expectedImage.Format.BitDepth, actualImage.Format.BitDepth);
+        for (int i = 0; i < W * H; i++)
+        {
+            Assert.Equal(expectedImage.GetPixel(i % W, i / W), actualImage.GetPixel(i % W, i / W));
+        }
+
+        // 非圧縮16bitは SampleFormat=1 と同じく直接読み出せる(1億画素超でもオンデマンド読み出し)
+        Assert.Equal(
+            TiffLoader.TryProbePixelLayout(unsigned.Path, out _, out _),
+            TiffLoader.TryProbePixelLayout(undefined.Path, out _, out _));
+    }
+
     [Fact]
     public void Cfa8Bit_IsDecodedNativelyWithBayer()
     {

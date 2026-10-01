@@ -33,7 +33,8 @@ public sealed record TiffPixelLayout(
 /// <param name="BitsPerSample">1サンプルのビット数。</param>
 /// <param name="SamplesPerPixel">1画素のサンプル数(1=グレー、3=RGB)。</param>
 /// <param name="SampleFormat">
-/// TIFFのSampleFormat(1=符号なし整数、2=符号あり整数、3=IEEE実数)。
+/// TIFFのSampleFormat(1=符号なし整数、2=符号あり整数、3=IEEE実数)。4(未定義)はTIFF 6.0の勧めどおり
+/// タグがないときと同じ符号なし整数として扱い、1を返す。
 /// </param>
 /// <param name="PageCount">TIFF内のページ数。</param>
 public sealed record TiffSampleInfo(
@@ -127,6 +128,9 @@ public static unsafe class TiffLoader
     private const ushort TagCfaRepeatPatternDim = 33421;
     private const ushort TagCfaPattern = 33422;
     private const ushort TagActiveArea = 50829;
+
+    /// <summary>SampleFormat = 未定義。</summary>
+    private const int SampleFormatUndefined = 4;
 
     /// <summary>PhotometricInterpretation = CFA(DNG/TIFF-EP)。</summary>
     public const int PhotometricCfa = 32803;
@@ -1150,6 +1154,13 @@ public static unsafe class TiffLoader
         long spp = GetScalar(entries, data, TagSamplesPerPixel, header) ?? 1;
         long photometric = GetScalar(entries, data, TagPhotometric, header) ?? 1;
         long format = GetScalar(entries, data, TagSampleFormat, header) ?? 1;
+        if (format == SampleFormatUndefined)
+        {
+            // 未定義(4)はTIFF 6.0の勧めどおりタグがないとき(符号なし整数)と同じに読む。区別すると
+            // 16bitが値域換算で引き伸ばされ、1億画素超の直接読み出しもできず、SampleFormat=1 と違う値で開く
+            format = 1;
+        }
+
         long planar = GetScalar(entries, data, TagPlanarConfiguration, header) ?? 1;
         long predictor = GetScalar(entries, data, TagPredictor, header) ?? 1;
         long fillOrder = GetScalar(entries, data, TagFillOrder, header) ?? 1;
@@ -1921,7 +1932,7 @@ public static unsafe class TiffLoader
                 $"BlackIsZeroのTIFFのみサポートします(Photometric={photometric})。");
         }
 
-        if (sampleFormat != 1)
+        if (sampleFormat is not (1 or SampleFormatUndefined))
         {
             throw new InvalidDataException(
                 $"符号なし整数のTIFFのみサポートします(SampleFormat={sampleFormat})。");
