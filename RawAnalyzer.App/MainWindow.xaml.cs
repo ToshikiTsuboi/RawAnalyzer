@@ -217,6 +217,13 @@ public partial class MainWindow : Window
         InitializeComponent();
         _session = _sessionStore.Load();
         ApplyWindowPlacement();
+
+        // パネルの表示状態は、変更通知(隠す前に今の幅を控える CapturePanelWidths)を購読する前に入れ、
+        // 保存していた幅とともに最初のレイアウトの前に列へ反映する。以前は Loaded で入れたため、隠す変更の通知で
+        // XAML の既定幅(220/240)のままの列の幅を控え、保存していた幅を(表示したままの側の幅も)上書きしていた
+        _vm.LeftPanelVisible = _session.LeftPanelVisible;
+        _vm.RightPanelVisible = _session.RightPanelVisible;
+        UpdatePanelLayout();
         DataContext = _vm;
         _vm.PropertyChanged += OnViewModelPropertyChanged;
         Viewport.ViewportStateChanged += OnViewportStateChanged;
@@ -242,10 +249,7 @@ public partial class MainWindow : Window
             // 電源断などで後始末されなかった・以前の版が残した、ネットワーク上の大きな raw のローカル一時コピー
             // (数GB)を消す。使用中(実行中の別のインスタンス)のものは残る。UI スレッドで待たない
             _ = Task.Run(() => RawLoader.DeleteUnusedTemporaryCopies(RawLoader.TemporaryCopyFolder));
-            _vm.LeftPanelVisible = _session.LeftPanelVisible;
-            _vm.RightPanelVisible = _session.RightPanelVisible;
             _vm.FileFilterText = _session.FileFilter ?? "";
-            UpdatePanelLayout();
 
             if (App.StartupPath is { } startup)
             {
