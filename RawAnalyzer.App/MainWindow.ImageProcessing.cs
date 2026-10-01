@@ -1,4 +1,5 @@
 using System.Windows;
+using RawAnalyzer.App.Services;
 using RawAnalyzer.App.Views;
 using RawAnalyzer.Core;
 
@@ -85,7 +86,8 @@ public partial class MainWindow
         try
         {
             await ApplyProcessedImageAsync(source, processed, choice.Label + frameNote,
-                color: processedColor);
+                color: processedColor,
+                valueChange: ValueMappingChange.ForProcessing(choice.Filter, choice.Factor, choice.Mode));
         }
         catch (Exception ex)
         {

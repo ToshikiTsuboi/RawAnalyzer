@@ -108,15 +108,15 @@ public partial class MainWindow : Window
     private long _histogramPopulation;
     private string? _correctionLabel;
 
-    // 32bit実数などを16bitへ写したときの対応関係。画像情報欄へ添える
-    private string? _valueNote;
+    // 32bit実数などを16bitへ写したときの対応関係。画像情報欄へ添える。処理結果では処理に合わせて引き継ぐ
+    private ValueMappingNote? _valueNote;
 
     // その係数(等倍ならnull)。画像演算・ノイズ測定で参照画像の係数と照合する。処理結果でも引き継ぐ
     // (フィルタ・欠陥補正・演算はコードの値域で行い対応を変えない。寸法の変わるビニングの結果は参照と組み合わせられない)
     private SampleScaling? _valueScaling;
 
     /// <summary>画像情報欄へ添える、値の対応関係の説明。</summary>
-    private string ValueNoteSuffix => _valueNote is null ? "" : $" · {_valueNote}";
+    private string ValueNoteSuffix => _valueNote is null ? "" : $" · {_valueNote.Text}";
     private ColorImage? _colorImage;
     private WindowState _preFullscreenState = WindowState.Normal;
     private WindowStyle _preFullscreenStyle = WindowStyle.SingleBorderWindow;
@@ -844,7 +844,7 @@ public partial class MainWindow : Window
             ? new TiffStackSource(path, pageCount) { BayerOverride = image.Format.Bayer } : null;
         _sequenceBayerOverride = image.Format.Bayer;
         _tiffPageIndex = 0;
-        _valueNote = valueNote;
+        _valueNote = ValueMappingNote.FromFile(valueNote, valueScaling);
         _valueScaling = valueScaling;
         _histogram = null;
         _vm.HasRoi = false;
@@ -2603,7 +2603,8 @@ public partial class MainWindow : Window
         // 保存の付随テキスト)に残す(ビニング・フィルタと同じ)
         await ApplyProcessedImageAsync(
             source, corrected,
-            $"{opLabel} {Path.GetFileName(choice.ReferencePath)}{CalculationFrameNote(source, frame)}");
+            $"{opLabel} {Path.GetFileName(choice.ReferencePath)}{CalculationFrameNote(source, frame)}",
+            valueChange: ValueMappingChange.ForCalculation(choice.Operation));
     }
 
     /// <summary>
@@ -2633,10 +2634,13 @@ public partial class MainWindow : Window
     /// 欠陥ウィンドウで一覧を破棄したときに出す案内。省略時は画像が替わったことを示す。
     /// 差し替えと同じUIターンで出す(縮小表示の作成を待った後で出すと、その間に検出し直した一覧を消す)。
     /// </param>
+    /// <param name="valueChange">
+    /// 処理がコードと元の値の対応(32bit TIFF などの説明)に与える変化。省略時は変えない(欠陥補正など)。
+    /// </param>
     /// <returns>差し替えた場合はtrue。</returns>
     private async Task<bool> ApplyProcessedImageAsync(
         RawImage source, RawImage processed, string label, ColorImage? color = null,
-        string? defectNotice = null)
+        string? defectNotice = null, ValueMappingChange? valueChange = null)
     {
         // 処理は実行中の操作・HDR表示の間は始めないが、前提が崩れていたら表示に触れる前に断る
         if (RejectProcessedImage(source, processed, label))
@@ -2683,7 +2687,10 @@ public partial class MainWindow : Window
         _currentFormat = processed.Format;
         _colorImage = color;
         _vm.IsColorImage = color is not null;
-        _valueNote = null;
+
+        // 32bit TIFF などの値の対応は、対応を変えない処理(フィルタ・平均ビニング・欠陥補正など)では引き継ぎ、
+        // 変える処理(差・加算ビニング・Sobel など)では新しい対応で説明し直す。消すと 1code の値が分からなくなる
+        _valueNote = _valueNote?.After(valueChange ?? ValueMappingChange.None);
         _histogram = null;
         _channelHistograms = null;
         _vm.HasRoi = false;
@@ -2706,7 +2713,7 @@ public partial class MainWindow : Window
         _vm.ImageInfoText =
             $"{processed.Width}×{processed.Height} · {processed.Format.BitDepth}bit" +
             (color is null ? " · " : " · RGB · ") +
-            $"補正: {_correctionLabel}(再読込で元に戻せます)";
+            $"補正: {_correctionLabel}(再読込で元に戻せます)" + ValueNoteSuffix;
 
         Viewport.SetImage(processed, processed.Format);
         Viewport.SetColorImage(color);
@@ -4349,7 +4356,7 @@ public partial class MainWindow : Window
                 // 送りでは同じサイズの記憶へ記録しない(開いたときに記録済みのフォーマットで読むだけ)
                 _openedRawFormat = isRaw ? format : null;
                 SetMainFormatNotice("");
-                _valueNote = valueNote;
+                _valueNote = ValueMappingNote.FromFile(valueNote, valueScaling);
                 _valueScaling = valueScaling;
                 _tiffStack = pageCount > 1
                     ? new TiffStackSource(path, pageCount, pageNavigationEnabled: false)
@@ -5427,7 +5434,7 @@ public partial class MainWindow : Window
         }
 
         _vm.ImageInfoText = $"欠陥画素 {count} 個を{methodLabel}補間で補正しました" +
-            "(保存すると補正後のデータが出力されます)";
+            "(保存すると補正後のデータが出力されます)" + ValueNoteSuffix;
     }
 
     // ---- フォーマットその場変更 ----
