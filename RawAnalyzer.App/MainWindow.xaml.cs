@@ -3928,15 +3928,19 @@ public partial class MainWindow : Window
             return;
         }
 
-        // チャネル分割表示ではタイル座標を元画像座標へ写像する
+        // チャネル分割表示ではタイル座標を元画像座標へ写像する。奇数寸法の端の行・列(どのタイルにも並ばない)
+        // など、表示されている画素に対応しない位置は範囲外として表示を消す。前の画素の値と位置を残すと、
+        // Ctrl+C(画素値・座標のコピー)がカーソルの下にない前の画素をコピーする
         if (!TryMapToSourceCoordinates(image, e.X, e.Y, out int sourceX, out int sourceY))
         {
+            ClearCursorReadout();
             return;
         }
 
         if (CursorReadout.Compose(image, format, _colorImage, sourceX, sourceY, Viewport.Frame)
             is not { } text)
         {
+            ClearCursorReadout();
             return;
         }
 
