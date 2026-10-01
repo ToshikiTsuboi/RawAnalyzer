@@ -201,6 +201,32 @@ public class DefectPixelWindowTests
         window.Close();
     });
 
+    [Theory]
+    [InlineData(BayerPattern.Rggb, "段1 R: mean=", "段2 B: mean=")]
+    [InlineData(BayerPattern.None, "段1: mean=", "段2: mean=")]
+    public Task SegmentedResult_ShowsThresholdsPerSegment(
+        BayerPattern pattern, string firstLine, string lastLine) => WpfTestHost.Run(() =>
+    {
+        // HDR分割ビューの検出は段ごと(Bayer は段×チャネルごと)に閾値を求める。どの段の閾値かを示す
+        // (段を示さないと同じチャネル名の行が段の数だけ並び、モノクロは閾値が1つも出なかった)
+        var window = new DefectPixelWindow();
+        var summary = (TextBlock)window.FindName("SummaryText");
+        const int segment = 16;
+        var codes = new ushort[segment * 2 * 16];
+        for (int i = 0; i < codes.Length; i++)
+        {
+            codes[i] = (ushort)((i % (segment * 2) < segment ? 2000 : 500) + (i % 2));
+        }
+
+        using RawImage image = TestImages.FromCodes(codes, segment * 2, 16, 12, pattern);
+        window.ShowResult(DefectPixelDetector.Detect(image, pattern: pattern, segmentWidth: segment), 4095);
+
+        Assert.Contains(firstLine, summary.Text);
+        Assert.Contains(lastLine, summary.Text);
+        Assert.Contains("段", summary.Text.Split('\n')[0]);
+        window.Close();
+    });
+
     [Fact]
     public Task ExportButtons_ZeroDefects_ExportHeaderOnlyTable() => WpfTestHost.Run(() =>
     {

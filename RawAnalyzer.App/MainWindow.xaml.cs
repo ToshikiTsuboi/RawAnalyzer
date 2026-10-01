@@ -4874,10 +4874,23 @@ public partial class MainWindow : Window
             return;
         }
 
+        // 行交互HDRの Raw 表示は、長秒と短秒の行を1つの統計で判定して欠陥を見逃すので、分割ビューへ案内する
+        if (_derivedImage is null && _currentFormat is not null
+            && HdrExposureMix.DefectDetectionRefusal(_currentFormat, derivedViewShown: false) is { } hdrRefusal)
+        {
+            MessageBox.Show(this, hdrRefusal, "欠陥画素検出", MessageBoxButton.OK, MessageBoxImage.Information);
+            _defectWindow?.ResetRunButton();
+            return;
+        }
+
         using BusyScope busy = EnterBusy();
         RawImage image = ActiveImage;
         int frame = Viewport.Frame;
         int maxCode = (1 << image.Format.BitDepth) - 1;
+
+        // HDR分割ビューは露光の段を左右に並べた1枚なので、段ごとに統計と閾値を求める
+        // (1つの統計にすると露光差で σ が膨らみ、閾値が値域の外へ出て欠陥を見逃す)
+        int segmentWidth = _derivedImage is not null && _hdrFloatImage is null ? _hdrSegmentWidth : 0;
 
         // Bayerはチャネル感度差で混合σが膨らみ閾値が値域外へ出るため、チャネル別に判定する
         BayerPattern pattern = ActiveFormat?.Bayer ?? BayerPattern.None;
@@ -4893,7 +4906,7 @@ public partial class MainWindow : Window
             (report, ct) => Task.Run(
                 () => result = DefectPixelDetector.Detect(
                     image, frame, sigma, detectHot, detectDead,
-                    pattern: pattern, progress: report, cancellationToken: ct),
+                    pattern: pattern, progress: report, cancellationToken: ct, segmentWidth: segmentWidth),
                 ct));
 
         if (progress.Error is not null)

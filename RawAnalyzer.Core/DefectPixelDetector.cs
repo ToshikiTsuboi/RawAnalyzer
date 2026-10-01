@@ -17,14 +17,16 @@ public enum DefectType
 /// <param name="Type">種別。</param>
 public readonly record struct DefectPixel(int X, int Y, int Code, DefectType Type);
 
-/// <summary>チャネル別の判定閾値(Bayer画像での検出に使用)。</summary>
-/// <param name="Channel">対象チャネル。</param>
+/// <summary>チャネル別の判定閾値(Bayer画像・区画別の検出に使用)。</summary>
+/// <param name="Channel">対象チャネル。区画別のモノクロ検出では <see cref="BayerChannel.None"/>。</param>
 /// <param name="Mean">チャネルの平均(raw code)。</param>
 /// <param name="Sigma">チャネルの標準偏差(raw code)。</param>
 /// <param name="HotThreshold">白点判定閾値。</param>
 /// <param name="DeadThreshold">黒点判定閾値。</param>
+/// <param name="Segment">区画の番号(左から0起点)。区画に分けない検出では0。</param>
 public readonly record struct DefectChannelThreshold(
-    BayerChannel Channel, double Mean, double Sigma, double HotThreshold, double DeadThreshold);
+    BayerChannel Channel, double Mean, double Sigma, double HotThreshold, double DeadThreshold,
+    int Segment = 0);
 
 /// <summary>
 /// 欠陥画素検出の結果。
@@ -34,7 +36,7 @@ public sealed class DefectDetectionResult
     internal DefectDetectionResult(
         IReadOnlyList<DefectPixel> defects, RegionStatistics statistics,
         double hotThreshold, double deadThreshold, bool truncated,
-        IReadOnlyList<DefectChannelThreshold> channelThresholds)
+        IReadOnlyList<DefectChannelThreshold> channelThresholds, int segmentCount = 1)
     {
         Defects = defects;
         Statistics = statistics;
@@ -42,7 +44,13 @@ public sealed class DefectDetectionResult
         DeadThreshold = deadThreshold;
         Truncated = truncated;
         ChannelThresholds = channelThresholds;
+        SegmentCount = segmentCount;
     }
+
+    /// <summary>
+    /// 統計と閾値を別々に求めた区画(列方向に並ぶ帯)の数。区画に分けない検出では1。
+    /// </summary>
+    public int SegmentCount { get; }
 
     /// <summary>検出された欠陥画素(y→x順)。</summary>
     public IReadOnlyList<DefectPixel> Defects { get; }
@@ -94,6 +102,12 @@ public static class DefectPixelDetector
     /// <param name="pattern">Bayerパターン。None以外でチャネル別判定になる。</param>
     /// <param name="progress">進捗通知(0〜1)。</param>
     /// <param name="cancellationToken">キャンセルトークン。</param>
+    /// <param name="segmentWidth">
+    /// 統計と閾値を別々に求める区画の幅(画素)。0以下(または画像の幅以上)なら画像全体で1組。
+    /// 正なら左から segmentWidth ごとの列の帯(右端は残りの幅)を区画とし、区画ごと(Bayerは区画×チャネルごと)に
+    /// mean±Nσ を求めてその区画の画素を判定する。HDR分割ビュー(各露光の段を左右に並べた1枚)では段の幅を渡す。
+    /// 露光の違う段を1つの母集団にすると σ に露光差が乗り、閾値が値域の外へ出て欠陥を見逃すため。
+    /// </param>
     /// <returns>検出結果。</returns>
     /// <exception cref="ArgumentOutOfRangeException">σ係数が正でない場合。</exception>
     public static DefectDetectionResult Detect(
@@ -105,7 +119,8 @@ public static class DefectPixelDetector
         int maxResults = 100_000,
         BayerPattern pattern = BayerPattern.None,
         IProgress<double>? progress = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        int segmentWidth = 0)
     {
         // NaN は比較を素通りするため、有限性を先に確かめる
         if (!double.IsFinite(sigmaFactor) || sigmaFactor <= 0)
@@ -113,34 +128,64 @@ public static class DefectPixelDetector
             throw new ArgumentOutOfRangeException(nameof(sigmaFactor), "σ係数は正の値である必要があります。");
         }
 
-        // パス1: 統計(Bayerはチャネル別、モノクロは全体)
-        RegionStatistics stats;
+        int width = image.Width;
+        int height = image.Height;
+        bool segmented = segmentWidth > 0 && segmentWidth < width;
+        int segmentSize = segmented ? segmentWidth : width;
+        int segments = segmented ? (int)(((long)width + segmentWidth - 1) / segmentWidth) : 1;
+
+        // パス1: 統計(Bayerはチャネル別、モノクロは全体)。区画に分けるときは区画ごと
+        RegionStatistics stats = default;
         double scalarHot = double.NaN;
         double scalarDead = double.NaN;
-        IReadOnlyList<DefectChannelThreshold> channelThresholds =
-            Array.Empty<DefectChannelThreshold>();
+        var channelThresholds = new List<DefectChannelThreshold>();
 
-        // 判定パスで毎画素分岐しないよう、2x2位相→閾値のテーブルにしておく
-        Span<double> hotByParity = stackalloc double[4];
-        Span<double> deadByParity = stackalloc double[4];
+        // 判定パスで毎画素分岐しないよう、区画×2x2位相→閾値のテーブルにしておく
+        var hotTable = new double[segments * 4];
+        var deadTable = new double[segments * 4];
 
-        if (pattern == BayerPattern.None)
+        if (segmented)
         {
+            // 判定には区画ごとの統計を使う。結果の全体統計は従来どおり全画素から取る
             stats = ImageAnalysis.ComputeStatistics(
-                image, frame, new RegionOfInterest(0, 0, image.Width, image.Height),
-                cancellationToken);
-            scalarHot = stats.Mean + sigmaFactor * stats.Sigma;
-            scalarDead = stats.Mean - sigmaFactor * stats.Sigma;
-            hotByParity.Fill(scalarHot);
-            deadByParity.Fill(scalarDead);
+                image, frame, new RegionOfInterest(0, 0, width, height), cancellationToken);
         }
-        else
+
+        for (int segment = 0; segment < segments; segment++)
         {
+            int left = segment * segmentSize;
+            var region = new RegionOfInterest(left, 0, Math.Min(segmentSize, width - left), height);
+            if (pattern == BayerPattern.None)
+            {
+                RegionStatistics regionStats = ImageAnalysis.ComputeStatistics(
+                    image, frame, region, cancellationToken);
+                double hot = regionStats.Mean + sigmaFactor * regionStats.Sigma;
+                double dead = regionStats.Mean - sigmaFactor * regionStats.Sigma;
+                hotTable.AsSpan(segment * 4, 4).Fill(hot);
+                deadTable.AsSpan(segment * 4, 4).Fill(dead);
+                if (segmented)
+                {
+                    channelThresholds.Add(new DefectChannelThreshold(
+                        BayerChannel.None, regionStats.Mean, regionStats.Sigma, hot, dead, segment));
+                }
+                else
+                {
+                    stats = regionStats;
+                    scalarHot = hot;
+                    scalarDead = dead;
+                }
+
+                continue;
+            }
+
             // 閾値の元になる統計なのでサンプリングせず全画素から取る
             ChannelAnalysisResult analysis = ImageAnalysis.ComputeChannelAnalysis(
-                image, frame, pattern, region: null,
+                image, frame, pattern, region: segmented ? region : null,
                 maxSamples: long.MaxValue, cancellationToken);
-            stats = analysis.Total.Statistics;
+            if (!segmented)
+            {
+                stats = analysis.Total.Statistics;
+            }
 
             var thresholds = new DefectChannelThreshold[analysis.Channels.Count];
             for (int i = 0; i < analysis.Channels.Count; i++)
@@ -151,18 +196,19 @@ public static class DefectPixelDetector
                     channel.Statistics.Mean,
                     channel.Statistics.Sigma,
                     channel.Statistics.Mean + sigmaFactor * channel.Statistics.Sigma,
-                    channel.Statistics.Mean - sigmaFactor * channel.Statistics.Sigma);
+                    channel.Statistics.Mean - sigmaFactor * channel.Statistics.Sigma,
+                    segment);
             }
 
-            channelThresholds = thresholds;
+            channelThresholds.AddRange(thresholds);
             for (int py = 0; py < 2; py++)
             {
                 for (int px = 0; px < 2; px++)
                 {
                     BayerChannel ch = BayerHelper.GetChannel(pattern, px, py);
                     DefectChannelThreshold t = thresholds.First(x => x.Channel == ch);
-                    hotByParity[py * 2 + px] = t.HotThreshold;
-                    deadByParity[py * 2 + px] = t.DeadThreshold;
+                    hotTable[segment * 4 + py * 2 + px] = t.HotThreshold;
+                    deadTable[segment * 4 + py * 2 + px] = t.DeadThreshold;
                 }
             }
         }
@@ -170,16 +216,6 @@ public static class DefectPixelDetector
         progress?.Report(0.5);
 
         int shift = 16 - image.Format.BitDepth;
-        int width = image.Width;
-        int height = image.Height;
-        double hot0 = hotByParity[0];
-        double hot1 = hotByParity[1];
-        double hot2 = hotByParity[2];
-        double hot3 = hotByParity[3];
-        double dead0 = deadByParity[0];
-        double dead1 = deadByParity[1];
-        double dead2 = deadByParity[2];
-        double dead3 = deadByParity[3];
 
         // パス2: 閾値超過画素の収集(行並列)
         object gate = new();
@@ -234,21 +270,26 @@ public static class DefectPixelDetector
                 }
 
                 image.CopyRegion(frame, 0, y, width, 1, local.Buffer);
-                double hotEvenX = (y & 1) == 0 ? hot0 : hot2;
-                double hotOddX = (y & 1) == 0 ? hot1 : hot3;
-                double deadEvenX = (y & 1) == 0 ? dead0 : dead2;
-                double deadOddX = (y & 1) == 0 ? dead1 : dead3;
-                for (int x = 0; x < width; x++)
+                for (int segment = 0; segment < segments; segment++)
                 {
-                    int code = local.Buffer[x] >> shift;
-                    bool evenX = (x & 1) == 0;
-                    if (detectHot && code > (evenX ? hotEvenX : hotOddX))
+                    int t = segment * 4 + (y & 1) * 2;
+                    double hotEvenX = hotTable[t];
+                    double hotOddX = hotTable[t + 1];
+                    double deadEvenX = deadTable[t];
+                    double deadOddX = deadTable[t + 1];
+                    int right = Math.Min(width, (segment + 1) * segmentSize);
+                    for (int x = segment * segmentSize; x < right; x++)
                     {
-                        local.Local.Add(new DefectPixel(x, y, code, DefectType.Hot));
-                    }
-                    else if (detectDead && code < (evenX ? deadEvenX : deadOddX))
-                    {
-                        local.Local.Add(new DefectPixel(x, y, code, DefectType.Dead));
+                        int code = local.Buffer[x] >> shift;
+                        bool evenX = (x & 1) == 0;
+                        if (detectHot && code > (evenX ? hotEvenX : hotOddX))
+                        {
+                            local.Local.Add(new DefectPixel(x, y, code, DefectType.Hot));
+                        }
+                        else if (detectDead && code < (evenX ? deadEvenX : deadOddX))
+                        {
+                            local.Local.Add(new DefectPixel(x, y, code, DefectType.Dead));
+                        }
                     }
                 }
 
@@ -271,6 +312,6 @@ public static class DefectPixelDetector
         defects.Sort((a, b) => a.Y != b.Y ? a.Y - b.Y : a.X - b.X);
         progress?.Report(1.0);
         return new DefectDetectionResult(
-            defects, stats, scalarHot, scalarDead, truncated, channelThresholds);
+            defects, stats, scalarHot, scalarDead, truncated, channelThresholds, segments);
     }
 }

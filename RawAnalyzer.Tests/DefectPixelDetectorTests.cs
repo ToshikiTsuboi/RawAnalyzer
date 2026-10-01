@@ -138,6 +138,76 @@ public class DefectPixelDetectorTests
         }
     }
 
+    /// <summary>
+    /// HDR分割ビューと同じく、左に長秒(信号 long)・右に短秒(信号 short)の段を並べた画面。
+    /// </summary>
+    private static ushort[] MakeSideBySide(
+        int segmentWidth, int height, ushort longCode, ushort shortCode,
+        params (int X, int Y, ushort Code)[] defects)
+    {
+        int width = segmentWidth * 2;
+        var codes = new ushort[width * height];
+        for (int y = 0; y < height; y++)
+        {
+            for (int x = 0; x < width; x++)
+            {
+                ushort level = x < segmentWidth ? longCode : shortCode;
+                codes[y * width + x] = (ushort)(level + ((x + y) % 2)); // σ>0にするためのディザ
+            }
+        }
+
+        foreach ((int x, int y, ushort code) in defects)
+        {
+            codes[y * width + x] = code;
+        }
+
+        return codes;
+    }
+
+    [Theory]
+    [InlineData(BayerPattern.Rggb)]
+    [InlineData(BayerPattern.None)]
+    public void Detect_SideBySideExposures_PerSegment_FindsDefectsOfEachExposure(BayerPattern pattern)
+    {
+        // 露光比4のフラット(長秒 2000・短秒 500 code)を左右に並べた HDR 分割ビュー。
+        // 画像全体で1組の統計を取ると各チャネルが mean≈1250・σ≈750 になり、黒点の閾値は負、
+        // 白点の閾値は値域の外へ出て、長秒の黒点(1000)も短秒の白点(1500)も0件になっていた
+        const int segment = 32;
+        ushort[] codes = MakeSideBySide(segment, 32, 2000, 500, (10, 10, 1000), (40, 12, 1500));
+        using RawImage image = TestImages.FromCodes(codes, segment * 2, 32, 12, pattern);
+
+        DefectDetectionResult mixed = DefectPixelDetector.Detect(image, pattern: pattern);
+        Assert.Empty(mixed.Defects);
+
+        DefectDetectionResult result = DefectPixelDetector.Detect(
+            image, pattern: pattern, segmentWidth: segment);
+
+        Assert.Equal(2, result.Defects.Count);
+        Assert.Contains(new DefectPixel(10, 10, 1000, DefectType.Dead), result.Defects);
+        Assert.Contains(new DefectPixel(40, 12, 1500, DefectType.Hot), result.Defects);
+        Assert.Equal(2, result.SegmentCount);
+
+        // 閾値は段×チャネルごと(モノクロは段ごと)に返す。スカラー閾値は使わせない
+        int channels = pattern == BayerPattern.None ? 1 : 4;
+        Assert.Equal(2 * channels, result.ChannelThresholds.Count);
+        Assert.True(double.IsNaN(result.HotThreshold));
+        Assert.All(result.ChannelThresholds.Where(t => t.Segment == 0), t => Assert.InRange(t.Mean, 1900, 2010));
+        Assert.All(result.ChannelThresholds.Where(t => t.Segment == 1), t => Assert.InRange(t.Mean, 490, 510));
+    }
+
+    [Fact]
+    public void Detect_SegmentWidthNotDividingImage_LastSegmentIsNarrower()
+    {
+        // 区画の幅で割り切れない右端は、残りの幅の区画として統計を取る(取りこぼさない)
+        ushort[] codes = MakeFlatWithDefects(40, 32, 1000, (38, 5, 4000));
+        using RawImage image = TestImages.FromCodes(codes, 40, 32, bitDepth: 12);
+
+        DefectDetectionResult result = DefectPixelDetector.Detect(image, segmentWidth: 16);
+
+        Assert.Equal(3, result.SegmentCount);
+        Assert.Equal(new DefectPixel(38, 5, 4000, DefectType.Hot), Assert.Single(result.Defects));
+    }
+
     [Fact]
     public void Detect_CancelledToken_ThrowsOperationCanceled()
     {

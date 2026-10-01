@@ -65,11 +65,27 @@ public partial class DefectPixelWindow : Window
         var sb = new StringBuilder();
         if (result.ChannelThresholds.Count > 0)
         {
-            // Bayerはチャネル間の感度差が大きいため、チャネル別の閾値で判定している
-            sb.Append("閾値 (チャネル別, max=").Append(maxCode).AppendLine("):");
+            // Bayerはチャネル間の感度差が大きいため、チャネル別の閾値で判定している。
+            // HDR分割ビューは段(露光)ごとにも分けて判定している(左の段から長秒→短秒)
+            bool bySegment = result.SegmentCount > 1;
+            bool byChannel = result.ChannelThresholds.Any(t => t.Channel != BayerChannel.None);
+            sb.Append(bySegment ? (byChannel ? "閾値 (段×チャネル別" : "閾値 (段別") : "閾値 (チャネル別")
+                .Append(bySegment ? "・段は左から長秒→短秒" : "")
+                .Append(", max=").Append(maxCode).AppendLine("):");
             foreach (DefectChannelThreshold t in result.ChannelThresholds)
             {
-                sb.Append("  ").Append(t.Channel).Append(": mean=")
+                sb.Append("  ");
+                if (bySegment)
+                {
+                    sb.Append("段").Append(t.Segment + 1).Append(t.Channel != BayerChannel.None ? " " : "");
+                }
+
+                if (t.Channel != BayerChannel.None)
+                {
+                    sb.Append(t.Channel);
+                }
+
+                sb.Append(": mean=")
                     .Append(t.Mean.ToString("F1", CultureInfo.InvariantCulture))
                     .Append(" σ=").Append(t.Sigma.ToString("F2", CultureInfo.InvariantCulture))
                     .Append("  白点>")
