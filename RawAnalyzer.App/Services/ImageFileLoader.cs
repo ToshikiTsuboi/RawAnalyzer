@@ -92,7 +92,9 @@ internal static class ImageFileLoader
             return 2; // ushort[]
         }
 
-        if (format == PixelFormats.Gray8)
+        // 1/2/4bitのグレーは DecodeFrame が Gray8 へ変換して帯ごとに読む(Bgra32 へは広げない)
+        if (format == PixelFormats.Gray8 || format == PixelFormats.BlackWhite
+            || format == PixelFormats.Gray2 || format == PixelFormats.Gray4)
         {
             return 1 + 2; // byte[] + ushort[]
         }

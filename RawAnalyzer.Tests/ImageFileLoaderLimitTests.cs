@@ -13,6 +13,9 @@ public class ImageFileLoaderLimitTests
         nameof(PixelFormats.Rgb48) => PixelFormats.Rgb48,
         nameof(PixelFormats.Rgba64) => PixelFormats.Rgba64,
         nameof(PixelFormats.Bgra32) => PixelFormats.Bgra32,
+        nameof(PixelFormats.BlackWhite) => PixelFormats.BlackWhite,
+        nameof(PixelFormats.Gray2) => PixelFormats.Gray2,
+        nameof(PixelFormats.Gray4) => PixelFormats.Gray4,
         _ => throw new ArgumentOutOfRangeException(nameof(name), name, null),
     };
 
@@ -37,6 +40,21 @@ public class ImageFileLoaderLimitTests
             () => ImageFileLoader.EnsureDecodable(20000, 10000, format));
 
         Assert.Contains("GB", ex.Message);
+    }
+
+    [Theory]
+    [InlineData(nameof(PixelFormats.BlackWhite))]
+    [InlineData(nameof(PixelFormats.Gray2))]
+    [InlineData(nameof(PixelFormats.Gray4))]
+    public void EnsureDecodable_LowBitGray_IsEstimatedLikeGray8(string formatName)
+    {
+        // 1/2/4bitのグレーは Gray8 へ変換して帯ごとに読み、ushort[] しか確保しない。Bgra32 カラー相当
+        // (12byte/画素)と見積もり、1.25億〜2億画素の2値画像(欠陥マスクなど)を不要に拒否していた
+        // (全体レビュー 2026-10-01 B96)
+        PixelFormat format = ToPixelFormat(formatName);
+
+        Assert.Equal(ImageFileLoader.EstimateBytesPerPixel(PixelFormats.Gray8), ImageFileLoader.EstimateBytesPerPixel(format));
+        ImageFileLoader.EnsureDecodable(16320, 12240, format); // 2億画素級センサの1bitマスク
     }
 
     [Fact]
