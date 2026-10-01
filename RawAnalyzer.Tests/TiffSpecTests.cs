@@ -329,7 +329,7 @@ public class TiffSpecTests
     }
 
     [Fact]
-    public void ReducedResolutionPages_AreNotCountedOnAnyRoute()
+    public void ReducedResolutionPages_AreSkippedInPageTable_AndWicRouteReadsPageTableFrame()
     {
         // WICは NewSubfileType bit0 のIFDをフレームに数えない。ページ表(TryReadSampleInfo)も
         // 直接経路の読込結果も同じ数え方にする(以前はページ数が経路で食い違い、ページ送りが例外になった)
@@ -346,6 +346,41 @@ public class TiffSpecTests
         using RawImage image = decoded.Luminance;
         Assert.Equal(1, decoded.PageCount);
         AssertRamp16(image);
+
+        // 圧縮ページは直接経路に乗らず、ページ表のWICフレーム番号でWICから読む。
+        // [全解像度, 縮小, 全解像度(Deflate)] のページ1はWICのフレーム1で、縮小画像(3×2)ではない
+        var other = new byte[W * H * 2];
+        for (int i = 0; i < W * H; i++)
+        {
+            BinaryPrimitives.WriteUInt16LittleEndian(other.AsSpan(i * 2), (ushort)(65535 - (i * 1000)));
+        }
+
+        var compressed = TiffBuilder.GrayPage(W, H, 16, other);
+        TiffBuilder.Deflate(compressed);
+        using var afterReduced = TempTiff.Write(new TiffBuilder().Build(full, reduced, compressed));
+        AssertOtherPage(afterReduced.Path, pageIndex: 1, pageCount: 2);
+
+        // 全解像度のSubIFD(WICに届かない)がページ1に入ると、主チェーンの2枚目はページ2・WICのフレーム1になる。
+        // ページ番号のままWICのフレームを引くと範囲外になる
+        var withSubIfd = TiffBuilder.GrayPage(W, H, 16, Ramp16());
+        withSubIfd.SubIfds.Add(TiffBuilder.GrayPage(W, H, 16, new byte[W * H * 2]));
+        using var afterSubIfd = TempTiff.Write(new TiffBuilder().Build(withSubIfd, compressed));
+        AssertOtherPage(afterSubIfd.Path, pageIndex: 2, pageCount: 3);
+
+        static void AssertOtherPage(string path, int pageIndex, int pageCount)
+        {
+            Assert.False(TiffLoader.TryProbePixelLayout(path, out _, out _, pageIndex));
+            DecodedImage page = ImageFileLoader.Load(path, pageIndex: pageIndex);
+            using RawImage pageImage = page.Luminance;
+            Assert.Equal(pageCount, page.PageCount);
+            Assert.Equal(pageIndex, page.PageIndex);
+            Assert.Equal(W, pageImage.Width);
+            Assert.Equal(H, pageImage.Height);
+            for (int i = 0; i < W * H; i++)
+            {
+                Assert.Equal((ushort)(65535 - (i * 1000)), pageImage.GetPixel(i % W, i / W));
+            }
+        }
     }
 
     [Fact]
