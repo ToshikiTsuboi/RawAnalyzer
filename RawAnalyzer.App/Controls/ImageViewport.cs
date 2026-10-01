@@ -401,9 +401,19 @@ public sealed class ImageViewport : FrameworkElement
         // _roi が null でも、直前の単クリックで統計だけ残っている場合があるため
         // 「以前ROIがあった」ことも解除通知の条件にする
         bool had = _roi is not null || _roiHadValue;
+        bool wasDragging = _roiDragging;
         _roi = null;
         _roiDragging = false;
         _roiHadValue = false;
+
+        // ドラッグ中に消されたら(画像の差し替え・分割⇔非分割の切り替え・Ctrl+G)ドラッグごと中止する。
+        // キャプチャを残すと、ボタンを離しても EndDrag はドラッグ中でないので外さず、
+        // ビューポートの外のマウス移動と次のクリックまでビューポートに届いてしまう
+        if (wasDragging && !_panning && IsMouseCaptured)
+        {
+            ReleaseMouseCapture();
+        }
+
         if (had)
         {
             RoiChanged?.Invoke(this, EventArgs.Empty);
@@ -1066,6 +1076,13 @@ public sealed class ImageViewport : FrameworkElement
 
         if (!_roiDragging)
         {
+            // ビューポートがキャプチャを取るのはパンとROIのドラッグだけ。どちらでもないのに
+            // キャプチャが残っていれば、ボタンを離した時点で外す(残すと次のクリックが吸われる)
+            if (IsMouseCaptured)
+            {
+                ReleaseMouseCapture();
+            }
+
             return;
         }
 

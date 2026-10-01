@@ -1,4 +1,6 @@
 using System.Windows;
+using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using RawAnalyzer.App.Controls;
@@ -496,6 +498,75 @@ public class ImageViewportTests
             pyramid.Dispose();
         }
     });
+
+    [Fact]
+    public Task ClearRoiDuringRoiDrag_ReleasesMouseCaptureWhenButtonIsReleased() =>
+        WpfTestHost.Run(async () =>
+    {
+        // ROI のドラッグ中に画像の差し替え(HDR 分割の計算完了など)・分割⇔非分割の切り替え・
+        // Ctrl+G で ROI が消されることがある。以前はドラッグの状態だけを落としてマウスキャプチャを残し、
+        // ボタンを離しても外れなかったため、ビューポートの外のマウス移動と次の1クリックが
+        // ビューポートに吸われていた
+        (ImageViewport viewport, RawImage image) = CreateBayerViewport(BayerPattern.None);
+        using HwndSource host = HostInHiddenWindow(viewport);
+        try
+        {
+            // キャプチャを取るとWPFが実際のカーソル位置・ボタン状態でマウス移動を合成する。
+            // 実際のボタンは押されていないので、そのまま届くとドラッグ自体が終わってしまう。
+            // ボタンを押したまま動かさない操作にするため、実際のマウス移動は届けない
+            viewport.PreviewMouseMove += (_, e) => e.Handled = true;
+            viewport.InteractionMode = ViewportInteractionMode.RoiSelect;
+            RaiseLeftButton(viewport, UIElement.MouseDownEvent);
+            Assert.True(viewport.IsMouseCaptured); // ROI のドラッグを始めた
+
+            viewport.ClearRoi();
+            RaiseLeftButton(viewport, UIElement.MouseUpEvent);
+
+            Assert.False(viewport.IsMouseCaptured);
+        }
+        finally
+        {
+            viewport.ReleaseMouseCapture();
+            host.RootVisual = null;
+            await viewport.ClearImageAsync();
+            image.Dispose();
+        }
+    });
+
+    /// <summary>
+    /// マウスキャプチャは PresentationSource に載った要素でしか取れないので、表示しない HWND に載せる。
+    /// </summary>
+    private static HwndSource HostInHiddenWindow(ImageViewport viewport)
+    {
+        const int WsPopup = unchecked((int)0x80000000); // WS_VISIBLE を付けない
+        const int WsExToolWindow = 0x00000080;
+        const int WsExNoActivate = 0x08000000;
+        return new HwndSource(new HwndSourceParameters(nameof(ImageViewportTests))
+        {
+            WindowStyle = WsPopup,
+            ExtendedWindowStyle = WsExToolWindow | WsExNoActivate,
+            PositionX = -32000,
+            PositionY = -32000,
+            Width = 240,
+            Height = 180,
+        })
+        {
+            RootVisual = viewport,
+        };
+    }
+
+    /// <summary>左ボタンの押下または解放を、入力と同じく Preview → 本体の順に送る。</summary>
+    private static void RaiseLeftButton(ImageViewport viewport, RoutedEvent bubbling)
+    {
+        RoutedEvent preview = bubbling == UIElement.MouseDownEvent
+            ? UIElement.PreviewMouseDownEvent
+            : UIElement.PreviewMouseUpEvent;
+        foreach (RoutedEvent routed in new[] { preview, bubbling })
+        {
+            viewport.RaiseEvent(new MouseButtonEventArgs(
+                Mouse.PrimaryDevice, Environment.TickCount, MouseButton.Left) { RoutedEvent = routed });
+        }
+    }
 
     /// <summary>
     /// 表示中の描画結果の中央の画素の最も明るいチャネル。Bayerカラー表示では、その画素のチャネルの値
