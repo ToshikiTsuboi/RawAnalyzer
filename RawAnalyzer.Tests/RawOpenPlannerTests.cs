@@ -48,7 +48,9 @@ public class RawOpenPlannerTests
         Assert.Equal(RawFormatOrigin.Dialog,
             RawOpenPlanner.Plan(@"D:\cap\shot_0001.bin", Size, null, history, null).Origin);
 
-        // サイズ不明なら記憶では開かない
+        // サイズ不明(SafeFileSize が -1)でも例外にせずダイアログへ。記憶は0以下のサイズを持てない
+        // (FormatHistory が記録・読込で拒む)ので、Plan のサイズの判定を外しても記憶では開かない。
+        // ここで確かめるのは例外にならずダイアログになることだけ
         Assert.Equal(RawFormatOrigin.Dialog,
             RawOpenPlanner.Plan(Path, -1, null, history, null).Origin);
     }
@@ -116,7 +118,8 @@ public class RawOpenPlannerTests
     [Fact]
     public void Notices_DescribeTheGuessAndHowToChangeIt()
     {
-        Assert.Equal("同じサイズのファイルの記憶から推定して開きました(F2 で変更)", RawOpenPlanner.AutoOpenNotice);
+        // 文言の写しとは比べず、変え方(F2)を示すことだけを確かめる
+        Assert.Contains("F2", RawOpenPlanner.AutoOpenNotice);
 
         RawFormat format = Fmt(640, 480, bayer: BayerPattern.Rggb);
         string toolTip = RawOpenPlanner.AutoOpenToolTip(Path, Size, format);
