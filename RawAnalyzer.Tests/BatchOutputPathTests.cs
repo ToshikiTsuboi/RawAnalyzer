@@ -43,6 +43,31 @@ public class BatchOutputPathTests
     }
 
     [Theory]
+    [InlineData("export2", @"C:\data\seq\export2")]
+    [InlineData(@"out\run1", @"C:\data\seq\out\run1")]
+    [InlineData(@"..\out", @"C:\data\out")]
+    [InlineData(@".\", @"C:\data\seq\")]
+    [InlineData(@"\out", @"C:\out")] // ドライブの根からの相対は元画像のドライブ
+    [InlineData(@"E:\export", @"E:\export")] // 絶対パスはそのまま
+    [InlineData(@"\\nas01\share\export", @"\\nas01\share\export")]
+    public void RelativeOutputFolder_IsResolvedAgainstImageFolder(string input, string expected)
+    {
+        // 全体レビュー 2026-10-01 B83。出力先に相対パス(例 export2)を入れると、元画像のフォルダではなく
+        // プロセスのカレントディレクトリ(exe の場所など)の下へ書き出し、完了表示も相対パスのままで
+        // 出力の場所が分からなかった。元画像のフォルダを基準に絶対パスにする
+        Assert.True(OutputPaths.TryResolveOutputFolder(input, Folder, out string folder));
+
+        Assert.Equal(expected, folder);
+        Assert.True(Path.IsPathFullyQualified(folder));
+    }
+
+    [Fact]
+    public void OutputFolderThatIsNotAPath_IsRejected()
+    {
+        Assert.False(OutputPaths.TryResolveOutputFolder("out\0put", Folder, out _));
+    }
+
+    [Theory]
     [InlineData(@"C:\data\seq\export", "img_001.png", 0, 1, false, ".png", @"C:\data\seq\export\img_001.png")]
     [InlineData(Folder, "img_001.tiff", 0, 1, false, ".tif", @"C:\data\seq\img_001.tif")] // .tiff とは別名
     [InlineData(Folder, "stack.tif", 0, 3, true, ".tif", @"C:\data\seq\stack_p0001.tif")] // 複数ページは _p

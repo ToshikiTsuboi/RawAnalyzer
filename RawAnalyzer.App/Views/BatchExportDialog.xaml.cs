@@ -126,6 +126,7 @@ public partial class BatchExportDialog : Window
 
     private readonly int _frameWidth;
     private readonly int _frameHeight;
+    private readonly string _sourceFolder;
 
     /// <summary>ダイアログを生成する。</summary>
     /// <param name="targetCount">対象ファイル数。</param>
@@ -134,17 +135,22 @@ public partial class BatchExportDialog : Window
     /// <param name="frameWidth">1フレームの幅(ビットレート目安の表示用。0なら表示しない)。</param>
     /// <param name="frameHeight">1フレームの高さ。</param>
     /// <param name="tiffPageCount">単一TIFFスタック内のページ数。通常は1。</param>
+    /// <param name="sourceFolder">
+    /// 出力先の相対パスの基準にする元画像のフォルダ。null なら出力先の初期値の親フォルダ。
+    /// </param>
     public BatchExportDialog(
         int targetCount,
         string defaultOutputFolder,
         bool rawTargets = true,
         int frameWidth = 0,
         int frameHeight = 0,
-        int tiffPageCount = 1)
+        int tiffPageCount = 1,
+        string? sourceFolder = null)
     {
         InitializeComponent();
         _frameWidth = frameWidth;
         _frameHeight = frameHeight;
+        _sourceFolder = sourceFolder ?? Path.GetDirectoryName(defaultOutputFolder) ?? "";
         TargetInfoText.Text = tiffPageCount > 1
             ? $"対象: TIFFスタック 1 件・全 {tiffPageCount} ページ"
             : rawTargets
@@ -245,10 +251,19 @@ public partial class BatchExportDialog : Window
 
     private void OnRunClick(object sender, RoutedEventArgs e)
     {
-        string folder = OutputFolderBox.Text.Trim();
-        if (string.IsNullOrEmpty(folder))
+        string input = OutputFolderBox.Text.Trim();
+        if (string.IsNullOrEmpty(input))
         {
             MessageBox.Show(this, "出力先フォルダを指定してください。", "バッチ書き出し",
+                MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        // 相対パスはカレントディレクトリではなく元画像のフォルダを基準に絶対パスにする
+        // (完了表示にも絶対パスで出す)
+        if (!OutputPaths.TryResolveOutputFolder(input, _sourceFolder, out string folder))
+        {
+            MessageBox.Show(this, $"出力先フォルダのパスが正しくありません: {input}", "バッチ書き出し",
                 MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }

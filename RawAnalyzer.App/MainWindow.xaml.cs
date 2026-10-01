@@ -2652,7 +2652,8 @@ public partial class MainWindow : Window
         var dialog = new BatchExportDialog(
             targets.Count, Path.Combine(folder, "export"), rawTargets,
             _currentFormat?.Width ?? 0, _currentFormat?.Height ?? 0,
-            _tiffStack is { PageNavigationEnabled: true } stack ? stack.PageCount : 1)
+            _tiffStack is { PageNavigationEnabled: true } stack ? stack.PageCount : 1,
+            sourceFolder: folder)
         {
             Owner = this,
         };

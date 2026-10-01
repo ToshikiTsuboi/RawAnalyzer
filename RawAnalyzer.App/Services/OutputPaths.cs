@@ -26,6 +26,33 @@ internal static class OutputPaths
     }
 
     /// <summary>
+    /// 出力先フォルダの入力を絶対パスにする。
+    /// </summary>
+    /// <remarks>
+    /// 相対パス(例 export2)をそのまま使うと、元画像のフォルダではなくプロセスのカレントディレクトリ
+    /// (exe の場所など)を基準に書き出し、完了表示も相対パスのままで出力の場所が分からない。
+    /// 元画像のフォルダを基準に解決する(「\out」のようなドライブの根からの相対は元画像のドライブ)。
+    /// ファイルシステムには触れない(NAS の出力先でも UI スレッドで待たない)。
+    /// </remarks>
+    /// <param name="input">入力された出力先(前後の空白は除いたもの)。</param>
+    /// <param name="baseFolder">相対パスの基準にする元画像のフォルダ(絶対パス)。</param>
+    /// <param name="folder">絶対パスの出力先。</param>
+    /// <returns>パスとして解釈できればtrue。</returns>
+    internal static bool TryResolveOutputFolder(string input, string baseFolder, out string folder)
+    {
+        try
+        {
+            folder = Path.GetFullPath(input, baseFolder);
+            return true;
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            folder = input;
+            return false;
+        }
+    }
+
+    /// <summary>
     /// 一括書き出しで静止画1枚(ファイル・RAWのフレーム・TIFFのページ)を書き出すパスを作る。
     /// </summary>
     /// <remarks>
