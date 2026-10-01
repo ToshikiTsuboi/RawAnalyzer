@@ -139,7 +139,10 @@ public class SaveTests
         {
             TiffWriter.SaveGray16(image, 0, path, rowsPerStripOverride: rowsPerStrip);
 
-            using RawImage reloaded = TiffLoader.Load(path);
+            // 本番で1億画素超の保存物を開き直す直接経路(ストリップの連続性の判定 → RawLoader)で読み戻す。
+            // 小さな画像は判定が不成立でもWICで読めてしまうので、判定が成り立つことを明示する
+            Assert.True(TiffLoader.TryProbePixelLayout(path, out TiffPixelLayout? layout, out string reason), reason);
+            using RawImage reloaded = RawLoader.Load(path, TiffLoader.ToRawFormat(layout!));
             Assert.Equal(width, reloaded.Width);
             Assert.Equal(height, reloaded.Height);
             Assert.Equal(16, reloaded.Format.BitDepth);
@@ -185,7 +188,8 @@ public class SaveTests
             using RawImage image = RawLoader.Load(source, format);
             TiffWriter.SaveGray16(image, 1, path);
 
-            using RawImage reloaded = TiffLoader.Load(path);
+            Assert.True(TiffLoader.TryProbePixelLayout(path, out TiffPixelLayout? layout, out string reason), reason);
+            using RawImage reloaded = RawLoader.Load(path, TiffLoader.ToRawFormat(layout!));
             for (int y = 0; y < height; y++)
             {
                 for (int x = 0; x < width; x++)
@@ -242,18 +246,23 @@ public class SaveTests
     [Fact]
     public void ImageExport_RenderGray8_AppliesLut()
     {
-        ushort[] codes = TestData.MakePattern(8 * 4, 16);
-        using RawImage image = LoadImage(codes, 8, 4, 16);
-        var lut = DisplayLut.Create(new DisplayParameters());
+        // 8bitグレー保存と一括書き出しが使う単一LUT版。渡したLUTと frame で焼くことを、
+        // 既定でないLUTと、フレームごとに値の違う2フレーム画像のフレーム1で確かめる
+        const int width = 8;
+        const int height = 4;
+        ushort[] codes = TestData.MakePattern(width * height * 2, 16);
+        using RawImage image = RawImage.FromPixels(
+            new RawFormat { Width = width, Height = height, BitDepth = 16, FrameCount = 2 }, codes);
+        var lut = DisplayLut.Create(new DisplayParameters(Gain: 1.5, Gamma: 2.2));
 
-        byte[] gray = ImageExport.RenderGray8(image, 0, lut);
+        byte[] gray = ImageExport.RenderGray8(image, 1, lut);
 
-        Assert.Equal(8 * 4, gray.Length);
-        for (int y = 0; y < 4; y++)
+        Assert.Equal(width * height, gray.Length);
+        for (int y = 0; y < height; y++)
         {
-            for (int x = 0; x < 8; x++)
+            for (int x = 0; x < width; x++)
             {
-                Assert.Equal(lut.Map(image.GetPixel(x, y)), gray[y * 8 + x]);
+                Assert.Equal(lut.Map(codes[(width * height) + (y * width) + x]), gray[y * width + x]);
             }
         }
     }
