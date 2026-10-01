@@ -23,6 +23,9 @@ public partial class NoiseMeasureDialog : Window
     private string _lastResultText = "";
     private long _expectedReferenceSize;
 
+    // 前回の UpdateSource で受け取ったビット深度の最大code(初回は0)。飽和コードの換算に使う
+    private int _maxCode;
+
     /// <summary>ダイアログを生成する。</summary>
     /// <param name="sourceName">対象画像(A)の表示名。</param>
     /// <param name="initialFolder">参照ファイル選択の初期フォルダ。</param>
@@ -40,8 +43,13 @@ public partial class NoiseMeasureDialog : Window
     /// <summary>
     /// 対象画像が変わったときに表示と既定値を更新する。
     /// これを呼ばないと旧ファイル名・旧ビット深度の飽和コードのまま測定され、
-    /// DRが最大で数stop過大に出る。
+    /// DRが最大で数stop誤る。
     /// </summary>
+    /// <remarks>
+    /// 飽和コードは σ と同じく raw code(対象のビット深度)の単位。ビット深度が変わったら(ビニング・フィルタの
+    /// 16bit の結果、HDR合成、ビット深度の違うファイル)、既定値(前の最大code)のままなら新しい最大codeへ、
+    /// 入れた値は同じ信号水準のコード(2^Δbit 倍)へ換算する。上限を超える値は上限へ戻す。
+    /// </remarks>
     /// <param name="sourceName">対象画像(A)の表示名。</param>
     /// <param name="initialFolder">参照ファイル選択の初期フォルダ。</param>
     /// <param name="maxCode">ビット深度の最大code。</param>
@@ -55,9 +63,19 @@ public partial class NoiseMeasureDialog : Window
         Tag = initialFolder;
         _expectedReferenceSize = expectedReferenceSize;
 
-        // 前の画像の飽和コードがビット深度上限を超えて残らないようにする
+        // 前の画像の飽和コードが別のビット深度の単位のまま、または上限を超えて残らないようにする。
+        // 以前は上限を超えるときしか直さず、12bit の既定値 4095 が 16bit の画像に残って DR が約24dB 小さく出た
         bool parsed = NumericInput.TryParsePositive(SaturationBox.Text, out double current);
-        if (!parsed || current > maxCode)
+        int previousMax = _maxCode;
+        _maxCode = maxCode;
+        if (parsed && previousMax > 0 && previousMax != maxCode)
+        {
+            current = current == previousMax
+                ? maxCode
+                : Math.Round(current * (maxCode + 1.0) / (previousMax + 1.0), 3);
+            SaturationBox.Text = Math.Min(current, maxCode).ToString("0.###", CultureInfo.InvariantCulture);
+        }
+        else if (!parsed || current > maxCode)
         {
             SaturationBox.Text = maxCode.ToString(CultureInfo.InvariantCulture);
         }
