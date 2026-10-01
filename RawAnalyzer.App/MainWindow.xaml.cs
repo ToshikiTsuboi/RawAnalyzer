@@ -4588,6 +4588,28 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
+    /// 比較モード中なら、通常表示の画像を対象にする操作を始めずに理由を知らせる。
+    /// </summary>
+    /// <remarks>
+    /// メニュー・キーからは比較モード中に開けない(<see cref="MainViewModel.CanUseMainView"/>)が、比較モードへ入る前に
+    /// 開いたままの欠陥画素・ノイズ測定のウィンドウからは実行できた。比較画面に隠れた通常表示の画像を検出・補正・
+    /// 測定してしまうので、コマンドパレットと同じ理由で断る。
+    /// </remarks>
+    /// <param name="operation">操作名(ダイアログの見出し)。</param>
+    /// <returns>拒否した場合はtrue。</returns>
+    private bool RejectWhileComparing(string operation)
+    {
+        if (!_compareMode)
+        {
+            return false;
+        }
+
+        MessageBox.Show(this, CommandDisabledReasons.CompareMode,
+            operation, MessageBoxButton.OK, MessageBoxImage.Information);
+        return true;
+    }
+
+    /// <summary>
     /// 実行中(読み込み・操作・縮小表示の作成、表示画像の差し替え待ち)でフレームを送れないとき、理由をステータスバーに出す。
     /// </summary>
     /// <remarks>
@@ -4917,6 +4939,14 @@ public partial class MainWindow : Window
 
     private void OnDefectRunRequested(double sigma, bool detectHot, bool detectDead)
     {
+        // 比較モード中は、開いたままのウィンドウからの検出も断る(メニュー・キーと同じく、比較画面に隠れた
+        // 通常表示の画像を検出してしまう)
+        if (RejectWhileComparing("欠陥画素検出"))
+        {
+            _defectWindow?.ResetRunButton();
+            return;
+        }
+
         if (ActiveImage is null)
         {
             _defectWindow?.ResetRunButton();
@@ -4989,13 +5019,19 @@ public partial class MainWindow : Window
         _defectWindow.ShowResult(result, maxCode,
             correctionUnavailableReason: _currentFormat is null ? null
                 : DefectCorrectionAvailability.Refusal(
-                    _currentFormat, _derivedImage is not null, _colorImage is not null));
+                    _compareMode, _currentFormat, _derivedImage is not null, _colorImage is not null));
         _defectSource = source;
         Viewport.SetDefectMarkers(result.Defects);
     }
 
     private void OnDefectActivated(DefectPixel defect)
     {
+        // 比較モード中は、移動先の通常表示が比較画面に隠れていて何も見えないので、黙って動かさず理由を示す
+        if (RejectWhileComparing("欠陥画素検出"))
+        {
+            return;
+        }
+
         // 欠陥は元画像の座標。チャネル分割表示ではその画素が並ぶ象限上の位置へ移動する
         Viewport.CenterOnSourcePixel(defect.X, defect.Y, Math.Max(Viewport.Zoom, 32));
     }
@@ -5136,6 +5172,14 @@ public partial class MainWindow : Window
 
     private void OnNoiseMeasureRequested(NoiseMeasureRequest request)
     {
+        // 比較モード中は、開いたままのダイアログからの測定も断る(メニュー・キーと同じく、比較画面に隠れた
+        // 通常表示の画像を測ってしまう)
+        if (RejectWhileComparing("ノイズ測定"))
+        {
+            _noiseWindow?.ResetRunButton();
+            return;
+        }
+
         RawImage? image = ActiveImage;
         RawFormat? format = ActiveFormat;
         if (image is null || format is null)
@@ -5270,11 +5314,12 @@ public partial class MainWindow : Window
             return;
         }
 
+        // 比較モード中(開いたままのウィンドウからの補正)は、比較画面に隠れた通常表示の画像を差し替えるので断る。
         // HDR素材(派生ビューの表示中、HDR方式を指定した raw の Raw 表示)とカラー画像は補正しない。行交互では
         // 同色近傍に露光の違う行が混ざり、結果は HDR 方式を失う(ビニング・フィルタと同じく分割して開くよう案内する)。
         // カラー画像は輝度で補正するので、結果がグレーになりカラーを失う
         if (DefectCorrectionAvailability.Refusal(
-                _currentFormat, _derivedImage is not null, _colorImage is not null) is { } refusal)
+                _compareMode, _currentFormat, _derivedImage is not null, _colorImage is not null) is { } refusal)
         {
             MessageBox.Show(this, refusal,
                 "欠陥画素補正", MessageBoxButton.OK, MessageBoxImage.Information);

@@ -33,12 +33,23 @@ internal static class DefectCorrectionAvailability
         "輝度だけのグレーの画像に置き換わります)。一覧の移動・コピー・CSV保存は使えます。";
 
     /// <summary>補正できない理由を返す。</summary>
+    /// <remarks>
+    /// 比較モード中は、開いたままの欠陥ウィンドウから補正すると、比較画面に隠れた通常表示の画像を補正結果へ
+    /// 差し替えてしまう(画像演算・ビニング・フィルタと同じく断る)。比較モードの理由を HDR・カラーより先に示す。
+    /// </remarks>
+    /// <param name="compareMode">比較モード中か。</param>
     /// <param name="currentFormat">表示中の元画像のフォーマット(右パネルでの変更を含む)。</param>
     /// <param name="derivedViewShown">HDR分割・合成の派生ビューを表示しているか。</param>
     /// <param name="colorImage">表示中の画像がカラー(RGB)か。</param>
     /// <returns>補正できない理由。補正できるならnull。</returns>
-    internal static string? Refusal(RawFormat currentFormat, bool derivedViewShown, bool colorImage)
+    internal static string? Refusal(
+        bool compareMode, RawFormat currentFormat, bool derivedViewShown, bool colorImage)
     {
+        if (compareMode)
+        {
+            return CommandDisabledReasons.CompareMode;
+        }
+
         if (derivedViewShown || currentFormat.Hdr != HdrMode.None)
         {
             return HdrRefusal;
