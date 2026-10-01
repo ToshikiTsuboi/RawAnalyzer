@@ -87,17 +87,64 @@ public class ColorImageTests
             65535, 0, 0,   0, 65535, 0,
             0, 0, 65535,   20000, 40000, 10000,
         };
-        ColorImage image = ColorImage.FromInterleaved(2, 2, 8, rgb);
+        ColorImage image = ColorImage.FromInterleaved(2, 2, 16, rgb);
         using RawImage luminance = image.ToLuminance();
 
         Assert.Equal(2, luminance.Width);
         Assert.Equal(2, luminance.Height);
-        Assert.Equal(8, luminance.Format.BitDepth);   // 元画像のビット深度が伝播する
+        Assert.Equal(16, luminance.Format.BitDepth);   // 元画像のビット深度が伝播する
         Assert.Equal(BayerPattern.None, luminance.Format.Bayer);
         Assert.InRange((int)luminance.GetPixel(0, 0), 19594, 19596);
         Assert.InRange((int)luminance.GetPixel(1, 0), 38468, 38470);
         Assert.InRange((int)luminance.GetPixel(0, 1), 7470, 7472);
         Assert.InRange((int)luminance.GetPixel(1, 1), 30599, 30601);
+    }
+
+    [Fact]
+    public void ToLuminance_8Bit_RawCodeIsRoundedLumaLikeCursor()
+    {
+        // 8bitのカラー画像(WIC経路は v*257 で置く)の輝度は、解析が value >> 8 で読む raw code が
+        // カーソルの YCbCr の Y(8bitの code から BT.601 で求めて四捨五入)と一致すること。
+        // 16bitで丸めてから >> 8 で切り捨てると (30,20,10) の Y=21.85 が 21 になり、
+        // (240,200,150) の Y=206.26 が 207 になっていた
+        var colors = new List<(int R, int G, int B)> { (30, 20, 10), (240, 200, 150) };
+        for (int r = 0; r < 256; r += 15)
+        {
+            for (int g = 0; g < 256; g += 15)
+            {
+                for (int b = 0; b < 256; b += 15)
+                {
+                    colors.Add((r, g, Math.Min(255, b + (r % 7))));
+                }
+            }
+        }
+
+        var rgb = new ushort[colors.Count * 3];
+        for (int i = 0; i < colors.Count; i++)
+        {
+            rgb[i * 3] = (ushort)(colors[i].R * 257);
+            rgb[(i * 3) + 1] = (ushort)(colors[i].G * 257);
+            rgb[(i * 3) + 2] = (ushort)(colors[i].B * 257);
+        }
+
+        ColorImage image = ColorImage.FromInterleaved(colors.Count, 1, 8, rgb);
+        using RawImage luminance = image.ToLuminance();
+
+        Assert.Equal(8, luminance.Format.BitDepth);
+        for (int i = 0; i < colors.Count; i++)
+        {
+            (int R, int G, int B) c = colors[i];
+            int cursorY = ColorConvert.RgbToYCbCr(c.R, c.G, c.B, 255).Y;
+            ushort value = luminance.GetPixel(i, 0);
+            Assert.True(cursorY == value >> 8, $"({c.R},{c.G},{c.B}): 輝度 {value} >> 8 = {value >> 8}、カーソルの Y = {cursorY}");
+            Assert.Equal(cursorY * 257, value);   // 元のチャネルと同じ v*257 の置き方
+        }
+
+        // 一様なパッチのROI平均も同じ値になる
+        RegionStatistics dark = ImageAnalysis.ComputeStatistics(luminance, 0, new RegionOfInterest(0, 0, 1, 1));
+        RegionStatistics bright = ImageAnalysis.ComputeStatistics(luminance, 0, new RegionOfInterest(1, 0, 1, 1));
+        Assert.Equal(22, dark.Mean);
+        Assert.Equal(206, bright.Mean);
     }
 
     [Fact]

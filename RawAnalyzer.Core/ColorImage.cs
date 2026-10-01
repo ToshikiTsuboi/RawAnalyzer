@@ -114,12 +114,20 @@ public sealed class ColorImage
     /// <summary>
     /// 輝度(BT.601のY)画像を生成する。ヒストグラム等の解析に使う。
     /// </summary>
+    /// <remarks>
+    /// 16bitの画像は16bitの値からYを求める。8bitの画像は、解析が value &gt;&gt; 8 で raw code に戻すため、
+    /// 8bitの code(各チャネル &gt;&gt; 8)からYを求めて四捨五入した整数 code にし、WIC経路の8bitと同じ
+    /// v*257 の置き方で16bitへ置く。16bitで丸めてから &gt;&gt; 8 で切り捨てると、Yが水準により
+    /// −1〜+1 code ずれ、カーソルの YCbCr(<see cref="ColorConvert.RgbToYCbCr"/>)とも食い違う。
+    /// </remarks>
     /// <returns>輝度のRawImage(Bayerなし)。</returns>
     /// <param name="cancellationToken">キャンセルトークン。</param>
     public RawImage ToLuminance(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         var luminance = new ushort[(long)Width * Height];
+        int shift = 16 - BitDepth;
+        int maxCode = (1 << BitDepth) - 1;
         Parallel.For(0, Height, new ParallelOptions { CancellationToken = cancellationToken }, y =>
         {
             long source = (long)y * Width * 3;
@@ -131,10 +139,21 @@ public sealed class ColorImage
                     cancellationToken.ThrowIfCancellationRequested();
                 }
 
-                luminance[dest + x] = ColorConvert.Luma(
-                    _pixels[source + x * 3],
-                    _pixels[source + x * 3 + 1],
-                    _pixels[source + x * 3 + 2]);
+                ushort r = _pixels[source + x * 3];
+                ushort g = _pixels[source + x * 3 + 1];
+                ushort b = _pixels[source + x * 3 + 2];
+                if (shift == 0)
+                {
+                    luminance[dest + x] = ColorConvert.Luma(r, g, b);
+                    continue;
+                }
+
+                // カーソルの RgbToYCbCr の Y と同じ式・同じ丸め。上位ビットを下位へ複製して置く(8bitは v*257)
+                int rCode = r >> shift;
+                int gCode = g >> shift;
+                int bCode = b >> shift;
+                int luma = (int)Math.Clamp(Math.Round(0.299 * rCode + 0.587 * gCode + 0.114 * bCode), 0, maxCode);
+                luminance[dest + x] = (ushort)((luma << shift) | (luma >> (BitDepth - shift)));
             }
         });
 
