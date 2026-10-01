@@ -2229,10 +2229,9 @@ public partial class MainWindow : Window
         }
         else if (!result.WasCanceled)
         {
-            if (choice.WriteSidecar)
-            {
-                WriteProcessingSidecar(path, choice, developParameters, split, frame, image.FrameCount);
-            }
+            string sidecarNote = choice.WriteSidecar
+                ? WriteProcessingSidecar(path, choice, developParameters, split, frame, image.FrameCount)
+                : "";
 
             // RawSaver はヘッダを出力しないため、保存したrawを開き直したときに
             // 元のHeaderOffsetのままだと開けない。出力実体に合うフォーマットを記憶する。
@@ -2257,7 +2256,8 @@ public partial class MainWindow : Window
                 : "";
             _vm.ImageInfoText = $"保存完了: {Path.GetFileName(path)}"
                 + frameNote
-                + (choice.IsProcessed ? " (処理を焼き込み)" : " (無処理)");
+                + (choice.IsProcessed ? " (処理を焼き込み)" : " (無処理)")
+                + sidecarNote;
         }
     }
 
@@ -2268,7 +2268,11 @@ public partial class MainWindow : Window
     /// <param name="split">HDR分割ビューから保存したときの段ごとの表示調整(分割ビューでなければ null)。</param>
     /// <param name="frame">保存したフレーム番号(raw 形式以外は表示中の1フレームだけを書き出す)。</param>
     /// <param name="frameCount">保存した画像のフレーム数。</param>
-    private void WriteProcessingSidecar(
+    /// <returns>
+    /// 保存完了の表示に添える注記。画像と同名の .txt へ書いたときは空。既存のファイルを残すため別名へ書いたとき・
+    /// 書けなかったときはそのことを示す。
+    /// </returns>
+    private string WriteProcessingSidecar(
         string imagePath, SaveChoice choice, DevelopParameters developParameters, HdrSplitAdjustments? split,
         int frame, int frameCount)
     {
@@ -2278,11 +2282,11 @@ public partial class MainWindow : Window
             // 派生画像の形式と作り方は[HDR派生ビュー]に書く(派生ビューでなければ ActiveFormat と同じ)
             RawFormat? format = _currentFormat;
             var sb = new StringBuilder();
-            sb.AppendLine("RawAnalyzer 保存情報");
+            sb.AppendLine(ProcessingSidecar.Title);
             sb.AppendLine("====================");
             sb.Append("保存日時: ").AppendLine(
                 DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture));
-            sb.Append("出力ファイル: ").AppendLine(Path.GetFileName(imagePath));
+            sb.Append(ProcessingSidecar.OutputFileLabel).AppendLine(Path.GetFileName(imagePath));
             sb.Append("元ファイル: ").AppendLine(_currentPath ?? "(不明)");
             if (_tiffStack is not null)
             {
@@ -2410,12 +2414,22 @@ public partial class MainWindow : Window
 
             sb.Append("  デモザイク: ").AppendLine(choice.ApplyDemosaic ? "適用 (バイリニア)" : "なし");
 
-            string sidecarPath = Path.ChangeExtension(imagePath, ".txt");
+            // 同名の .txt に利用者のファイル(撮影メモなど)や別の画像の付随テキストがあれば上書きせず別名へ書く
+            string? sidecarPath = ProcessingSidecar.ResolvePath(imagePath);
+            if (sidecarPath is null)
+            {
+                return " / 付随テキストは同名・別名の .txt がすべて使われているため保存していません";
+            }
+
             File.WriteAllText(sidecarPath, sb.ToString(), Encoding.UTF8);
+            return string.Equals(sidecarPath, Path.ChangeExtension(imagePath, ".txt"), StringComparison.OrdinalIgnoreCase)
+                ? ""
+                : $" / 付随テキスト: {Path.GetFileName(sidecarPath)} (同名の .txt は別のファイルのため残しました)";
         }
         catch (Exception)
         {
-            // 付随情報の保存失敗は本体の保存結果に影響させない
+            // 付随情報の保存失敗は本体の保存結果に影響させない(保存完了の表示で知らせる)
+            return " / 付随テキストを保存できませんでした";
         }
     }
 

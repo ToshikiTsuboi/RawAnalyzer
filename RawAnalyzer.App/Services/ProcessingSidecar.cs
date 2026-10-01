@@ -1,3 +1,5 @@
+using System.IO;
+using System.Text;
 using RawAnalyzer.App.Views;
 
 namespace RawAnalyzer.App.Services;
@@ -7,6 +9,79 @@ namespace RawAnalyzer.App.Services;
 /// </summary>
 internal static class ProcessingSidecar
 {
+    /// <summary>付随テキストの先頭行(見出し)。</summary>
+    internal const string Title = "RawAnalyzer 保存情報";
+
+    /// <summary>付随テキストに保存した画像のファイル名を書く行の始まり。</summary>
+    internal const string OutputFileLabel = "出力ファイル: ";
+
+    // 番号を付けた名前を試す上限(これを超えたら書かない)
+    private const int MaxNumberedCandidates = 99;
+
+    /// <summary>
+    /// 付随テキストの書き出し先を決める。既定は画像と同名の .txt。
+    /// </summary>
+    /// <remarks>
+    /// 保存ダイアログの上書き確認は画像のパスにしか掛からない。同名の .txt を確かめずに上書きすると、元 raw の横に
+    /// 置いた撮影メモや、同じ名前で別の形式に保存した画像(foo.tif と foo.png)の付随テキストを黙って消す。
+    /// 同名の .txt がない、または同じ画像(同じファイル名)を前に保存したときの付随テキストなら従来どおりそこへ書き、
+    /// それ以外のファイルがあれば残して、画像の名前に .txt を足した名前(foo.png.txt)、それも使われていれば
+    /// 番号を付けた名前(foo.png (2).txt …)へ書く。
+    /// </remarks>
+    /// <param name="imagePath">保存した画像のパス。</param>
+    /// <returns>書き出し先。使える名前が見つからなければ null。</returns>
+    internal static string? ResolvePath(string imagePath)
+    {
+        string imageFileName = Path.GetFileName(imagePath);
+        var candidates = new List<string> { Path.ChangeExtension(imagePath, ".txt"), imagePath + ".txt" };
+        for (int n = 2; n <= MaxNumberedCandidates; n++)
+        {
+            candidates.Add($"{imagePath} ({n}).txt");
+        }
+
+        foreach (string candidate in candidates)
+        {
+            if (!File.Exists(candidate) || IsSidecarOf(candidate, imageFileName))
+            {
+                return candidate;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// 既存のテキストが、同じファイル名の画像を保存したときの付随テキストか(先頭行が見出しで、出力ファイルの行が
+    /// その画像の名前)。読めないときは付随テキストではないとみなす(上書きしない)。
+    /// </summary>
+    private static bool IsSidecarOf(string path, string imageFileName)
+    {
+        try
+        {
+            using var reader = new StreamReader(path, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+            if (reader.ReadLine() != Title)
+            {
+                return false;
+            }
+
+            // 出力ファイルの行は見出しの数行下にある
+            for (int i = 0; i < 8 && reader.ReadLine() is { } line; i++)
+            {
+                if (line.StartsWith(OutputFileLabel, StringComparison.Ordinal))
+                {
+                    return string.Equals(
+                        line[OutputFileLabel.Length..], imageFileName, StringComparison.OrdinalIgnoreCase);
+                }
+            }
+
+            return false;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
+
     /// <summary>
     /// マルチフレームの画像の1フレームだけを書き出したときの「元画像のフレーム: k/N」の行。
     /// </summary>
