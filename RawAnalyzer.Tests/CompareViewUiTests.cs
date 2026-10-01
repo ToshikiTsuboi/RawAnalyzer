@@ -485,6 +485,37 @@ public class CompareViewUiTests
         }
     });
 
+    [Fact]
+    public Task Drop_ReturnsBeforeLoadingFiles() => WpfTestHost.Run(async () =>
+    {
+        // 読み込み(raw のフォーマット確認ダイアログを含む)は Drop から戻ってから始める。
+        // Drop の中でモーダルダイアログを開くと、閉じるまでドラッグ元のエクスプローラーが固まる
+        var view = NewView();
+        var loaded = new List<string>();
+        var pending = new TaskCompletionSource<ComparePane?>();
+        view.PaneLoader = (path, _) =>
+        {
+            loaded.Add(path);
+            return pending.Task;
+        };
+        string dropped = Path.Combine(Path.GetTempPath(), "dropped.raw");
+        var data = new DataObject(DataFormats.FileDrop, new[] { dropped });
+        var args = (DragEventArgs)typeof(DragEventArgs)
+            .GetConstructors(System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
+            .Single()
+            .Invoke(new object[] { data, DragDropKeyStates.None, DragDropEffects.Copy, view, new Point() });
+        args.RoutedEvent = DragDrop.DropEvent;
+        view.RaiseEvent(args);
+        Assert.Empty(loaded);
+
+        await DrainAsync();
+        Assert.Equal(new[] { dropped }, loaded);
+        pending.SetResult(null); // ダイアログで取り消した扱い
+        await DrainAsync();
+        Assert.Equal(0, view.PaneCount);
+        Assert.True(((Button)view.FindName("AddImageButton")).IsEnabled);
+    });
+
     // ボタンの押下と解放(移動なし)。入力の順と同じく Preview → 本体の順に送る
     private static void Click(ComparePaneView pane, System.Windows.Input.MouseButton button)
     {

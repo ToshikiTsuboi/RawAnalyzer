@@ -1,5 +1,6 @@
 ﻿using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Threading;
 
 namespace RawAnalyzer.App.Compare;
 
@@ -648,7 +649,11 @@ public partial class CompareView : UserControl
             return;
         }
 
+        // 読み込みは Drop から戻ってから始める。最初のファイルが raw でフォーマットの記憶がないと、
+        // 最初の await より前に確認ダイアログが同期で開く。Drop の中でモーダルループに入ると、
+        // 閉じるまでドラッグ元(エクスプローラー)が応答しなくなる。ファイル一覧は戻る前に取り出し済み
         int generation = _generation;
+        await Dispatcher.Yield(DispatcherPriority.Background);
         foreach (string file in files)
         {
             // 複数ファイルの途中で比較を終了したら、残りを新しい比較へ追加しない。
