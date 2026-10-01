@@ -132,7 +132,8 @@ public class TiffStackTests
         int nextLink = NextIfdLinkOffset(bytes, firstIfd);
         BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(nextLink), (uint)firstIfd); // 先頭IFDが自分自身を指す
         using var cycle = new Fixture(bytes);
-        Assert.False(TiffLoader.TryProbePixelLayout(cycle.Path, out _, out _));
+        Assert.False(TiffLoader.TryProbePixelLayout(cycle.Path, out _, out string cycleReason));
+        Assert.Contains("循環", cycleReason); // 10万ページの上限ではなく、循環として断る
 
         BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(nextLink), uint.MaxValue);
         using var invalid = new Fixture(bytes);
