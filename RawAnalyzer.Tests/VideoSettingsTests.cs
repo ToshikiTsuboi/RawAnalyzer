@@ -44,6 +44,36 @@ public class VideoSettingsTests
         Assert.Equal(240, FpsInput.ParseInteger("1000", fallback: 15));
     }
 
+    [Theory]
+    [InlineData("３０", 30)]       // IME がオンのまま打った全角数字(以前は黙って既定値の 15 になった)
+    [InlineData("２４ ｆｐｓ", 24)]
+    [InlineData("７．５", 7.5)]
+    [InlineData("７。５", 7.5)]    // かな入力で "." キーは句点になる
+    [InlineData("30 f", 30)]       // 単位を打っている途中も数字を読む(再生速度が既定値へ飛ばない)
+    [InlineData("1,000", 240)]     // 3桁区切り(以前は 1 と読んだ)
+    public void Parse_ReadsFullWidthAndGroupedNumbers(string text, double expected)
+    {
+        Assert.Equal(expected, FpsInput.Parse(text, fallback: 15), 10);
+    }
+
+    [Theory]
+    [InlineData("-5")]  // 以前は符号を無視して 5 fps と読んだ
+    [InlineData("－５")]
+    [InlineData("ー５")] // かな入力で "-" キーは長音符になる
+    public void Parse_NegativeFallsBackLikeZero(string text)
+    {
+        Assert.Equal(15, FpsInput.Parse(text, fallback: 15), 10);
+    }
+
+    [Theory]
+    [InlineData("12.5", 13)] // 以前は銀行丸めで 12(13.5 は 14)と .5 の向きが値でそろわなかった
+    [InlineData("13.5", 14)]
+    [InlineData("24.5", 25)]
+    public void ParseInteger_RoundsHalfAwayFromZero(string text, int expected)
+    {
+        Assert.Equal(expected, FpsInput.ParseInteger(text, fallback: 15));
+    }
+
     [Fact]
     public void Quality_IncreasesBitrateAndJpegQuality()
     {
