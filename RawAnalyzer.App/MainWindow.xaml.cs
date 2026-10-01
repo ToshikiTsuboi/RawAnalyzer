@@ -2714,6 +2714,10 @@ public partial class MainWindow : Window
         // 失敗・キャンセル時に上書き対象だった既存の動画を失う
         string videoTempPath = OutputPaths.BuildPartialPath(videoPath);
 
+        // 出力先に元のフォルダを選ぶと、同じ拡張子の1枚ものの元画像と同じ名前になる。元画像を黙って
+        // 焼き込み結果へ置き換えないよう、元ファイルと同じパスへは書かずに中止する
+        var sourceGuard = new BatchSourceGuard(targets);
+
         ProgressWindow result = ProgressWindow.Run(
             this,
             $"バッチ書き出し中 ({targets.Count}件)",
@@ -2741,7 +2745,6 @@ public partial class MainWindow : Window
                     {
                         ct.ThrowIfCancellationRequested();
                         string file = targets[i];
-                        string baseName = Path.GetFileNameWithoutExtension(file);
                         // RAWの全フレーム／TIFFの全ページを1枚ずつ処理する。
                         // 列挙子が画像を所有するので、中断・例外でも確実に解放される。
                         foreach (FileFrame entry in FileFrameReader.Read(file, format, ct))
@@ -2779,24 +2782,18 @@ public partial class MainWindow : Window
                             else
                             {
                                 ct.ThrowIfCancellationRequested();
-                                string stem = entry.IsTiffPage ? $"{baseName}_p{entry.Index + 1:D4}"
-                                    : entry.Count > 1 ? $"{baseName}_f{entry.Index:D3}"
-                                    : baseName;
+                                bool jpeg = choice.Format == BatchFormat.Jpeg8;
+                                string outputPath = OutputPaths.BatchImagePath(
+                                    choice.OutputFolder, file, entry.Index, entry.Count, entry.IsTiffPage,
+                                    choice.Format == BatchFormat.Tiff16 ? ".tif" : jpeg ? ".jpg" : ".png");
+                                sourceGuard.EnsureNotSource(outputPath);
                                 if (choice.Format == BatchFormat.Tiff16)
                                 {
-                                    TiffWriter.SaveGray16(
-                                        image, entry.Frame,
-                                        Path.Combine(choice.OutputFolder, stem + ".tif"),
-                                        null, ct);
+                                    TiffWriter.SaveGray16(image, entry.Frame, outputPath, null, ct);
                                 }
                                 else
                                 {
-                                    bool jpeg = choice.Format == BatchFormat.Jpeg8;
-                                    renderer.Save(
-                                        entry,
-                                        Path.Combine(choice.OutputFolder,
-                                            stem + (jpeg ? ".jpg" : ".png")),
-                                        jpeg, ct);
+                                    renderer.Save(entry, outputPath, jpeg, ct);
                                 }
                             }
 
