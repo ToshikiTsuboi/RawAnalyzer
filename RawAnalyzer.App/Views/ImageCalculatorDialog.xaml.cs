@@ -2,6 +2,7 @@ using System.IO;
 using System.Windows;
 using System.Windows.Threading;
 using Microsoft.Win32;
+using RawAnalyzer.App.Services;
 using RawAnalyzer.Core;
 
 namespace RawAnalyzer.App.Views;
@@ -17,6 +18,7 @@ public sealed record ImageCalculatorChoice(ImageOperation Operation, string Refe
 public partial class ImageCalculatorDialog : Window
 {
     private readonly long _expectedSize;
+    private readonly long _targetFileSize;
 
     // 参照パスのサイズ照合は入力が止まってから裏で行う(File.Exists・FileInfo は NAS の UNC パスで
     // 名前解決・SMB のタイムアウトまで止まるため、打鍵ごとに UI スレッドで呼ばない)。
@@ -28,10 +30,15 @@ public partial class ImageCalculatorDialog : Window
     /// <param name="sourceName">対象画像(A)の表示名。</param>
     /// <param name="initialFolder">参照ファイル選択の初期フォルダ。</param>
     /// <param name="expectedSize">参照ファイルに期待するバイト数(サイズ検証用)。</param>
-    public ImageCalculatorDialog(string sourceName, string? initialFolder, long expectedSize)
+    /// <param name="targetFileSize">
+    /// 対象(A)の raw ファイルのバイト数(同じ形のファイルも警告しない)。raw でなければ0。
+    /// </param>
+    public ImageCalculatorDialog(
+        string sourceName, string? initialFolder, long expectedSize, long targetFileSize = 0)
     {
         InitializeComponent();
         _expectedSize = expectedSize;
+        _targetFileSize = targetFileSize;
         SourceText.Text = $"対象 A: {sourceName}";
         Tag = initialFolder;
         OperationCombo.SelectedIndex = 0;
@@ -116,7 +123,8 @@ public partial class ImageCalculatorDialog : Window
         int generation = _referenceCheckGeneration;
         string path = ReferenceBox.Text.Trim();
         long expectedSize = _expectedSize;
-        string? note = await Task.Run(() => DescribeSizeMismatch(path, expectedSize));
+        long targetFileSize = _targetFileSize;
+        string? note = await Task.Run(() => DescribeSizeMismatch(path, expectedSize, targetFileSize));
         if (generation != _referenceCheckGeneration)
         {
             return; // 照合中に入力が変わった・閉じた
@@ -127,7 +135,7 @@ public partial class ImageCalculatorDialog : Window
     }
 
     /// <summary>参照ファイルのサイズが期待と違えば警告文を返す(ファイルシステムに触れるので UI スレッドで呼ばない)。</summary>
-    private static string? DescribeSizeMismatch(string path, long expectedSize)
+    private static string? DescribeSizeMismatch(string path, long expectedSize, long targetFileSize)
     {
         if (!File.Exists(path))
         {
@@ -137,9 +145,11 @@ public partial class ImageCalculatorDialog : Window
         long size = SafeLength(path);
 
         // raw参照は対象画像のフォーマットで強制解釈されるため、
-        // 不足だけでなく超過も警告する(超過分は先頭だけ読まれ無警告で通ってしまう)
-        return size >= 0 && size != expectedSize
-            ? $"⚠ ファイルサイズが一致しません ({size:N0} / 期待 {expectedSize:N0} バイト)。" +
+        // 不足だけでなく超過も警告する(超過分は先頭だけ読まれ無警告で通ってしまう)。
+        // ただし対象のファイルと同じ大きさ(同じ形の連写ファイル)は先頭フレームを正しく読めるので警告しない
+        return size >= 0 && !ReferenceImage.IsExpectedRawSize(size, expectedSize, targetFileSize)
+            ? $"⚠ ファイルサイズが一致しません ({size:N0} / 期待 " +
+              $"{ReferenceImage.DescribeExpectedRawSize(expectedSize, targetFileSize)})。" +
               "対象画像のフォーマットで解釈されるため結果が正しくない可能性があります"
             : null;
     }

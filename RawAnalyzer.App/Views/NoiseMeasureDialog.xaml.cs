@@ -22,6 +22,7 @@ public partial class NoiseMeasureDialog : Window
 {
     private string _lastResultText = "";
     private long _expectedReferenceSize;
+    private long _targetFileSize;
 
     // 前回の UpdateSource で受け取ったビット深度の最大code(初回は0)。飽和コードの換算に使う
     private int _maxCode;
@@ -40,13 +41,17 @@ public partial class NoiseMeasureDialog : Window
     /// <param name="hasRoi">ROIが選択されているか。</param>
     /// <param name="expectedReferenceSize">raw参照ファイルの期待バイト数(0なら検証しない)。</param>
     /// <param name="source">対象画像の同一性(差し替えを見分けるのに使う)。</param>
+    /// <param name="targetFileSize">
+    /// 対象(A)の raw ファイルのバイト数(同じ形のファイルも警告しない)。raw でなければ0。
+    /// </param>
     public NoiseMeasureDialog(
         string sourceName, string? initialFolder, int maxCode, bool hasRoi,
-        long expectedReferenceSize, object? source = null)
+        long expectedReferenceSize, object? source = null, long targetFileSize = 0)
     {
         InitializeComponent();
         _initialResultText = ResultText.Text;
-        UpdateSource(sourceName, initialFolder, maxCode, hasRoi, expectedReferenceSize, source);
+        UpdateSource(
+            sourceName, initialFolder, maxCode, hasRoi, expectedReferenceSize, source, targetFileSize);
     }
 
     /// <summary>「結果をコピー」でコピーする文字列(結果がなければ空)。</summary>
@@ -71,13 +76,17 @@ public partial class NoiseMeasureDialog : Window
     /// <param name="hasRoi">ROIが選択されているか。</param>
     /// <param name="expectedReferenceSize">raw参照ファイルの期待バイト数(0なら検証しない)。</param>
     /// <param name="source">対象画像の同一性(差し替えを見分けるのに使う)。</param>
+    /// <param name="targetFileSize">
+    /// 対象(A)の raw ファイルのバイト数(同じ形のファイルも警告しない)。raw でなければ0。
+    /// </param>
     public void UpdateSource(
         string sourceName, string? initialFolder, int maxCode, bool hasRoi,
-        long expectedReferenceSize, object? source = null)
+        long expectedReferenceSize, object? source = null, long targetFileSize = 0)
     {
         SourceText.Text = $"対象 A: {sourceName}";
         Tag = initialFolder;
         _expectedReferenceSize = expectedReferenceSize;
+        _targetFileSize = targetFileSize;
         _sourceName = sourceName;
         if (!ReferenceEquals(source, _source))
         {
@@ -224,14 +233,18 @@ public partial class NoiseMeasureDialog : Window
 
         // raw参照は対象Aのフォーマットで強制解釈されるため、
         // サイズが違うと行ストライドがずれて無相関の差分になり、σ_FPN=0 / DR過小報告になる。
+        // 2枚目は先頭フレームだけを読むので、対象Aのファイルと同じ大きさ(同じファイル・同じ形の連写ファイル。
+        // 同一ファイルを断るときの案内が勧める手順)は警告しない
         if (reference.Length > 0 && _expectedReferenceSize > 0 && IsRawPath(reference))
         {
             long actual = SafeLength(reference);
-            if (actual >= 0 && actual != _expectedReferenceSize)
+            if (actual >= 0
+                && !ReferenceImage.IsExpectedRawSize(actual, _expectedReferenceSize, _targetFileSize))
             {
                 string message =
                     $"2枚目のファイルサイズが対象Aと一致しません。{Environment.NewLine}" +
-                    $"期待: {_expectedReferenceSize:N0} バイト / 実際: {actual:N0} バイト" +
+                    $"期待: {ReferenceImage.DescribeExpectedRawSize(_expectedReferenceSize, _targetFileSize)}" +
+                    $" / 実際: {actual:N0} バイト" +
                     $"{Environment.NewLine}{Environment.NewLine}" +
                     "対象Aのフォーマットで強制的に読み込むため、測定値が正しくない可能性があります。" +
                     $"{Environment.NewLine}続行しますか?";

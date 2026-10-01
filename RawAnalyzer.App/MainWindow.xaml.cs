@@ -2488,7 +2488,7 @@ public partial class MainWindow : Window
         // 対象名には演算するフレーム・TIFFページも示す(ビニング・フィルタと同じ。演算は表示中の1フレームだけ)
         var dialog = new ImageCalculatorDialog(
             NoiseSourceName() + (_tiffStack is null ? CalculationFrameNote(_currentImage, Viewport.Frame) : ""),
-            _currentFolder, expectedSize)
+            _currentFolder, expectedSize, TargetRawFileSize())
         {
             Owner = this,
         };
@@ -4978,7 +4978,8 @@ public partial class MainWindow : Window
                 (1 << ActiveFormat.BitDepth) - 1,
                 HasAnalyzableRoi,
                 ExpectedReferenceSize(),
-                ActiveImage)
+                ActiveImage,
+                TargetRawFileSize())
             {
                 Owner = this,
             };
@@ -5034,6 +5035,17 @@ public partial class MainWindow : Window
         return _correctionLabel is null ? name : $"{name} [{_correctionLabel}]";
     }
 
+    /// <summary>
+    /// 表示中の raw ファイルのバイト数(raw 参照の大きさの照合で、同じ形のファイルを警告しないのに使う)。
+    /// raw でなければ0。
+    /// </summary>
+    private long TargetRawFileSize()
+    {
+        return _openedRawFormat is not null && _currentPath is not null
+            ? Math.Max(0, SafeFileSize(_currentPath))
+            : 0;
+    }
+
     /// <summary>raw参照ファイルに期待するバイト数(1フレーム分)。不明なら0。</summary>
     private long ExpectedReferenceSize()
     {
@@ -5067,7 +5079,8 @@ public partial class MainWindow : Window
             (1 << ActiveFormat.BitDepth) - 1,
             HasAnalyzableRoi,
             ExpectedReferenceSize(),
-            ActiveImage);
+            ActiveImage,
+            TargetRawFileSize());
     }
 
     private void OnNoiseMeasureRequested(NoiseMeasureRequest request)

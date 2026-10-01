@@ -216,6 +216,35 @@ public class ReferenceImageTests
     }
 
     [Fact]
+    public void MultiFrameReference_ShapedLikeTargetFile_IsExpectedSize()
+    {
+        // 4フレームの raw を開いてフレーム2を表示し、2枚目に同じファイル(または同じ形の連写ファイル)を
+        // 指定した。2枚目は先頭フレームだけを読むので正しく測れるのに、以前は1フレーム分と一致しないため
+        // 毎回「サイズ不一致・測定値が正しくない可能性」の警告が出ていた(同一ファイルの断り文はこの手順を勧める)
+        RawFormat opened = Raw12(headerOffset: 64) with { FrameCount = 4 };
+        long oneFrame = ReferenceImage.ExpectedRawSize(ReferenceImage.RawReadFormat(opened, opened));
+        long file = opened.RequiredBytes();
+
+        Assert.True(ReferenceImage.IsExpectedRawSize(file, oneFrame, targetFileSize: file));
+        Assert.True(ReferenceImage.IsExpectedRawSize(oneFrame, oneFrame, targetFileSize: file));
+    }
+
+    [Theory]
+    [InlineData(2)]  // 2フレーム分(幅2倍・同じ高さの別フォーマットとも区別できない)
+    [InlineData(3)]
+    public void OtherSizes_AreStillWarned(int frames)
+    {
+        // 1フレームの倍数を一律に許すと、幅2倍などの別フォーマットのファイルを無警告で誤読する。
+        // 許すのは1フレーム分と、対象のファイルと同じ大きさ(同じ形のファイル)だけ
+        RawFormat opened = Raw12(headerOffset: 64) with { FrameCount = 4 };
+        long oneFrame = ReferenceImage.ExpectedRawSize(ReferenceImage.RawReadFormat(opened, opened));
+        long other = 64 + (opened.FrameSizeInBytes * frames);
+
+        Assert.False(ReferenceImage.IsExpectedRawSize(other, oneFrame, targetFileSize: opened.RequiredBytes()));
+        Assert.False(ReferenceImage.IsExpectedRawSize(oneFrame * 4, oneFrame, targetFileSize: 0));
+    }
+
+    [Fact]
     public void ImageFileTarget_UsesCurrentFormat()
     {
         // TIFF 等の画像ファイルを表示中(raw のフォーマットがない)なら、従来どおり表示中の形式で読む

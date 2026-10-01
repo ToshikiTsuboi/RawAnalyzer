@@ -85,6 +85,54 @@ public class ImageCalculatorDialogTests : IDisposable
         });
     }
 
+    [Fact]
+    public Task ReferenceShapedLikeTargetFile_IsNotWarned()
+    {
+        // 全体レビュー 2026-10-01 B90。4フレームのダーク(対象と同じ形の連写ファイル)を参照に指定した。
+        // 参照は先頭フレームだけを読むので正しく演算できるのに、以前は1フレーム分と一致しないため
+        // サイズ不一致の警告を出していた
+        string sameShape = CreateFile("dark_burst.raw", 4 * 200);
+        return WpfTestHost.Run(async () =>
+        {
+            var dialog = new ImageCalculatorDialog("A", _directory, expectedSize: 200, targetFileSize: 4 * 200);
+            try
+            {
+                TextBlock note = (TextBlock)dialog.FindName("NoteText");
+                ((TextBox)dialog.FindName("ReferenceBox")).Text = sameShape;
+
+                await Task.Delay(1000);
+                Assert.Equal(Visibility.Collapsed, note.Visibility);
+            }
+            finally
+            {
+                dialog.Close();
+            }
+        });
+    }
+
+    [Fact]
+    public Task ReferenceOfOtherSize_IsStillWarned()
+    {
+        // 1フレーム分でも対象のファイルと同じ大きさでもなければ、従来どおり警告する(別フォーマットの誤読)
+        string other = CreateFile("dark_two.raw", 2 * 200);
+        return WpfTestHost.Run(async () =>
+        {
+            var dialog = new ImageCalculatorDialog("A", _directory, expectedSize: 200, targetFileSize: 4 * 200);
+            try
+            {
+                TextBlock note = (TextBlock)dialog.FindName("NoteText");
+                ((TextBox)dialog.FindName("ReferenceBox")).Text = other;
+
+                await WaitUntil(() => note.Visibility == Visibility.Visible);
+                Assert.Contains("800", note.Text);
+            }
+            finally
+            {
+                dialog.Close();
+            }
+        });
+    }
+
     private static async Task WaitUntil(Func<bool> condition)
     {
         for (int i = 0; i < 100 && !condition(); i++)

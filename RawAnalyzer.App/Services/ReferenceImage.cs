@@ -35,6 +35,32 @@ internal static class ReferenceImage
         return readFormat.HeaderOffset + readFormat.FrameSizeInBytes;
     }
 
+    /// <summary>raw の参照ファイルの大きさが、対象の形式で読んでよい大きさか。</summary>
+    /// <param name="actual">参照ファイルのバイト数。</param>
+    /// <param name="expected">期待するバイト数(<see cref="ExpectedRawSize"/>)。</param>
+    /// <param name="targetFileSize">対象(A)の raw ファイルのバイト数。raw でなければ0。</param>
+    /// <returns>警告せずに読んでよければtrue。</returns>
+    /// <remarks>
+    /// 参照は先頭の1フレームだけを読む。1フレーム分のほか、対象の raw ファイルと同じ大きさ(同じファイル、
+    /// 同じ形の連写ファイル)なら同じ形式で読める。1フレームの倍数を一律に許すと、幅2倍・同じ高さのような
+    /// 別フォーマットのファイルまで無警告で誤読するので許さない(不足も超過も警告する)。
+    /// </remarks>
+    internal static bool IsExpectedRawSize(long actual, long expected, long targetFileSize)
+    {
+        return actual == expected || (targetFileSize > 0 && actual == targetFileSize);
+    }
+
+    /// <summary>サイズ不一致の案内に添える、期待するバイト数の説明。</summary>
+    /// <param name="expected">期待するバイト数(<see cref="ExpectedRawSize"/>)。</param>
+    /// <param name="targetFileSize">対象(A)の raw ファイルのバイト数。raw でなければ0。</param>
+    /// <returns>「N バイト」または「N バイト(1フレーム)または M バイト(対象と同じ)」。</returns>
+    internal static string DescribeExpectedRawSize(long expected, long targetFileSize)
+    {
+        return targetFileSize > 0 && targetFileSize != expected
+            ? $"{expected:N0} バイト(1フレーム)または {targetFileSize:N0} バイト(対象Aのファイルと同じ)"
+            : $"{expected:N0} バイト";
+    }
+
     /// <summary>
     /// 参照画像を読み込む(raw は <paramref name="rawReadFormat"/> の先頭フレーム、画像ファイルは先頭ページの輝度)。
     /// </summary>
