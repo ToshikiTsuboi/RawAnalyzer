@@ -5587,10 +5587,8 @@ public partial class MainWindow : Window
         RenderTargetBitmap bitmap;
         try
         {
-            bitmap = new RenderTargetBitmap(
-                (int)Viewport.ActualWidth, (int)Viewport.ActualHeight, 96, 96,
-                PixelFormats.Pbgra32);
-            bitmap.Render(Viewport);
+            // 画面と同じデバイス解像度で作る(DIP の大きさで作ると、高DPIでは表示が間引かれる)
+            bitmap = Viewport.CaptureView();
         }
         catch (Exception ex) when (ex is ArgumentException or OutOfMemoryException)
         {

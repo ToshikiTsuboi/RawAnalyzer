@@ -855,6 +855,26 @@ public sealed class ImageViewport : FrameworkElement
         RestartIdleTimer();
     }
 
+    /// <summary>
+    /// いまの表示(画像と、ROI・マーカー・画素値などの重ね描き)を、画面と同じデバイス解像度の
+    /// ビットマップにする(表示のコピー用)。
+    /// </summary>
+    /// <remarks>
+    /// 画像はデバイス解像度で描いているので、96dpi の DIP の大きさで作ると最近傍で表示倍率ぶん間引かれ、
+    /// 等倍の表示でも元画像の画素が不規則に抜ける。表示倍率 100% では従来どおり DIP の大きさ(切り捨て)の 96dpi。
+    /// </remarks>
+    /// <returns>表示のビットマップ。</returns>
+    /// <exception cref="ArgumentException">ビューポートの大きさが 1 デバイス画素に満たない場合。</exception>
+    public RenderTargetBitmap CaptureView()
+    {
+        double scale = DeviceScale;
+        double dpi = DeviceScaling.BitmapDpi(scale);
+        var bitmap = new RenderTargetBitmap(
+            (int)(ActualWidth * scale), (int)(ActualHeight * scale), dpi, dpi, PixelFormats.Pbgra32);
+        bitmap.Render(this);
+        return bitmap;
+    }
+
     /// <inheritdoc />
     protected override void OnRender(DrawingContext dc)
     {

@@ -220,6 +220,39 @@ public class ImageViewportDeviceScaleTests
         }
     });
 
+    [Theory]
+    [InlineData(1.0)]
+    [InlineData(1.25)]
+    [InlineData(1.5)]
+    [InlineData(2.0)]
+    public Task CaptureView_CopiesWhatIsOnScreenAtDeviceResolution(double scale) => WpfTestHost.Run(async () =>
+    {
+        // 「表示をクリップボードへコピー」は画面と同じデバイス画素で作る。以前のように DIP の大きさの 96dpi で
+        // 作ると、デバイス解像度で描いた表示が最近傍で表示倍率ぶん間引かれ、等倍でも元画像の画素が不規則に抜ける
+        (ImageViewport viewport, RawImage image) = CreateViewport(scale, 64, 64);
+        try
+        {
+            Task<ViewportStateEventArgs> shown = NextPresentAsync(viewport, _ => true);
+            viewport.ActualSize();
+            await shown.WaitAsync(TimeSpan.FromSeconds(10));
+            (BitmapSource onScreen, _, byte[] expected) = Rendered(viewport);
+
+            RenderTargetBitmap copy = viewport.CaptureView();
+
+            Assert.Equal(onScreen.PixelWidth, copy.PixelWidth);
+            Assert.Equal(onScreen.PixelHeight, copy.PixelHeight);
+            var copied = new byte[copy.PixelWidth * copy.PixelHeight * 4];
+            copy.CopyPixels(copied, copy.PixelWidth * 4, 0);
+            int differing = Enumerable.Range(0, expected.Length).Count(i => copied[i] != expected[i]);
+            Assert.Equal(0, differing);
+        }
+        finally
+        {
+            await viewport.ClearImageAsync();
+            image.Dispose();
+        }
+    });
+
     private static List<GlyphRun> CollectGlyphRuns(Drawing? drawing)
     {
         var runs = new List<GlyphRun>();
