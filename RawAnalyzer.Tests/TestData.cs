@@ -7,6 +7,10 @@ namespace RawAnalyzer.Tests;
 internal static class TestData
 {
     /// <summary>Nビットの生値列をフォーマットに従ってファイルバイト列へエンコードする。</summary>
+    /// <remarks>
+    /// Msb(上詰め)の下位の埋めビットには0でない値(画素の通し番号の下位ビット)を入れる。
+    /// 読み込み側が埋めビットを落とさないと値が変わるので、マスクの退行を検出できる。
+    /// </remarks>
     public static byte[] EncodeRawFile(ushort[] rawValues, RawFormat format)
     {
         using var stream = new MemoryStream();
@@ -16,8 +20,10 @@ internal static class TestData
         }
 
         Span<byte> buffer = stackalloc byte[2];
-        foreach (ushort value in rawValues)
+        int shift = 16 - format.BitDepth;
+        for (int i = 0; i < rawValues.Length; i++)
         {
+            ushort value = rawValues[i];
             if (format.BytesPerPixel == 1)
             {
                 stream.WriteByte((byte)value);
@@ -26,7 +32,7 @@ internal static class TestData
 
             ushort container = format.Packing == BitPacking.Lsb
                 ? value
-                : (ushort)(value << (16 - format.BitDepth));
+                : (ushort)((value << shift) | (i & ((1 << shift) - 1)));
             if (format.Endianness == Endianness.Little)
             {
                 BinaryPrimitives.WriteUInt16LittleEndian(buffer, container);
