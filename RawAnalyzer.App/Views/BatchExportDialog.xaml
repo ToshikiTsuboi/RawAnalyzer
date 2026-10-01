@@ -21,7 +21,8 @@
         <ComboBox x:Name="FormatCombo" Margin="0,3,0,0" SelectionChanged="OnFormatChanged">
             <ComboBoxItem Content="PNG (8bit・現像/LUT焼き込み)" />
             <ComboBoxItem Content="JPEG (8bit・現像/LUT焼き込み)" />
-            <ComboBoxItem Content="TIFF (16bit グレー・raw値そのまま)" />
+            <ComboBoxItem Content="TIFF (16bit グレー・無処理・16bitフルスケール)"
+                          ToolTip="画素値は内部表現(16bitフルスケール)のまま書きます。Nbit の raw は code×2^(16−N)(12bit の code 100 は 1600)で、raw の code そのままではありません" />
             <ComboBoxItem Content="AVI動画 (MJPEG・現像/LUT焼き込み)" />
             <ComboBoxItem Content="MP4動画 (H.264・現像/LUT焼き込み)" />
         </ComboBox>

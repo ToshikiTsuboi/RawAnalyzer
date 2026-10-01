@@ -15,7 +15,7 @@ public enum BatchFormat
     /// <summary>JPEG 8bit(現像/LUT焼き込み)。</summary>
     Jpeg8,
 
-    /// <summary>TIFF 16bitグレー(raw値そのまま)。</summary>
+    /// <summary>TIFF 16bitグレー(無処理。画素値は内部表現の16bitフルスケールで、Nbit の raw は code&lt;&lt;(16−N))。</summary>
     Tiff16,
 
     /// <summary>MJPEG AVI動画(現像/LUT焼き込み)。</summary>
@@ -180,7 +180,7 @@ public partial class BatchExportDialog : Window
 
         if (DisplayLutCheck is not null)
         {
-            // TIFF16はraw値そのままの出力なので表示調整の選択自体がない
+            // TIFF16は無処理(16bitフルスケールの内部値そのまま)の出力なので表示調整の選択自体がない
             DisplayLutCheck.Visibility = FormatCombo.SelectedIndex == 2
                 ? Visibility.Collapsed
                 : Visibility.Visible;
