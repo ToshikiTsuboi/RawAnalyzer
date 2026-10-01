@@ -1,4 +1,3 @@
-using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 
@@ -17,16 +16,14 @@ namespace RawAnalyzer.Core;
 /// RawAnalyzer は複数起動でき、どのインスタンスも同じファイルを使う。起動時に読んだ記憶を丸ごと書き戻すと、
 /// 別のインスタンスで直した・消した・足した記憶が古い内容で巻き戻るため、変更は <see cref="Update"/> で
 /// 「他のインスタンスと排他して最新を読み直し、変更を当てて保存する」。他のインスタンスの変更は
-/// <see cref="ReloadIfChanged"/> で取り込む。スレッドセーフではない(UI スレッドから使う)。
+/// <see cref="ReloadIfChanged"/> で取り込む(排他は <see cref="InterProcessFileLock"/>)。スレッドセーフではない
+/// (UI スレッドから使う)。
 /// </para>
 /// </remarks>
 public sealed class FormatHistoryStore
 {
     /// <summary>保存ファイル名。</summary>
     public const string DefaultFileName = "format-history.json";
-
-    /// <summary>他のインスタンスとの排他を待つ上限。読み書きは数ミリ秒で終わる。</summary>
-    private static readonly TimeSpan LockTimeout = TimeSpan.FromSeconds(5);
 
     /// <summary>このストアが最後に読んだ・保存したファイルの内容(ファイルがなければ null)。</summary>
     private byte[]? _knownContent;
@@ -84,7 +81,7 @@ public sealed class FormatHistoryStore
     public FormatHistory? ReloadIfChanged()
     {
         byte[]? content;
-        using (AcquireLock())
+        using (InterProcessFileLock.Acquire(FilePath))
         {
             content = ReadContent();
         }
@@ -113,7 +110,7 @@ public sealed class FormatHistoryStore
     public FormatHistory Update(Func<FormatHistory, bool> change)
     {
         ArgumentNullException.ThrowIfNull(change);
-        using (AcquireLock())
+        using (InterProcessFileLock.Acquire(FilePath))
         {
             FormatHistory history = Load();
             if (change(history))
@@ -212,58 +209,6 @@ public sealed class FormatHistoryStore
         return _known && (content is null
             ? _knownContent is null
             : _knownContent is not null && content.AsSpan().SequenceEqual(_knownContent));
-    }
-
-    /// <summary>
-    /// 同じ記憶ファイルを使う他のプロセス(複数起動した RawAnalyzer)と排他する。名前付きミューテックスは
-    /// 取得したスレッドで解放する必要があるため、同じスレッドで同期に使う。
-    /// </summary>
-    private IDisposable AcquireLock()
-    {
-        // ミューテックス名に \ は使えないので、正規化したフルパスのハッシュで名前を作る
-        byte[] hash = SHA256.HashData(Encoding.UTF8.GetBytes(Path.GetFullPath(FilePath).ToUpperInvariant()));
-        var mutex = new Mutex(initiallyOwned: false, @"Local\RawAnalyzer.FormatHistory." + Convert.ToHexString(hash, 0, 16));
-        try
-        {
-            bool acquired;
-            try
-            {
-                acquired = mutex.WaitOne(LockTimeout);
-            }
-            catch (AbandonedMutexException)
-            {
-                // 保持したまま終了したプロセスがあった。所有権は得ている(書きかけは AtomicFileWriter が置き換えない)
-                acquired = true;
-            }
-
-            if (!acquired)
-            {
-                throw new IOException("他の RawAnalyzer がフォーマットの記憶ファイルを使用中のため、読み書きできませんでした。");
-            }
-
-            return new LockRelease(mutex);
-        }
-        catch
-        {
-            mutex.Dispose();
-            throw;
-        }
-    }
-
-    /// <summary>取得したミューテックスを解放して破棄する。</summary>
-    private sealed class LockRelease(Mutex mutex) : IDisposable
-    {
-        private Mutex? _mutex = mutex;
-
-        public void Dispose()
-        {
-            if (_mutex is { } held)
-            {
-                _mutex = null;
-                held.ReleaseMutex();
-                held.Dispose();
-            }
-        }
     }
 
     /// <summary>保存ファイルの中身(将来の書式変更に備えて版を持つ)。</summary>

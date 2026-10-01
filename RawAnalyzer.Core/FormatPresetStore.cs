@@ -7,6 +7,11 @@ namespace RawAnalyzer.Core;
 /// RawFormatプリセットの永続化ストア。
 /// 既定では %AppData%/RawAnalyzer/presets.json に保存する。
 /// </summary>
+/// <remarks>
+/// RawAnalyzer は複数起動でき、どのインスタンスも同じファイルを使う。ダイアログを開いたときに読んだプリセットを
+/// 丸ごと書き戻すと、別のインスタンスがその後に保存したプリセットが消えるため、変更は <see cref="Update"/> で
+/// 「他のインスタンスと排他して最新を読み直し、その変更だけを当てて保存する」。
+/// </remarks>
 public sealed class FormatPresetStore
 {
     /// <summary>
@@ -94,8 +99,36 @@ public sealed class FormatPresetStore
     }
 
     /// <summary>
+    /// 他のインスタンスと排他しながら、保存されている最新のプリセットを読み直して変更を当て、変更したときだけ保存する。
+    /// </summary>
+    /// <remarks>
+    /// 手元に持っているプリセットではなく読み直したプリセットへ当てるので、別のインスタンスがその後に保存した
+    /// プリセットを巻き戻さない。保存先ディレクトリがなければ作成する。
+    /// </remarks>
+    /// <param name="change">読み直したプリセットへの変更。変更したら true を返す。</param>
+    /// <returns>変更を当てたプリセット(変更がなければ読み直したプリセット)。</returns>
+    /// <exception cref="JsonException">保存されている内容がJSONとして不正な場合(何も保存しない)。</exception>
+    /// <exception cref="IOException">読み書きできない、または他のインスタンスが長く使用中の場合。</exception>
+    /// <exception cref="UnauthorizedAccessException">読み書きする権限がない場合。</exception>
+    public IReadOnlyDictionary<string, RawFormat> Update(Func<Dictionary<string, RawFormat>, bool> change)
+    {
+        ArgumentNullException.ThrowIfNull(change);
+        using (InterProcessFileLock.Acquire(FilePath))
+        {
+            var presets = new Dictionary<string, RawFormat>(Load());
+            if (change(presets))
+            {
+                Save(presets);
+            }
+
+            return presets;
+        }
+    }
+
+    /// <summary>
     /// プリセットを保存する。保存先ディレクトリがなければ作成する。
     /// 一時ファイルへ書いてから置換するため、中断しても既存ファイルは壊れない。
+    /// ファイル全体を置き換えるので、他のインスタンスの保存を巻き戻さないよう、変更は <see cref="Update"/> で行う。
     /// </summary>
     /// <param name="presets">プリセット名からRawFormatへの辞書。</param>
     public void Save(IReadOnlyDictionary<string, RawFormat> presets)

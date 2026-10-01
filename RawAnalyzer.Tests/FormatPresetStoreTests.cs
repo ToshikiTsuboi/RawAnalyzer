@@ -69,6 +69,31 @@ public class FormatPresetStoreTests : IDisposable
     }
 
     [Fact]
+    public void Update_AppliesChangeToLatestSavedPresetsNotToOwnSnapshot()
+    {
+        // 複数起動: 先に読んだインスタンス(A)の変更が、後から別のインスタンス(B)が保存したプリセットを消さない
+        var a = new FormatPresetStore(_directory);
+        IReadOnlyDictionary<string, RawFormat> snapshot = a.LoadOrQuarantine(out _);
+        Assert.Empty(a.Update(_ => false));
+        Assert.False(File.Exists(a.FilePath), "変更がなければ書かないこと");
+        new FormatPresetStore(_directory).Update(presets =>
+        {
+            presets["B"] = new RawFormat { Width = 2, Height = 2 };
+            return true;
+        });
+
+        IReadOnlyDictionary<string, RawFormat> updated = a.Update(presets =>
+        {
+            presets["A"] = new RawFormat { Width = 3, Height = 3 };
+            return true;
+        });
+
+        Assert.Empty(snapshot);
+        Assert.Equal(["A", "B"], updated.Keys.Order());
+        Assert.Equal(["A", "B"], new FormatPresetStore(_directory).Load().Keys.Order());
+    }
+
+    [Fact]
     public void LoadOrQuarantine_CorruptedFile_MovesToBackupAndReturnsEmpty()
     {
         // 破損を握りつぶすと、次に1件保存したときに辞書全体が上書きされ

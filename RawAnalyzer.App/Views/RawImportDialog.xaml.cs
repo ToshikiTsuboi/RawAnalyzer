@@ -535,10 +535,23 @@ public partial class RawImportDialog : Window
             return;
         }
 
-        _presets[name] = format;
+        SavePreset(name, format);
+    }
+
+    /// <summary>プリセットを保存して一覧に出し、選ぶ。保存できなければ理由を示す。</summary>
+    /// <param name="name">プリセット名。</param>
+    /// <param name="format">保存するフォーマット。</param>
+    internal void SavePreset(string name, RawFormat format)
+    {
         try
         {
-            _presetStore.Save(_presets);
+            // ダイアログを開いたときに読んだプリセットを丸ごと書き戻さず、最新を読み直してこのプリセットだけを当てる
+            // (別のインスタンスがその後に保存したプリセットを消さない。一覧にも出す)
+            _presets = new Dictionary<string, RawFormat>(_presetStore.Update(presets =>
+            {
+                presets[name] = format;
+                return true;
+            }));
         }
         catch (Exception ex)
         {

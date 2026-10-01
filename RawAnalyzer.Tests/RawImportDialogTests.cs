@@ -233,6 +233,33 @@ public class RawImportDialogTests : IDisposable
     }
 
     [Fact]
+    public Task SavePreset_KeepsPresetsSavedByAnotherInstanceAfterTheDialogOpened()
+    {
+        // 残課題 2026-10-02 M1。ダイアログを開いたときに読んだプリセットを丸ごと書き戻していたので、その後に
+        // 別のインスタンス(のダイアログ)で保存したプリセットが消えた。保存されている最新へこのプリセットだけを当てる
+        string path = CreateFile("sensor.raw", FileSize);
+        return WpfTestHost.Run(() =>
+        {
+            RawImportDialog a = CreateDialog(path, null, initial: Fmt(640, 480));
+            RawImportDialog b = CreateDialog(path, null, initial: Fmt(640, 480));
+            b.SavePreset("SensorB", Fmt(640, 480, bayer: BayerPattern.Rggb));
+            a.SavePreset("SensorA", Fmt(640, 480, bayer: BayerPattern.Gbrg));
+
+            IReadOnlyDictionary<string, RawFormat> saved =
+                new FormatPresetStore(Path.Combine(_directory, "settings")).Load();
+            Assert.Equal(Fmt(640, 480, bayer: BayerPattern.Rggb), saved["SensorB"]);
+            Assert.Equal(Fmt(640, 480, bayer: BayerPattern.Gbrg), saved["SensorA"]);
+
+            // 一覧にも他のインスタンスが保存したプリセットが出て、保存したものが選ばれている
+            var presets = Find<ComboBox>(a, "PresetCombo");
+            Assert.Contains("SensorB", presets.Items.Cast<string>());
+            Assert.Equal("SensorA", presets.SelectedItem);
+            a.Close();
+            b.Close();
+        });
+    }
+
+    [Fact]
     public Task UnknownFileSize_SaysTheSizeCannotBeRead()
     {
         // ファイルサイズを取得できない(-1)ときに「ファイル -0.00 MB」と出て、取得できないことが伝わらなかった

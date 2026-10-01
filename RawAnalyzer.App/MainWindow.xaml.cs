@@ -38,6 +38,9 @@ public partial class MainWindow : Window
     private int _recentMenuGeneration;
     private int _folderGeneration;
     private readonly SessionStore _sessionStore = new();
+
+    // 起動時に読んだセッション(ウィンドウ配置・パネル・絞り込み・最後のフォルダの復元に使う)。変更は
+    // _sessionStore.Update で保存されている最新の状態へ当てる(別のインスタンスの保存を巻き戻さない)
     private readonly SessionState _session;
     private ColorMatrix _colorMatrix = ColorMatrix.Identity;
     private bool _updatingMatrixBoxes;
@@ -372,41 +375,47 @@ public partial class MainWindow : Window
     private void SaveWindowPlacement()
     {
         CapturePanelWidths();
-        _session.LeftPanelWidth = _leftPanelWidth;
-        _session.RightPanelWidth = _rightPanelWidth;
-        _session.LeftPanelVisible = _vm.LeftPanelVisible;
-        _session.RightPanelVisible = _vm.RightPanelVisible;
-        _session.FileFilter = _vm.FileFilterText;
+        double leftPanelWidth = _leftPanelWidth;
+        double rightPanelWidth = _rightPanelWidth;
+        bool leftPanelVisible = _vm.LeftPanelVisible;
+        bool rightPanelVisible = _vm.RightPanelVisible;
+        string fileFilter = _vm.FileFilterText;
         // フルスクリーン中は(フルスクリーンのための最大化ではなく)フルスクリーンに入る前の状態を保存する
-        _session.WindowMaximized = FullscreenWindowState.IsMaximizedToSave(
+        bool maximized = FullscreenWindowState.IsMaximizedToSave(
             WindowState, _vm.IsFullscreen, _preFullscreenState);
-        if (WindowState == WindowState.Normal)
-        {
-            _session.WindowLeft = Left;
-            _session.WindowTop = Top;
-            _session.WindowWidth = Width;
-            _session.WindowHeight = Height;
-        }
-        else
-        {
-            _session.WindowLeft = RestoreBounds.Left;
-            _session.WindowTop = RestoreBounds.Top;
-            _session.WindowWidth = RestoreBounds.Width;
-            _session.WindowHeight = RestoreBounds.Height;
-        }
+        bool normal = WindowState == WindowState.Normal;
+        double left = normal ? Left : RestoreBounds.Left;
+        double top = normal ? Top : RestoreBounds.Top;
+        double width = normal ? Width : RestoreBounds.Width;
+        double height = normal ? Height : RestoreBounds.Height;
 
-        _sessionStore.Save(_session);
+        // ウィンドウ配置・パネル・絞り込みは最後に閉じたウィンドウのものを残す。ファイルごとのフォーマットと最後の
+        // フォルダは変えたときに保存済みなので書かない(起動時に読んだ内容で、別のインスタンスの保存を巻き戻さない)
+        _sessionStore.Update(session =>
+        {
+            session.LeftPanelWidth = leftPanelWidth;
+            session.RightPanelWidth = rightPanelWidth;
+            session.LeftPanelVisible = leftPanelVisible;
+            session.RightPanelVisible = rightPanelVisible;
+            session.FileFilter = fileFilter;
+            session.WindowMaximized = maximized;
+            session.WindowLeft = left;
+            session.WindowTop = top;
+            session.WindowWidth = width;
+            session.WindowHeight = height;
+        });
     }
 
     private void RememberFileFormat(string path, RawFormat format)
     {
-        SessionStore.TouchFileFormat(_session, SessionStore.NormalizeKey(path), format);
-        _sessionStore.Save(_session);
+        string key = SessionStore.NormalizeKey(path);
+        _sessionStore.Update(session => SessionStore.TouchFileFormat(session, key, format));
     }
 
     private RawFormat? TryGetRememberedFormat(string path, long fileSize)
     {
-        if (!_session.FileFormats.TryGetValue(SessionStore.NormalizeKey(path), out RawFormat? format))
+        // 別のインスタンスが記憶した・F2 で直したフォーマットも使う(古い記憶で開いて記憶し直し、直したものを巻き戻さない)
+        if (!_sessionStore.Current.FileFormats.TryGetValue(SessionStore.NormalizeKey(path), out RawFormat? format))
         {
             return null;
         }
@@ -525,9 +534,12 @@ public partial class MainWindow : Window
         // 祖先の各階層の初回の列挙は UI スレッドの外で行い、待たずに一覧の続きへ進む(別のフォルダを開いたら
         // 前の同期はやめる)
         _ = _folderTreeNavigator.SyncToFolderAsync(FolderTree, folder);
-        _session.LastFolder = folder;
-        _session.FileFilter = _vm.FileFilterText;
-        _sessionStore.Save(_session);
+        string fileFilter = _vm.FileFilterText;
+        _sessionStore.Update(session =>
+        {
+            session.LastFolder = folder;
+            session.FileFilter = fileFilter;
+        });
 
         if (selectPath is not null)
         {
