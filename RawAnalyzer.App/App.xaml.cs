@@ -37,12 +37,16 @@ public partial class App : Application
                 }
             }));
 
-        // 起動引数のパスを開く(端末やエクスプローラの「送る」から直接開けるように)
-        StartupPath = ResolveStartupPath(e.Args);
+        // 起動引数のパスを開く(端末やエクスプローラの「送る」から直接開けるように)。実在の確認は UI スレッドの外で
+        // 行う(ネットワーク上のパスは、切断していればタイムアウトまで戻らず、ウィンドウが出ないまま固まっていた)
+        string[] args = e.Args;
+        StartupPath = args.Length == 0
+            ? Task.FromResult<string?>(null)
+            : Task.Run(() => ResolveStartupPath(args));
     }
 
-    /// <summary>起動時に開くパス(なければnull)。MainWindowがLoadedで参照する。</summary>
-    internal static string? StartupPath { get; private set; }
+    /// <summary>起動時に開くパス(なければnull)を決めるタスク。MainWindowがLoadedで待つ。</summary>
+    internal static Task<string?> StartupPath { get; private set; } = Task.FromResult<string?>(null);
 
     /// <summary>
     /// 起動引数から開くべきファイル/フォルダを決める。

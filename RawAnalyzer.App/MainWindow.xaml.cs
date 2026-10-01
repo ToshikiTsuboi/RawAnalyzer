@@ -265,9 +265,17 @@ public partial class MainWindow : Window
             _ = Task.Run(() => RawLoader.DeleteUnusedTemporaryCopies(RawLoader.TemporaryCopyFolder));
             _vm.FileFilterText = _session.FileFilter ?? "";
 
-            if (App.StartupPath is { } startup)
+            // 起動引数のパスの実在は UI スレッドの外で確かめている(App.StartupPath)。確かめる間に利用者が別の
+            // ファイル・フォルダを開いていたら、後から来た方を優先して起動引数のパスは開かない
+            int openRequests = _openRequests;
+            int startupFolderGeneration = _folderGeneration;
+            if (await App.StartupPath is { } startup)
             {
-                await OpenStartupPath(startup);
+                if (openRequests == _openRequests && startupFolderGeneration == _folderGeneration)
+                {
+                    await OpenStartupPath(startup);
+                }
+
                 return;
             }
 
@@ -305,7 +313,7 @@ public partial class MainWindow : Window
     /// <param name="path">ファイルまたはフォルダのパス。</param>
     private async Task OpenStartupPath(string path)
     {
-        // 起動直後に UI スレッドでネットワーク上のパスを確かめない(起動前の引数の解釈で実在は確かめてある)
+        // 起動直後に UI スレッドでネットワーク上のパスを確かめない(実在は起動引数の解釈(App.StartupPath)で確かめてある)
         if (await Task.Run(() => Directory.Exists(path)))
         {
             await LoadFolderAsync(path, selectPath: null);
