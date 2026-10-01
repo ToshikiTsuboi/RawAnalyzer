@@ -268,8 +268,19 @@ public partial class NumericSliderRow : UserControl
             _textEdited = false;
             e.Handled = true;
         }
-        else if (e.Key is Key.Up or Key.Down)
+    }
+
+    private void OnValueBoxPreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        // ↑↓は TextBox がキャレット移動のコマンドとして処理済みにするので KeyDown には届かない。
+        // Preview で先に受ける。打ちかけの値があれば確定してから、その値を起点に動かす
+        if (e.Key is Key.Up or Key.Down)
         {
+            if (_textEdited)
+            {
+                CommitText();
+            }
+
             StepBy(e.Key == Key.Up ? 1 : -1);
             e.Handled = true;
         }

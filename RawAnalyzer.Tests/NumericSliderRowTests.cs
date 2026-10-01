@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Media;
 using RawAnalyzer.App.Controls;
 using Xunit;
 
@@ -44,6 +45,26 @@ public class NumericSliderRowTests
         Assert.Equal(4095, row.Value, 10);
     });
 
+    [Fact]
+    public Task ValueBox_UpDownKeysStepValue() => WpfTestHost.Run(() =>
+    {
+        // TextBox は↑↓をキャレット移動のコマンドで処理済みにするので、KeyDown では届かない
+        var row = NewRow(decimals: 0, step: 1, maximum: 4095);
+        row.Value = 100;
+        Assert.True(PressKey(row.ValueBox, Key.Up));
+        Assert.Equal(101, row.Value, 10);
+        Assert.Equal("101", row.ValueBox.Text);
+        Assert.True(PressKey(row.ValueBox, Key.Down));
+        Assert.True(PressKey(row.ValueBox, Key.Down));
+        Assert.Equal(99, row.Value, 10);
+
+        // 打ちかけの値はその値を起点にする(打った値を捨てて元の値から動かさない)
+        row.ValueBox.Text = "250";
+        Assert.True(PressKey(row.ValueBox, Key.Up));
+        Assert.Equal(251, row.Value, 10);
+        Assert.Equal("251", row.ValueBox.Text);
+    });
+
     private static NumericSliderRow NewRow(int decimals, double step, double maximum) => new()
     {
         Minimum = 0,
@@ -52,11 +73,47 @@ public class NumericSliderRowTests
         Decimals = decimals,
     };
 
+    /// <summary>
+    /// 実際の入力と同じく PreviewKeyDown(トンネル)→ 未処理なら KeyDown(バブル)の順にキーを送る。
+    /// </summary>
+    /// <returns>どちらかで処理済みになったら true。</returns>
+    private static bool PressKey(UIElement target, Key key)
+    {
+        var args = new KeyEventArgs(Keyboard.PrimaryDevice, new TestInputSource(), Environment.TickCount, key)
+        {
+            RoutedEvent = Keyboard.PreviewKeyDownEvent,
+        };
+        target.RaiseEvent(args);
+        if (!args.Handled)
+        {
+            args.RoutedEvent = Keyboard.KeyDownEvent;
+            target.RaiseEvent(args);
+        }
+
+        return args.Handled;
+    }
+
     private static void Wheel(Slider slider, bool up)
     {
         slider.RaiseEvent(new MouseWheelEventArgs(Mouse.PrimaryDevice, Environment.TickCount, up ? 120 : -120)
         {
             RoutedEvent = UIElement.PreviewMouseWheelEvent,
         });
+    }
+
+    /// <summary>ウィンドウを表示せずにキー入力イベントを作るための入力元。</summary>
+    private sealed class TestInputSource : PresentationSource
+    {
+        private Visual? _root;
+
+        public override Visual RootVisual
+        {
+            get => _root!;
+            set => _root = value;
+        }
+
+        public override bool IsDisposed => false;
+
+        protected override CompositionTarget GetCompositionTargetCore() => null!;
     }
 }
