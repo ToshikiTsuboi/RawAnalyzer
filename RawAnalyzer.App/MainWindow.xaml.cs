@@ -4952,9 +4952,14 @@ public partial class MainWindow : Window
         if (e.NewValue is System.Windows.Controls.TreeViewItem { Tag: string path } item)
         {
             // 存在の確認も切断されたネットワークドライブではタイムアウトまで戻らないので、UI スレッドの外で行う。
-            // 確かめる間に別の項目を選んでいたら開かない
+            // 確かめる間に別の項目を選んでいた・別のファイルやフォルダを開いていたら(後から来た方を優先する)開かない。
+            // 以前は選択だけを見ていたので、確かめる間に「開く」で別のフォルダのファイルを開くと、その一覧の列挙中に
+            // このフォルダを読み込み始めて列挙の結果を捨てさせ、後から開いたファイルが開かれなかった
+            int openRequests = _openRequests;
+            int folderGeneration = _folderGeneration;
             bool exists = await Task.Run(() => Directory.Exists(path));
-            if (exists && ReferenceEquals(FolderTree.SelectedItem, item))
+            if (exists && ReferenceEquals(FolderTree.SelectedItem, item)
+                && openRequests == _openRequests && folderGeneration == _folderGeneration)
             {
                 LoadFolder(path, selectPath: null);
             }
@@ -5683,17 +5688,27 @@ public partial class MainWindow : Window
         OpenPathChoosingFormat(entry.FullPath, initial, correctFrom: null);
     }
 
-    private void OnFileCtxRevealClick(object sender, RoutedEventArgs e)
+    private async void OnFileCtxRevealClick(object sender, RoutedEventArgs e)
     {
-        if (_vm.SelectedFile is { } entry && File.Exists(entry.FullPath))
+        if (_vm.SelectedFile is not { } entry)
         {
-            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
-            {
-                FileName = "explorer.exe",
-                Arguments = $"/select,\"{entry.FullPath}\"",
-                UseShellExecute = true,
-            });
+            return;
         }
+
+        // 実在の確認(と起動)は UI スレッドの外で行う(切断した NAS ではタイムアウトまで戻らない)
+        string path = entry.FullPath;
+        await Task.Run(() =>
+        {
+            if (File.Exists(path))
+            {
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = "explorer.exe",
+                    Arguments = $"/select,\"{path}\"",
+                    UseShellExecute = true,
+                });
+            }
+        });
     }
 
     private void OnFileCtxCopyPathClick(object sender, RoutedEventArgs e)
@@ -5704,11 +5719,20 @@ public partial class MainWindow : Window
         }
     }
 
-    private void OnFileCtxRefreshClick(object sender, RoutedEventArgs e)
+    private async void OnFileCtxRefreshClick(object sender, RoutedEventArgs e)
     {
-        if (_currentFolder is not null && Directory.Exists(_currentFolder))
+        if (_currentFolder is not { } folder)
         {
-            LoadFolder(_currentFolder, _vm.SelectedFile?.FullPath);
+            return;
+        }
+
+        // 実在の確認は UI スレッドの外で行う(切断した NAS ではタイムアウトまで戻らない)。確かめる間に別のフォルダの
+        // 読み込みが始まったら、後から来た方を優先して読み込み直さない
+        int folderGeneration = _folderGeneration;
+        bool exists = await Task.Run(() => Directory.Exists(folder));
+        if (exists && folderGeneration == _folderGeneration)
+        {
+            LoadFolder(folder, _vm.SelectedFile?.FullPath);
         }
     }
 
@@ -5792,17 +5816,25 @@ public partial class MainWindow : Window
         }
     }
 
-    private void OnTreeOpenExplorerClick(object sender, RoutedEventArgs e)
+    private async void OnTreeOpenExplorerClick(object sender, RoutedEventArgs e)
     {
-        if (FolderTree.SelectedItem is System.Windows.Controls.TreeViewItem { Tag: string path }
-            && Directory.Exists(path))
+        if (FolderTree.SelectedItem is not System.Windows.Controls.TreeViewItem { Tag: string path })
         {
-            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
-            {
-                FileName = path,
-                UseShellExecute = true,
-            });
+            return;
         }
+
+        // 実在の確認(と起動)は UI スレッドの外で行う(切断したネットワークドライブではタイムアウトまで戻らない)
+        await Task.Run(() =>
+        {
+            if (Directory.Exists(path))
+            {
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = path,
+                    UseShellExecute = true,
+                });
+            }
+        });
     }
 
     private void OnTreeRefreshClick(object sender, RoutedEventArgs e)
@@ -5830,12 +5862,23 @@ public partial class MainWindow : Window
             return;
         }
 
+        // フォルダかファイルかの確認は UI スレッドの外で行う(ネットワーク上のパスは、切断していればタイムアウトまで
+        // 戻らない)。確かめる間に別のファイル・フォルダが開かれたら、後から来た方を優先してドロップしたものは開かない
         string path = paths[0];
-        if (Directory.Exists(path))
+        int openRequests = _openRequests;
+        int folderGeneration = _folderGeneration;
+        (bool isFolder, bool isFile) = await Task.Run(
+            () => Directory.Exists(path) ? (true, false) : (false, File.Exists(path)));
+        if (openRequests != _openRequests || folderGeneration != _folderGeneration)
+        {
+            return;
+        }
+
+        if (isFolder)
         {
             LoadFolder(path, selectPath: null);
         }
-        else if (File.Exists(path))
+        else if (isFile)
         {
             // 比較モード中は、比較画面の外(左右のパネル・メニュー・ツールバー)へのドロップも、比較画面への
             // ドロップと同じく全ファイルを比較ペインへ追加する
