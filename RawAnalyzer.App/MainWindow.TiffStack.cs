@@ -99,11 +99,16 @@ public partial class MainWindow
             {
                 _tiffPageLoadCts = null;
                 _sequenceBusy = false;
+
+                // 進捗表示は、後から始まった通常の読み込み(OpenPath)が持っていればそちらに任せる。送りのUIは
+                // 世代によらず表示中のページへ戻す。通常の読み込みに取り消された・追い越された後に戻さないと、
+                // 読み込みが失敗したときにスライダーが要求したページ、ラベルが前のページのまま残る
                 if (generation == _openGeneration)
                 {
                     _vm.IsLoading = false;
-                    UpdateSequenceUi();
                 }
+
+                UpdateSequenceUi();
             }
 
             cts.Dispose();

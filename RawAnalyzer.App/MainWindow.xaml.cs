@@ -587,7 +587,6 @@ public partial class MainWindow : Window
         // 確定がそれらのダイアログ・進捗表示(入れ子ポンプ)の中で走ると、操作のために
         // 作った画面が別の画像を処理し、処理中の画像も破棄されてしまう
         using IDisposable pendingLoad = _imageGate.BeginLoad();
-        int generation = ++_openGeneration;
 
         RawFormat? format = null;
         RawFormatOrigin? origin = null;
@@ -620,6 +619,11 @@ public partial class MainWindow : Window
             }
         }
 
+        // 世代はフォーマットが確定して読み込みを始めるときに進める(先に始まっていた読み込みは下の
+        // ReplaceLoadCts で取り消す)。ダイアログを出す前に進めると、ダイアログを取り消したときに、先に始まっていた
+        // 読み込みが取り消されないまま古い世代になって読み終わっても黙って捨てられ、進捗表示も誰も消さなくなる
+        // (取り消されたTIFFのページ読み込みも、進捗表示と送りのUIを戻さなくなる)
+        int generation = ++_openGeneration;
         CancelAnalysis();
         var cts = new CancellationTokenSource();
         ReplaceLoadCts(cts);
