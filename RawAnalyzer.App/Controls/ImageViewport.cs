@@ -1437,10 +1437,11 @@ public sealed class ImageViewport : FrameworkElement
             return false;
         }
 
-        // オーバーレイは品質パスでしか取得しない
+        // オーバーレイは品質パスでしか取得しない(分割表示か否かは描画と同じ判定。
+        // 表示モードがチャネル分割でも Bayer が「なし」なら Raw として描き、オーバーレイも出す)
         if (!_overlayEvaluated
             && _zoom >= RawOverlayMinZoom
-            && _displayMode != ViewportDisplayMode.ChannelSplit)
+            && !IsChannelSplitLayout)
         {
             return false;
         }
@@ -1648,7 +1649,7 @@ public sealed class ImageViewport : FrameworkElement
         // 表示するのは最新の描画要求の結果だけ(古い要求は取り消され、表示前に捨てられる)
         _fastRenderPending = false;
         _overlay = !fast && zoom >= RawOverlayMinZoom
-            && _displayMode != ViewportDisplayMode.ChannelSplit
+            && !IsChannelSplitLayout
             ? FetchOverlayData()
             : null;
 

@@ -66,6 +66,54 @@ public class ImageViewportTests
         Assert.DoesNotContain("2176", texts);
     });
 
+    [Fact]
+    public Task ChannelSplitModeWithBayerNone_DrawsRawCodeOverlayLikeRaw() => WpfTestHost.Run(async () =>
+    {
+        // 表示モードがチャネル分割でも Bayer が「なし」なら描画は Raw へ落ちる(表示座標=元画像座標)。
+        // 以前は raw 値オーバーレイの取得だけが表示モードの値で分割表示かを判断していたため、
+        // 32倍以上に拡大しても Raw 表示と違って画素値が出なかった
+        const int size = 16;
+        const int bitDepth = 12;
+        var format = new RawFormat { Width = size, Height = size, BitDepth = bitDepth };
+        var codes = new ushort[size * size];
+        for (int i = 0; i < codes.Length; i++)
+        {
+            codes[i] = (ushort)i; // コード値 = y * 16 + x
+        }
+
+        using RawImage image = TestImages.FromCodes(codes, format);
+        var viewport = new ImageViewport();
+        viewport.Measure(new Size(240, 180));
+        viewport.Arrange(new Rect(0, 0, 240, 180));
+        viewport.SetImage(image, format);
+        viewport.SetDisplayMode(ViewportDisplayMode.ChannelSplit);
+        Assert.False(viewport.IsChannelSplitLayout);
+
+        var presented = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        viewport.ViewportStateChanged += (_, e) =>
+        {
+            if (e.Zoom >= 32)
+            {
+                presented.TrySetResult(); // CenterOn の描画は品質パス(オーバーレイを取得する)
+            }
+        };
+
+        List<string> texts;
+        try
+        {
+            viewport.CenterOn(8, 8, 48);
+            await presented.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            viewport.UpdateLayout();
+            texts = CollectTexts(VisualTreeHelper.GetDrawing(viewport));
+        }
+        finally
+        {
+            await viewport.ClearImageAsync();
+        }
+
+        Assert.Contains("136", texts); // 中央の画素 (8,8)
+    });
+
     [Theory]
     [InlineData(ViewportDisplayMode.Raw, ViewportDisplayMode.ChannelSplit)]
     [InlineData(ViewportDisplayMode.ChannelSplit, ViewportDisplayMode.BayerColor)]
