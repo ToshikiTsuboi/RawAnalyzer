@@ -519,6 +519,104 @@ public class ImageViewportTests
         }
     });
 
+    [Theory]
+    [InlineData(ViewportDisplayMode.BayerColor)]
+    [InlineData(ViewportDisplayMode.ColorDevelop)]
+    public Task BayerLevel_ZoomedOut_DrawsUpToTheImageEdge(ViewportDisplayMode mode) => WpfTestHost.Run(async () =>
+    {
+        // Bayer縮小レベルは元画像の幅・高さを 2×縮小率 で割った端数を切り捨てている(22×22 の L4 は 4×4 で
+        // 元画像の 16×16 ぶん)。以前はそのレベルを座標だけ倍率で補正して描いていたため、右端・下端の端数
+        // (ここでは6画素)が背景になり、元画像の座標で描くROIなどとずれていた。チャネル分割の縮小表示と同じく、
+        // 端数は同じBayer位相の最終列・最終行で埋め、元画像の範囲ちょうどまで描く
+        const int size = 22;
+        const int factor = 4;
+        const double zoom = 0.25;
+        ushort[] channelValues = { 8000, 24000, 40000, 56000 }; // RGGB の位相 (0,0)(1,0)(0,1)(1,1)
+        var codes = new ushort[size * size];
+        for (int y = 0; y < size; y++)
+        {
+            for (int x = 0; x < size; x++)
+            {
+                codes[y * size + x] = channelValues[(y & 1) * 2 + (x & 1)];
+            }
+        }
+
+        var format = new RawFormat { Width = size, Height = size, BitDepth = 16, Bayer = BayerPattern.Rggb };
+        using RawImage image = TestImages.FromCodes(codes, format);
+        using BayerPyramid pyramid = BayerPyramid.Create(image, format, maxLevelPixels: long.MaxValue);
+        int levelCovered = pyramid.GetLevel(factor)!.Width * factor;
+        Assert.True(levelCovered < size); // レベルが端数を切り捨てている寸法
+
+        var viewport = new ImageViewport();
+        viewport.Measure(new Size(240, 180));
+        viewport.Arrange(new Rect(0, 0, 240, 180));
+        viewport.SetImage(image, format);
+        viewport.SetBayerPyramid(pyramid);
+        viewport.SetDisplayMode(mode);
+
+        var presented = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        viewport.ViewportStateChanged += (_, e) =>
+        {
+            if (e.Zoom == zoom && e.RenderedFactor == factor)
+            {
+                presented.TrySetResult(); // 縮小レベルから描いた結果が表示された
+            }
+        };
+
+        try
+        {
+            viewport.CenterOn(size - 4, size - 4, zoom);
+            await presented.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+            byte[] pixels = RenderedPixels(viewport, out int width, out int height);
+            DisplayLut lut = DisplayLut.Create(new DisplayParameters());
+            var mismatches = new List<string>();
+            bool checkedBandX = false;
+            bool checkedBandY = false;
+            for (int dy = 0; dy < height; dy++)
+            {
+                double sourceY = viewport.OriginY + (dy + 0.5) / zoom;
+                for (int dx = 0; dx < width; dx++)
+                {
+                    double sourceX = viewport.OriginX + (dx + 0.5) / zoom;
+                    int offset = (dy * width + dx) * 4;
+                    bool background = pixels[offset] == ViewportRenderer.BackgroundGray
+                        && pixels[offset + 1] == ViewportRenderer.BackgroundGray
+                        && pixels[offset + 2] == ViewportRenderer.BackgroundGray;
+                    bool inside = sourceX >= 0 && sourceX < size && sourceY >= 0 && sourceY < size;
+                    if (inside == background)
+                    {
+                        mismatches.Add($"({sourceX},{sourceY}): {(background ? "背景" : "画像")}");
+                        continue;
+                    }
+
+                    if (inside && mode == ViewportDisplayMode.BayerColor)
+                    {
+                        // Bayerカラーは、レベルの画素の位相のチャネルの値で明るく描く(端数も同じ位相の値で埋める)
+                        int levelX = (int)(sourceX / factor);
+                        int levelY = (int)(sourceY / factor);
+                        byte expected = lut.Map(channelValues[(levelY & 1) * 2 + (levelX & 1)]);
+                        byte actual = Math.Max(pixels[offset], Math.Max(pixels[offset + 1], pixels[offset + 2]));
+                        if (actual != expected)
+                        {
+                            mismatches.Add($"({sourceX},{sourceY}): {actual}(期待 {expected})");
+                        }
+                    }
+
+                    checkedBandX |= inside && sourceX >= levelCovered;
+                    checkedBandY |= inside && sourceY >= levelCovered;
+                }
+            }
+
+            Assert.Empty(mismatches);
+            Assert.True(checkedBandX && checkedBandY); // 以前は背景だった端数の帯を実際に確かめている
+        }
+        finally
+        {
+            await viewport.ClearImageAsync();
+        }
+    });
+
     [Fact]
     public Task DetachBayerPyramidThenSetFrameInSameTurn_DrawsNewFrameAndNeverUsesDetachedPyramid() =>
         WpfTestHost.Run(async () =>

@@ -1511,8 +1511,12 @@ public sealed class ImageViewport : FrameworkElement
                     1);
             }
 
-            return new SelectedSource(
-                new RawImageRenderSource(colorImage, colorFrame), coordinateFactor);
+            // 縮小レベルは元画像の幅・高さを 2×縮小率 で割った端数を切り捨てているので、
+            // 端数を最終列・最終行で埋めて元画像の範囲ちょうどまで描くソースで包む
+            RenderSource source = coordinateFactor > 1
+                ? new BayerLevelRenderSource(colorImage, coordinateFactor, _image.Width, _image.Height)
+                : new RawImageRenderSource(colorImage, colorFrame);
+            return new SelectedSource(source, coordinateFactor);
         }
 
         // ゼブラ判定は実画素値に対して行う必要がある。

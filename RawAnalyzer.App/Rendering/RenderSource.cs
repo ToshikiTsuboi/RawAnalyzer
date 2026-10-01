@@ -24,6 +24,19 @@ public abstract class RenderSource
     public abstract int LevelHeight { get; }
 
     /// <summary>
+    /// 画像として描く範囲の幅(ソース座標)。ここから右の列は画像の外として背景にする。
+    /// 既定は <see cref="SourceWidth"/>。
+    /// </summary>
+    /// <remarks>
+    /// 縮小レベルをそのレベルの座標のまま描くソース(<see cref="BayerLevelRenderSource"/>)では、元画像の幅を
+    /// 縮小率で割った小数になる(元画像の範囲ちょうどまで描く)。
+    /// </remarks>
+    public virtual double ExtentWidth => SourceWidth;
+
+    /// <summary>画像として描く範囲の高さ(ソース座標)。<see cref="ExtentWidth"/> の縦方向版。</summary>
+    public virtual double ExtentHeight => SourceHeight;
+
+    /// <summary>
     /// 同じ画素データを指すソースなら等値になるキー(描画結果のキャッシュ照合用)。
     /// </summary>
     public abstract object CacheKey { get; }
@@ -109,6 +122,92 @@ public sealed class RawImageRenderSource : RenderSource
     public override void ReadRow(int levelY, int levelX, int count, Span<ushort> destination)
     {
         _image.CopyRegion(_frame, levelX, levelY, count, 1, destination);
+    }
+}
+
+/// <summary>
+/// Bayer位相を保った縮小レベル(<see cref="BayerPyramid"/> のレベル)を、レベルの座標のまま等倍として
+/// 供給するソース(Bayerカラー・カラー現像の縮小描画用。呼び出し側がズームと原点を縮小率で補正する)。
+/// </summary>
+/// <remarks>
+/// レベルは元画像の幅・高さを 2×縮小率 で割った端数を切り捨てているので、レベルをそのまま描くと元画像の
+/// 右端・下端の端数(最大 2×縮小率−1 画素)が背景になり、元画像の座標で描くROIなどとずれる。
+/// 描く範囲は元画像の範囲(元画像の寸法÷縮小率)とし、レベルにない端数の列・行は同じBayer位相の
+/// 最終列・最終行で埋める(チャネル分割の縮小表示と同じ埋め方)。
+/// </remarks>
+public sealed class BayerLevelRenderSource : RenderSource
+{
+    private readonly RawImage _level;
+
+    /// <summary>ソースを生成する。</summary>
+    /// <param name="level">縮小レベル(幅・高さは2以上の偶数、フレームは1枚)。</param>
+    /// <param name="factor">縮小率(1以上)。</param>
+    /// <param name="imageWidth">元画像の幅。</param>
+    /// <param name="imageHeight">元画像の高さ。</param>
+    public BayerLevelRenderSource(RawImage level, int factor, int imageWidth, int imageHeight)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(factor, 1);
+        _level = level;
+        ExtentWidth = (double)imageWidth / factor;
+        ExtentHeight = (double)imageHeight / factor;
+
+        // 端数の列・行を含めるよう切り上げる(レベルより大きい分は ReadRow が埋める)
+        SourceWidth = Math.Max(level.Width, (imageWidth + factor - 1) / factor);
+        SourceHeight = Math.Max(level.Height, (imageHeight + factor - 1) / factor);
+    }
+
+    /// <inheritdoc />
+    public override int SourceWidth { get; }
+
+    /// <inheritdoc />
+    public override int SourceHeight { get; }
+
+    /// <inheritdoc />
+    public override int Factor => 1;
+
+    /// <inheritdoc />
+    public override int LevelWidth => SourceWidth;
+
+    /// <inheritdoc />
+    public override int LevelHeight => SourceHeight;
+
+    /// <inheritdoc />
+    public override double ExtentWidth { get; }
+
+    /// <inheritdoc />
+    public override double ExtentHeight { get; }
+
+    /// <inheritdoc />
+    public override object CacheKey => (_level, nameof(BayerLevelRenderSource));
+
+    /// <inheritdoc />
+    public override void ReadRow(int levelY, int levelX, int count, Span<ushort> destination)
+    {
+        int y = ToLevel(levelY, _level.Height);
+        int inside = Math.Clamp(_level.Width - levelX, 0, count);
+        if (inside > 0)
+        {
+            _level.CopyRegion(0, levelX, y, inside, 1, destination[..inside]);
+        }
+
+        if (inside == count)
+        {
+            return;
+        }
+
+        // レベルの右にある端数の列は、同じ位相の最終列(偶数列なら最後から2列目、奇数列なら最終列)で埋める
+        Span<ushort> lastPair = stackalloc ushort[2];
+        _level.CopyRegion(0, _level.Width - 2, y, 2, 1, lastPair);
+        for (int i = inside; i < count; i++)
+        {
+            destination[i] = lastPair[(levelX + i) & 1];
+        }
+    }
+
+    /// <summary>レベルの外の座標を、同じ位相(偶奇)の最終の座標へ写す。</summary>
+    private static int ToLevel(int coordinate, int length)
+    {
+        return coordinate < length ? coordinate : length - 2 + (coordinate & 1);
     }
 }
 

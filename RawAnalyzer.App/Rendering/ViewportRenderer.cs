@@ -153,7 +153,7 @@ public static class ViewportRenderer
     /// 線形探索は不要。従来はdest行ごとに最大2×destWidth回のループを回していた。
     /// </remarks>
     private static bool TryComputeVisibleColumns(
-        double zoom, double originX, int sourceWidth, int destWidth,
+        double zoom, double originX, double sourceWidth, int destWidth,
         out int dx0, out int dx1)
     {
         // originX + (dx + 0.5)/zoom >= 0        → dx >= -originX*zoom - 0.5
@@ -195,14 +195,14 @@ public static class ViewportRenderer
     {
         double invZoom = 1.0 / zoom;
         double srcY = originY + (destY + 0.5) * invZoom;
-        if (srcY < 0 || srcY >= source.SourceHeight)
+        if (srcY < 0 || srcY >= source.ExtentHeight)
         {
             return null;
         }
 
         int levelY = Math.Min(source.ToLevelY(srcY), source.LevelHeight - 1);
         if (!TryComputeVisibleColumns(
-                zoom, originX, source.SourceWidth, destWidth, out int dx0, out int dx1))
+                zoom, originX, source.ExtentWidth, destWidth, out int dx0, out int dx1))
         {
             return null;
         }
@@ -528,7 +528,7 @@ public static class ViewportRenderer
 
                 Span<byte> destRow = destination.AsSpan(destY * destWidth * 4, destWidth * 4);
                 double srcY = originY + (destY + 0.5) * invZoom;
-                if (srcY < 0 || srcY >= source.SourceHeight)
+                if (srcY < 0 || srcY >= source.ExtentHeight)
                 {
                     FillBackground(destRow);
                     return;
@@ -539,7 +539,7 @@ public static class ViewportRenderer
                 {
                     double srcX = originX + (dx + 0.5) * invZoom;
                     int o = dx * 4;
-                    if (srcX < 0 || srcX >= source.SourceWidth)
+                    if (srcX < 0 || srcX >= source.ExtentWidth)
                     {
                         destRow[o] = BackgroundGray;
                         destRow[o + 1] = BackgroundGray;
@@ -601,7 +601,7 @@ public static class ViewportRenderer
 
                 Span<byte> destRow = destination.AsSpan(destY * destWidth * 4, destWidth * 4);
                 double srcY = originY + (destY + 0.5) * invZoom;
-                if (srcY < 0 || srcY >= source.SourceHeight)
+                if (srcY < 0 || srcY >= source.ExtentHeight)
                 {
                     FillBackground(destRow);
                     return buffers;
@@ -611,7 +611,7 @@ public static class ViewportRenderer
 
                 // 可視dest列区間
                 if (!TryComputeVisibleColumns(
-                        zoom, originX, source.SourceWidth, destWidth, out int dx0, out int dx1))
+                        zoom, originX, source.ExtentWidth, destWidth, out int dx0, out int dx1))
                 {
                     FillBackground(destRow);
                     return buffers;
