@@ -58,8 +58,12 @@ public class DolSampleSmokeTests
             _output.WriteLine($"merged center = {center}, FullScale = {merged.FullScale}");
             Assert.Equal((4095 << 4) * 16f, center);
 
-            // 左端(暗部)はウェッジが0で、長秒データがそのまま使われ低輝度
-            Assert.True(merged.Pixels[540 * 1920] < 65535);
+            // 左端寄りの x=50(シーン = ウェッジ 1707 × リングの係数 0.68 ≈ 1159.4)は長秒が飽和しない暗部。
+            // 生成器は長秒 1159・短秒 72(切り捨て)と書くので、分割の順(偶数行が長秒)もここで確かめる。
+            // 合成は長秒をそのまま使う(短秒×露光比 72×16 = 1152 とは切り捨てのぶん値が違う)
+            Assert.Equal(1159 << 4, frames[0].GetPixel(50, 540));
+            Assert.Equal(72 << 4, frames[1].GetPixel(50, 540));
+            Assert.Equal(1159f * 16, merged.Pixels[540 * 1920 + 50]);
         }
         finally
         {
