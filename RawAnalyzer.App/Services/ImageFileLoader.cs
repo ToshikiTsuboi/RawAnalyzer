@@ -300,9 +300,8 @@ internal static class ImageFileLoader
             || info.IsVirtualPage                   // ImageJの仮想ページはWICに存在しない
             || info.WicFrameIndex < 0               // SubIFD(DNG本体など)
             || info.IsRawPhotometric                // CFAはWICが現像してしまう
-            || info.BitsPerSample is 10 or 12 or 14 or 24 or 64
+            || info.BitsPerSample is 10 or 12 or 14 or 24 or 64   // 64bitは整数・実数とも
             || (info.SampleFormat == 2 && info.BitsPerSample == 8)
-            || (info.SampleFormat == 3 && info.BitsPerSample == 64)
             || WicBreaksWhiteIsZero(info);          // WICのWhiteIsZero反転で値が壊れる
     }
 
