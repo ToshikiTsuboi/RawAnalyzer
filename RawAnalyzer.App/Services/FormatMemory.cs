@@ -34,7 +34,10 @@ internal sealed class FormatMemory
 
     private FormatHistory _history;
 
-    /// <summary>保存先から記憶を読み込む。壊れていれば .bak へ退避して空から始め、警告を残す。</summary>
+    /// <summary>
+    /// 保存先から記憶を読み込む。壊れていれば .bak へ退避して空から始め、警告を残す。ロック・共有違反などで
+    /// 読めないだけなら退避せずに空から始めて警告を残し、次に使うとき(<see cref="History"/>・記録)に読み直す。
+    /// </summary>
     /// <param name="store">保存先(テストでは一時フォルダ)。</param>
     /// <param name="warn">警告の出力先(既定はアプリのログ)。</param>
     /// <param name="clock">最終使用日時に使う現在時刻(UTC。既定は DateTime.UtcNow)。</param>
@@ -44,10 +47,19 @@ internal sealed class FormatMemory
         _store = store;
         _warn = warn ?? AppLog.Warn;
         _clock = clock ?? (() => DateTime.UtcNow);
-        _history = store.LoadOrQuarantine(out bool corrupted);
-        if (corrupted)
+        try
         {
-            _warn($"サイズ別フォーマットの記憶が読み込めなかったため退避し、空から始めます: {store.BackupPath}");
+            _history = store.LoadOrQuarantine(out bool corrupted);
+            if (corrupted)
+            {
+                _warn($"サイズ別フォーマットの記憶が読み込めなかったため退避し、空から始めます: {store.BackupPath}");
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // 正常な記憶かもしれないので退避も上書きもしない(記録はストアが最新を読み直してから当てる)
+            _history = new FormatHistory();
+            _warn($"サイズ別フォーマットの記憶を読み込めませんでした(退避せず、次に使うときに読み直します): {ex.Message}");
         }
     }
 

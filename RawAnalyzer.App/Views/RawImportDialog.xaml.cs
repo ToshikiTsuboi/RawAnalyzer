@@ -134,10 +134,27 @@ public partial class RawImportDialog : Window
 
     private IReadOnlyDictionary<string, RawFormat> LoadPresetsSafe()
     {
+        IReadOnlyDictionary<string, RawFormat> presets;
+        bool corrupted;
+        try
+        {
+            presets = _presetStore.LoadOrQuarantine(out corrupted);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // ロック・共有違反などで読めないだけなら、ファイルは退避も上書きもしない(保存は最新を読み直してから当てる)。
+            // 一覧が空の理由を知らせる
+            AppLog.Warn($"プリセットファイルを読み込めませんでした: {ex.Message}");
+            MessageBox.Show(
+                this,
+                "プリセットファイルを読み込めませんでした(ほかのアプリが使用中の可能性があります)。" +
+                $"ファイルはそのまま残しています。{Environment.NewLine}{ex.Message}",
+                "RawAnalyzer", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return new Dictionary<string, RawFormat>();
+        }
+
         // 破損を握りつぶすと、次に1件保存したときに全プリセットが消える。
         // .bak へ退避したことをユーザーへ知らせる。
-        IReadOnlyDictionary<string, RawFormat> presets =
-            _presetStore.LoadOrQuarantine(out bool corrupted);
         if (corrupted)
         {
             AppLog.Warn($"プリセットファイルが破損していたため退避: {_presetStore.BackupPath}");

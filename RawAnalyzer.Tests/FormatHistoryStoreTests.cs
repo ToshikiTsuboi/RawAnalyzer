@@ -174,6 +174,36 @@ public class FormatHistoryStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task LoadOrQuarantine_WhileAnotherInstanceIsSaving_WaitsForIt()
+    {
+        // 読み込みも他のインスタンスの保存と排他する(置き換えの途中に読んで、読めない・古い内容を使わない)
+        var store = new FormatHistoryStore(_directory);
+        Directory.CreateDirectory(_directory);
+        using var holding = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        Task other = Task.Factory.StartNew(() =>
+        {
+            // ミューテックスは取得したスレッドで解放するので、待たずに同じスレッドで書く
+            using (InterProcessFileLock.Acquire(store.FilePath))
+            {
+                holding.Set();
+                release.Wait();
+                var history = new FormatHistory();
+                history.Record(8, ".raw", new RawFormat { Width = 2, Height = 2 }, null, T0);
+                new FormatHistoryStore(_directory).Save(history);
+            }
+        }, TaskCreationOptions.LongRunning);
+        holding.Wait();
+
+        Task<FormatHistory> load = Task.Run(() => store.LoadOrQuarantine(out _));
+        await Task.WhenAny(load, Task.Delay(200));
+        release.Set();
+        await other;
+
+        Assert.Single((await load).Entries);
+    }
+
+    [Fact]
     public void LoadOrQuarantine_CorruptedFile_MovesToBackupAndStartsEmpty()
     {
         // 握りつぶして空から始めると、次の保存で記憶が上書きされ復旧できなくなる

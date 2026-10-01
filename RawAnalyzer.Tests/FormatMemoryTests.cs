@@ -156,6 +156,25 @@ public class FormatMemoryTests : IDisposable
         Assert.Contains(store.BackupPath, Assert.Single(_warnings));
     }
 
+    [Fact]
+    public void Constructor_FileUnreadableButNotCorrupt_IsKeptAndReadOnNextUse()
+    {
+        // 残課題 2026-10-02(LoadOrQuarantine の退避)。ロック・共有違反で読めないだけの正常な記憶も .bak へ退避し、
+        // 空から始めていた。退避も上書きもせず、読めなかったことを警告し、次に使うときに読み直す
+        var store = new FormatHistoryStore(_directory);
+        Create().RememberLoaded(Path, Size, Fmt(), autoOpen: true);
+
+        FormatMemory memory;
+        using (new FileStream(store.FilePath, FileMode.Open, FileAccess.Read, FileShare.Delete))
+        {
+            memory = Create();
+            Assert.Contains("退避せず", Assert.Single(_warnings));
+            Assert.False(File.Exists(store.BackupPath));
+        }
+
+        Assert.Equal(Fmt(), memory.History.FindAutoOpenFormat(Size, ".raw"));
+    }
+
     // ------------------------------------------------------------------ 複数起動(全体レビュー 2026-10-01 B8)
     // 起動時に読んだ記憶を丸ごと書き戻すと、別のインスタンスで直した・消した・足した記憶が古い内容で巻き戻る。
     // 2つの FormatMemory を同じ保存先で作り、2つのインスタンスを模す

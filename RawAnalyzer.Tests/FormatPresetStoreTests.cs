@@ -112,6 +112,54 @@ public class FormatPresetStoreTests : IDisposable
         Assert.Contains("this is not json", File.ReadAllText(store.BackupPath));
     }
 
+    [Fact]
+    public void LoadOrQuarantine_FileUnreadableButNotCorrupt_IsNeitherMovedNorReplaced()
+    {
+        // 残課題 2026-10-02(LoadOrQuarantine の退避)。ロック・共有違反・アクセス拒否で読めないだけの正常なファイルも
+        // .bak へ退避して空から始めていたので、プリセットを失った。退避は JSON として壊れているときだけにする
+        var store = new FormatPresetStore(_directory);
+        store.Save(new Dictionary<string, RawFormat> { ["P"] = new RawFormat { Width = 2, Height = 2 } });
+
+        // 他のアプリが読み取りを共有せずに開いている(名前の変更は許すので、退避すると移ってしまう)
+        using (new FileStream(store.FilePath, FileMode.Open, FileAccess.Read, FileShare.Delete))
+        {
+            Assert.Throws<IOException>(() => store.LoadOrQuarantine(out _));
+            Assert.False(File.Exists(store.BackupPath));
+        }
+
+        Assert.Single(store.LoadOrQuarantine(out bool corrupted));
+        Assert.False(corrupted);
+    }
+
+    [Fact]
+    public async Task LoadOrQuarantine_WhileAnotherInstanceIsSaving_WaitsForIt()
+    {
+        // 読み込みも他のインスタンスの保存と排他する(置き換えの途中に読んで、読めない・古い内容を使わない)
+        var store = new FormatPresetStore(_directory);
+        Directory.CreateDirectory(_directory);
+        using var holding = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        Task other = Task.Factory.StartNew(() =>
+        {
+            // ミューテックスは取得したスレッドで解放するので、待たずに同じスレッドで書く
+            using (InterProcessFileLock.Acquire(store.FilePath))
+            {
+                holding.Set();
+                release.Wait();
+                new FormatPresetStore(_directory).Save(
+                    new Dictionary<string, RawFormat> { ["P"] = new RawFormat { Width = 2, Height = 2 } });
+            }
+        }, TaskCreationOptions.LongRunning);
+        holding.Wait();
+
+        Task<IReadOnlyDictionary<string, RawFormat>> load = Task.Run(() => store.LoadOrQuarantine(out _));
+        await Task.WhenAny(load, Task.Delay(200));
+        release.Set();
+        await other;
+
+        Assert.Single(await load);
+    }
+
     [Theory]
     [InlineData("Staggered")]
     public void Load_LegacyHdrModeName_MapsToAuto(string legacy)

@@ -123,37 +123,38 @@ public sealed class FormatHistoryStore
     }
 
     /// <summary>
-    /// 記憶を読み込む。破損している場合は .bak へ退避して空の記憶を返す。
+    /// 他のインスタンスと排他しながら記憶を読み込む。JSON として壊れている場合は .bak へ退避して空の記憶を返す。
     /// </summary>
+    /// <remarks>
+    /// ロック・共有違反・アクセス拒否などで読めないだけのときは、正常な記憶かもしれないので退避しない
+    /// (例外を投げる)。このストアはまだ内容を読んでいないことになるので、次の <see cref="ReloadIfChanged"/>・
+    /// <see cref="Update"/> で読み直す。
+    /// </remarks>
     /// <param name="corrupted">破損を検知して退避したかどうか。</param>
     /// <returns>読み込んだ記憶。</returns>
+    /// <exception cref="IOException">読めない、または他のインスタンスが長く使用中の場合(退避しない)。</exception>
+    /// <exception cref="UnauthorizedAccessException">読む権限がない場合(退避しない)。</exception>
     public FormatHistory LoadOrQuarantine(out bool corrupted)
     {
         corrupted = false;
-        try
+        using (InterProcessFileLock.Acquire(FilePath))
         {
-            return Load();
-        }
-        catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
-        {
-            // 握りつぶして空から始めると、次の保存で記憶全体が上書きされ復旧できなくなる。
-            // 退避して呼び出し側へ知らせる
             try
             {
-                if (File.Exists(FilePath))
+                return Load();
+            }
+            catch (JsonException)
+            {
+                // 握りつぶして空から始めると、次の保存で記憶全体が上書きされ復旧できなくなる。
+                // 退避して呼び出し側へ知らせる
+                corrupted = FormatPresetStore.TryQuarantine(FilePath, BackupPath);
+                if (corrupted)
                 {
-                    File.Move(FilePath, BackupPath, overwrite: true);
-                    corrupted = true;
                     Remember(null);
                 }
-            }
-            catch (Exception moveError) when (
-                moveError is IOException or UnauthorizedAccessException)
-            {
-                // 退避できなくても読み込み自体は空で続行する
-            }
 
-            return new FormatHistory();
+                return new FormatHistory();
+            }
         }
     }
 

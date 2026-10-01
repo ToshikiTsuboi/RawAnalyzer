@@ -65,37 +65,57 @@ public sealed class FormatPresetStore
     }
 
     /// <summary>
-    /// プリセットを読み込む。破損している場合は .bak へ退避して空の辞書を返す。
+    /// 他のインスタンスと排他しながらプリセットを読み込む。JSON として壊れている場合は .bak へ退避して空の辞書を返す。
     /// </summary>
+    /// <remarks>
+    /// ロック・共有違反・アクセス拒否などで読めないだけのときは、正常なファイルかもしれないので退避しない
+    /// (例外を投げる)。保存は <see cref="Update"/> で読み直してから行うので、空の一覧で上書きしない。
+    /// </remarks>
     /// <param name="corrupted">破損を検知して退避したかどうか。</param>
     /// <returns>プリセット名からRawFormatへの辞書。</returns>
+    /// <exception cref="IOException">読めない、または他のインスタンスが長く使用中の場合(退避しない)。</exception>
+    /// <exception cref="UnauthorizedAccessException">読む権限がない場合(退避しない)。</exception>
     public IReadOnlyDictionary<string, RawFormat> LoadOrQuarantine(out bool corrupted)
     {
         corrupted = false;
-        try
+        using (InterProcessFileLock.Acquire(FilePath))
         {
-            return Load();
-        }
-        catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
-        {
-            // 握りつぶすと、次に1件保存したときに辞書全体が上書きされ
-            // 全プリセットが復旧不能に消える。退避して呼び出し側へ知らせる。
             try
             {
-                if (File.Exists(FilePath))
-                {
-                    File.Move(FilePath, BackupPath, overwrite: true);
-                    corrupted = true;
-                }
+                return Load();
             }
-            catch (Exception moveError) when (
-                moveError is IOException or UnauthorizedAccessException)
+            catch (JsonException)
             {
-                // 退避できなくても読み込み自体は空で続行する
+                // 握りつぶすと、次に1件保存したときに辞書全体が上書きされ
+                // 全プリセットが復旧不能に消える。退避して呼び出し側へ知らせる。
+                corrupted = TryQuarantine(FilePath, BackupPath);
+                return new Dictionary<string, RawFormat>();
             }
-
-            return new Dictionary<string, RawFormat>();
         }
+    }
+
+    /// <summary>
+    /// JSON として壊れた保存ファイルを .bak へ退避する(サイズ別フォーマット記憶も使う)。
+    /// 退避できなくても読み込み自体は空で続行する。
+    /// </summary>
+    /// <param name="filePath">壊れた保存ファイル。</param>
+    /// <param name="backupPath">退避先。</param>
+    /// <returns>退避したら true。</returns>
+    internal static bool TryQuarantine(string filePath, string backupPath)
+    {
+        try
+        {
+            if (File.Exists(filePath))
+            {
+                File.Move(filePath, backupPath, overwrite: true);
+                return true;
+            }
+        }
+        catch (Exception moveError) when (moveError is IOException or UnauthorizedAccessException)
+        {
+        }
+
+        return false;
     }
 
     /// <summary>
