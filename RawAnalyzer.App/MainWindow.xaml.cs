@@ -2472,8 +2472,10 @@ public partial class MainWindow : Window
             return;
         }
 
-        // 参照画像は1フレームだけ読むため、期待サイズも1フレーム分
-        long expectedSize = _currentFormat.HeaderOffset + _currentFormat.FrameSizeInBytes;
+        // 参照画像は1フレームだけ読むため、期待サイズも1フレーム分。raw の参照はファイルを読んだ形式で読む
+        // (ビニング・フィルタの結果の 16bit 形式で読むと下詰めNbitの参照が正規化されない)
+        long expectedSize = ReferenceImage.ExpectedRawSize(
+            ReferenceImage.RawReadFormat(_currentFormat, _openedRawFormat));
         var dialog = new ImageCalculatorDialog(
             Path.GetFileName(_currentPath) + (_correctionLabel is null ? "" : $" [{_correctionLabel}]"),
             _currentFolder, expectedSize)
@@ -2493,6 +2495,7 @@ public partial class MainWindow : Window
         using BusyScope busy = EnterBusy();
         RawImage source = _currentImage!;
         RawFormat format = _currentFormat!;
+        RawFormat rawReadFormat = ReferenceImage.RawReadFormat(format, _openedRawFormat);
         int frame = Viewport.Frame;
 
         RawImage? corrected = null;
@@ -2505,7 +2508,7 @@ public partial class MainWindow : Window
                 // 読み込み段階からキャンセルを効かせる
                 // (NAS等では参照の読み込みだけで数十秒かかることがある)
                 reference = IsRawFile(choice.ReferencePath)
-                    ? RawLoader.Load(choice.ReferencePath, format with { FrameCount = 1 }, ct)
+                    ? RawLoader.Load(choice.ReferencePath, rawReadFormat, ct)
                     : ImageFileLoader.Load(choice.ReferencePath, ct).Luminance;
                 // 右パネルで変更したBayerは source.Format に入らないため、結果へ明示的に引き継ぐ
                 corrected = ImageCalculator.Apply(
