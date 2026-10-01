@@ -3962,6 +3962,14 @@ public partial class MainWindow : Window
                 // それらが始まったら、差し替えの時点で終わっていても送らない(HDR分割の
                 // 派生ビューや開き直した画像を上書きしない。TIFFのページ送りは読み込みの中止で同じことをする)
                 int activity = _imageGate.ActivityStamp;
+
+                // await中にモーダル(保存・測定・演算)が開いていたら差し替えない。
+                // モーダルのディスパッチャポンプ内でここが再開すると、処理対象の
+                // 画像を背後で破棄してしまう。HDR分割・合成の派生ビューの表示中も差し替えない
+                // (派生ビューを残したまま元画像だけが入れ替わる。派生ビューはHDR表示の開始で
+                // ActivityStamp が進むので通常はその判定で譲るが、確定の前提として確かめる)
+                bool Yielded() => _busyDepth > 0 || activity != _imageGate.ActivityStamp
+                    || !ReferenceEquals(expectedFormat, _currentFormat) || _derivedImage is not null;
                 RawImage image;
                 ColorImage? color = null;
                 int pageCount = 1;
@@ -3990,9 +3998,17 @@ public partial class MainWindow : Window
                 {
                     return; // 開く・操作の開始・終了で取り消した
                 }
-                catch (Exception)
+                catch (Exception ex)
                 {
-                    return; // 消えた/読めないファイルはスキップ
+                    // 消えた・ロックされた・壊れたファイル。黙って戻ると、再生は毎ティック同じファイルを読み直して
+                    // 捨て続け(前のファイルで止まって見える)、「次」も理由なく効かない。再生を止めて理由を知らせる
+                    // (送り先は飛ばさない。スライダー・End などで越えられる)。読む間に始まった操作などに譲るときは知らせない
+                    if (!Yielded())
+                    {
+                        NotifySequenceMoveFailed(SequenceFileLoad.ExplainUnreadable(path, ex));
+                    }
+
+                    return;
                 }
                 finally
                 {
@@ -4004,24 +4020,20 @@ public partial class MainWindow : Window
                     loadCts.Dispose();
                 }
 
-                // await中にモーダル(保存・測定・演算)が開いていたら差し替えない。
-                // モーダルのディスパッチャポンプ内でここが再開すると、処理対象の
-                // 画像を背後で破棄してしまう。HDR分割・合成の派生ビューの表示中も差し替えない
-                // (派生ビューを残したまま元画像だけが入れ替わる。派生ビューはHDR表示の開始で
-                // ActivityStamp が進むので通常はその判定で譲るが、確定の前提として確かめる)
-                if (_busyDepth > 0 || activity != _imageGate.ActivityStamp
-                    || !ReferenceEquals(expectedFormat, _currentFormat) || _derivedImage is not null)
+                // 読み込みの間に始まった操作・読み込みなどに譲る(上の Yielded)
+                if (Yielded())
                 {
                     image.Dispose();
                     return;
                 }
 
-                // 通常のファイル連番では既存どおり同一サイズだけを送る。
+                // 通常のファイル連番では既存どおり同一サイズだけを送る。寸法の違う画像ファイルが混じっていたら、
+                // 読めないときと同じく再生を止めて理由を知らせる
                 if (_currentImage is not null
-                    && (image.Width != _currentImage.Width
-                        || image.Height != _currentImage.Height))
+                    && SequenceFileLoad.CheckSize(path, image, _currentImage) is { } sizeRefusal)
                 {
                     image.Dispose();
+                    NotifySequenceMoveFailed(sizeRefusal);
                     return;
                 }
 
@@ -4333,6 +4345,21 @@ public partial class MainWindow : Window
 
         _vm.ImageInfoText = BusyNotice.ForSequence(reason);
         return true;
+    }
+
+    /// <summary>
+    /// ファイル連番の送り先を表示できなかった(読めない・寸法が違う)とき、再生を止めて理由をステータスバーに出す。
+    /// </summary>
+    /// <remarks>
+    /// 再生は毎ティック次のファイルを要求するので、止めないと同じファイルの読み込みを繰り返して先へ進まない。
+    /// 送り先は飛ばさず、表示中の画像と位置はそのまま残す(TIFFのページ送りが読めないページで再生を止めるのと同じ)。
+    /// </remarks>
+    /// <param name="reason">送れなかった理由(<see cref="SequenceFileLoad"/>)。</param>
+    private void NotifySequenceMoveFailed(string reason)
+    {
+        bool wasPlaying = _playTimer?.IsEnabled == true;
+        StopPlayback();
+        _vm.ImageInfoText = wasPlaying ? $"{reason}(再生を止めました)" : reason;
     }
 
     /// <summary>
