@@ -13,8 +13,7 @@ namespace RawAnalyzer.App.Compare;
 /// その「束」を自己完結のオブジェクトとして切り出したもの。
 /// 生成(<see cref="LoadAsync"/>)から破棄(<see cref="Dispose"/>)までの
 /// 資源の所有権はこのクラスが持つ。
-/// ピラミッドをビューポートへ装着している間に<see cref="Dispose"/>や
-/// <see cref="EnsureBayerPyramidAsync"/>(別フレーム)を呼ばないこと
+/// ピラミッドをビューポートへ装着している間に<see cref="Dispose"/>を呼ばないこと
 /// (描画中の破棄になる。先にビューポートから切り離すのは呼び出し側の責務)。
 /// </remarks>
 internal sealed class ComparePane : IDisposable
@@ -78,12 +77,6 @@ internal sealed class ComparePane : IDisposable
 
     /// <summary><see cref="Pyramid"/>の生成元フレーム。</summary>
     public int PyramidFrame { get; private set; }
-
-    /// <summary>カラー系表示用のBayerピラミッド。Bayerなし画像ではnullのまま。</summary>
-    public BayerPyramid? BayerPyramid { get; private set; }
-
-    /// <summary><see cref="BayerPyramid"/>の生成元フレーム。</summary>
-    public int BayerPyramidFrame { get; private set; }
 
     /// <summary>指定パスをrawとして開くべきか。</summary>
     /// <param name="path">ファイルパス。</param>
@@ -149,34 +142,6 @@ internal sealed class ComparePane : IDisposable
         PyramidFrame = frame;
     }
 
-    /// <summary>
-    /// カラー系表示用のBayerピラミッドを用意する(Bayerなし画像では何もしない)。
-    /// 別フレームのものが残っていた場合は破棄して作り直す。
-    /// </summary>
-    /// <param name="frame">生成元フレーム。</param>
-    /// <param name="cancellationToken">キャンセルトークン。</param>
-    /// <returns>生成完了を表すタスク。</returns>
-    public async Task EnsureBayerPyramidAsync(
-        int frame = 0, CancellationToken cancellationToken = default)
-    {
-        ThrowIfDisposed();
-        if (Format.Bayer == BayerPattern.None)
-        {
-            return;
-        }
-
-        if (BayerPyramid is not null && BayerPyramidFrame == frame)
-        {
-            return;
-        }
-
-        BayerPyramid built = await Core.BayerPyramid.CreateAsync(
-            Image, Format, frame, cancellationToken: cancellationToken);
-        BayerPyramid?.Dispose();
-        BayerPyramid = built;
-        BayerPyramidFrame = frame;
-    }
-
     /// <summary>現在の表示調整からLUTを作る。</summary>
     /// <returns>このペイン用の表示LUT。</returns>
     public DisplayLut BuildLut()
@@ -193,8 +158,6 @@ internal sealed class ComparePane : IDisposable
         }
 
         _disposed = true;
-        BayerPyramid?.Dispose();
-        BayerPyramid = null;
         Pyramid = null;
         Image.Dispose();
     }

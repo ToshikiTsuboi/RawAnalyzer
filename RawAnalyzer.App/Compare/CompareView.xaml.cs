@@ -179,7 +179,7 @@ public partial class CompareView : UserControl
     /// </summary>
     /// <param name="paneCount">表示する画像数。</param>
     /// <returns>UniformGridの列数。</returns>
-    internal static int ColumnsFor(int paneCount)
+    private static int ColumnsFor(int paneCount)
     {
         return paneCount <= 3 ? Math.Max(1, paneCount) : 2;
     }

@@ -45,7 +45,7 @@ public class BayerSplitTests
     [InlineData(0, -1)]
     public void TryMapSourceToTiled_PixelNotInTiles_ReturnsFalse(int x, int y)
     {
-        // 5×3 は 4×2 のタイルとして並べる(CreateTiled と同じく奇数の端は切り捨てる)
+        // 5×3 は 4×2 のタイルとして並べる(チャネル分割表示は奇数の端を切り捨てる)
         Assert.False(BayerSplit.TryMapSourceToTiled(x, y, 5 & ~1, 3 & ~1, out int tiledX, out int tiledY));
         Assert.Equal((0, 0), (tiledX, tiledY));
     }
