@@ -33,7 +33,9 @@ public class SampleScalingTests
     [Fact]
     public void Normalized_ZeroToOne_FillsFullRange()
     {
-        int[] bits = FloatBits(0f, 0.5f, 1f);
+        // 最大が1に届かない0〜1のデータも、最大ではなく1をフルスケールにする
+        // (最大をフルスケールにすると 0.5 が 65535 になる)
+        int[] bits = FloatBits(0f, 0.25f, 0.5f);
         SampleRange range = SampleScaling.Scan(bits, bits.Length, SampleInterpretation.Float);
         SampleScaling scaling = SampleScaling.FromRange(range);
 
@@ -41,6 +43,7 @@ public class SampleScalingTests
         Assert.Equal(0, scaling.ToCode(0));
         Assert.Equal(32768, scaling.ToCode(0.5));
         Assert.Equal(65535, scaling.ToCode(1.0));
+        Assert.Contains("0〜1", scaling.Describe());
     }
 
     [Fact]
