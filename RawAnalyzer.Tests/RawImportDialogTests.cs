@@ -166,6 +166,46 @@ public class RawImportDialogTests : IDisposable
     }
 
     [Fact]
+    public Task EditingAfterPreset_ReturnsPresetListToGuideRowSoReselectingRestoresIt()
+    {
+        // 全体レビュー 2026-10-01 B92。プリセットを選んだあと幅を書き換えても一覧はそのプリセット名のまま残り、
+        // 元に戻そうと同じプリセットを選び直しても(選択が変わらないので)何も起きなかった。
+        // 入力がプリセットと食い違ったら一覧を案内の行へ戻し(候補一覧と同じ)、選び直せば全項目を戻す
+        string path = CreateFile("sensor.raw", FileSize);
+        new FormatPresetStore(Path.Combine(_directory, "settings")).Save(new Dictionary<string, RawFormat>
+        {
+            ["SensorA"] = Fmt(640, 480, bayer: BayerPattern.Gbrg),
+        });
+        return WpfTestHost.Run(() =>
+        {
+            RawImportDialog dialog = CreateDialog(path, null, initial: Fmt(320, 240, bitDepth: 16));
+            var presets = Find<ComboBox>(dialog, "PresetCombo");
+            var width = Find<TextBox>(dialog, "WidthBox");
+
+            presets.SelectedItem = "SensorA";
+            Assert.Equal("640", width.Text);
+            Assert.Equal(3, Find<ComboBox>(dialog, "BayerCombo").SelectedIndex);
+            Assert.Equal("SensorA", presets.SelectedItem);
+
+            width.Text = "600";
+            Assert.Equal(0, presets.SelectedIndex);
+            Assert.Equal("600", width.Text);
+
+            presets.SelectedItem = "SensorA";
+            Assert.Equal("640", width.Text);
+            Assert.Equal("SensorA", presets.SelectedItem);
+
+            // 候補を選んでプリセットと違う値になっても案内の行へ戻る
+            var candidates = Find<ComboBox>(dialog, "CandidateCombo");
+            int other = Enumerable.Range(1, dialog.Candidates.Count)
+                .First(i => dialog.Candidates[i - 1].Format != Fmt(640, 480, bayer: BayerPattern.Gbrg));
+            candidates.SelectedIndex = other;
+            Assert.Equal(0, presets.SelectedIndex);
+            dialog.Close();
+        });
+    }
+
+    [Fact]
     public Task UnknownFileSize_SaysTheSizeCannotBeRead()
     {
         // ファイルサイズを取得できない(-1)ときに「ファイル -0.00 MB」と出て、取得できないことが伝わらなかった

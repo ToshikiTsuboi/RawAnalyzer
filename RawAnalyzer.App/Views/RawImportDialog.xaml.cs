@@ -30,6 +30,10 @@ public partial class RawImportDialog : Window
     private bool _initializing = true;
     private bool _syncingCandidates;
 
+    // 選択中のプリセットを適用した直後の入力値。入力がこれと食い違ったら一覧を案内の行へ戻す
+    private RawFormat? _presetFormat;
+    private bool _syncingPresets;
+
     /// <summary>
     /// ファイルサイズを取得する。取得できない場合は -1(サイズ不明)。
     /// </summary>
@@ -270,6 +274,7 @@ public partial class RawImportDialog : Window
     {
         RawFormat? format = TryBuildFormat(out string error);
         SyncCandidateSelection(format);
+        SyncPresetSelection(format);
         if (format is null)
         {
             SizeNoteText.Text = $"✕ {error}";
@@ -375,6 +380,27 @@ public partial class RawImportDialog : Window
         _syncingCandidates = false;
     }
 
+    /// <summary>
+    /// 入力中の値が選択中のプリセットと食い違ったら、プリセット一覧を案内の行へ戻す。
+    /// </summary>
+    /// <remarks>
+    /// プリセット名を選んだまま残すと、値を変えたあとも一覧はそのプリセットを指したままになり、元に戻そうと
+    /// 同じプリセットを選び直しても選択が変わらないので何も起きない(候補一覧の <see cref="SyncCandidateSelection"/> と同じ)。
+    /// </remarks>
+    /// <param name="current">入力中の値(不正なら null)。</param>
+    private void SyncPresetSelection(RawFormat? current)
+    {
+        if (PresetCombo.SelectedIndex <= 0 || (current is not null && current == _presetFormat))
+        {
+            return;
+        }
+
+        _presetFormat = null;
+        _syncingPresets = true;
+        PresetCombo.SelectedIndex = 0;
+        _syncingPresets = false;
+    }
+
     private void OnCandidateSelected(object sender, SelectionChangedEventArgs e)
     {
         if (_initializing || _syncingCandidates || CandidateCombo.SelectedIndex <= 0
@@ -451,7 +477,7 @@ public partial class RawImportDialog : Window
 
     private void OnPresetSelected(object sender, SelectionChangedEventArgs e)
     {
-        if (_initializing || PresetCombo.SelectedIndex <= 0)
+        if (_initializing || _syncingPresets || PresetCombo.SelectedIndex <= 0)
         {
             return;
         }
@@ -462,6 +488,9 @@ public partial class RawImportDialog : Window
             _initializing = true;
             ApplyFormat(format);
             _initializing = false;
+
+            // 照合は入力欄に入った値で行う(入力欄で表せない項目の違いで、適用した直後に案内の行へ戻さない)
+            _presetFormat = TryBuildFormat(out _);
             UpdateSizeNote();
         }
     }
