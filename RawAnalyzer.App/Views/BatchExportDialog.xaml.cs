@@ -139,6 +139,9 @@ public partial class BatchExportDialog : Window
     private readonly int _frameHeight;
     private readonly string _sourceFolder;
 
+    // 「参照…」の始めるフォルダを確かめている・選択ダイアログを出している間
+    private bool _browsing;
+
     /// <summary>ダイアログを生成する。</summary>
     /// <param name="targetCount">対象ファイル数。</param>
     /// <param name="defaultOutputFolder">出力先の初期値。</param>
@@ -260,17 +263,54 @@ public partial class BatchExportDialog : Window
         }
     }
 
-    private void OnBrowseClick(object sender, RoutedEventArgs e)
+    /// <summary>
+    /// 「参照…」のフォルダ選択ダイアログを始めるフォルダの候補(実在は確かめない)。
+    /// </summary>
+    /// <remarks>
+    /// 出力先の入力が相対パスなら、「実行」と同じく元画像のフォルダを基準に解決する(空なら元画像のフォルダ)。
+    /// 以前は入力をそのまま Directory.Exists に渡し、プロセスのカレントディレクトリ(exe の場所など)を基準に探していた。
+    /// </remarks>
+    /// <returns>候補の絶対パス。パスとして解釈できなければ null。</returns>
+    internal string? BrowseStartFolder()
     {
-        var dialog = new OpenFolderDialog();
-        if (Directory.Exists(OutputFolderBox.Text))
+        return OutputPaths.TryResolveOutputFolder(OutputFolderBox.Text.Trim(), _sourceFolder, out string folder)
+            ? folder
+            : null;
+    }
+
+    private async void OnBrowseClick(object sender, RoutedEventArgs e)
+    {
+        if (_browsing)
         {
-            dialog.InitialDirectory = OutputFolderBox.Text;
+            return;
         }
 
-        if (dialog.ShowDialog(this) == true)
+        // 始めるフォルダの実在は UI スレッドの外で確かめる(出力先は元画像のそばの NAS 上のことが多く、切断していると
+        // Directory.Exists がタイムアウトまで戻らない。DialogInitialFolder)。確かめる間に重ねて押されても選択ダイアログを
+        // 重ねて出さず、閉じられたら出さない
+        _browsing = true;
+        try
         {
-            OutputFolderBox.Text = dialog.FolderName;
+            string? folder = await DialogInitialFolder.ConfirmAsync(BrowseStartFolder(), DialogInitialFolder.Timeout);
+            if (!IsVisible)
+            {
+                return;
+            }
+
+            var dialog = new OpenFolderDialog();
+            if (folder is not null)
+            {
+                dialog.InitialDirectory = folder;
+            }
+
+            if (dialog.ShowDialog(this) == true)
+            {
+                OutputFolderBox.Text = dialog.FolderName;
+            }
+        }
+        finally
+        {
+            _browsing = false;
         }
     }
 

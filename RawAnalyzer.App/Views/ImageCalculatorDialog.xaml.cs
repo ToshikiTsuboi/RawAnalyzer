@@ -26,6 +26,9 @@ public partial class ImageCalculatorDialog : Window
     private readonly DispatcherTimer _referenceCheckTimer;
     private int _referenceCheckGeneration;
 
+    // 「参照…」の初期フォルダを確かめている・選択ダイアログを出している間
+    private bool _browsing;
+
     /// <summary>ダイアログを生成する。</summary>
     /// <param name="sourceName">対象画像(A)の表示名。</param>
     /// <param name="initialFolder">参照ファイル選択の初期フォルダ。</param>
@@ -83,20 +86,41 @@ public partial class ImageCalculatorDialog : Window
         };
     }
 
-    private void OnBrowseClick(object sender, RoutedEventArgs e)
+    private async void OnBrowseClick(object sender, RoutedEventArgs e)
     {
-        var dialog = new OpenFileDialog
+        if (_browsing)
         {
-            Filter = "Raw (*.raw;*.bin)|*.raw;*.bin|すべてのファイル (*.*)|*.*",
-        };
-        if (Tag is string folder && Directory.Exists(folder))
-        {
-            dialog.InitialDirectory = folder;
+            return;
         }
 
-        if (dialog.ShowDialog(this) == true)
+        // 初期フォルダ(表示中の画像のフォルダ)の実在は UI スレッドの外で確かめる(DialogInitialFolder)。
+        // 確かめる間に重ねて押されても選択ダイアログを重ねて出さず、閉じられたら出さない
+        _browsing = true;
+        try
         {
-            ReferenceBox.Text = dialog.FileName;
+            string? folder = await DialogInitialFolder.ConfirmAsync(Tag as string, DialogInitialFolder.Timeout);
+            if (!IsVisible)
+            {
+                return;
+            }
+
+            var dialog = new OpenFileDialog
+            {
+                Filter = "Raw (*.raw;*.bin)|*.raw;*.bin|すべてのファイル (*.*)|*.*",
+            };
+            if (folder is not null)
+            {
+                dialog.InitialDirectory = folder;
+            }
+
+            if (dialog.ShowDialog(this) == true)
+            {
+                ReferenceBox.Text = dialog.FileName;
+            }
+        }
+        finally
+        {
+            _browsing = false;
         }
     }
 
@@ -173,10 +197,28 @@ public partial class ImageCalculatorDialog : Window
         }
     }
 
-    private void OnRunClick(object sender, RoutedEventArgs e)
+    private async void OnRunClick(object sender, RoutedEventArgs e)
     {
+        // 参照ファイルの実在は UI スレッドの外で確かめる(切断した NAS 上のパスでは File.Exists がタイムアウトまで
+        // 戻らない)。確かめる間は「実行」を受け付けず、閉じられた・参照パスが変わったら確定しない(押し直せる)
         string path = ReferenceBox.Text.Trim();
-        if (!File.Exists(path))
+        RunButton.IsEnabled = false;
+        bool exists;
+        try
+        {
+            exists = await Task.Run(() => File.Exists(path));
+        }
+        finally
+        {
+            RunButton.IsEnabled = true;
+        }
+
+        if (!IsVisible || ReferenceBox.Text.Trim() != path)
+        {
+            return;
+        }
+
+        if (!exists)
         {
             MessageBox.Show(this, "参照画像ファイルを指定してください。", "画像演算",
                 MessageBoxButton.OK, MessageBoxImage.Warning);

@@ -36,6 +36,9 @@ public partial class NoiseMeasureDialog : Window
     // 結果欄の最初の案内(「測定実行」を押してください。)。対象が替わったら結果をこれに戻す
     private readonly string _initialResultText;
 
+    // 「参照…」の初期フォルダを確かめている・選択ダイアログを出している間
+    private bool _browsing;
+
     /// <summary>ダイアログを生成する。</summary>
     /// <param name="sourceName">対象画像(A)の表示名。</param>
     /// <param name="initialFolder">参照ファイル選択の初期フォルダ。</param>
@@ -213,24 +216,45 @@ public partial class NoiseMeasureDialog : Window
         RunButton.IsEnabled = true;
     }
 
-    private void OnBrowseClick(object sender, RoutedEventArgs e)
+    private async void OnBrowseClick(object sender, RoutedEventArgs e)
     {
-        var dialog = new OpenFileDialog
+        if (_browsing)
         {
-            Filter = "Raw (*.raw;*.bin)|*.raw;*.bin|すべてのファイル (*.*)|*.*",
-        };
-        if (Tag is string folder && Directory.Exists(folder))
-        {
-            dialog.InitialDirectory = folder;
+            return;
         }
 
-        if (dialog.ShowDialog(this) == true)
+        // 初期フォルダ(表示中の画像のフォルダ)の実在は UI スレッドの外で確かめる(DialogInitialFolder)。
+        // 確かめる間に重ねて押されても選択ダイアログを重ねて出さず、閉じられたら出さない
+        _browsing = true;
+        try
         {
-            ReferenceBox.Text = dialog.FileName;
+            string? folder = await DialogInitialFolder.ConfirmAsync(Tag as string, DialogInitialFolder.Timeout);
+            if (!IsVisible)
+            {
+                return;
+            }
+
+            var dialog = new OpenFileDialog
+            {
+                Filter = "Raw (*.raw;*.bin)|*.raw;*.bin|すべてのファイル (*.*)|*.*",
+            };
+            if (folder is not null)
+            {
+                dialog.InitialDirectory = folder;
+            }
+
+            if (dialog.ShowDialog(this) == true)
+            {
+                ReferenceBox.Text = dialog.FileName;
+            }
+        }
+        finally
+        {
+            _browsing = false;
         }
     }
 
-    private void OnRunClick(object sender, RoutedEventArgs e)
+    private async void OnRunClick(object sender, RoutedEventArgs e)
     {
         if (!NumericInput.TryParsePositive(SaturationBox.Text, out double saturation))
         {
@@ -239,8 +263,34 @@ public partial class NoiseMeasureDialog : Window
             return;
         }
 
+        // 2枚目の実在とサイズは UI スレッドの外で確かめる(切断した NAS 上のパスでは File.Exists・FileInfo が
+        // タイムアウトまで戻らない)。確かめる間は「測定実行」を受け付けず、閉じられた・2枚目のパスが変わったら
+        // 測定を始めない(押し直せる)
         string reference = ReferenceBox.Text.Trim();
-        if (reference.Length > 0 && !File.Exists(reference))
+        bool checkSize = _expectedReferenceSize > 0 && IsRawPath(reference);
+        bool exists = true;
+        long actual = -1;
+        if (reference.Length > 0)
+        {
+            RunButton.IsEnabled = false;
+            try
+            {
+                (exists, actual) = await Task.Run(() => File.Exists(reference)
+                    ? (true, checkSize ? SafeLength(reference) : -1L)
+                    : (false, -1L));
+            }
+            finally
+            {
+                RunButton.IsEnabled = true;
+            }
+
+            if (!IsVisible || ReferenceBox.Text.Trim() != reference)
+            {
+                return;
+            }
+        }
+
+        if (!exists)
         {
             MessageBox.Show(this, "2枚目のファイルが見つかりません。", "ノイズ測定",
                 MessageBoxButton.OK, MessageBoxImage.Warning);
@@ -251,9 +301,8 @@ public partial class NoiseMeasureDialog : Window
         // サイズが違うと行ストライドがずれて無相関の差分になり、σ_FPN=0 / DR過小報告になる。
         // 2枚目は先頭フレームだけを読むので、対象Aのファイルと同じ大きさ(同じファイル・同じ形の連写ファイル。
         // 同一ファイルを断るときの案内が勧める手順)は警告しない
-        if (reference.Length > 0 && _expectedReferenceSize > 0 && IsRawPath(reference))
+        if (reference.Length > 0 && checkSize)
         {
-            long actual = SafeLength(reference);
             if (actual >= 0
                 && !ReferenceImage.IsExpectedRawSize(actual, _expectedReferenceSize, _targetFileSize))
             {
