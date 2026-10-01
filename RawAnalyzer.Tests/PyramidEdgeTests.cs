@@ -36,7 +36,7 @@ public class PyramidEdgeTests
         // (以前は割り切れないと連鎖を諦め、レベルごとに元画像を読み直していた。
         // さらにその前は、前段から縮小を重ねると端のブロックが少ない画素数のまま
         // 同じ重みで平均され、直接ブロック平均とずれていた)。
-        // 5x3 は L2 が右端1列・下端1行・角1画素の部分ブロックになる最小例、
+        // 5x3 は L2 が右端1列・下端1行・角1画素の部分ブロックになる最小例(L2 は 3x2)、
         // 8x8 は L2〜L8 が割り切れたあと L16 以降で1x1の部分ブロックになる
         var codes = new ushort[width * height];
         for (int i = 0; i < codes.Length; i++)
@@ -50,6 +50,11 @@ public class PyramidEdgeTests
         Assert.NotEmpty(pyramid.Levels);
         foreach (PyramidLevel level in pyramid.Levels)
         {
+            // 元画像の全列・全行がちょうど1つのレベル画素に入る。端の部分ブロックの列・行を
+            // 落とす(切り捨て)と、下のループはレベル自身の寸法で回るので画素の比較では気付けない
+            Assert.InRange(width, ((level.Width - 1) * level.Factor) + 1, level.Width * level.Factor);
+            Assert.InRange(height, ((level.Height - 1) * level.Factor) + 1, level.Height * level.Factor);
+
             var buffer = new ushort[level.Width];
             for (int y = 0; y < level.Height; y++)
             {
