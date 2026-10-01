@@ -49,6 +49,17 @@ public class NoiseReferenceTests
     }
 
     [Fact]
+    public void RawReference_InMergedView_IsRefusedWithReason()
+    {
+        // 合成ビューの対象Aと、合成していない2枚目の raw は同じ画素・同じ値の対応で比べられない
+        string? reason = NoiseReference.RawReferenceRefusal(mergedView: true);
+
+        Assert.NotNull(reason);
+        Assert.Contains("分割ビュー", reason);
+        Assert.Null(NoiseReference.RawReferenceRefusal(mergedView: false));
+    }
+
+    [Fact]
     public void SameFileWrittenDifferently_IsSameData()
     {
         // 大文字小文字や . / .. を含む書き方の違いでは見逃さない

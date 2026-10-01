@@ -5009,6 +5009,13 @@ public partial class MainWindow : Window
     /// <summary>raw参照ファイルに期待するバイト数(1フレーム分)。不明なら0。</summary>
     private long ExpectedReferenceSize()
     {
+        // HDR派生ビューでも2枚目の raw は元の raw ファイルの形式で読む(分割ビューは読んでから同じく分割する。
+        // 合成ビューは断る)。並置画像の形式で求めると、行交互・フレーム連結では元のファイルとたまたま一致した
+        if (_derivedImage is not null && _currentFormat is not null)
+        {
+            return HdrSplitComposite.ReferenceReadFormat(_currentFormat).RequiredBytes();
+        }
+
         RawFormat? format = ActiveFormat;
         return format is null ? 0 : format.HeaderOffset + format.FrameSizeInBytes;
     }
@@ -5051,12 +5058,28 @@ public partial class MainWindow : Window
         int frame = Viewport.Frame;
         SampleScaling? targetScaling = _valueScaling;
 
+        // HDR分割ビューでは、2枚目の raw も元のファイルの形式で読んで対象Aと同じく分割・並置して比べる
+        // (並置画像の形式のまま読むと別の画素同士の差分になる)。合成ビューでは raw の2枚目を断る
+        bool rawReference = request.ReferencePath is not null && IsRawFile(request.ReferencePath);
+        bool mergedView = _derivedImage is not null && _hdrFloatImage is not null;
+        RawFormat? splitFormat = _derivedImage is not null && !mergedView && rawReference ? _currentFormat : null;
+        if (rawReference && NoiseReference.RawReferenceRefusal(mergedView) is { } rawRefusal)
+        {
+            MessageBox.Show(this, rawRefusal, "ノイズ測定", MessageBoxButton.OK, MessageBoxImage.Warning);
+            _noiseWindow?.ResetRunButton();
+            return;
+        }
+
         // 2枚目は常に先頭フレーム・先頭ページを読む。対象Aと同一ファイルの先頭を表示中に
         // 指定すると完全に同一のデータ同士になり、σ_temporal=0という
-        // 誤った測定値が無警告で出てしまう。TIFFの2ページ目以降を表示中なら別データ
+        // 誤った測定値が無警告で出てしまう。TIFFの2ページ目以降を表示中なら別データ。
+        // 分割ビューで raw を指定したときは、2枚目もファイルの先頭から同じく分割するので、分割の元にした
+        // フレーム(フレーム連結なら常に同じデータ)で比べる
         if (request.ReferencePath is not null
             && NoiseReference.ReadsSameDataAsTarget(
-                request.ReferencePath, _currentPath, _derivedImage is not null, frame,
+                request.ReferencePath, _currentPath, _derivedImage is not null && splitFormat is null,
+                splitFormat is null ? frame : HdrSplitComposite.EquivalentTargetFrame(
+                    splitFormat, _hdrSourceFrame.Frame),
                 _tiffPageIndex))
         {
             MessageBox.Show(this,
@@ -5098,9 +5121,10 @@ public partial class MainWindow : Window
 
                 // 32bit TIFF などを値域で写した2枚目は、対象と係数が同じときだけ使う(違えば理由を示して断る。
                 // ビット深度はどちらも16なので MeasurePair の検査では見分けられない)
-                using RawImage reference = ReferenceImage.Load(
-                    request.ReferencePath, IsRawFile(request.ReferencePath), format with { FrameCount = 1 },
-                    targetScaling, ct);
+                using RawImage reference = splitFormat is not null
+                    ? HdrSplitComposite.LoadReference(request.ReferencePath, splitFormat, targetScaling, ct)
+                    : ReferenceImage.Load(
+                        request.ReferencePath, rawReference, format with { FrameCount = 1 }, targetScaling, ct);
                 measurement = RoiAnalysis.MeasureNoise(
                     image, reference, frame, target, format.Bayer,
                     request.SaturationCode, ct);
