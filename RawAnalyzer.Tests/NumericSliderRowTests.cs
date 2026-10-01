@@ -65,6 +65,41 @@ public class NumericSliderRowTests
         Assert.Equal("251", row.ValueBox.Text);
     });
 
+    [Fact]
+    public Task ValueBox_LosingKeyboardFocusCommitsTypedValue() => WpfTestHost.Run(() =>
+    {
+        // メインメニュー・パレット・ダイアログへはキーボードフォーカスだけが移り、論理フォーカスの
+        // LostFocus は来ない。確定しないと、欄に 256 と見えたまま旧値で保存や合成が走る
+        var row = NewRow(decimals: 0, step: 1, maximum: 4095);
+        row.Value = 100;
+        row.ValueBox.Text = "256";
+        LoseKeyboardFocus(row.ValueBox, newFocus: new MenuItem());
+        Assert.Equal(256, row.Value, 10);
+
+        // 入力欄自身のコンテキストメニュー(貼り付けなど)へ移るときは、編集の途中なので確定しない
+        row.ValueBox.Text = "300";
+        var menuItem = new MenuItem();
+        _ = new ContextMenu { PlacementTarget = row.ValueBox, Items = { menuItem } };
+        LoseKeyboardFocus(row.ValueBox, newFocus: menuItem);
+        Assert.Equal(256, row.Value, 10);
+        Assert.Equal("300", row.ValueBox.Text);
+    });
+
+    [Fact]
+    public Task CommitPendingEdit_CommitsTypedValueOfFocusedBoxOnly() => WpfTestHost.Run(() =>
+    {
+        // ショートカット(Ctrl+S など)はフォーカスを動かさないので、コマンドの実行前に確定させる
+        var row = NewRow(decimals: 0, step: 1, maximum: 4095);
+        row.Value = 100;
+        row.ValueBox.Text = "256";
+        NumericSliderRow.CommitPendingEdit(row.ValueSlider);
+        NumericSliderRow.CommitPendingEdit(null);
+        Assert.Equal(100, row.Value, 10);
+
+        NumericSliderRow.CommitPendingEdit(row.ValueBox);
+        Assert.Equal(256, row.Value, 10);
+    });
+
     private static NumericSliderRow NewRow(int decimals, double step, double maximum) => new()
     {
         Minimum = 0,
@@ -91,6 +126,15 @@ public class NumericSliderRowTests
         }
 
         return args.Handled;
+    }
+
+    private static void LoseKeyboardFocus(UIElement target, IInputElement? newFocus)
+    {
+        target.RaiseEvent(new KeyboardFocusChangedEventArgs(
+            Keyboard.PrimaryDevice, Environment.TickCount, (IInputElement)target, newFocus)
+        {
+            RoutedEvent = Keyboard.LostKeyboardFocusEvent,
+        });
     }
 
     private static void Wheel(Slider slider, bool up)

@@ -100,6 +100,9 @@ public partial class MainWindow
     /// <param name="command">実行するコマンド。</param>
     private void RunCommand(AppCommand command)
     {
+        // ショートカットはフォーカスを動かさないので、数値欄に打ちかけの値があれば先に確定し、
+        // 欄に見えている値で処理させる(メニュー・パレットへはフォーカスが移った時点で確定済み)
+        Controls.NumericSliderRow.CommitPendingEdit(Keyboard.FocusedElement);
         try
         {
             command.Execute();

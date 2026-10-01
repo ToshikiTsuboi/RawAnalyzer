@@ -2,12 +2,13 @@ using System.Globalization;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Media;
 
 namespace RawAnalyzer.App.Controls;
 
 /// <summary>
 /// 数値入力・目盛・値域表示を備えた調整行。
-/// スライダー、直接入力(Enter/フォーカス外れで確定)、ホイール操作、
+/// スライダー、直接入力(Enter/フォーカス外れ/ショートカットでのコマンド実行前に確定)、ホイール操作、
 /// ラベルのダブルクリックで既定値へリセットに対応する。
 /// </summary>
 public partial class NumericSliderRow : UserControl
@@ -301,6 +302,57 @@ public partial class NumericSliderRow : UserControl
         if (_textEdited)
         {
             CommitText();
+        }
+    }
+
+    private void OnValueBoxLostKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e)
+    {
+        // LostFocus は論理フォーカスのイベントで、フォーカススコープの違うメインメニューや
+        // パレット・ダイアログへキーボードフォーカスが移っても来ない。確定しないと、欄に見えている
+        // 値ではなく旧値で保存や合成が走る。入力欄自身のコンテキストメニュー(貼り付けなど)へ
+        // 移るのは編集の続きなので確定しない
+        if (_textEdited && !IsOwnContextMenu(e.NewFocus))
+        {
+            CommitText();
+        }
+    }
+
+    private bool IsOwnContextMenu(IInputElement? element)
+    {
+        for (var node = element as DependencyObject; node is not null;
+             node = LogicalTreeHelper.GetParent(node) ?? (node is Visual ? VisualTreeHelper.GetParent(node) : null))
+        {
+            if (node is ContextMenu menu)
+            {
+                return ReferenceEquals(menu.PlacementTarget, ValueBox);
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// キーボードフォーカスのある入力欄に打ちかけの値があれば確定する。
+    /// </summary>
+    /// <remarks>
+    /// ショートカットはフォーカスを動かさずにコマンドを実行するので、確定の契機
+    /// (Enter・フォーカスの移動)が来ない。コマンドを実行する前に呼び、欄に見えている値で処理させる。
+    /// </remarks>
+    /// <param name="focused">キーボードフォーカスのある要素(<see cref="Keyboard.FocusedElement"/>)。</param>
+    internal static void CommitPendingEdit(IInputElement? focused)
+    {
+        for (var element = focused as FrameworkElement; element is not null;
+             element = element.Parent as FrameworkElement)
+        {
+            if (element is NumericSliderRow row)
+            {
+                if (ReferenceEquals(focused, row.ValueBox) && row._textEdited)
+                {
+                    row.CommitText();
+                }
+
+                return;
+            }
         }
     }
 
