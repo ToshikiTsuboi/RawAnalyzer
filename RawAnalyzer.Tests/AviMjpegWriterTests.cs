@@ -42,7 +42,16 @@ public class AviMjpegWriterTests
         {
             new byte[] { 0xFF, 0xD8, 1, 2, 3, 0xFF, 0xD9 },          // 7バイト(奇数)
             new byte[] { 0xFF, 0xD8, 9, 8, 7, 6, 0xFF, 0xD9 },       // 8バイト
-            new byte[] { 0xFF, 0xD8, 0xAA, 0xFF, 0xD9 },             // 5バイト(奇数)
+
+            // 29バイト(奇数)。本番の JpegBitmapEncoder の出力と同じく SOI の直後に JFIF APP0 がある。
+            // APP0 の長さは標準の 0x10 ではなく 0x12 にして、読み飛ばす長さの決め打ちも見分ける
+            new byte[]
+            {
+                0xFF, 0xD8,
+                0xFF, 0xE0, 0x00, 0x12, (byte)'J', (byte)'F', (byte)'I', (byte)'F', 0x00,
+                1, 2, 0, 0, 1, 0, 1, 0, 0, 0xAB, 0xCD,
+                0xFF, 0xDB, 0x11, 0x22, 0x33, 0xFF, 0xD9,
+            },
         };
         try
         {
@@ -79,7 +88,7 @@ public class AviMjpegWriterTests
             Assert.Equal(3u, ReadU32(data, strh + 8 + 32));                // dwLength
 
             // moviとフレームチャンク(奇数フレームはパディングされる)。
-            // 各フレームはSOI直後に AVI1 APP0(18バイト)が挿入される
+            // APP0 のないフレームはSOI直後に AVI1 APP0(18バイト)が挿入される
             const uint App0 = 18;
             int movi = FindFourCc(data, "movi");
             Assert.True(movi > 0);
@@ -105,6 +114,18 @@ public class AviMjpegWriterTests
 
             // 2フレーム目のオフセット = 4 + 8 + 25(+1パディング) = 38
             Assert.Equal(4u + 8 + 7 + App0 + 1, ReadU32(data, idx1 + 8 + 16 + 8));
+
+            // 3フレーム目: JFIF APP0 を読み飛ばして AVI1 APP0 に置き換え、その直後に APP0 の次のマーカ(DQT)
+            // から続ける。長さ = 29 − (2+18) + 18 = 27(置き換えずに挿入すると 47、0x10 と決め打ちすると 29)
+            int third = movi + (int)ReadU32(data, idx1 + 8 + (2 * 16) + 8);
+            Assert.Equal("00dc", Encoding.ASCII.GetString(data, third, 4));
+            Assert.Equal(27u, ReadU32(data, third + 4));
+            Assert.Equal(27u, ReadU32(data, idx1 + 8 + (2 * 16) + 12));
+            byte[] chunk = data.AsSpan(third + 8, 27).ToArray();
+            Assert.Equal(new byte[] { 0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10 }, chunk[..6]);
+            Assert.Equal("AVI1", Encoding.ASCII.GetString(chunk, 6, 4));
+            Assert.Equal(new byte[] { 0xFF, 0xDB, 0x11, 0x22, 0x33, 0xFF, 0xD9 }, chunk[20..]);
+            Assert.DoesNotContain("JFIF", Encoding.ASCII.GetString(chunk));
         }
         finally
         {
