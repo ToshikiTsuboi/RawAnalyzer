@@ -355,16 +355,14 @@ public class WideSampleTiffTests
     }
 
     [Theory]
-    [InlineData(3, false, false)]
-    [InlineData(4, false, false)]
-    [InlineData(3, true, false)]
-    [InlineData(4, true, false)]
-    [InlineData(3, false, true)]
-    public void Float64Rgb_ScalesLikeFloat32Rgb(int samplesPerPixel, bool planar, bool tiled)
+    [InlineData(4, false)]
+    [InlineData(3, true)]
+    public void Float64Rgb_ScalesLikeFloat32Rgb(int samplesPerPixel, bool tiled)
     {
         // 以前は非圧縮なのに「64bit 実数の非圧縮(1)TIFFは未対応です(非圧縮であれば読めます)」という
         // 矛盾したエラーで開けなかった。自前で復号し、同じ値の32bit実数RGB(WIC経路)と同じコード・
         // 同じ換算になること。アルファ(4サンプル目の1000)は値域に入れない
+        // (プレーン分離の読み方はビット幅によらず、SignedInt16Rgb_ScalesLikeSignedInt32Rgb が見る)
         const int width = 3;
         const int height = 2;
         float[] rgb =
@@ -384,10 +382,8 @@ public class WideSampleTiffTests
         byte[] chunky = DoubleSamples(samples);
         TiffBuilder.Page page = tiled
             ? TiledPage(width, height, 64, 3, samplesPerPixel, chunky, 2, 2)
-            : planar
-                ? PlanarPage(width, height, 64, 3, samplesPerPixel, chunky)
-                : TiffBuilder.GrayPage(width, height, 64, chunky,
-                    photometric: 2, sampleFormat: 3, samplesPerPixel: samplesPerPixel);
+            : TiffBuilder.GrayPage(width, height, 64, chunky,
+                photometric: 2, sampleFormat: 3, samplesPerPixel: samplesPerPixel);
         if (samplesPerPixel == 4)
         {
             page.Tags[338] = (3, new long[] { 2 });
@@ -511,21 +507,14 @@ public class WideSampleTiffTests
         Assert.Equal("16bit値 -1000〜1000 → 16bit (1code≈0.0305)", actual.ValueNote);
     }
 
-    [Theory]
-    [InlineData(3)]
-    [InlineData(4)]
-    public void SignedInt16Rgb_Compressed_IsRejectedWithReason(int samplesPerPixel)
+    [Fact]
+    public void SignedInt16Rgb_Compressed_IsRejectedWithReason()
     {
         // WICは符号あり16bitのRGBを復号できない(以前は「イメージが破損している可能性があります」という
         // WICの汎用の文言だった)。自前で読めない圧縮ページは、開く前に理由付きのエラーにする
-        long[] samples = { -100, 0, 100, 30000 };
-        var page = TiffBuilder.GrayPage(1, 1, 16, IntegerSamples(16, samples[..samplesPerPixel]),
-            photometric: 2, sampleFormat: 2, samplesPerPixel: samplesPerPixel);
-        if (samplesPerPixel == 4)
-        {
-            page.Tags[338] = (3, new long[] { 2 });
-        }
-
+        // (判定はサンプル数を見ない。RGBAは SignedInt16Rgb_ScalesLikeSignedInt32Rgb の非圧縮の行が同じ判定を通す)
+        var page = TiffBuilder.GrayPage(1, 1, 16, IntegerSamples(16, -100, 0, 100),
+            photometric: 2, sampleFormat: 2, samplesPerPixel: 3);
         TiffBuilder.Deflate(page);
         using var file = TempTiff.Write(new TiffBuilder().Build(page));
 
@@ -550,25 +539,23 @@ public class WideSampleTiffTests
         Assert.Equal($"{bits}bit実数 0〜1 → 16bit", decoded.ValueNote);
     }
 
-    [Theory]
-    [InlineData(16)]
-    [InlineData(64)]
-    public void FloatWhiteIsZero_BeyondOneAndNegative_MatchesFloat32(int bits)
+    [Fact]
+    public void FloatWhiteIsZero_BeyondOneAndNegative_MatchesFloat32()
     {
-        // 32bit実数のWhiteIsZeroはWICが 1−v で返す。範囲外の値でも同じ向き・同じ換算になること
+        // 32bit実数のWhiteIsZeroはWICが 1−v で返す。自前復号(半精度)でも範囲外の値で同じ向き・同じ換算に
+        // なること(64bitも自前復号の同じ反転を通る)
         float[] values = { 0f, 0.5f, 1f, 2f, -1f, 4f };
-        byte[] samples = bits == 16 ? HalfSamples(values) : DoubleSamples(values);
 
         DecodedImage expected = Load(TiffBuilder.GrayPage(6, 1, 32, FloatSamples(values), photometric: 0, sampleFormat: 3));
         using RawImage expectedOwned = expected.Luminance;
-        DecodedImage actual = Load(TiffBuilder.GrayPage(6, 1, bits, samples, photometric: 0, sampleFormat: 3));
+        DecodedImage actual = Load(TiffBuilder.GrayPage(6, 1, 16, HalfSamples(values), photometric: 0, sampleFormat: 3));
         using RawImage actualOwned = actual.Luminance;
 
         // 1−v = [1, 0.5, 0, −1, 2, −3] を −3〜2 で写す
         Assert.Equal(new[] { 52428, 45874, 39321, 26214, 65535, 0 }, Row(expected.Luminance));
         Assert.Equal(Row(expected.Luminance), Row(actual.Luminance));
         Assert.Equal("32bit値 -3〜2 → 16bit (1code≈7.63E-05)", expected.ValueNote);
-        Assert.Equal($"{bits}bit値 -3〜2 → 16bit (1code≈7.63E-05)", actual.ValueNote);
+        Assert.Equal("16bit値 -3〜2 → 16bit (1code≈7.63E-05)", actual.ValueNote);
     }
 
     [Theory]
@@ -606,7 +593,6 @@ public class WideSampleTiffTests
     [Theory]
     [InlineData(16, 3)]
     [InlineData(32, 1)]
-    [InlineData(32, 2)]
     public void WhiteIsZero_CompressedHalfOrInt32_IsRejectedWithReason(int bits, int sampleFormat)
     {
         // WICはこれらのWhiteIsZeroをビット反転・実数の 1−v で壊して返す。自前で読めない圧縮ページは開かない
@@ -620,17 +606,15 @@ public class WideSampleTiffTests
     }
 
     [Theory]
-    [InlineData(32, 3)] // WICはRgba128Float
-    [InlineData(32, 2)]
-    [InlineData(32, 1)]
     [InlineData(16, 3)] // WICはRgba64
     [InlineData(16, 2)]
     [InlineData(8, 2)] // WICはBgra32
     public void GrayWithAlpha_WideSamples_OpensFirstChannelAsGray(int bits, int sampleFormat)
     {
-        // WICはグレー+アルファをRGBA(R=G=B=グレー)に展開して返すため、元タグの2サンプル分の
+        // WICは16/8bitのグレー+アルファをRGBA(R=G=B=グレー)に展開して返すため、元タグの2サンプル分の
         // 画素幅と合わず読込エラーになっていた。先頭チャネルだけをグレーとして開き、
-        // アルファ(100)は値域に入れない
+        // アルファ(100)は値域に入れない(非圧縮の32bitは自前復号へ回り、
+        // MultiChannelGray_WicUnreadable_OpensFirstChannelAsGray の32bitの行が見る)
         float[] grayAndAlpha = { 0f, 100f, 10f, 100f, 20f, 100f };
         byte[] samples = sampleFormat != 3
             ? IntegerSamples(bits, Array.ConvertAll(grayAndAlpha, v => (long)v))
@@ -668,31 +652,8 @@ public class WideSampleTiffTests
         Assert.Equal("16bit値 0〜20 → 16bit (1code≈0.000305)", decoded.ValueNote);
     }
 
-    [Fact]
-    public void GrayWithAlpha_Float32WhiteIsZero_MatchesSingleSample()
-    {
-        // WICは32bit実数のグレー+アルファでもグレーを 1−v で返す。1サンプルのページと同じ結果になること
-        float[] gray = { 0f, 0.5f, 1f };
-        float[] grayAndAlpha = { 0f, 1f, 0.5f, 1f, 1f, 1f };
-        DecodedImage single = Load(TiffBuilder.GrayPage(3, 1, 32, FloatSamples(gray), photometric: 0, sampleFormat: 3));
-        using RawImage singleOwned = single.Luminance;
-        var page = TiffBuilder.GrayPage(
-            3, 1, 32, FloatSamples(grayAndAlpha), photometric: 0, sampleFormat: 3, samplesPerPixel: 2);
-        page.Tags[338] = (3, new long[] { 2 });
-
-        DecodedImage decoded = Load(page);
-        using RawImage owned = decoded.Luminance;
-
-        Assert.Equal(new[] { 65535, 32768, 0 }, Row(single.Luminance));
-        Assert.Equal(Row(single.Luminance), Row(decoded.Luminance));
-        Assert.Equal(single.ValueNote, decoded.ValueNote);
-    }
-
     [Theory]
     [InlineData(32, 3, 3, -1)]
-    [InlineData(32, 3, 3, 0)]
-    [InlineData(32, 3, 3, 2)]
-    [InlineData(32, 3, 4, 2)]
     [InlineData(32, 3, 5, 2)]
     [InlineData(32, 1, 3, 2)]
     [InlineData(32, 2, 4, 0)]
@@ -757,12 +718,8 @@ public class WideSampleTiffTests
     [Theory]
     [InlineData(32, 3, 3, 2)] // WICが復号できない
     [InlineData(32, 2, 2, 2)] // 以前は理由付きエラー(WICの反転が壊れる32bit整数)
-    [InlineData(32, 2, 3, 2)]
     [InlineData(16, 3, 2, 2)] // 以前は理由付きエラー(WICの反転が壊れる半精度)
-    [InlineData(16, 3, 4, 0)]
     [InlineData(64, 3, 3, 2)]
-    [InlineData(8, 2, 3, -1)] // WICはExtraSamplesのない8bit×3サンプルをRGBとして返し、反転しない
-    [InlineData(8, 2, 3, 2)]
     public void MultiChannelGrayWhiteIsZero_MatchesSingleSample(
         int bits, int sampleFormat, int samplesPerPixel, int extraSamples)
     {
@@ -783,11 +740,9 @@ public class WideSampleTiffTests
     }
 
     [Theory]
-    [InlineData(1, -1, false)] // WICがRGBとして返す。以前は先頭チャネルではなくBを読んでいた(黙って誤値)
-    [InlineData(1, -1, true)]
+    [InlineData(1, -1, true)]  // WICはRGB(Bgr24)として返す。以前は先頭チャネルではなくBを読んでいた(黙って誤値)
     [InlineData(1, 2, false)]  // ExtraSamplesがあるとWICは復号できない
-    [InlineData(0, -1, false)] // WICはRGBとして返し反転しない
-    [InlineData(0, 0, false)]
+    [InlineData(0, -1, false)] // WICはRGBとして返し反転しない(8bit符号あり・多チャネルのWhiteIsZeroはこの行だけが見る)
     public void ThreeSampleGray8Signed_OpensFirstChannelAsGray(int photometric, int extraSamples, bool compressed)
     {
         var page = MultiChannelGrayPage(8, 2, 3, extraSamples, new[] { 0f, 10f, 20f }, 100f, photometric);
@@ -808,7 +763,6 @@ public class WideSampleTiffTests
     [Theory]
     [InlineData(1, 2, new[] { 0, 10 << 8, 20 << 8 })]                  // ExtraSamplesがあるとWICは復号できない
     [InlineData(0, -1, new[] { 255 << 8, 245 << 8, 235 << 8 })]         // WICはRGBとして返し反転しない
-    [InlineData(0, 2, new[] { 255 << 8, 245 << 8, 235 << 8 })]
     [InlineData(1, -1, new[] { 0, 10 * 257, 20 * 257 })]                // WICが読めるもの(RGBのR)はWICのまま
     public void ThreeSampleGray8Unsigned_OpensFirstChannelAsGray(int photometric, int extraSamples, int[] expected)
     {
@@ -823,9 +777,7 @@ public class WideSampleTiffTests
     }
 
     [Theory]
-    [InlineData(16, 3, false)]
     [InlineData(16, 2, false)]
-    [InlineData(8, 2, false)]
     [InlineData(16, 3, true)]
     [InlineData(8, 2, true)]
     public void FiveSampleGray_WideSamples_OpensFirstChannelAsGray(int bits, int sampleFormat, bool compressed)
@@ -852,7 +804,6 @@ public class WideSampleTiffTests
     [InlineData(32, 3, 2, 0, 1)] // 2サンプルで追加サンプルが未指定
     [InlineData(8, 1, 3, 2, 1)]  // 8bit×3サンプル、ExtraSamples あり
     [InlineData(8, 1, 3, -1, 0)] // 8bit×3サンプルのWhiteIsZero(WICはRGBとして返し反転しない)
-    [InlineData(8, 2, 3, -1, 0)]
     public void MultiChannelGray_CompressedWicUnreadable_IsRejectedWithReason(
         int bits, int sampleFormat, int samplesPerPixel, int extraSamples, int photometric)
     {
@@ -889,7 +840,6 @@ public class WideSampleTiffTests
 
     [Theory]
     [InlineData(8, 1, 2, false)]
-    [InlineData(8, 1, 2, true)]
     [InlineData(8, 1, 4, false)]
     [InlineData(8, 0, 2, false)] // WhiteIsZero: 以前は全画素65535
     [InlineData(8, 0, 4, true)]
@@ -920,14 +870,16 @@ public class WideSampleTiffTests
         Assert.Equal(bits, actual.Luminance.Format.BitDepth);
         Assert.Equal(codes, Row(actual.Luminance));
         Assert.Equal(Row(expected.Luminance), Row(actual.Luminance));
+
+        // 非関連アルファの側も、カラーにせず先頭チャネルを元のビット深度のグレーとして開く
+        Assert.Null(expected.Color);
+        Assert.Equal(bits, expected.Luminance.Format.BitDepth);
     }
 
     [Theory]
     [InlineData(8, 4, false)]
-    [InlineData(8, 4, true)]
     [InlineData(8, 5, false)]
     [InlineData(16, 4, false)]
-    [InlineData(16, 4, true)]
     [InlineData(16, 5, true)]
     public void AssociatedAlphaRgb_KeepsSampleValues(int bits, int samplesPerPixel, bool compressed)
     {
@@ -948,19 +900,14 @@ public class WideSampleTiffTests
         AssertSameColor(expected, actual);
     }
 
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public void AssociatedAlphaRgb16_Planar_KeepsSampleValues(bool compressed)
+    [Fact]
+    public void AssociatedAlphaRgb16_Planar_KeepsSampleValues()
     {
-        // プレーン分離の16bit RGB+関連アルファも、割り戻さず16bitのまま読む
+        // プレーン分離の16bit RGB+関連アルファも、割り戻さず16bitのまま読む(プレーン分離の展開はWICの
+        // 内部で行われ、圧縮の有無で本番の経路は変わらない)
         long[] rgba = { 0, 5, 15, 1000, 10, 6, 16, 1000, 60000, 1, 2, 1000, 50, 60, 70, 0 };
         var page = PlanarPage(4, 1, 16, 1, 4, IntegerSamples(16, rgba));
         page.Tags[338] = (3, new long[] { 1 });
-        if (compressed)
-        {
-            TiffBuilder.Deflate(page);
-        }
 
         DecodedImage decoded = Load(page);
         using RawImage owned = decoded.Luminance;

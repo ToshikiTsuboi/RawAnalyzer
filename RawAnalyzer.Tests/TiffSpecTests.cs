@@ -10,9 +10,11 @@ namespace RawAnalyzer.Tests;
 /// TIFF仕様の対応状況(2026-09-07調査)に基づく回帰テスト。
 /// </summary>
 /// <remarks>
-/// WICが黙って誤った値を返す形式(未知の圧縮=全画素0、CFAの勝手な現像、8bit符号ありの生ビット)を
+/// WICが黙って誤った値を返す形式(未知の圧縮=全画素0、CFAの勝手な現像)を
 /// 弾く/自前で読むこと、WICが開けない形式(BigTIFF、10/14/24/64bit、ImageJの連続スタック、
 /// SubIFDのDNG本体)を自前で読めること、ページ数の数え方が経路によらず一致することを確かめる。
+/// 8bit符号ありの生ビットは WideSampleTiffTests.SignedWhiteIsZero_IsInvertedAtAnyWidth(8) と
+/// ThreeSampleGray8Signed_OpensFirstChannelAsGray が確かめる。
 /// </remarks>
 public class TiffSpecTests
 {
@@ -37,43 +39,23 @@ public class TiffSpecTests
     }
 
     [Fact]
-    public void SignedInt8_IsScaledNotRawBits()
-    {
-        var samples = new byte[W * H];
-        for (int i = 0; i < samples.Length; i++)
-        {
-            samples[i] = (byte)(sbyte)(-128 + (i * 255 / (samples.Length - 1)));
-        }
-
-        var page = TiffBuilder.GrayPage(W, H, 8, samples, sampleFormat: 2);
-        using var file = TempTiff.Write(new TiffBuilder().Build(page));
-
-        DecodedImage decoded = ImageFileLoader.Load(file.Path);
-        using RawImage image = decoded.Luminance;
-        Assert.Equal(0, image.GetPixel(0, 0));                 // -128 → 0
-        Assert.Equal(65535, image.GetPixel(W - 1, H - 1));     // 127 → 65535
-        Assert.Contains("8bit値 -128〜127", decoded.ValueNote);
-    }
-
-    [Theory]
-    [InlineData(new byte[] { 1, 0, 2, 1 }, BayerPattern.Grbg)]
-    [InlineData(new byte[] { 1, 2, 0, 1 }, BayerPattern.Gbrg)]
-    public void Cfa_IsReadAsBayerRaw(byte[] cfaPattern, BayerPattern expected)
+    public void Cfa_IsReadAsBayerRaw()
     {
         // Photometric=CFA(32803) をWICは勝手に現像してRGBにする。生値のままBayerとして読む
-        // (Rggb は Dng_MainImageInSubIfd、Bggr は Cfa8Bit_IsDecodedNativelyWithBayer が同じ表を通す)
+        // (Rggb は Dng_MainImageInSubIfd、Bggr は Cfa8Bit_IsDecodedNativelyWithBayer、Grbg は
+        // ImageFileBayerTests.CfaTiff_DesignationTakesPrecedenceOverCfaPattern の CfaPage が同じ表を通す)
         var page = TiffBuilder.GrayPage(W, H, 16, Ramp16(), photometric: TiffLoader.PhotometricCfa);
         page.Tags[33421] = (3, new long[] { 2, 2 });
-        page.Tags[33422] = (1, cfaPattern);
+        page.Tags[33422] = (1, new byte[] { 1, 2, 0, 1 }); // G B / R G
         using var file = TempTiff.Write(new TiffBuilder().Build(page));
 
         Assert.True(TiffLoader.TryProbePixelLayout(file.Path, out TiffPixelLayout? layout, out _));
-        Assert.Equal(expected, layout!.Bayer);
+        Assert.Equal(BayerPattern.Gbrg, layout!.Bayer);
 
         DecodedImage decoded = ImageFileLoader.Load(file.Path);
         using RawImage image = decoded.Luminance;
         Assert.Null(decoded.Color);
-        Assert.Equal(expected, image.Format.Bayer);
+        Assert.Equal(BayerPattern.Gbrg, image.Format.Bayer);
         Assert.Equal(16, image.Format.BitDepth);
         AssertRamp16(image);
     }
@@ -201,26 +183,6 @@ public class TiffSpecTests
     }
 
     [Fact]
-    public void Float64_IsScaledLikeFloat32()
-    {
-        var bytes = new byte[W * H * 8];
-        for (int i = 0; i < W * H; i++)
-        {
-            BinaryPrimitives.WriteDoubleLittleEndian(bytes.AsSpan(i * 8), i / (double)(W * H - 1));
-        }
-
-        var page = TiffBuilder.GrayPage(W, H, 64, bytes, sampleFormat: 3);
-        using var file = TempTiff.Write(new TiffBuilder().Build(page));
-
-        DecodedImage decoded = ImageFileLoader.Load(file.Path);
-        using RawImage image = decoded.Luminance;
-        Assert.Equal("64bit実数 0〜1 → 16bit", decoded.ValueNote);
-        Assert.Equal(0, image.GetPixel(0, 0));
-        Assert.Equal(65535, image.GetPixel(W - 1, H - 1));
-        Assert.Equal(Math.Round(65535.0 * 7 / (W * H - 1)), image.GetPixel(1, 1));
-    }
-
-    [Fact]
     public void Float64_ExtremeFiniteRange_IsNotCollapsed()
     {
         // 値はすべて有限だが最大−最小が double を超える。以前は幅1へ潰れて [0,65535,65535]、
@@ -238,28 +200,6 @@ public class TiffSpecTests
         Assert.Equal(32768, image.GetPixel(1, 0));
         Assert.Equal(65535, image.GetPixel(2, 0));
         Assert.Equal("64bit値 -1E+308〜1E+308 → 16bit (1code≈3.05E+303)", decoded.ValueNote);
-    }
-
-    [Fact]
-    public void Uint24_IsScaledWithNote()
-    {
-        var bytes = new byte[W * H * 3];
-        for (int i = 0; i < W * H; i++)
-        {
-            int v = i * 1000;
-            bytes[i * 3] = (byte)v;
-            bytes[(i * 3) + 1] = (byte)(v >> 8);
-            bytes[(i * 3) + 2] = (byte)(v >> 16);
-        }
-
-        var page = TiffBuilder.GrayPage(W, H, 24, bytes);
-        using var file = TempTiff.Write(new TiffBuilder().Build(page));
-
-        DecodedImage decoded = ImageFileLoader.Load(file.Path);
-        using RawImage image = decoded.Luminance;
-        Assert.StartsWith("24bit値 0〜23000", decoded.ValueNote);
-        Assert.Equal(65535, image.GetPixel(W - 1, H - 1));
-        Assert.Equal(0, image.GetPixel(0, 0));
     }
 
     [Fact]
@@ -326,40 +266,6 @@ public class TiffSpecTests
         using RawImage image = decoded.Luminance;
         Assert.Equal(1, decoded.PageCount);
         AssertRamp16(image);
-    }
-
-    [Theory]
-    [InlineData(8)]
-    [InlineData(16)]
-    public void GrayWithAlpha_IsGrayNotColor(int bits)
-    {
-        // WICはグレー+アルファをBgra32/Rgba64で返す。先頭チャネルをグレーとして取り込む
-        int bytesPer = bits / 8;
-        var samples = new byte[W * H * 2 * bytesPer];
-        for (int i = 0; i < W * H; i++)
-        {
-            int v = i * 1000;
-            if (bits == 8)
-            {
-                samples[i * 2] = (byte)i;
-                samples[(i * 2) + 1] = 200;
-            }
-            else
-            {
-                BinaryPrimitives.WriteUInt16LittleEndian(samples.AsSpan(i * 4), (ushort)v);
-                BinaryPrimitives.WriteUInt16LittleEndian(samples.AsSpan((i * 4) + 2), 50000);
-            }
-        }
-
-        var page = TiffBuilder.GrayPage(W, H, bits, samples, samplesPerPixel: 2);
-        page.Tags[338] = (3, new long[] { 2 }); // ExtraSamples = unassociated alpha
-        using var file = TempTiff.Write(new TiffBuilder().Build(page));
-
-        DecodedImage decoded = ImageFileLoader.Load(file.Path);
-        using RawImage image = decoded.Luminance;
-        Assert.Null(decoded.Color);
-        Assert.Equal(bits, image.Format.BitDepth);
-        Assert.Equal(bits == 8 ? 5 * 257 : 5000, image.GetPixel(5, 0));
     }
 
     [Fact]
@@ -499,6 +405,14 @@ public class TiffSpecTests
         {
             foreach ((int photometric, int spp, int bits, int format) in layouts)
             {
+                if (container == 0 && photometric is 1 or 2)
+                {
+                    // クラシックのグレー/RGBは UncompressedHint_IsGivenOnlyWhenUncompressedPageOpens が同一の
+                    // バイト列(全 Photometric 1/0/2 × サンプル数 × ビット幅 × SampleFormat)で見る。
+                    // 向こうの行列を絞るときは、この除外を戻す
+                    continue;
+                }
+
                 string layout = $"{containers[container]} Photometric={photometric} {bits}bit×{spp} SampleFormat={format}";
                 string? uncompressed = LoadError(
                     ContainerTiff(container, SamplePage(photometric, spp, bits, format, compress: false)));

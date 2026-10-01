@@ -60,7 +60,8 @@ public class ImageFileBayerTests
 
     private static TiffBuilder.Page CfaPage()
     {
-        // CFAPattern 1,0,2,1 = G R / B G(GRBG)
+        // CFAPattern 1,0,2,1 = G R / B G(GRBG)。TiffSpecTests.Cfa_IsReadAsBayerRaw の Grbg の対応
+        // (ReadCfaPattern の表)を兼ねているので、パターンを変えるときは向こうへ Grbg の確認を戻す
         var page = TiffBuilder.GrayPage(W, H, 16, Samples16(), photometric: TiffLoader.PhotometricCfa);
         page.Tags[33421] = (3, new long[] { 2, 2 });
         page.Tags[33422] = (1, new byte[] { 1, 0, 2, 1 });
