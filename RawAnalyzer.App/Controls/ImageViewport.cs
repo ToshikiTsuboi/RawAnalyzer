@@ -101,6 +101,14 @@ public sealed class ImageViewport : FrameworkElement
     private double _originY;
 
     private WriteableBitmap? _bitmap;
+
+    // 表示中のビットマップを描いたときの表示倍率(ビットマップはデバイス解像度で描く)
+    private double _presentedScale = 1.0;
+
+    // 表示倍率。ウィンドウに載っている間は実際の DPI から読み、載っていない間は最後に読んだ値を使う
+    private double _connectedScale = 1.0;
+    private double? _deviceScaleOverride;
+
     private CancellationTokenSource? _renderCts;
     private Task _renderTask = Task.CompletedTask;
     private int _renderedFactor = 1;
@@ -263,8 +271,72 @@ public sealed class ImageViewport : FrameworkElement
     /// <summary>現在のROI(未選択ならnull)。</summary>
     public RegionOfInterest? Roi => _roi;
 
-    /// <summary>現在のズーム率。</summary>
+    /// <summary>現在のズーム率(表示 DIP / 元画像画素)。</summary>
     public double Zoom => _zoom;
+
+    /// <summary>
+    /// 表示倍率(1 DIP あたりのデバイス画素数。Windows の表示スケールが 125% なら 1.25)。
+    /// 描画はこの倍率を掛けたデバイス解像度で行う。
+    /// </summary>
+    /// <remarks>
+    /// ウィンドウに載っていない間(レイアウトだけ通したテストなど)は、最後に載っていたときの倍率
+    /// (一度も載っていなければ 1)。画面に出ないので倍率は意味を持たず、描画結果を実行環境の DPI に左右させない。
+    /// </remarks>
+    public double DeviceScale
+    {
+        get
+        {
+            if (_deviceScaleOverride is { } forced)
+            {
+                return forced;
+            }
+
+            if (PresentationSource.FromVisual(this) is not null)
+            {
+                _connectedScale = DeviceScaling.Normalize(VisualTreeHelper.GetDpi(this).DpiScaleX);
+            }
+
+            return _connectedScale;
+        }
+    }
+
+    /// <summary>
+    /// 表示倍率を固定する(実際の DPI を変えられないテスト用。null で実際の DPI に戻す)。
+    /// DPI が変わったときと同じく描き直す。
+    /// </summary>
+    /// <param name="scale">表示倍率。</param>
+    internal void OverrideDeviceScale(double? scale)
+    {
+        double old = DeviceScale;
+        _deviceScaleOverride = scale is { } value ? DeviceScaling.Normalize(value) : null;
+        OnDeviceScaleChanged(old, DeviceScale);
+    }
+
+    /// <inheritdoc />
+    protected override void OnDpiChanged(DpiScale oldDpi, DpiScale newDpi)
+    {
+        base.OnDpiChanged(oldDpi, newDpi);
+        _connectedScale = DeviceScaling.Normalize(newDpi.DpiScaleX);
+        if (_deviceScaleOverride is null)
+        {
+            OnDeviceScaleChanged(DeviceScaling.Normalize(oldDpi.DpiScaleX), _connectedScale);
+        }
+    }
+
+    /// <summary>
+    /// 表示倍率が変わったら(別の倍率のモニタへ移した・表示スケールを変えた)、新しいデバイス解像度で描き直す。
+    /// </summary>
+    private void OnDeviceScaleChanged(double oldScale, double newScale)
+    {
+        if (oldScale == newScale)
+        {
+            return;
+        }
+
+        // raw 値オーバーレイの文字は倍率(PixelsPerDip)に合わせて作り直す
+        _overlayDrawing = null;
+        RequestRender(fast: false);
+    }
 
     /// <summary>表示原点X(画面左上に写る画像X座標)。</summary>
     public double OriginX => _originX;
@@ -761,7 +833,13 @@ public sealed class ImageViewport : FrameworkElement
         dc.DrawRectangle(CanvasBrush, null, new Rect(0, 0, ActualWidth, ActualHeight));
         if (_bitmap is not null)
         {
-            dc.DrawImage(_bitmap, new Rect(0, 0, _bitmap.PixelWidth, _bitmap.PixelHeight));
+            // ビットマップはデバイス解像度で描いてあるので、DIP の大きさ(画素数/倍率)で置けば 1 画素が
+            // 1 デバイス画素に写る。左上はデバイス画素の境目へそろえる(ビューポートの位置が画素の途中だと、
+            // 最近傍のサンプル位置が画素の境目に乗って写り方が揺れうる)
+            dc.PushGuidelineSet(BitmapGuidelines);
+            dc.DrawImage(_bitmap, new Rect(
+                0, 0, _bitmap.PixelWidth / _presentedScale, _bitmap.PixelHeight / _presentedScale));
+            dc.Pop();
         }
 
         DrawRawValueOverlay(dc);
@@ -770,6 +848,16 @@ public sealed class ImageViewport : FrameworkElement
         DrawProfileMarker(dc);
         DrawKeyboardCursor(dc);
         DrawGhostCursor(dc);
+    }
+
+    private static readonly GuidelineSet BitmapGuidelines = CreateBitmapGuidelines();
+
+    private static GuidelineSet CreateBitmapGuidelines()
+    {
+        // 縦横 1 本ずつにし、ビットマップ全体を平行移動だけでそろえる(拡大縮小させない)
+        var guidelines = new GuidelineSet(new[] { 0.0 }, new[] { 0.0 });
+        guidelines.Freeze();
+        return guidelines;
     }
 
     private static readonly Pen KeyCursorPen = CreateKeyCursorPen(0xE6);
@@ -1428,11 +1516,13 @@ public sealed class ImageViewport : FrameworkElement
         }
 
         // 表示中の内容が現在のビュー状態のものでなければ描き直す
+        double scale = DeviceScale;
         if (_presentedZoom != _zoom
             || _presentedOriginX != _originX
             || _presentedOriginY != _originY
-            || _presentedWidth != Math.Max(1, (int)Math.Round(ActualWidth))
-            || _presentedHeight != Math.Max(1, (int)Math.Round(ActualHeight)))
+            || _presentedScale != scale
+            || _presentedWidth != DeviceScaling.DevicePixels(ActualWidth, scale)
+            || _presentedHeight != DeviceScaling.DevicePixels(ActualHeight, scale))
         {
             return false;
         }
@@ -1446,7 +1536,7 @@ public sealed class ImageViewport : FrameworkElement
             return false;
         }
 
-        return SelectSource(fast: false) is { } quality
+        return SelectSource(fast: false, scale) is { } quality
             && quality.Source.Factor * quality.CoordinateFactor == _renderedFactor;
     }
 
@@ -1461,7 +1551,10 @@ public sealed class ImageViewport : FrameworkElement
     /// </param>
     private readonly record struct SelectedSource(RenderSource Source, int CoordinateFactor);
 
-    private SelectedSource? SelectSource(bool fast)
+    /// <summary>描画に使う画素供給元(元画像か縮小レベル)を選ぶ。</summary>
+    /// <param name="fast">操作中の速報か。</param>
+    /// <param name="scale">表示倍率(縮小レベルはデバイス画素に見合うものを選ぶ)。</param>
+    private SelectedSource? SelectSource(bool fast, double scale)
     {
         if (_image is null)
         {
@@ -1492,7 +1585,7 @@ public sealed class ImageViewport : FrameworkElement
             if (bayer is not null && !zebraDrawn)
             {
                 int factor = DeviceScaling.SelectRenderFactor(
-                    bayer.SelectFactor, f => bayer.GetLevel(f) is not null, _zoom, 1.0, fast);
+                    bayer.SelectFactor, f => bayer.GetLevel(f) is not null, _zoom, scale, fast);
                 if (factor > 1 && bayer.GetLevel(factor) is { } level)
                 {
                     colorImage = level;
@@ -1533,7 +1626,7 @@ public sealed class ImageViewport : FrameworkElement
         int grayFactor = pyramid is null
             ? 1
             : DeviceScaling.SelectRenderFactor(
-                pyramid.SelectFactor, f => pyramid.GetLevel(f) is not null, _zoom, 1.0, fast);
+                pyramid.SelectFactor, f => pyramid.GetLevel(f) is not null, _zoom, scale, fast);
 
         if (grayFactor <= 1)
         {
@@ -1556,7 +1649,8 @@ public sealed class ImageViewport : FrameworkElement
             return;
         }
 
-        SelectedSource? selected = SelectSource(fast);
+        double scale = DeviceScale;
+        SelectedSource? selected = SelectSource(fast, scale);
         if (selected is not { } chosen)
         {
             return;
@@ -1565,13 +1659,16 @@ public sealed class ImageViewport : FrameworkElement
         var cts = new CancellationTokenSource();
         _renderCts = cts;
         _fastRenderPending = fast;
-        int destW = Math.Max(1, (int)Math.Round(ActualWidth));
-        int destH = Math.Max(1, (int)Math.Round(ActualHeight));
+
+        // デバイス解像度で描く(DIP の大きさで描くと、表示倍率 100% 以外では最近傍で非整数倍に
+        // 引き伸ばされ、等倍でも元画像の画素が 1,1,1,2 デバイス画素のように周期的に幅を変えて縞に見える)
+        int destW = DeviceScaling.DevicePixels(ActualWidth, scale);
+        int destH = DeviceScaling.DevicePixels(ActualHeight, scale);
 
         // 縮小レベルを等倍ソースとして使う場合、画面座標→ソース座標の
         // 対応が保たれるよう zoom と origin を倍率で補正する
         int coordinateFactor = chosen.CoordinateFactor;
-        double zoom = _zoom * coordinateFactor;
+        double zoom = DeviceScaling.ToDeviceZoom(_zoom, scale) * coordinateFactor;
         double originX = _originX / coordinateFactor;
         double originY = _originY / coordinateFactor;
 
@@ -1606,7 +1703,7 @@ public sealed class ImageViewport : FrameworkElement
                         return;
                     }
 
-                    Present(buffer, destW, destH, effectiveFactor, displayZoom, fast);
+                    Present(buffer, destW, destH, scale, effectiveFactor, displayZoom, fast);
                 });
             }
             catch (Exception ex) when (TaskRaceGuard.IsAbandoned(ex))
@@ -1622,14 +1719,19 @@ public sealed class ImageViewport : FrameworkElement
         });
     }
 
-    private void Present(byte[] buffer, int width, int height, int factor, double zoom, bool fast)
+    private void Present(
+        byte[] buffer, int width, int height, double scale, int factor, double zoom, bool fast)
     {
-        if (_bitmap is null || _bitmap.PixelWidth != width || _bitmap.PixelHeight != height)
+        // 96×倍率 dpi にすると、ビットマップの DIP の大きさがビューポートと同じになる
+        double dpi = DeviceScaling.BitmapDpi(scale);
+        if (_bitmap is null || _bitmap.PixelWidth != width || _bitmap.PixelHeight != height
+            || _bitmap.DpiX != dpi)
         {
-            _bitmap = new WriteableBitmap(width, height, 96, 96, PixelFormats.Bgra32, null);
+            _bitmap = new WriteableBitmap(width, height, dpi, dpi, PixelFormats.Bgra32, null);
         }
 
         _bitmap.WritePixels(new Int32Rect(0, 0, width, height), buffer, width * 4, 0);
+        _presentedScale = scale;
         _renderedFactor = factor;
 
         // 表示するのは最新の描画要求の結果だけ(古い要求は取り消され、表示前に捨てられる)
