@@ -298,14 +298,18 @@ public partial class LineProfileWindow : Window
         MiddleLabel.Text = middle.ToString("G8", CultureInfo.CurrentCulture);
         MiddleLabel.ToolTip = middle.ToString("G17", CultureInfo.CurrentCulture) + axisHint;
         if (_ready && !ManualScale) UpdateScaleInputs();
+
+        // 断面は整数の raw code なので最小・最大・P-P は整数で出す。射影は直交方向の平均(実数)で 1 code 未満の
+        // 列ムラを見るための値なので、整数に丸めず平均・σ と同じ小数2桁で出す
+        string extremeFormat = projection ? "F2" : "F0";
         StatsText.Text = _outsideImage is { } outside
             ? $"基準点 (x={_pointX}, y={_pointY}) は表示中の画像 ({outside.Width}×{outside.Height}) の範囲外です。" +
               "範囲内の画像へ送るか、画像上をクリックし直してください。"
             : stats.Count == 0
             ? "—"
-            : $"N={stats.Count}   平均 {stats.Mean:F2}   最小 {stats.Min:F0}   " +
-              $"最大 {stats.Max:F0}   中央値 {stats.Median:F1}   σ {stats.Sigma:F2}   " +
-              $"P-P {stats.Max - stats.Min:F0}";
+            : $"N={stats.Count}   平均 {stats.Mean:F2}   最小 {stats.Min.ToString(extremeFormat)}   " +
+              $"最大 {stats.Max.ToString(extremeFormat)}   中央値 {stats.Median:F1}   σ {stats.Sigma:F2}   " +
+              $"P-P {(stats.Max - stats.Min).ToString(extremeFormat)}";
 
         string origin = _outsideImage is not null
             ? $"範囲外 (x={_pointX}, y={_pointY})"

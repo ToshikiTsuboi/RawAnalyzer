@@ -318,6 +318,39 @@ public class LineProfileWindowTests
     });
 
     [Fact]
+    public Task ProjectionStatistics_ShowSubCodeMinMaxAndPeakToPeak() => WpfTestHost.Run(() =>
+    {
+        // 全体レビュー 2026-10-01 B89。射影は ROI の直交方向の平均(実数)で、1 code 未満の列ムラを見るための
+        // 値なのに、最小・最大・P-P を F0 に丸めて「最小 1000 最大 1001 P-P 0」のように矛盾した値を出していた。
+        // 射影では平均・σ と同じ小数2桁で出す。整数の raw code の断面は従来どおり整数
+        CultureInfo previousCulture = CultureInfo.CurrentCulture;
+        CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo("ja-JP");
+        var window = NewWindow();
+        try
+        {
+            var stats = (TextBlock)window.FindName("StatsText");
+            double[] projection = { 1000.40, 1000.55, 1000.60 };
+            window.SetProfiles(new double[] { 1000, 1001, 1003 }, new double[] { 1, 2, 3 },
+                projection, projection, new RegionOfInterest(0, 0, 3, 1000), 0, 0, 4095);
+            ((CheckBox)window.FindName("ProjectionCheck")).IsChecked = true;
+
+            Assert.Contains("最小 1000.40", stats.Text);
+            Assert.Contains("最大 1000.60", stats.Text);
+            Assert.Contains("P-P 0.20", stats.Text);
+
+            ((CheckBox)window.FindName("ProjectionCheck")).IsChecked = false;
+            Assert.Contains("最小 1000 ", stats.Text);
+            Assert.Contains("最大 1003 ", stats.Text);
+            Assert.EndsWith("P-P 3", stats.Text);
+        }
+        finally
+        {
+            window.Close();
+            CultureInfo.CurrentCulture = previousCulture;
+        }
+    });
+
+    [Fact]
     public Task DataOrDirectionChanges_ResetOnlyObsoleteHorizontalZoom() => WpfTestHost.Run(() =>
     {
         var window = NewWindow();
