@@ -1,5 +1,6 @@
 using System.IO;
 using System.Windows;
+using System.Windows.Threading;
 using Microsoft.Win32;
 using RawAnalyzer.Core;
 
@@ -17,6 +18,12 @@ public partial class ImageCalculatorDialog : Window
 {
     private readonly long _expectedSize;
 
+    // 参照パスのサイズ照合は入力が止まってから裏で行う(File.Exists・FileInfo は NAS の UNC パスで
+    // 名前解決・SMB のタイムアウトまで止まるため、打鍵ごとに UI スレッドで呼ばない)。
+    // 世代は入力のたびに進め、古い入力の照合結果を捨てる
+    private readonly DispatcherTimer _referenceCheckTimer;
+    private int _referenceCheckGeneration;
+
     /// <summary>ダイアログを生成する。</summary>
     /// <param name="sourceName">対象画像(A)の表示名。</param>
     /// <param name="initialFolder">参照ファイル選択の初期フォルダ。</param>
@@ -28,6 +35,16 @@ public partial class ImageCalculatorDialog : Window
         SourceText.Text = $"対象 A: {sourceName}";
         Tag = initialFolder;
         OperationCombo.SelectedIndex = 0;
+        _referenceCheckTimer = new DispatcherTimer(DispatcherPriority.Background, Dispatcher)
+        {
+            Interval = TimeSpan.FromMilliseconds(300),
+        };
+        _referenceCheckTimer.Tick += OnReferenceCheckTick;
+        Closed += (_, _) =>
+        {
+            _referenceCheckTimer.Stop();
+            _referenceCheckGeneration++;
+        };
     }
 
     /// <summary>「実行」で確定された選択。</summary>
@@ -78,29 +95,53 @@ public partial class ImageCalculatorDialog : Window
 
     private void OnReferenceChanged(object sender, RoutedEventArgs e)
     {
-        if (NoteText is null)
+        if (NoteText is null || _referenceCheckTimer is null)
         {
             return;
         }
 
-        string path = ReferenceBox.Text.Trim();
-        if (File.Exists(path) && _expectedSize > 0 && IsRawPath(path))
+        // 前の入力の警告は消し、入力が止まってから照合し直す
+        _referenceCheckGeneration++;
+        NoteText.Visibility = Visibility.Collapsed;
+        _referenceCheckTimer.Stop();
+        if (_expectedSize > 0 && IsRawPath(ReferenceBox.Text.Trim()))
         {
-            long size = SafeLength(path);
+            _referenceCheckTimer.Start();
+        }
+    }
 
-            // raw参照は対象画像のフォーマットで強制解釈されるため、
-            // 不足だけでなく超過も警告する(超過分は先頭だけ読まれ無警告で通ってしまう)
-            bool mismatch = size >= 0 && size != _expectedSize;
-            NoteText.Text = mismatch
-                ? $"⚠ ファイルサイズが一致しません ({size:N0} / 期待 {_expectedSize:N0} バイト)。" +
-                  "対象画像のフォーマットで解釈されるため結果が正しくない可能性があります"
-                : "";
-            NoteText.Visibility = mismatch ? Visibility.Visible : Visibility.Collapsed;
-        }
-        else
+    private async void OnReferenceCheckTick(object? sender, EventArgs e)
+    {
+        _referenceCheckTimer.Stop();
+        int generation = _referenceCheckGeneration;
+        string path = ReferenceBox.Text.Trim();
+        long expectedSize = _expectedSize;
+        string? note = await Task.Run(() => DescribeSizeMismatch(path, expectedSize));
+        if (generation != _referenceCheckGeneration)
         {
-            NoteText.Visibility = Visibility.Collapsed;
+            return; // 照合中に入力が変わった・閉じた
         }
+
+        NoteText.Text = note ?? "";
+        NoteText.Visibility = note is null ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    /// <summary>参照ファイルのサイズが期待と違えば警告文を返す(ファイルシステムに触れるので UI スレッドで呼ばない)。</summary>
+    private static string? DescribeSizeMismatch(string path, long expectedSize)
+    {
+        if (!File.Exists(path))
+        {
+            return null;
+        }
+
+        long size = SafeLength(path);
+
+        // raw参照は対象画像のフォーマットで強制解釈されるため、
+        // 不足だけでなく超過も警告する(超過分は先頭だけ読まれ無警告で通ってしまう)
+        return size >= 0 && size != expectedSize
+            ? $"⚠ ファイルサイズが一致しません ({size:N0} / 期待 {expectedSize:N0} バイト)。" +
+              "対象画像のフォーマットで解釈されるため結果が正しくない可能性があります"
+            : null;
     }
 
     private static bool IsRawPath(string path)
