@@ -11,12 +11,13 @@ public class FileNameFilterTests
     [InlineData(".raw", "dark_001.tif", false)]            // 拡張子
     [InlineData(".RAW", "dark_001.raw", true)]             // 大文字小文字を区別しない
     [InlineData("*.raw;*.tif", "scene.TIF", true)]         // 複数条件の OR(; 区切り)
-    [InlineData("*.raw, *.tif", "scene.png", false)]       // , 区切り
+    [InlineData("*.raw, *.tif", "a.raw", true)]            // , 区切り(区切らないと "*.raw," になって一致しない)
     [InlineData(".tif .tiff", "scan.tiff", true)]          // 空白区切りの拡張子
     [InlineData("dark*", "dark_001.raw", true)]            // 前方一致
     [InlineData("dark*", "flat_dark.raw", false)]          // ワイルドカードは名前全体に掛かる
     [InlineData("img_00?.raw", "img_007.raw", true)]       // ? は 1 文字
     [InlineData("img_00?.raw", "img_0071.raw", false)]
+    [InlineData("*.raw", "a.raw.bak", false)]              // ワイルドカードは名前の末尾まで
     [InlineData("dark", "flat_dark.raw", true)]            // 素の語は部分一致
     [InlineData("a.b", "a+b.raw", false)]                  // . を含む語もワイルドカードでなければ部分一致(正規表現ではない)
     [InlineData(@"/^img_\d{3}\.raw$/", "img_12.raw", false)]  // 正規表現
