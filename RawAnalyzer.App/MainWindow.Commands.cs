@@ -542,6 +542,7 @@ public partial class MainWindow
                 Id = "roi-center",
                 Category = "操作モード",
                 Title = "中央に ROI を設定 (画像の1/4)",
+                Description = "HDR分割表示では調整対象の段(全体なら長秒)の中央に置く",
                 Key = Key.G,
                 Modifiers = ModifierKeys.Control | ModifierKeys.Shift,
                 CanExecute = MainViewAvailable,
@@ -746,7 +747,7 @@ public partial class MainWindow
         return list;
     }
 
-    /// <summary>画像中央に画像の1/4サイズのROIを設定する。</summary>
+    /// <summary>画像中央に画像の1/4サイズのROIを設定する(HDR分割ビューでは調整対象の段の中央)。</summary>
     private void SetCenterRoi()
     {
         if (ActiveImage is not { } image)
@@ -765,10 +766,13 @@ public partial class MainWindow
             return;
         }
 
-        int width = Math.Max(1, image.Width / 2);
-        int height = Math.Max(1, image.Height / 2);
-        Viewport.SetRoi(new Core.RegionOfInterest(
-            (image.Width - width) / 2, (image.Height - height) / 2, width, height));
+        // HDR分割ビューは段を横に並べた画像で、全体の中央は段の継ぎ目になる(露光の違う画素を混ぜた統計になる)。
+        // 調整対象の段(「全体」なら長秒)の中央に置く
+        Core.RegionOfInterest roi = _hdrFrameParams is { Length: > 0 } stages && _hdrSegmentWidth > 0
+            ? CenterRoi.Compute(image.Width, image.Height, _hdrSegmentWidth,
+                CenterRoi.StageForTarget(HdrTargetCombo.SelectedIndex, stages.Length))
+            : CenterRoi.Compute(image.Width, image.Height);
+        Viewport.SetRoi(roi);
         RoiToggle.IsChecked = true;
     }
 }
