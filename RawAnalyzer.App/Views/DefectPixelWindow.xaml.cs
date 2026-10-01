@@ -2,7 +2,10 @@
 using System.IO;
 using System.Text;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Media;
+using System.Windows.Media.Media3D;
 using Microsoft.Win32;
 using RawAnalyzer.App.Services;
 using RawAnalyzer.Core;
@@ -256,10 +259,43 @@ public partial class DefectPixelWindow : Window
 
     private void OnListDoubleClick(object sender, MouseButtonEventArgs e)
     {
-        if (DefectList.SelectedItem is DefectRow row)
+        if (IsRowDoubleClick(e.OriginalSource as DependencyObject, e.ChangedButton)
+            && DefectList.SelectedItem is DefectRow row)
         {
             DefectActivated?.Invoke(row.Source);
         }
+    }
+
+    /// <summary>一覧のダブルクリックが、行(ListViewItem)の上での左ボタンのダブルクリックか。</summary>
+    /// <remarks>
+    /// Control.MouseDoubleClick は処理済みのマウス押下にも発火し、右ボタンでも発火する。ListView 全体で受けると、
+    /// スクロールバーの矢印・つまみ、列見出し(境界のダブルクリックで列幅を合わせる)のダブルクリックや右ボタンの
+    /// ダブルクリックでも、選択中の行の欠陥へ移動して拡大してしまう。押した要素から ListView までの間に行がある
+    /// ときだけ移動する。
+    /// </remarks>
+    /// <param name="originalSource">押した要素(MouseButtonEventArgs.OriginalSource)。</param>
+    /// <param name="changedButton">押したボタン。</param>
+    /// <returns>行の上での左ボタンのダブルクリックならtrue。</returns>
+    internal static bool IsRowDoubleClick(DependencyObject? originalSource, MouseButton changedButton)
+    {
+        if (changedButton != MouseButton.Left)
+        {
+            return false;
+        }
+
+        // 行の中の文字(Run)はビジュアルではないので、論理ツリーの親もたどる
+        for (DependencyObject? element = originalSource; element is not null and not ListView;)
+        {
+            if (element is ListViewItem)
+            {
+                return true;
+            }
+
+            DependencyObject? parent = element is Visual or Visual3D ? VisualTreeHelper.GetParent(element) : null;
+            element = parent ?? LogicalTreeHelper.GetParent(element);
+        }
+
+        return false;
     }
 
     /// <summary>コピー(Excel用)・CSV保存に使う一覧の表を作る。</summary>

@@ -1,4 +1,6 @@
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
+using System.Windows.Input;
 using RawAnalyzer.App.Services;
 using RawAnalyzer.App.Views;
 using RawAnalyzer.Core;
@@ -243,6 +245,31 @@ public class DefectPixelWindowTests
         Assert.False(((Button)window.FindName("CorrectButton")).IsEnabled);
         Assert.Equal("x,y,raw_code,type", window.BuildTable(',')!.TrimEnd());
         window.Close();
+    });
+
+    [Fact]
+    public Task DoubleClickOnRow_JumpsButScrollBarHeaderAndRightButtonDoNot() => WpfTestHost.Run(() =>
+    {
+        // 一覧の行をダブルクリックするとその欠陥へ移動する。以前は ListView 全体の MouseDoubleClick で受けて
+        // いたため、スクロールバーの▼を素早く2回押す・列見出しの境界をダブルクリックして列幅を合わせる・
+        // 右ボタンでダブルクリックするだけでも、選択中の行の欠陥へ移動して32倍に拡大していた
+        var cell = new TextBlock();
+        cell.Inlines.Add(new System.Windows.Documents.Run("12"));
+        var row = new ListViewItem { Content = cell };
+        var run = (System.Windows.Documents.Run)cell.Inlines.FirstInline;
+
+        Assert.True(DefectPixelWindow.IsRowDoubleClick(cell, MouseButton.Left));
+        Assert.True(DefectPixelWindow.IsRowDoubleClick(run, MouseButton.Left));
+        Assert.True(DefectPixelWindow.IsRowDoubleClick(row, MouseButton.Left));
+        Assert.False(DefectPixelWindow.IsRowDoubleClick(cell, MouseButton.Right));
+
+        var list = new ListView();
+        var scrollBar = new ScrollBar();
+        var header = new GridViewColumnHeader { Content = scrollBar };
+        Assert.False(DefectPixelWindow.IsRowDoubleClick(scrollBar, MouseButton.Left));
+        Assert.False(DefectPixelWindow.IsRowDoubleClick(header, MouseButton.Left));
+        Assert.False(DefectPixelWindow.IsRowDoubleClick(list, MouseButton.Left));
+        Assert.False(DefectPixelWindow.IsRowDoubleClick(null, MouseButton.Left));
     });
 
     private const string HdrReason = DefectCorrectionAvailability.HdrRefusal;
