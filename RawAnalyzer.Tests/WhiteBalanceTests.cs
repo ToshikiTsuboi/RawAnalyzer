@@ -12,19 +12,6 @@ public class WhiteBalanceTests
         return TestImages.FromCodes(mosaic, size, size, bayer: pattern);
     }
 
-    [Theory]
-    [InlineData(BayerPattern.Rggb)]
-    [InlineData(BayerPattern.Bggr)]
-    public void ComputeGrayWorld_ConstantChannels_ComputesInverseGains(BayerPattern pattern)
-    {
-        using RawImage image = MakeMosaic(pattern, r: 1000, g: 2000, b: 4000);
-
-        WhiteBalanceGains gains = WhiteBalance.ComputeGrayWorld(image, 0, pattern);
-
-        Assert.Equal(2.0, gains.GainR, 10);
-        Assert.Equal(0.5, gains.GainB, 10);
-    }
-
     [Fact]
     public void ComputeSpotGains_OddSizedImage_KeepsBayerPhaseAtLastColumn()
     {

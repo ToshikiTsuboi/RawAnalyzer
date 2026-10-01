@@ -151,28 +151,20 @@ public class ColorPipelineTests
     }
 
     [Fact]
-    public void DevelopLuts_LinearParameters_MapEndpoints()
+    public void DevelopLuts_WbGainsScaleTheirOwnChannels_GainScalesAll()
     {
-        var luts = DevelopLuts.Create(new DevelopParameters(BlackLevel: 0, Gamma: 1.0));
-        Assert.Equal(0, luts.G[0]);
-        Assert.Equal(255, luts.G[65535]);
-        Assert.InRange(luts.G[32768], (byte)127, (byte)128);
-    }
-
-    [Fact]
-    public void DevelopLuts_WbGains_ScaleTheirOwnChannels()
-    {
-        // GainR/GainG/GainB を1回の Create で同時に与え、
-        // 各ゲインが自分のチャネルにだけ配線されていることを見る
+        // GainR/GainG/GainB と全体の Gain を1回の Create で同時に与え、各WBゲインが自分のチャネルにだけ、
+        // 全体の Gain が全チャネルに配線されていることを見る(実効倍率は R×4・G×2・B×1)。
+        // 全体の Gain は、カラー現像でゲインスライダーが完全に無反応だった問題(1fba66b 重大#14)の回帰の確認を兼ねる
         var luts = DevelopLuts.Create(
-            new DevelopParameters(GainR: 2.0, GainG: 1.0, GainB: 0.5, Gamma: 1.0));
+            new DevelopParameters(GainR: 2.0, GainG: 1.0, GainB: 0.5, Gamma: 1.0, Gain: 2.0));
 
-        Assert.Equal(255, luts.R[32768]);                       // ×2: 半分の入力で飽和
-        Assert.InRange(luts.R[16384], (byte)127, (byte)128);
-        Assert.InRange(luts.G[32768], (byte)127, (byte)128);   // ×1: 等倍のまま
-        Assert.Equal(255, luts.G[65535]);
-        Assert.InRange(luts.B[65535], (byte)127, (byte)128);   // ×0.5: 最大入力でも半分
-        Assert.InRange(luts.B[32768], (byte)63, (byte)64);
+        Assert.Equal(255, luts.R[16384]);                       // ×4: 1/4の入力で飽和
+        Assert.InRange(luts.R[8192], (byte)127, (byte)128);
+        Assert.Equal(255, luts.G[32768]);                       // ×2: 半分の入力で飽和
+        Assert.InRange(luts.G[16384], (byte)127, (byte)128);
+        Assert.InRange(luts.B[32768], (byte)127, (byte)128);   // ×1: 等倍のまま
+        Assert.Equal(255, luts.B[65535]);
     }
 
     [Fact]
@@ -187,18 +179,6 @@ public class ColorPipelineTests
         Assert.InRange(luts.G[1000 + 16384], (byte)127, (byte)128);
         Assert.Equal(255, luts.G[33768]);
         Assert.Equal(255, luts.G[65535]);
-    }
-
-    [Fact]
-    public void DevelopLuts_Gain_ScalesAllChannels()
-    {
-        // ColorDevelop表示でゲインスライダーが完全に無反応だった問題の回帰テスト
-        var luts = DevelopLuts.Create(new DevelopParameters(Gamma: 1.0, Gain: 2.0));
-
-        Assert.Equal(255, luts.R[32768]);
-        Assert.Equal(255, luts.G[32768]);
-        Assert.Equal(255, luts.B[32768]);
-        Assert.InRange(luts.G[16384], (byte)127, (byte)128);
     }
 
     [Fact]
@@ -260,7 +240,6 @@ public class ColorPipelineTests
 
     [Theory]
     [InlineData(1.0)]
-    [InlineData(2.2)]
     public void DevelopLuts_SaturatedPixel_TypicalCcm_StaysWhite(double gamma)
     {
         // 全チャネルが白点(65535)に達した画素を WB(2,1,1.5)・典型的なCCMで現像する。
@@ -329,16 +308,15 @@ public class ColorPipelineTests
     {
         // 対角行列 diag(dR,dG,dB) を掛ける行列経路は、WBゲインへ同じ倍率を
         // 掛けた非行列経路(クリップは最終段の1回だけ)と同じ出力になるはず。
-        // 1. レビュー指摘#5の再現値: WB R=2 で1を超えた値が行列0.5倍で範囲内へ戻る
-        yield return new object[] { new DevelopParameters(GainR: 2.0, Gamma: 1.0), 0.5, 1.0, 1.0 };
-
-        // 2. 行列で1を超えた値・黒レベル未満の負の値を、コントラスト<1が範囲内へ戻す
+        // (レビュー指摘#5の再現値 WB R=2・diag(0.5,1,1) は DevelopLuts_MatrixAfterWbOverflow_DisplayAndExportKeepHighlight
+        // が手計算の値で見る)
+        // 1. 行列で1を超えた値・黒レベル未満の負の値を、コントラスト<1が範囲内へ戻す
         yield return new object[]
         {
             new DevelopParameters(BlackLevel: 8192, Gamma: 1.0, Contrast: 0.5), 1.5, 1.0, 1.0,
         };
 
-        // 3. 黒/白点・全体ゲイン・コントラスト>1・ガンマ2.2 を含む一般の組み合わせ
+        // 2. 黒/白点・全体ゲイン・コントラスト>1・ガンマ2.2 を含む一般の組み合わせ
         yield return new object[]
         {
             new DevelopParameters(

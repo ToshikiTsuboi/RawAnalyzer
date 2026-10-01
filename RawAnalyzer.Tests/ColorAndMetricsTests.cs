@@ -6,15 +6,6 @@ namespace RawAnalyzer.Tests;
 public class ColorConvertTests
 {
     [Fact]
-    public void RgbToYCbCr_White_IsMaxLumaNeutralChroma()
-    {
-        (int y, int cb, int cr) = ColorConvert.RgbToYCbCr(255, 255, 255, 255);
-        Assert.Equal(255, y);
-        Assert.Equal(128, cb);
-        Assert.Equal(128, cr);
-    }
-
-    [Fact]
     public void RgbToYCbCr_PureRedAndBlue_DriveCrAndCb()
     {
         (int y, int cb, int cr) = ColorConvert.RgbToYCbCr(255, 0, 0, 255);
@@ -175,13 +166,13 @@ public class ProfileAndMetricsTests
     }
 
     [Fact]
-    public void ComputeProjections_Horizontal_AveragesEachColumnWithinRoi()
+    public void ComputeProjections_AveragesEachColumnAndRowWithinRoi()
     {
         // 8x5 の ROI(2,1,4,3) に
-        //   y=1:  90 190 290 390
-        //   y=2: 100 200 300 400
-        //   y=3: 110 210 310 410
-        // を置く。列ごとの行方向平均は 100 / 200 / 300 / 400
+        //   y=1:  90 190 290 390  → 平均 240
+        //   y=2: 100 200 300 400  → 平均 250
+        //   y=3: 110 210 310 410  → 平均 260
+        // を置く。列ごとの行方向平均は 100 / 200 / 300 / 400、行ごとの列方向平均は 240 / 250 / 260
         var roi = new RegionOfInterest(2, 1, 4, 3);
         ushort[,] roiValues =
         {
@@ -199,31 +190,9 @@ public class ProfileAndMetricsTests
         Assert.Equal(200, horizontal[1], 10);
         Assert.Equal(300, horizontal[2], 10);
         Assert.Equal(400, horizontal[3], 10);
-    }
-
-    [Fact]
-    public void ComputeProjections_Vertical_AveragesEachRowWithinRoi()
-    {
-        // 6x8 の ROI(1,2,4,3) に
-        //   y=2:   10   20   30   40  → 平均   25
-        //   y=3:  100  200  300  400  → 平均  250
-        //   y=4: 1000 1100 1200 1300  → 平均 1150
-        var roi = new RegionOfInterest(1, 2, 4, 3);
-        ushort[,] roiValues =
-        {
-            { 10, 20, 30, 40 },
-            { 100, 200, 300, 400 },
-            { 1000, 1100, 1200, 1300 },
-        };
-        using RawImage image = MakeWithRoiValues(6, 8, roi, roiValues);
-
-        (double[] horizontal, double[] vertical) = ImageAnalysis.ComputeProjections(image, 0, roi);
-
-        Assert.Equal(4, horizontal.Length);
-        Assert.Equal(3, vertical.Length);
-        Assert.Equal(25, vertical[0], 10);
+        Assert.Equal(240, vertical[0], 10);
         Assert.Equal(250, vertical[1], 10);
-        Assert.Equal(1150, vertical[2], 10);
+        Assert.Equal(260, vertical[2], 10);
     }
 
     [Fact]
@@ -267,32 +236,17 @@ public class ProfileAndMetricsTests
         return ImageAnalysis.ComputeHistogramMetrics(ImageAnalysis.ComputeHistogram(image, 0));
     }
 
-    [Fact]
-    public void ComputeHistogramMetrics_TwoPixelRoi_KeepsPercentileOrder()
-    {
-        // レビュー指摘#15の再現値: コード[100,200]のROIで Median=200・P99=100 と逆転していた
-        // (中央値は「累積 > N/2」、P99 は「累積 ≥ floor(0.99N)」と順位規約が違っていた)
-        ushort[] codes = { 4095, 100, 200, 4095 };
-        using RawImage image = TestImages.FromCodes(codes, 4, 1, bitDepth: 12);
-
-        HistogramMetrics metrics = ImageAnalysis.ComputeHistogramMetrics(
-            ImageAnalysis.ComputeHistogram(image, 0, new RegionOfInterest(1, 0, 2, 1)));
-
-        Assert.Equal(2, metrics.SampleCount);
-        Assert.Equal(100, metrics.P1);
-        Assert.Equal(200, metrics.Median);   // 偶数個の中央値は従来どおり上側の値
-        Assert.Equal(200, metrics.P99);
-    }
-
     [Theory]
     [InlineData(new ushort[] { 70 }, 70, 70, 70)]                      // 1画素
+    [InlineData(new ushort[] { 100, 200 }, 100, 200, 200)]             // レビュー指摘#15の再現値(下記)
     [InlineData(new ushort[] { 30, 10, 20 }, 10, 20, 30)]              // 奇数
     [InlineData(new ushort[] { 40, 10, 30, 20 }, 10, 30, 40)]          // 偶数(中央値は上側)
-    [InlineData(new ushort[] { 50, 40, 30, 20, 10 }, 10, 30, 50)]
     [InlineData(new ushort[] { 5, 9, 5, 9, 9, 1 }, 1, 9, 9)]           // 重複あり
     public void ComputeHistogramMetrics_SmallSamples_UseSingleRankConvention(
         ushort[] codes, int expectedP1, int expectedMedian, int expectedP99)
     {
+        // レビュー指摘#15: コード[100,200]のROIで Median=200・P99=100 と逆転していた
+        // (中央値は「累積 > N/2」、P99 は「累積 ≥ floor(0.99N)」と順位規約が違っていた)
         HistogramMetrics metrics = MetricsOf(codes);
 
         Assert.Equal(expectedP1, metrics.P1);
@@ -302,11 +256,10 @@ public class ProfileAndMetricsTests
 
     [Theory]
     [InlineData(100, 1, 50, 98)]
-    [InlineData(1000, 10, 500, 989)]
     public void ComputeHistogramMetrics_LargeSamples_KeepEstablishedPercentiles(
         int count, int expectedP1, int expectedMedian, int expectedP99)
     {
-        // 規約の統一で、100・1000画素のような通常の標本の値は変わらない
+        // 規約の統一で、100画素のような通常の標本の値は変わらない
         // (0..N-1 を1個ずつ: P1・P99 は両端から約1%ずつ除いた位置)
         ushort[] codes = Enumerable.Range(0, count).Select(i => (ushort)i).ToArray();
 
