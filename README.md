@@ -291,6 +291,7 @@ WICはこれらのページのサンプル形式を正しく返しません
 
 - **DNG / CFA**: `.dng` と Photometric=CFA の TIFF は現像せず、生の Bayer 値として開きます。
   CFAPattern から RGGB / BGGR / GRBG / GBRG を自動設定します (LinearRaw はモノクロ扱い)。
+  CFAPattern は ActiveArea の左上を起点とする配列として読み (DNG の読み手と同じ解釈)、遮光域を含む画像全体の左上を起点とする配列に直して設定します。
   IFD0 がサムネイルで本体が SubIFD にある一般的な DNG も本体を開きます。
   可逆 JPEG 圧縮の DNG と、3 サンプルの LinearRaw (linear DNG) は未対応です (非圧縮で 1 サンプル/画素の CFA / LinearRaw のみ)。
 - **ビット深度**: 10/12/14bit 詰め込みはそのビット深度の画像として開きます (白点は 2^N−1)。

@@ -60,6 +60,48 @@ public class TiffSpecTests
         AssertRamp16(image);
     }
 
+    [Theory]
+    [InlineData(0, 0, BayerPattern.Rggb)]
+    [InlineData(1, 0, BayerPattern.Gbrg)]
+    [InlineData(0, 1, BayerPattern.Grbg)]
+    [InlineData(1, 1, BayerPattern.Bggr)]
+    [InlineData(2, 4, BayerPattern.Rggb)]
+    public void Cfa_PatternOriginIsActiveAreaTopLeft(int top, int left, BayerPattern expected)
+    {
+        // DNG の CFAPattern は ActiveArea の左上を起点とする(DNG SDK・dcraw/LibRaw・rawspeed の解釈)。画像全体の
+        // (0,0) 起点で当てると、ActiveArea の上端・左端が奇数のとき R↔Gb・Gr↔B が入れ替わっていた
+        // (全体レビュー 2026-10-01 B34)。このアプリは遮光域を含む全体を開くので、(0,0) 起点の配列に直して設定する
+        foreach (int bits in new[] { 16, 12 })
+        {
+            int max = (1 << bits) - 1;
+            int[] values = Enumerable.Range(0, W * H).Select(i => i * max / ((W * H) - 1)).ToArray();
+            byte[] samples = bits == 16 ? Ramp16() : TiffBuilder.PackRows(values, W, bits);
+            var page = TiffBuilder.GrayPage(W, H, bits, samples, photometric: TiffLoader.PhotometricCfa);
+            page.Tags[33422] = (1, new byte[] { 0, 1, 1, 2 }); // ActiveArea 起点で RGGB
+            page.Tags[50829] = (4, new long[] { top, left, H, W });
+            using var file = TempTiff.Write(new TiffBuilder().Build(page), ".dng");
+
+            Assert.True(TiffLoader.TryReadSampleInfo(file.Path, out TiffSampleInfo? info));
+            Assert.Equal(expected, info!.Bayer);
+            DecodedImage decoded = ImageFileLoader.Load(file.Path);
+            using RawImage image = decoded.Luminance;
+            Assert.Equal(expected, image.Format.Bayer);
+        }
+    }
+
+    [Fact]
+    public void Cfa_BrokenActiveArea_KeepsPatternAtImageOrigin()
+    {
+        // ActiveArea が読めない(この読み手が扱わない型)ときは従来どおり (0,0) 起点で当て、Bayer の自動設定自体は止めない
+        var page = TiffBuilder.GrayPage(W, H, 16, Ramp16(), photometric: TiffLoader.PhotometricCfa);
+        page.Tags[33422] = (1, new byte[] { 0, 1, 1, 2 });
+        page.Tags[50829] = (5, new byte[] { 1, 0, 0, 0, 1, 0, 0, 0 }); // RATIONAL
+        using var file = TempTiff.Write(new TiffBuilder().Build(page), ".dng");
+
+        Assert.True(TiffLoader.TryProbePixelLayout(file.Path, out TiffPixelLayout? layout, out _));
+        Assert.Equal(BayerPattern.Rggb, layout!.Bayer);
+    }
+
     [Fact]
     public void Cfa8Bit_IsDecodedNativelyWithBayer()
     {

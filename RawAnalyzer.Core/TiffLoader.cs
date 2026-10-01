@@ -126,6 +126,7 @@ public static unsafe class TiffLoader
     private const ushort TagSampleFormat = 339;
     private const ushort TagCfaRepeatPatternDim = 33421;
     private const ushort TagCfaPattern = 33422;
+    private const ushort TagActiveArea = 50829;
 
     /// <summary>PhotometricInterpretation = CFA(DNG/TIFF-EP)。</summary>
     public const int PhotometricCfa = 32803;
@@ -1211,15 +1212,30 @@ public static unsafe class TiffLoader
     }
 
     /// <summary>CFARepeatPatternDim=2×2 の CFAPattern(0=R,1=G,2=B) を Bayer 配列へ写す。</summary>
+    /// <remarks>
+    /// DNG の CFAPattern は ActiveArea の左上を起点とする(DNG SDK・dcraw/LibRaw・rawspeed の解釈)。このアプリは
+    /// 遮光域を含む画像全体を開くので、ActiveArea の上端・左端の偶奇だけずらして画像全体の (0,0) 起点の配列にする
+    /// (ずらさないと奇数のとき R↔Gb・Gr↔B が入れ替わる)。
+    /// </remarks>
     private static BayerPattern ReadCfaPattern(List<IfdEntry> entries, TiffBytes data, TiffHeader header)
     {
         try
         {
             long[]? dim = GetArray(entries, data, TagCfaRepeatPatternDim, header);
-            long[]? pattern = GetArray(entries, data, TagCfaPattern, header);
-            if (pattern is null || pattern.Length < 4 || (dim is not null && (dim.Length < 2 || dim[0] != 2 || dim[1] != 2)))
+            long[]? relative = GetArray(entries, data, TagCfaPattern, header);
+            if (relative is null || relative.Length < 4 || (dim is not null && (dim.Length < 2 || dim[0] != 2 || dim[1] != 2)))
             {
                 return BayerPattern.None;
+            }
+
+            (int rowPhase, int columnPhase) = ReadActiveAreaPhase(entries, data, header);
+            var pattern = new long[4];
+            for (int row = 0; row < 2; row++)
+            {
+                for (int column = 0; column < 2; column++)
+                {
+                    pattern[(row * 2) + column] = relative[(((row + rowPhase) & 1) * 2) + ((column + columnPhase) & 1)];
+                }
             }
 
             return (pattern[0], pattern[1], pattern[2], pattern[3]) switch
@@ -1234,6 +1250,24 @@ public static unsafe class TiffLoader
         catch (InvalidDataException)
         {
             return BayerPattern.None;
+        }
+    }
+
+    /// <summary>
+    /// ActiveArea(上端, 左端, 下端, 右端)の上端・左端の偶奇。タグがない・読めないときは (0, 0)
+    /// (従来どおり画像全体の (0,0) 起点。Bayer の自動設定は止めない)。
+    /// </summary>
+    private static (int Row, int Column) ReadActiveAreaPhase(List<IfdEntry> entries, TiffBytes data, TiffHeader header)
+    {
+        try
+        {
+            return GetArray(entries, data, TagActiveArea, header) is { Length: >= 2 } area && area[0] >= 0 && area[1] >= 0
+                ? ((int)(area[0] & 1), (int)(area[1] & 1))
+                : (0, 0);
+        }
+        catch (InvalidDataException)
+        {
+            return (0, 0);
         }
     }
 
