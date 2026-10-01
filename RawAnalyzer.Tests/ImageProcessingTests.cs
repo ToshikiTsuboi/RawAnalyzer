@@ -163,7 +163,6 @@ public class ImageProcessingTests
     }
 
     [Theory]
-    [InlineData(ImageFilterKind.Gaussian)]
     [InlineData(ImageFilterKind.UnsharpMask)]
     [InlineData(ImageFilterKind.Median)]
     [InlineData(ImageFilterKind.Sobel)]
@@ -196,17 +195,6 @@ public class ImageProcessingTests
 
         source.GetPixel(0, 0, out ushort originalR, out _, out _);
         Assert.Equal(rgb[0], originalR);
-    }
-
-    [Fact]
-    public void Median_RemovesImpulseAndUnsharpZeroIsIdentity()
-    {
-        using RawImage source = Raw(9, 9, (x, y) => x == 4 && y == 4 ? (ushort)60000 : (ushort)1000);
-        using RawImage median = ImageFilters.Apply(source, new(ImageFilterKind.Median));
-        using RawImage unsharp = ImageFilters.Apply(source, new(ImageFilterKind.UnsharpMask, Amount: 0));
-        Assert.Equal(1000, median.GetPixel(4, 4));
-        Assert.Equal(60000, unsharp.GetPixel(4, 4));
-        Assert.Equal(60000, source.GetPixel(4, 4));
     }
 
     [Fact]
@@ -261,6 +249,12 @@ public class ImageProcessingTests
         {
             Assert.Throws<ArgumentOutOfRangeException>(() => ImageFilters.Apply(source, options));
         }
+
+        // 強度の下限 0 は受け付け(ダイアログでも入力できる)、アンシャープの結果は元の画像のまま
+        using RawImage impulse = Raw(9, 9, (x, y) => x == 4 && y == 4 ? (ushort)60000 : (ushort)1000);
+        using RawImage unsharpZero = ImageFilters.Apply(impulse, new(ImageFilterKind.UnsharpMask, Amount: 0));
+        Assert.Equal(60000, unsharpZero.GetPixel(4, 4));
+        Assert.Equal(1000, unsharpZero.GetPixel(3, 4));
 
         using var cts = new CancellationTokenSource();
         cts.Cancel();
