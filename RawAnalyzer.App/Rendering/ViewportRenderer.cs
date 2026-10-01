@@ -259,7 +259,6 @@ public static class ViewportRenderer
                 bool zebra = request.ZebraEnabled;
 
                 // ループ不変の除算を外へ出す(画素ごとの割り算をなくす)
-                double invSegmentWidth = 1.0 / segmentWidth;
                 double invZoomOverFactor = invZoom / factor;
                 double originOverFactor = originX / factor;
                 for (int dx = s.Dx0; dx <= s.Dx1; dx++)
@@ -272,10 +271,12 @@ public static class ViewportRenderer
                             - s.LevelX0,
                         0,
                         s.Count - 1);
+                    // 段は描く画素の列の整数除算で決める。1/段幅 を掛けると、段幅によっては
+                    // 段幅×fl(1/段幅) が1未満になり、境目ちょうどの列が前の段のLUTで描かれる
                     DisplayLut activeLut = segmentLuts is null
                         ? lut
                         : segmentLuts[Math.Clamp(
-                            (int)(srcX * invSegmentWidth), 0, segmentLuts.Count - 1)];
+                            (int)srcX / segmentWidth, 0, segmentLuts.Count - 1)];
                     ushort value = rowBuffer[levelX];
                     byte d = activeLut.Map(value);
                     int o = dx * 4;
