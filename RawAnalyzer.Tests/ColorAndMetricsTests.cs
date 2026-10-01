@@ -73,6 +73,12 @@ public class ColorImageTests
         Assert.Equal(r, buffer[0]);
         Assert.Equal(g, buffer[1]);
         Assert.Equal(b, buffer[2]);
+
+        // 2画素目まで写す(count を終端Xと取り違えると1画素しか写らない)
+        image.GetPixel(2, 1, out ushort r2, out ushort g2, out ushort b2);
+        Assert.Equal(r2, buffer[3]);
+        Assert.Equal(g2, buffer[4]);
+        Assert.Equal(b2, buffer[5]);
     }
 
     [Fact]
@@ -273,7 +279,9 @@ public class ProfileAndMetricsTests
         Assert.Equal(5.0, metrics.ZeroPercent, 6);
         Assert.Equal(0, metrics.Min);
         Assert.Equal(4095, metrics.Max);
-        Assert.True(metrics.DynamicRangeDb > 0);
+
+        // 20·log10(最大code / σ)。σ は母標準偏差 √760573.69 ≈ 872.11 なので 20·log10(4095/872.11) ≈ 13.43
+        Assert.Equal(13.43, metrics.DynamicRangeDb, 2);
     }
 
     /// <summary>1行の12bit画像を作り、全画素のヒストグラム指標を求める。</summary>
