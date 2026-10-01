@@ -1491,7 +1491,8 @@ public sealed class ImageViewport : FrameworkElement
             bool zebraDrawn = _zebraEnabled && _displayMode == ViewportDisplayMode.ChannelSplit;
             if (bayer is not null && !zebraDrawn)
             {
-                int factor = SelectFactorForRender(bayer.SelectFactor(_zoom), fast, bayer.GetLevel);
+                int factor = DeviceScaling.SelectRenderFactor(
+                    bayer.SelectFactor, f => bayer.GetLevel(f) is not null, _zoom, 1.0, fast);
                 if (factor > 1 && bayer.GetLevel(factor) is { } level)
                 {
                     colorImage = level;
@@ -1531,8 +1532,8 @@ public sealed class ImageViewport : FrameworkElement
         TilePyramid? pyramid = _pyramidFrame == _frame ? _pyramid : null;
         int grayFactor = pyramid is null
             ? 1
-            : SelectFactorForRender(
-                pyramid.SelectFactor(_zoom), fast, f => pyramid.GetLevel(f));
+            : DeviceScaling.SelectRenderFactor(
+                pyramid.SelectFactor, f => pyramid.GetLevel(f) is not null, _zoom, 1.0, fast);
 
         if (grayFactor <= 1)
         {
@@ -1542,21 +1543,6 @@ public sealed class ImageViewport : FrameworkElement
         PyramidLevel grayLevel = pyramid!.GetLevel(grayFactor)!;
         return new SelectedSource(
             new PyramidLevelRenderSource(grayLevel, _image.Width, _image.Height), 1);
-    }
-
-    /// <summary>
-    /// 操作中(fast)は1段粗いレベルへ落とす。ただし等倍以上では
-    /// 読み出し画素数が元々少なく利点がないうえ、平均がブロックとして見えるため落とさない。
-    /// </summary>
-    private static int SelectFactorForRender<T>(int factor, bool fast, Func<int, T?> getLevel)
-        where T : class
-    {
-        if (!fast || factor <= 1)
-        {
-            return factor;
-        }
-
-        return getLevel(factor * 2) is not null ? factor * 2 : factor;
     }
 
     private void RequestRender(bool fast)
