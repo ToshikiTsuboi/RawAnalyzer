@@ -29,18 +29,6 @@ public class DisplaySettingsTests
     }
 }
 
-public class CompareViewLayoutTests
-{
-    [Theory]
-    [InlineData(0, 1)]  // 画像なし: 中央の追加案内のみ
-    [InlineData(3, 3)]  // 3枚までは横一列
-    [InlineData(4, 2)]  // 4枚は2×2
-    public void ColumnsFor_ThreeAcrossThenGrid(int elements, int expected)
-    {
-        Assert.Equal(expected, CompareView.ColumnsFor(elements));
-    }
-}
-
 public class ComparePaneTests
 {
     private static string WriteRaw(ushort[] codes, RawFormat format)

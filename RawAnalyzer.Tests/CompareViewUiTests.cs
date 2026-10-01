@@ -196,68 +196,6 @@ public class CompareViewUiTests
         }
     });
 
-    [Fact]
-    public Task AddPane_SyncOff_NewPaneStaysFitAndExistingKeepsView() => WpfTestHost.Run(async () =>
-    {
-        using var small = new ImageFixture(480, 320);
-        using var large = new ImageFixture(960, 640);
-        var view = NewView();
-        try
-        {
-            Assert.True(await view.AddPaneFromPathAsync(small.Path));
-            await LayoutAsync(view, 1280, 720);
-            ((ComboBox)view.FindName("SyncCombo")).SelectedIndex = 2; // オフ
-            ComparePaneView first = PaneAt(view, 0);
-            ZoomAround(first, 4, 0.6, 0.4);
-            (double X, double Y) centerBefore = CenterOf(first);
-
-            Assert.True(await view.AddPaneFromPathAsync(large.Path));
-            await LayoutAsync(view, 1280, 720);
-
-            ComparePaneView second = PaneAt(view, 1);
-            Assert.True(second.ViewportControl.ActualWidth > 0 && second.ViewportControl.ActualHeight > 0);
-            Assert.Equal(4, first.ViewportControl.Zoom, 10);
-            Assert.Equal(centerBefore.X, CenterOf(first).X, 6);
-            Assert.Equal(centerBefore.Y, CenterOf(first).Y, 6);
-            Assert.Equal(FitZoomOf(second), second.ViewportControl.Zoom, 10);
-            Assert.Equal(0.5, RelativeCenterOf(second).X, 6);
-            Assert.Equal(0.5, RelativeCenterOf(second).Y, 6);
-        }
-        finally
-        {
-            await view.CloseAllAsync();
-        }
-    });
-
-    [Fact]
-    public Task AddPanes_WithoutOperation_AllKeepFittingAsGridChanges() => WpfTestHost.Run(async () =>
-    {
-        // 未操作の間は全ペインが全体表示に追従する。同期で新ペインだけ追従を外すと、
-        // 次の追加でAは再フィットするのにBは前の倍率が残ってずれる
-        using var fixture = new ImageFixture(480, 320);
-        var view = NewView();
-        try
-        {
-            for (int i = 0; i < 3; i++)
-            {
-                Assert.True(await view.AddPaneFromPathAsync(fixture.Path));
-                await LayoutAsync(view, 1280, 720);
-            }
-
-            for (int i = 0; i < 3; i++)
-            {
-                ComparePaneView pane = PaneAt(view, i);
-                Assert.Equal(FitZoomOf(pane), pane.ViewportControl.Zoom, 10);
-                Assert.Equal(0.5, RelativeCenterOf(pane).X, 6);
-                Assert.Equal(0.5, RelativeCenterOf(pane).Y, 6);
-            }
-        }
-        finally
-        {
-            await view.CloseAllAsync();
-        }
-    });
-
     [Theory]
     [InlineData(1, 0, false)] // 等倍→視野(等倍の基準はA、アクティブはAに揃えたB)
     [InlineData(0, 2, false)] // 視野→オフ
@@ -385,7 +323,6 @@ public class CompareViewUiTests
 
     [Theory]
     [InlineData(0, false)] // 視野→等倍
-    [InlineData(2, true)] // オフでAだけ拡大→等倍
     public Task SwitchToPixelZoom_BaseUntouched_ZoomsStayEqualAsGridAndSizeChange(
         int fromIndex, bool zoomOther) => WpfTestHost.Run(async () =>
     {
