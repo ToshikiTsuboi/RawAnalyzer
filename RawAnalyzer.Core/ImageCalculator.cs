@@ -34,7 +34,10 @@ public static class ImageCalculator
     /// </param>
     /// <param name="progress">進捗通知(0〜1)。</param>
     /// <param name="cancellationToken">キャンセルトークン。</param>
-    /// <returns>演算結果(Aと同フォーマット・指定CFA、単一フレーム)。</returns>
+    /// <returns>
+    /// 演算結果(Aと同フォーマット・指定CFA、単一フレーム)。行交互HDRは HDR のレイアウト(方式・段数・
+    /// 露光比・ライン単位・行オフセット)を保ち、フレーム連結HDRは1露光だけの結果なので HDR 方式なしになる。
+    /// </returns>
     /// <exception cref="ArgumentException">サイズが一致しない場合。</exception>
     /// <exception cref="InvalidOperationException">結果が大きすぎてヒープ展開できない場合。</exception>
     public static RawImage Apply(
@@ -135,7 +138,29 @@ public static class ImageCalculator
 
         cancellationToken.ThrowIfCancellationRequested();
         progress?.Report(1.0);
-        RawFormat format = source.Format with { FrameCount = 1, Hdr = HdrMode.None, Bayer = cfa };
+        // 行交互HDRは1フレームに全露光を含み、画素ごとの演算は寸法も行の並びも変えないので、HDR のレイアウトを
+        // 保つ(ダーク減算してから HDR 分割・合成できる)。フレーム連結は1フレーム=1露光なので、演算した
+        // 1フレームは HDR ではない
+        HdrMode hdr = IsLineInterleaved(source.Format) ? source.Format.Hdr : HdrMode.None;
+        RawFormat format = source.Format with { FrameCount = 1, Hdr = hdr, Bayer = cfa };
         return RawImage.FromPixels(format, pixels);
+    }
+
+    private static bool IsLineInterleaved(RawFormat format)
+    {
+        if (format.Hdr == HdrMode.None)
+        {
+            return false;
+        }
+
+        try
+        {
+            return HdrSplitter.ResolveLayout(format, format.HdrStages) == HdrMode.LineInterleaved;
+        }
+        catch (InvalidOperationException)
+        {
+            // 格納レイアウトを決められない指定(Auto でフレーム数が1でも段数でもない)は分割もできない
+            return false;
+        }
     }
 }

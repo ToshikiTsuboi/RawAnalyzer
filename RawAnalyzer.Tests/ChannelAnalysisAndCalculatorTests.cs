@@ -268,6 +268,57 @@ public class ImageCalculatorTests
         }
     }
 
+    [Theory]
+    [InlineData(HdrMode.LineInterleaved, 1)]
+    [InlineData(HdrMode.LineInterleaved, 3)]  // 行交互の連続撮影の1フレームも、1フレームに全露光を含む
+    [InlineData(HdrMode.Auto, 1)]             // Auto でフレーム数1は行交互
+    public void LineInterleavedHdr_KeepsHdrLayout_SoItCanBeSplitAfterDarkSubtraction(HdrMode hdr, int frames)
+    {
+        // 行交互HDRの raw をダーク減算してから HDR 合成する手順。演算は画素ごとで行の並びを変えないのに、
+        // 以前は結果を常に Hdr=None にしたため、減算した画像を HDR として分割・合成できなかった
+        // (HDR 方式は読み込みダイアログでしか指定できず、開き直すと減算が消える)
+        RawFormat format = new()
+        {
+            Width = 4, Height = 8, BitDepth = 12, Bayer = BayerPattern.Rggb, FrameCount = frames,
+            Hdr = hdr, HdrStages = 2, ExposureRatio = 8, HdrLineBlock = 2, HdrRowOffset = 0,
+        };
+        ushort[] codes = Enumerable.Range(0, 4 * 8 * frames).Select(i => (ushort)(200 + (i % 50))).ToArray();
+        using RawImage imageA = TestImages.FromCodes(codes, format);
+        using RawImage dark = TestImages.FromCodes(
+            Enumerable.Repeat((ushort)64, 4 * 8).ToArray(), format with { FrameCount = 1 });
+
+        using RawImage result = ImageCalculator.Apply(imageA, dark, ImageOperation.Subtract, frame: frames - 1);
+
+        Assert.Equal(1, result.FrameCount);
+        Assert.Equal(hdr, result.Format.Hdr);
+        Assert.Equal(format.HdrStages, result.Format.HdrStages);
+        Assert.Equal(format.ExposureRatio, result.Format.ExposureRatio);
+        Assert.Equal(format.HdrLineBlock, result.Format.HdrLineBlock);
+        IReadOnlyList<RawImage> stages = HdrSplitter.Split(result);
+        Assert.Equal(2, stages.Count);
+        foreach (RawImage stage in stages)
+        {
+            stage.Dispose();
+        }
+    }
+
+    [Fact]
+    public void FrameSequentialHdr_ResultIsSingleExposureWithoutHdr()
+    {
+        // フレーム連結は1フレーム=1露光。表示中の1フレームだけを演算した結果は HDR ではない(従来どおり)
+        RawFormat format = new()
+        {
+            Width = 4, Height = 4, BitDepth = 12, FrameCount = 2, Hdr = HdrMode.FrameSequential, HdrStages = 2,
+        };
+        using RawImage imageA = TestImages.FromCodes(new ushort[4 * 4 * 2], format);
+        using RawImage dark = TestImages.FromCodes(new ushort[4 * 4], format with { FrameCount = 1, Hdr = HdrMode.None });
+
+        using RawImage result = ImageCalculator.Apply(imageA, dark, ImageOperation.Subtract, frame: 1);
+
+        Assert.Equal(HdrMode.None, result.Format.Hdr);
+        Assert.Equal(1, result.FrameCount);
+    }
+
     [Fact]
     public void Apply_SizeMismatch_Throws()
     {
