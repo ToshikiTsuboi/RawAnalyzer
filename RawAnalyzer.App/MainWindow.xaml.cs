@@ -4205,6 +4205,10 @@ public partial class MainWindow : Window
                 Viewport.SetFrame(index);
                 _sequenceIndex = index;
 
+                // ノイズ測定ウィンドウも、ファイル・ページの送りと同じく前のフレームの結果を消し、対象名に
+                // 送った先のフレームを示す(画像はそのままなので、ダイアログはフレームも含めて照合する)
+                UpdateNoiseWindowSource();
+
                 // カーソル位置の画素値も送った先のフレームから読み直す(再生中も毎フレーム)
                 RefreshCursorReadout();
 
@@ -5061,12 +5065,12 @@ public partial class MainWindow : Window
         if (_noiseWindow is null)
         {
             _noiseWindow = new NoiseMeasureDialog(
-                NoiseSourceName(),
+                NoiseTargetName(),
                 _currentFolder,
                 (1 << ActiveFormat.BitDepth) - 1,
                 HasAnalyzableRoi,
                 ExpectedReferenceSize(),
-                ActiveImage,
+                new AnalysisSource(ActiveImage, Viewport.Frame),
                 TargetRawFileSize())
             {
                 Owner = this,
@@ -5124,6 +5128,14 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
+    /// ノイズ測定ダイアログに出す対象名。マルチフレームなら測るフレームも示す(TIFFのページは
+    /// <see cref="NoiseSourceName"/> に含まれる。画像演算・ビニング・フィルタのダイアログと同じ書式)。
+    /// </summary>
+    private string NoiseTargetName() =>
+        NoiseSourceName() + (_tiffStack is null && ActiveImage is { } image
+            ? CalculationFrameNote(image, Viewport.Frame) : "");
+
+    /// <summary>
     /// 表示中の raw ファイルのバイト数(raw 参照の大きさの照合で、同じ形のファイルを警告しないのに使う)。
     /// raw でなければ0。
     /// </summary>
@@ -5170,14 +5182,15 @@ public partial class MainWindow : Window
             return;
         }
 
-        // 表示中の画像(派生ビューならその画像)が替わったら、ダイアログは前の画像の測定結果を消す
+        // 表示中の画像(派生ビューならその画像)・フレームが替わったら、ダイアログは前の画像・フレームの
+        // 測定結果を消す(フレーム送りでは画像がそのままなので、フレームも含めて照合させる)
         _noiseWindow.UpdateSource(
-            NoiseSourceName(),
+            NoiseTargetName(),
             _currentFolder,
             (1 << ActiveFormat.BitDepth) - 1,
             HasAnalyzableRoi,
             ExpectedReferenceSize(),
-            ActiveImage,
+            ActiveImage is { } image ? new AnalysisSource(image, Viewport.Frame) : null,
             TargetRawFileSize());
     }
 

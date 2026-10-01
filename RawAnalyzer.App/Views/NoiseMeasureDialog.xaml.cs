@@ -66,16 +66,20 @@ public partial class NoiseMeasureDialog : Window
     /// 飽和コードは σ と同じく raw code(対象のビット深度)の単位。ビット深度が変わったら(ビニング・フィルタの
     /// 16bit の結果、HDR合成、ビット深度の違うファイル)、既定値(前の最大code)のままなら新しい最大codeへ、
     /// 入れた値は同じ信号水準のコード(2^Δbit 倍)へ換算する。上限を超える値は上限へ戻す。
-    /// 対象画像が替わったら(<paramref name="source"/> が前回と別のもの)、前の画像の測定結果を消して
-    /// 「未測定」へ戻す。結果の本文には対象の名前・フレーム・ROI が出ないので、残すと新しい名前の下に前の
-    /// 画像の値が並び、「結果をコピー」で新しい画像の値として記録されてしまう。
+    /// 対象画像が替わったら(<paramref name="source"/> が前回と等しくない。フレーム送りでフレームだけが
+    /// 替わったときも含む)、前の画像の測定結果を消して「未測定」へ戻す。結果の本文には対象の名前・フレーム・
+    /// ROI が出ないので、残すと新しい名前の下に前の画像の値が並び、「結果をコピー」で新しい画像の値として
+    /// 記録されてしまう。
     /// </remarks>
     /// <param name="sourceName">対象画像(A)の表示名。</param>
     /// <param name="initialFolder">参照ファイル選択の初期フォルダ。</param>
     /// <param name="maxCode">ビット深度の最大code。</param>
     /// <param name="hasRoi">ROIが選択されているか。</param>
     /// <param name="expectedReferenceSize">raw参照ファイルの期待バイト数(0なら検証しない)。</param>
-    /// <param name="source">対象画像の同一性(差し替えを見分けるのに使う)。</param>
+    /// <param name="source">
+    /// 対象の同一性(差し替え・フレーム送りを見分けるのに使う。<see cref="object.Equals(object?, object?)"/> で
+    /// 照合する。MainWindow は画像とフレームの組を渡す)。
+    /// </param>
     /// <param name="targetFileSize">
     /// 対象(A)の raw ファイルのバイト数(同じ形のファイルも警告しない)。raw でなければ0。
     /// </param>
@@ -88,7 +92,9 @@ public partial class NoiseMeasureDialog : Window
         _expectedReferenceSize = expectedReferenceSize;
         _targetFileSize = targetFileSize;
         _sourceName = sourceName;
-        if (!ReferenceEquals(source, _source))
+
+        // 値で照合する(MainWindow は画像とフレームの組を渡す。フレーム送りでは画像がそのままでも別の対象)
+        if (!Equals(source, _source))
         {
             _source = source;
             _lastResultText = "";

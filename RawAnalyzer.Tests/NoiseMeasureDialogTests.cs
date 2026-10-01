@@ -1,4 +1,5 @@
 using System.Windows.Controls;
+using RawAnalyzer.App.Services;
 using RawAnalyzer.App.Views;
 using RawAnalyzer.Core;
 using Xunit;
@@ -100,6 +101,32 @@ public class NoiseMeasureDialogTests
 
         Assert.Equal(shown, Result(dialog).Text);
         Assert.Equal(shown, dialog.CopyText);
+        dialog.Close();
+    });
+
+    [Fact]
+    public Task ResultOfPreviousFrame_IsClearedWhenFrameChanges() => WpfTestHost.Run(() =>
+    {
+        // 残課題 2026-10-02 A1。マルチフレーム raw のフレーム送りでは画像はそのままでフレームだけが替わる。
+        // 対象を画像だけで見分けていたため、送った後も前のフレームの結果が残り、「結果をコピー」で送った先の
+        // フレームの値として記録されてしまった。MainWindow は対象を画像とフレームの組(AnalysisSource)で渡し、
+        // ダイアログは値で照合する(同じ画像・同じフレームなら、作り直した組でも同じ対象として結果を残す)
+        using RawImage image = TestImages.FromCodes(new ushort[8], new RawFormat
+        {
+            Width = 2, Height = 2, BitDepth = 12, FrameCount = 2,
+        });
+        var dialog = new NoiseMeasureDialog(
+            "dark.raw [フレーム 1/2]", null, 4095, false, 0, new AnalysisSource(image, 0));
+        dialog.ShowResult(Measured, 12, null);
+        string shown = Result(dialog).Text;
+
+        dialog.UpdateSource("dark.raw [フレーム 1/2]", null, 4095, true, 0, new AnalysisSource(image, 0));
+        Assert.Equal(shown, dialog.CopyText);
+
+        dialog.UpdateSource("dark.raw [フレーム 2/2]", null, 4095, false, 0, new AnalysisSource(image, 1));
+        Assert.Equal("", dialog.CopyText);
+        Assert.DoesNotContain("2.100", Result(dialog).Text);
+        Assert.Equal("対象 A: dark.raw [フレーム 2/2]", ((TextBlock)dialog.FindName("SourceText")).Text);
         dialog.Close();
     });
 
