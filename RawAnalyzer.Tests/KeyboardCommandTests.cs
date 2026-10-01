@@ -178,4 +178,19 @@ public class KeyboardCommandTests
     {
         Assert.Equal(expected, CommandPaletteWindow.Matches(query, target));
     }
+
+    /// <summary>
+    /// IME をオンのまま打った検索語(語の間の全角スペース、全角英字)でも一致する。
+    /// 以前は半角スペースでしか区切らず、「ヒストグラム　コピー」は1語として探して何にも一致しなかった。
+    /// </summary>
+    [Theory]
+    [InlineData("ヒストグラム　コピー", "解析 ヒストグラムをクリップボードへコピー", true)]
+    [InlineData("ヒストグラム　欠陥", "解析 ヒストグラムをクリップボードへコピー", false)] // 全語一致は従来どおり
+    [InlineData("ヒストグラム\tコピー", "解析 ヒストグラムをクリップボードへコピー", true)]
+    [InlineData("ＲＯＩ", "ROI ROIを解除", true)]  // 全角英字
+    [InlineData("ｒｏｉ", "ROI ROIを解除", true)]  // 全角英字(大小文字も区別しない)
+    public void Matches_SplitsOnAnyWhitespace_AndIgnoresWidth(string query, string target, bool expected)
+    {
+        Assert.Equal(expected, CommandPaletteWindow.Matches(query, target));
+    }
 }

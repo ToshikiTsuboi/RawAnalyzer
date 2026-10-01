@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -41,15 +42,21 @@ public partial class CommandPaletteWindow : Window
     /// <summary>
     /// 空白区切りの語をすべて含むものを順に残す(語順は問わない)。
     /// </summary>
+    /// <remarks>
+    /// IME をオンのまま打つと、語の間のスペースは全角(U+3000)に、英字は全角になることがある。
+    /// 区切りは全角スペースを含むすべての空白とし、照合は大小文字・全角半角・ひらがなカタカナを区別しない。
+    /// 以前は半角スペースでしか区切らず、「ヒストグラム　コピー」を1語として探して何にも一致しなかった。
+    /// </remarks>
     /// <param name="query">検索文字列。</param>
     /// <param name="target">検索対象。</param>
     /// <returns>一致するならtrue。</returns>
     internal static bool Matches(string query, string target)
     {
-        string[] terms = query.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        CompareInfo compare = CultureInfo.InvariantCulture.CompareInfo;
+        string[] terms = query.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
         foreach (string term in terms)
         {
-            if (target.IndexOf(term, StringComparison.OrdinalIgnoreCase) < 0)
+            if (compare.IndexOf(target, term, SearchOptions) < 0)
             {
                 return false;
             }
@@ -57,6 +64,9 @@ public partial class CommandPaletteWindow : Window
 
         return true;
     }
+
+    private const CompareOptions SearchOptions =
+        CompareOptions.IgnoreCase | CompareOptions.IgnoreWidth | CompareOptions.IgnoreKanaType;
 
     private void ApplyFilter(string query)
     {
