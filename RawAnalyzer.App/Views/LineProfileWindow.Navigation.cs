@@ -190,8 +190,14 @@ public partial class LineProfileWindow
     private void DrawHorizontalAxis(double width, double height)
     {
         XAxisCanvas.Children.Clear();
+        // チャネル分割表示の射影は ROI を描いた分割表示(タイル)の座標で出す。元画像の列・行と読み違えないよう示す
+        bool splitView = UseSplitViewCoordinates;
         XAxisTitle.Text = $"{(IsHorizontal ? "水平" : "垂直")}{(UseProjection ? " ROI平均射影" : "プロファイル")}" +
-            $" — {(IsHorizontal ? "x" : "y")}座標 [px・画像座標]";
+            $" — {(IsHorizontal ? "x" : "y")}座標 [px・{(splitView ? "チャネル分割表示の座標" : "画像座標")}]";
+        XAxisCanvas.ToolTip = splitView
+            ? "チャネル分割表示(R/Gr/Gb/B の2×2並置)上で ROI を描いた座標。元画像の列・行ではありません。" +
+              "ホイールで横軸だけ拡大・縮小できます。"
+            : "元画像上の画素座標。ホイールで横軸だけ拡大・縮小できます。";
         if (CurrentData.Length == 0 || width < 4) return;
         ProfileAxisRange horizontal = HorizontalRange;
         var coordinates = new ProfileAxisRange(horizontal.Minimum + CoordinateOffset, horizontal.Maximum + CoordinateOffset);

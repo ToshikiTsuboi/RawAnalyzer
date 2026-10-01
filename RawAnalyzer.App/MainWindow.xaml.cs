@@ -1430,7 +1430,7 @@ public partial class MainWindow : Window
         {
             _profileWindow.SetProfiles(
                 data.Row, data.Column, data.HorizontalProjection, data.VerticalProjection, projectionRoi,
-                sourceX, sourceY, maxCode);
+                sourceX, sourceY, maxCode, projectionInSplitView: target is ChannelRoiTarget);
 
             // 表示座標(e.X, e.Y)で渡すと、分割⇔非分割の切替後にプロファイルと別の行・列を指す
             Viewport.SetProfileMarker(sourceX, sourceY, _profileWindow.IsHorizontal);

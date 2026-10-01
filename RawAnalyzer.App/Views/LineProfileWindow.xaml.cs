@@ -24,6 +24,9 @@ public partial class LineProfileWindow : Window
     private double[] _verticalProjection = Array.Empty<double>();
     private RegionOfInterest? _roi;
 
+    // チャネル分割表示で描いたROIの射影か(射影の座標は元画像ではなく分割表示(タイル)の座標)
+    private bool _projectionInSplitView;
+
     // 統計のキャッシュ(算出元の配列参照が変わったときだけ再計算する)
     private double[]? _statsSource;
     private ProfileStatistics _stats;
@@ -135,6 +138,9 @@ public partial class LineProfileWindow : Window
     /// <param name="pointX">基準点X(元画像の座標。クリックした点、送り・差し替えの後は同じ点)。</param>
     /// <param name="pointY">基準点Y(元画像の座標)。</param>
     /// <param name="maxCode">ビット深度の最大raw code。</param>
+    /// <param name="projectionInSplitView">
+    /// チャネル分割表示で描いたROIの射影か。射影の座標は元画像ではなく、ROIを描いた分割表示(タイル)の座標になる。
+    /// </param>
     public void SetProfiles(
         double[] rowProfile,
         double[] columnProfile,
@@ -143,10 +149,11 @@ public partial class LineProfileWindow : Window
         RegionOfInterest? roi,
         int pointX,
         int pointY,
-        int maxCode)
+        int maxCode,
+        bool projectionInSplitView = false)
     {
         ApplyData(rowProfile, columnProfile, horizontalProjection, verticalProjection, roi,
-            pointX, pointY, maxCode, outsideImage: null);
+            pointX, pointY, maxCode, outsideImage: null, projectionInSplitView);
     }
 
     /// <summary>
@@ -165,7 +172,7 @@ public partial class LineProfileWindow : Window
     public void ShowOutsideImage(int pointX, int pointY, int imageWidth, int imageHeight, int maxCode)
     {
         ApplyData(Array.Empty<double>(), Array.Empty<double>(), Array.Empty<double>(), Array.Empty<double>(),
-            null, pointX, pointY, maxCode, (imageWidth, imageHeight));
+            null, pointX, pointY, maxCode, (imageWidth, imageHeight), projectionInSplitView: false);
     }
 
     private void ApplyData(
@@ -177,7 +184,8 @@ public partial class LineProfileWindow : Window
         int pointX,
         int pointY,
         int maxCode,
-        (int Width, int Height)? outsideImage)
+        (int Width, int Height)? outsideImage,
+        bool projectionInSplitView)
     {
         int previousCount = CurrentData.Length;
         int previousOffset = CoordinateOffset;
@@ -191,6 +199,7 @@ public partial class LineProfileWindow : Window
         _horizontalProjection = horizontalProjection;
         _verticalProjection = verticalProjection;
         _roi = roi;
+        _projectionInSplitView = projectionInSplitView;
         _pointX = pointX;
         _pointY = pointY;
         _maxCode = Math.Max(1, maxCode);
@@ -208,6 +217,9 @@ public partial class LineProfileWindow : Window
 
     private bool UseProjection => ProjectionCheck?.IsChecked == true
         && _horizontalProjection.Length > 0;
+
+    /// <summary>表示中の射影の座標がチャネル分割表示(タイル)の座標か(断面は分割表示でも元画像の座標)。</summary>
+    private bool UseSplitViewCoordinates => UseProjection && _projectionInSplitView;
 
     private double[] CurrentData => (IsHorizontal, UseProjection) switch
     {
@@ -388,7 +400,8 @@ public partial class LineProfileWindow : Window
         }
 
         var sb = new StringBuilder();
-        sb.Append(IsHorizontal ? "x" : "y").Append(separator).Append("value").AppendLine();
+        sb.Append(IsHorizontal ? "x" : "y").Append(UseSplitViewCoordinates ? "_display" : "")
+            .Append(separator).Append("value").AppendLine();
         for (int i = 0; i < data.Length; i++)
         {
             sb.Append((long)i + CoordinateOffset).Append(separator)

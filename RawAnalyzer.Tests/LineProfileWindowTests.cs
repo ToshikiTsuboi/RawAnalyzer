@@ -280,6 +280,44 @@ public class LineProfileWindowTests
     });
 
     [Fact]
+    public Task SplitViewProjection_LabelsAxisAndTableAsDisplayCoordinates() => WpfTestHost.Run(() =>
+    {
+        // 全体レビュー 2026-10-01 B88。チャネル分割表示の ROI 平均射影は、ROI を描いた分割表示(タイル)の座標で
+        // 横軸・CSV/TSV を出す(MainWindow が ChannelRoiTarget の DisplayRoi を渡す)。それなのに軸の見出し・
+        // ツールチップは「画像座標」「元画像上の画素座標」、CSV の見出しは断面と同じ "x" で、元画像の列と
+        // 読み違えていた。分割表示の射影では表示座標であることを見出し・ツールチップ・CSV の見出しに示す
+        var window = NewWindow();
+        try
+        {
+            var title = (TextBlock)window.FindName("XAxisTitle");
+            var axis = (Canvas)window.FindName("XAxisCanvas");
+            var projection = (CheckBox)window.FindName("ProjectionCheck");
+            window.SetProfiles(new double[] { 1, 2, 3 }, new double[] { 4, 5, 6 },
+                new double[] { 10, 20, 30 }, new double[] { 40, 50, 60 },
+                new RegionOfInterest(2100, 100, 3, 3), 0, 0, 4095, projectionInSplitView: true);
+            projection.IsChecked = true;
+
+            Assert.Contains("分割表示の座標", title.Text);
+            Assert.DoesNotContain("画像座標", title.Text);
+            Assert.Contains("分割表示", (string)axis.ToolTip);
+            Assert.DoesNotContain("元画像上の画素座標", (string)axis.ToolTip);
+            Assert.StartsWith("x_display,value" + Environment.NewLine + "2100,10", window.BuildTable(','));
+            ((RadioButton)window.FindName("VerticalRadio")).IsChecked = true;
+            Assert.StartsWith("y_display,value" + Environment.NewLine + "100,40", window.BuildTable(','));
+
+            // 断面(行・列プロファイル)は分割表示でも元画像の列・行なので、従来どおり画像座標
+            projection.IsChecked = false;
+            Assert.Contains("画像座標", title.Text);
+            Assert.Contains("元画像上の画素座標", (string)axis.ToolTip);
+            Assert.StartsWith("y,value" + Environment.NewLine + "0,4", window.BuildTable(','));
+        }
+        finally
+        {
+            window.Close();
+        }
+    });
+
+    [Fact]
     public Task DataOrDirectionChanges_ResetOnlyObsoleteHorizontalZoom() => WpfTestHost.Run(() =>
     {
         var window = NewWindow();
