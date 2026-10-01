@@ -1524,6 +1524,16 @@ public partial class MainWindow : Window
 
     // ---- 表示調整 (LUT) ----
 
+    /// <summary>
+    /// ゼブラのトグルのツールチップを、出す直前にいまの表示モードで作り直す
+    /// (Bayer カラー・カラー現像の表示ではゼブラを描かないので、その理由を先頭に出す)。
+    /// </summary>
+    /// <remarks>表示モードを変える経路は多いので、変わるたびではなく見せるときに決める。</remarks>
+    private void OnZebraToolTipOpening(object sender, System.Windows.Controls.ToolTipEventArgs e)
+    {
+        ZebraToggle.ToolTip = ZebraToolTip.For(Viewport.DisplayMode);
+    }
+
     private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
         if (e.PropertyName is nameof(MainViewModel.HistogramIsLog)

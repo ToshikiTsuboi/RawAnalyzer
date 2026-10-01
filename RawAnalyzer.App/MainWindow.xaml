@@ -203,7 +203,8 @@
                         IsEnabled="{Binding CanUseMainView}" />
                 <ToggleButton x:Name="ZebraToggle" Content="ゼブラ"
                               Style="{StaticResource ToolToggle}" IsEnabled="{Binding CanUseMainView}"
-                              ToolTip="飽和(≥98%)を赤 / 黒潰れ(≤2%)を青のストライプで警告"
+                              ToolTip="飽和(≥98%)を赤 / 黒潰れ(≤2%)を青のストライプで警告(Raw・チャネル分割・カラー画像の表示のみ)"
+                              ToolTipOpening="OnZebraToolTipOpening"
                               IsChecked="{Binding ZebraOn, Mode=TwoWay}" />
                 <Border Style="{StaticResource ToolSep}" />
                 <ToggleButton x:Name="ProfileToggle" Content="ラインプロファイル"
