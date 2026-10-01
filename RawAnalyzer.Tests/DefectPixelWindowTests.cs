@@ -69,26 +69,7 @@ public class DefectPixelWindowTests
     });
 
     [Fact]
-    public Task DiscardResult_ThenDetectAgain_ShowsResultForNewImage() => WpfTestHost.Run(() =>
-    {
-        // 破棄した後の「検出実行」は表示中の画像を検出し、同じウィンドウに一覧を出す
-        var window = new DefectPixelWindow();
-        var list = (ListView)window.FindName("DefectList");
-        var correct = (Button)window.FindName("CorrectButton");
-        var summary = (TextBlock)window.FindName("SummaryText");
-
-        window.ShowResult(DetectTwoDefects(), 4095);
-        window.DiscardResult();
-        window.ShowResult(DetectTwoDefects(), 4095);
-
-        Assert.Equal(2, list.Items.Count);
-        Assert.True(correct.IsEnabled);
-        Assert.Contains("白点 1 / 黒点 1", summary.Text);
-        window.Close();
-    });
-
-    [Fact]
-    public Task CorrectionApplied_DiscardsListAndAsksToDetectAgain() => WpfTestHost.Run(() =>
+    public Task CorrectionApplied_DiscardsListAndAsksToDetectAgain_UntilImageChangesAgain() => WpfTestHost.Run(() =>
     {
         var window = new DefectPixelWindow();
         bool closed = false;
@@ -113,23 +94,14 @@ public class DefectPixelWindowTests
         Assert.Contains("2 個", summary.Text);
         Assert.Contains("メディアン", summary.Text);
         Assert.Contains("「検出実行」", summary.Text);
-        window.Close();
-    });
 
-    [Fact]
-    public Task CorrectionNotice_IsReplacedWhenImageChangesAgain() => WpfTestHost.Run(() =>
-    {
         // 補正の案内は補正した画像についてのもの。別の画像へ差し替えたら差し替えの案内に替える
-        var window = new DefectPixelWindow();
-        var summary = (TextBlock)window.FindName("SummaryText");
-        window.ShowResult(DetectTwoDefects(), 4095);
-        window.DiscardResult(DefectPixelWindow.CorrectionAppliedNotice(2, "平均"));
-
+        // (一覧は破棄済みでも、2 回目の破棄を素通りさせない)
         window.DiscardResult();
 
         Assert.DoesNotContain("補正しました", summary.Text);
         Assert.Contains("画像が替わった", summary.Text);
-        Assert.False(((Button)window.FindName("CorrectButton")).IsEnabled);
+        Assert.False(correct.IsEnabled);
         window.Close();
     });
 
@@ -163,10 +135,12 @@ public class DefectPixelWindowTests
     });
 
     [Fact]
-    public Task CorrectableResult_AfterUncorrectableOne_OffersCorrectionAgain() => WpfTestHost.Run(() =>
+    public Task CorrectableResult_AfterUncorrectableOne_ShowsListAndOffersCorrectionAgain() => WpfTestHost.Run(() =>
     {
-        // Raw表示へ戻して検出し直した一覧は補正できる(HDR表示中の理由を持ち越さない)
+        // Raw表示へ戻して検出し直した一覧は補正できる(HDR表示中の理由を持ち越さない)。
+        // 破棄した後の「検出実行」は表示中の画像を検出し、同じウィンドウに一覧を出す
         var window = new DefectPixelWindow();
+        var list = (ListView)window.FindName("DefectList");
         var correct = (Button)window.FindName("CorrectButton");
         var summary = (TextBlock)window.FindName("SummaryText");
         window.ShowResult(DetectTwoDefects(), 4095, correctionUnavailableReason: HdrReason);
@@ -174,6 +148,8 @@ public class DefectPixelWindowTests
 
         window.ShowResult(DetectTwoDefects(), 4095);
 
+        Assert.Equal(2, list.Items.Count);
+        Assert.Contains("白点 1 / 黒点 1", summary.Text);
         Assert.True(correct.IsEnabled);
         Assert.DoesNotContain(HdrReason, summary.Text);
         window.ResetRunButton();
