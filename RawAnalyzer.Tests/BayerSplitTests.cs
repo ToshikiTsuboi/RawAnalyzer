@@ -40,7 +40,7 @@ public class BayerSplitTests
     [Theory]
     [InlineData(4, 0)]   // 最終列(奇数幅の端)
     [InlineData(0, 2)]   // 最終行(奇数高さの端)
-    [InlineData(4, 2)]
+    [InlineData(3, 2)]   // x は範囲内(タイル上は3)で y だけ範囲外。false のときは x 側の out も0に戻す
     [InlineData(-1, 0)]
     [InlineData(0, -1)]
     public void TryMapSourceToTiled_PixelNotInTiles_ReturnsFalse(int x, int y)
