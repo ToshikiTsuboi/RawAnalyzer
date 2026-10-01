@@ -2697,8 +2697,11 @@ public partial class MainWindow : Window
             };
         }
 
-        // 現像LUTはページ・ファイルごとのビット深度で作る(白飛びの判定がビット深度で決まる)
-        var renderer = new BatchFrameRenderer(format.Bayer, developParameters, lut);
+        // 現像LUTはページ・ファイルごとのビット深度で作る(白飛びの判定がビット深度で決まる)。
+        // Bayer は表示中の画像ではなく引き継いでいる指定から取る(カラーのページの表示中でもグレーのページを現像する)
+        BayerPattern batchBayer = ImageFileBayer.ForBatch(
+            IsRawFile(targets[0]), format.Bayer, _tiffStack, _sequenceBayerOverride);
+        var renderer = new BatchFrameRenderer(batchBayer, developParameters, lut);
         int width = format.Width;
         int height = format.Height;
         bool video = choice.Format is BatchFormat.AviMjpeg or BatchFormat.Mp4H264;
