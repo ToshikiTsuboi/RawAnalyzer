@@ -82,9 +82,12 @@ public class Mp4QualityTests
             long highSize = WriteAt(
                 high, VideoQualitySettings.EncoderQuality(VideoQuality.NearLossless));
 
-            // ビットレート指定が効いていれば、同じ素材でも明確に容量が増える
+            // ビットレート指定が効いていれば、同じ素材でも明確に容量が増える(実測は約2.1倍)。
+            // 設定がエンコーダへ渡らなければ両方とも同じ既定のビットレートになり、比はほぼ1倍になる。
+            // 効きの大きさは固定しない(品質ごとの値の単調性は VideoSettingsTests が見る)ので、
+            // エンコーダの版による差で落ちないよう 1.5 倍を閾値にする
             Assert.True(
-                highSize > lowSize * 2,
+                highSize > lowSize * 1.5,
                 $"品質がビットレートに効いていない (標準 {lowSize} / 最高 {highSize})");
         }
         finally
