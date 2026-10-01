@@ -54,6 +54,11 @@ public partial class MainWindow : Window
     private RawFormat? _currentFormat;
     private string? _currentPath;
 
+    // 表示中のファイル(_currentPath)を読んだときのサイズ(取得できなければ -1)。読み込みと一緒に UI スレッドの外で
+    // 取っておき、連番の判定・一括書き出し・raw 参照の照合・サイズ別の記憶の訂正に使う(それらのたびに UI スレッドで
+    // FileInfo を撃つと、切断した NAS ではタイムアウトまでウィンドウが固まる)
+    private long _currentFileSize = -1;
+
     // 表示中の raw ファイルを読んだフォーマット(右パネルでの Bayer の変更を含み、ビニングなどの処理は含まない)。
     // F2 の初期値と、開き直したときに記憶を訂正する元のフォーマットに使う。raw 以外では null
     private RawFormat? _openedRawFormat;
@@ -653,8 +658,9 @@ public partial class MainWindow : Window
     private void ChangeCurrentRawFormat(string path)
     {
         // ビニング後の縮小寸法を元ファイルの寸法として提案しない。
+        // (path は表示中のファイルなので、サイズは読み込んだときに取ったものを使う)
         RawFormat? initial = _correctionLabel is null ? _currentFormat
-            : _openedRawFormat ?? TryGetRememberedFormat(path, SafeFileSize(path));
+            : _openedRawFormat ?? TryGetRememberedFormat(path, _currentFileSize);
         OpenPathChoosingFormat(path, initial, correctFrom: initial);
     }
 
@@ -865,6 +871,7 @@ public partial class MainWindow : Window
         ClearDefectSource();
         _currentFormat = image.Format;
         _currentPath = path;
+        _currentFileSize = fileSize;
 
         // 「フォーマット変更…」は raw でしか使えない。ファイル連番の送りは同じ拡張子のファイルだけを
         // 送る(SequenceScanner)ので、開いたときに決めれば送りの後も変わらない
@@ -2827,7 +2834,8 @@ public partial class MainWindow : Window
         IReadOnlyList<string> targets;
         if (rawTargets)
         {
-            long size = SafeFileSize(_currentPath);
+            // 読み込んだときに UI スレッドの外で取ったサイズ(ここで FileInfo を撃つと切断した NAS で固まる)
+            long size = _currentFileSize;
             if (size <= 0)
             {
                 MessageBox.Show(this, "対象ファイルのサイズを取得できませんでした。",
@@ -4116,9 +4124,11 @@ public partial class MainWindow : Window
             }
         }
 
-        return SafeFileSize(_currentPath);
+        // 一覧にない・一覧でサイズを取れなかったときは、読み込んだときに取ったサイズ(UI スレッドでは取り直さない)
+        return _currentFileSize;
     }
 
+    /// <summary>ファイルサイズ(取得できなければ -1)。ファイルシステムに触れるので UI スレッドで呼ばない。</summary>
     private static long SafeFileSize(string path)
     {
         try
@@ -4270,6 +4280,9 @@ public partial class MainWindow : Window
                 string? valueNote = null;
                 SampleScaling? valueScaling = null;
 
+                // 画像情報に出す送り先のサイズも、読み込みと一緒に UI スレッドの外で取る(再生中は毎フレーム)
+                long frameFileSize;
+
                 // 読み込みは取り消せるようにする。読む間に別ファイルを開く・操作を始める・ウィンドウを閉じると
                 // 結果は下で捨てるが、取り消さないと大きなファイルの読み込み(ネットワーク上の raw の一時コピー、
                 // TIFF のデコード)が最後まで走り、新しい読み込みや処理と I/O・メモリを奪い合う
@@ -4279,8 +4292,10 @@ public partial class MainWindow : Window
                 try
                 {
                     // raw は表示中のフォーマットで、TIFF等の連番はファイル自身のフォーマットで読む
-                    DecodedImage decoded = await Task.Run(
-                        () => SequenceFileLoad.Load(path, isRaw, expectedFormat, loadCts.Token), loadCts.Token);
+                    DecodedImage decoded;
+                    (decoded, frameFileSize) = await Task.Run(
+                        () => (SequenceFileLoad.Load(path, isRaw, expectedFormat, loadCts.Token), SafeFileSize(path)),
+                        loadCts.Token);
                     image = decoded.Luminance;
                     color = decoded.Color;
                     pageCount = decoded.PageCount;
@@ -4363,6 +4378,7 @@ public partial class MainWindow : Window
                 _currentImage = image;
                 _currentFormat = format;
                 _currentPath = path;
+                _currentFileSize = frameFileSize;
 
                 // 送り先は表示中のフォーマットで読んだ(記憶から推定したのではない)ので、推定の通知は消す。
                 // 送りでは同じサイズの記憶へ記録しない(開いたときに記録済みのフォーマットで読むだけ)
@@ -4418,7 +4434,6 @@ public partial class MainWindow : Window
                 // 送った先のもの)
                 RefreshCursorReadout();
 
-                long frameFileSize = SafeFileSize(path);
                 _vm.ImageInfoText =
                     $"{image.Width}×{image.Height} · {format.BitDepth}bit"
                     + (color is not null ? " · RGB" : "")
@@ -5167,8 +5182,9 @@ public partial class MainWindow : Window
     /// </summary>
     private long TargetRawFileSize()
     {
+        // 読み込んだときに取ったサイズ(ダイアログを開く・対象を替えるたびに UI スレッドで取り直さない)
         return _openedRawFormat is not null && _currentPath is not null
-            ? Math.Max(0, SafeFileSize(_currentPath))
+            ? Math.Max(0, _currentFileSize)
             : 0;
     }
 
@@ -5533,8 +5549,8 @@ public partial class MainWindow : Window
             RememberFileFormat(_currentPath, _currentFormat);
 
             // 同じサイズの記憶にこのファイルの元の形式があれば直す(F2 で開き直したときと同じく、
-            // 次に同じサイズのファイルを記憶から開くときは直した Bayer で開く)
-            _formatMemory.Correct(_currentPath, SafeFileSize(_currentPath), previous, _currentFormat);
+            // 次に同じサイズのファイルを記憶から開くときは直した Bayer で開く)。サイズは読み込んだときに取ったもの
+            _formatMemory.Correct(_currentPath, _currentFileSize, previous, _currentFormat);
             _openedRawFormat = _currentFormat;
         }
 
@@ -5661,8 +5677,9 @@ public partial class MainWindow : Window
         }
 
         // 記憶フォーマットをスキップして必ずダイアログを表示する。初期値は同じパスの記憶
-        // (なければ候補一覧の先頭 → 表示中の画像のフォーマット → ダイアログ既定の推定)
-        RawFormat? initial = TryGetRememberedFormat(entry.FullPath, SafeFileSize(entry.FullPath));
+        // (なければ候補一覧の先頭 → 表示中の画像のフォーマット → ダイアログ既定の推定)。記憶が使えるかは一覧の
+        // 列挙で取ったサイズで確かめる(UI スレッドで FileInfo を撃たない。ダイアログのサイズの照合は開く処理が取り直す)
+        RawFormat? initial = TryGetRememberedFormat(entry.FullPath, entry.Length);
         OpenPathChoosingFormat(entry.FullPath, initial, correctFrom: null);
     }
 
