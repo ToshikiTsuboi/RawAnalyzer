@@ -175,17 +175,21 @@
                 <Border Style="{StaticResource ToolSep}" />
                 <TextBlock Text="表示:" Foreground="{StaticResource TextDim}"
                            VerticalAlignment="Center" Margin="0,0,4,0" FontSize="12" />
-                <ComboBox x:Name="DisplayModeCombo" SelectedIndex="0" VerticalAlignment="Center"
-                          FontSize="12" MinWidth="110" IsEnabled="{Binding HasImage}"
-                          SelectionChanged="OnDisplayModeChanged"
-                          DropDownClosed="OnSelectorDropDownClosed">
-                    <ComboBoxItem Content="Raw表示" />
-                    <ComboBoxItem Content="Bayerカラー" />
-                    <ComboBoxItem Content="カラー現像" />
-                    <ComboBoxItem Content="チャネル分割 (R/Gr/Gb/B)" />
-                    <ComboBoxItem Content="HDR分割 (長/短)" />
-                    <ComboBoxItem Content="HDR合成" />
-                </ComboBox>
+                <!-- 表示モードの選択の IsEnabled はカラー画像でコードから設定する(バインドは上書きされる)。
+                     比較モード中(と画像がないとき)は外側で無効にする -->
+                <Border IsEnabled="{Binding CanUseMainView}">
+                    <ComboBox x:Name="DisplayModeCombo" SelectedIndex="0" VerticalAlignment="Center"
+                              FontSize="12" MinWidth="110" IsEnabled="{Binding HasImage}"
+                              SelectionChanged="OnDisplayModeChanged"
+                              DropDownClosed="OnSelectorDropDownClosed">
+                        <ComboBoxItem Content="Raw表示" />
+                        <ComboBoxItem Content="Bayerカラー" />
+                        <ComboBoxItem Content="カラー現像" />
+                        <ComboBoxItem Content="チャネル分割 (R/Gr/Gb/B)" />
+                        <ComboBoxItem Content="HDR分割 (長/短)" />
+                        <ComboBoxItem Content="HDR合成" />
+                    </ComboBox>
+                </Border>
                 <Border Style="{StaticResource ToolSep}" />
                 <Button Style="{StaticResource ToolButton}" Content="−" Click="OnZoomOutClick"
                         IsEnabled="{Binding CanUseMainView}" />
