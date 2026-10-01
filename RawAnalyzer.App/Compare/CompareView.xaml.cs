@@ -17,6 +17,12 @@ public partial class CompareView : UserControl
     /// <summary>同時に表示できる最大ペイン数。</summary>
     public const int MaxPanes = 4;
 
+    /// <summary>4枚表示中で追加できない理由(追加ボタンのツールチップと、追加を断るときの案内)。</summary>
+    internal const string FullReason = "4枚表示中です。追加するにはいずれかの画像を閉じてください。";
+
+    /// <summary>読み込み中・終了処理中で追加できない理由(追加ボタンのツールチップと、追加を断るときの案内)。</summary>
+    internal const string BusyReason = "処理が完了するまでお待ちください。";
+
     /// <summary>ホストの全画面状態と双方向連携する依存関係プロパティ。</summary>
     public static readonly DependencyProperty IsFullscreenProperty = DependencyProperty.Register(
         nameof(IsFullscreen), typeof(bool), typeof(CompareView),
@@ -56,6 +62,11 @@ public partial class CompareView : UserControl
     /// <summary>「比較モードを終了」が押されたときに発火する。</summary>
     public event EventHandler? ExitRequested;
 
+    /// <summary>
+    /// ペインを追加できなかった(上限・読み込み中)ときに、理由と追加しなかったファイルを知らせる(ホストが利用者へ示す)。
+    /// </summary>
+    internal event Action<string>? AddRefused;
+
     /// <summary>ファイル選択ダイアログ込みでペイン資源を用意する(キャンセルはnull)。</summary>
     internal Func<CancellationToken, Task<ComparePane?>>? PanePicker { get; set; }
 
@@ -68,7 +79,13 @@ public partial class CompareView : UserControl
     /// <summary>現在のペイン数。</summary>
     public int PaneCount => _panes.Count;
 
-    private bool CanAddPane => !_loading && !_closing && _panes.Count < MaxPanes;
+    /// <summary>いまペインを追加できない理由(<see cref="FullReason"/> / <see cref="BusyReason"/>)。追加できるなら null。</summary>
+    internal string? AddRefusal =>
+        _panes.Count >= MaxPanes ? FullReason
+        : _loading || _closing ? BusyReason
+        : null;
+
+    private bool CanAddPane => AddRefusal is null;
 
     /// <summary>
     /// 指定パスの画像をペインとして追加する。
@@ -167,10 +184,84 @@ public partial class CompareView : UserControl
         return paneCount <= 3 ? Math.Max(1, paneCount) : 2;
     }
 
+    /// <summary>
+    /// 指定ファイルを順にペインとして追加する(比較領域へのドロップと、比較モード中の「開く」系の操作)。
+    /// </summary>
+    /// <remarks>
+    /// 読み込みは呼び出し元へ戻ってから始める。最初のファイルが raw でフォーマットの記憶がないと、最初の await より前に
+    /// 確認ダイアログが同期で開く。Drop の中でモーダルループに入ると、閉じるまでドラッグ元(エクスプローラー)が
+    /// 応答しなくなる。上限(4枚)・読み込み中で追加できなくなったら残りは追加せず、理由と追加しなかったファイルを
+    /// <see cref="AddRefused"/> で知らせる(以前のドロップは上限を超えた残りを黙って捨てた)。途中で比較を終了したら、
+    /// 残りは新しい比較へ追加しない。
+    /// </remarks>
+    /// <param name="paths">追加するファイル(先頭から順に追加する)。</param>
+    /// <returns>追加し終える(または打ち切る)までのタスク。</returns>
+    internal async Task AddPanesFromPathsAsync(IReadOnlyList<string> paths)
+    {
+        int generation = _generation;
+        await Dispatcher.Yield(DispatcherPriority.Background);
+        for (int i = 0; i < paths.Count; i++)
+        {
+            if (generation != _generation)
+            {
+                return; // 途中で比較を終了した
+            }
+
+            if (AddRefusal is { } refusal)
+            {
+                AddRefused?.Invoke(DescribeRefusal(refusal, paths.Skip(i).ToList()));
+                return;
+            }
+
+            await AddPaneFromPathAsync(paths[i]);
+        }
+    }
+
+    /// <summary>追加を断るときの案内(理由と、追加しなかったファイル名)。</summary>
+    /// <param name="reason">追加できない理由(<see cref="AddRefusal"/>)。</param>
+    /// <param name="notAdded">追加しなかったファイル(ファイルを選ぶ前に断ったときは空)。</param>
+    /// <returns>利用者に示す文。</returns>
+    internal static string DescribeRefusal(string reason, IReadOnlyList<string> notAdded)
+    {
+        string text = "比較に画像を追加できません。" + reason;
+        if (notAdded.Count == 0)
+        {
+            return text;
+        }
+
+        const int MaxNames = 5;
+        string names = string.Join("、", notAdded.Take(MaxNames).Select(System.IO.Path.GetFileName));
+        if (notAdded.Count > MaxNames)
+        {
+            names += $" ほか {notAdded.Count - MaxNames} 件";
+        }
+
+        return text + "\n追加しなかったファイル: " + names;
+    }
+
     private async void OnAddImageClick(object sender, RoutedEventArgs e)
     {
-        if (PanePicker is null || !CanAddPane)
+        await AddPaneFromPickerAsync();
+    }
+
+    /// <summary>
+    /// ファイル選択ダイアログで選んだ画像をペインとして追加する(「＋ 画像を追加」と、比較モード中の「開く…」)。
+    /// </summary>
+    /// <remarks>
+    /// 上限(4枚)・読み込み中で追加できないときは、ダイアログを出さずに理由を <see cref="AddRefused"/> で知らせる
+    /// (追加ボタンはそのとき無効なので、知らせるのはボタン以外から呼んだとき)。
+    /// </remarks>
+    /// <returns>追加し終える(または取り消す)までのタスク。</returns>
+    internal async Task AddPaneFromPickerAsync()
+    {
+        if (PanePicker is null)
         {
+            return;
+        }
+
+        if (AddRefusal is { } refusal)
+        {
+            AddRefused?.Invoke(DescribeRefusal(refusal, Array.Empty<string>()));
             return;
         }
 
@@ -626,10 +717,8 @@ public partial class CompareView : UserControl
         AddImageButton.IsEnabled = CanAddPane;
         EmptyAddButton.IsEnabled = CanAddPane;
         AddImageButton.Content = _loading ? "読込中…" : "＋ 画像を追加";
-        AddImageButton.ToolTip = _panes.Count >= MaxPanes
-            ? "4枚表示中です。追加するにはいずれかの画像を閉じてください。"
-            : _loading || _closing ? "処理が完了するまでお待ちください。"
-            : "画像を選んで比較に追加。比較領域のどこへドロップしても追加できます (最大4枚)。";
+        AddImageButton.ToolTip = AddRefusal
+            ?? "画像を選んで比較に追加。比較領域のどこへドロップしても追加できます (最大4枚)。";
         ToolTipService.SetShowOnDisabled(AddImageButton, true);
     }
 
@@ -649,21 +738,8 @@ public partial class CompareView : UserControl
             return;
         }
 
-        // 読み込みは Drop から戻ってから始める。最初のファイルが raw でフォーマットの記憶がないと、
-        // 最初の await より前に確認ダイアログが同期で開く。Drop の中でモーダルループに入ると、
-        // 閉じるまでドラッグ元(エクスプローラー)が応答しなくなる。ファイル一覧は戻る前に取り出し済み
-        int generation = _generation;
-        await Dispatcher.Yield(DispatcherPriority.Background);
-        foreach (string file in files)
-        {
-            // 複数ファイルの途中で比較を終了したら、残りを新しい比較へ追加しない。
-            if (generation != _generation || !CanAddPane)
-            {
-                break;
-            }
-
-            await AddPaneFromPathAsync(file);
-        }
+        // 読み込みは Drop から戻ってから始める(AddPanesFromPathsAsync)。ファイル一覧は戻る前に取り出し済み
+        await AddPanesFromPathsAsync(files);
     }
 
     private void OnExitClick(object sender, RoutedEventArgs e)

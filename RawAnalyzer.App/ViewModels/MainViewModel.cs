@@ -293,6 +293,8 @@ public sealed class MainViewModel : ObservableObject
                 OnPropertyChanged(nameof(AdjustPanelDisabledReason));
                 OnPropertyChanged(nameof(CanEditBayer));
                 OnPropertyChanged(nameof(BayerEditToolTip));
+                OnPropertyChanged(nameof(CanOpenSelectedFileWithFormat));
+                OnPropertyChanged(nameof(OpenSelectedFileWithFormatToolTip));
             }
         }
     }
@@ -751,16 +753,19 @@ public sealed class MainViewModel : ObservableObject
     /// <remarks>
     /// フォーマットを指定して開けるのは raw だけ。以前は画像ファイル(TIFF 等)でも押せて、ダイアログを出さずに
     /// 普通に開いた(「フォーマット変更…」と同じ規約で無効にし、理由をツールチップで示す)。フォルダ・未選択も
-    /// 開くファイルがないので使えない。
+    /// 開くファイルがないので使えない。比較モード中は、比較画面に隠れた通常表示へ開くことになるので使えない
+    /// (ダブルクリック・「開く」は比較ペインへの追加に回すが、比較ペインはフォーマットを指定し直せない)。
     /// </remarks>
     public bool CanOpenSelectedFileWithFormat =>
-        _selectedFile is { IsDirectory: false } file && FormatChangeAvailability.CanOpenWithFormat(file.FullPath);
+        !_isCompareMode
+        && _selectedFile is { IsDirectory: false } file && FormatChangeAvailability.CanOpenWithFormat(file.FullPath);
 
     /// <summary>
-    /// 「フォーマットを指定して開く…」のツールチップ。画像ファイルでは使えない理由、それ以外は項目の説明。
+    /// 「フォーマットを指定して開く…」のツールチップ。比較モード中・画像ファイルでは使えない理由、それ以外は項目の説明。
     /// </summary>
     public string OpenSelectedFileWithFormatToolTip =>
-        _selectedFile is { IsDirectory: false } file && !FormatChangeAvailability.CanOpenWithFormat(file.FullPath)
+        _isCompareMode ? CommandDisabledReasons.CompareMode
+        : _selectedFile is { IsDirectory: false } file && !FormatChangeAvailability.CanOpenWithFormat(file.FullPath)
             ? FormatChangeAvailability.OpenWithFormatUnavailableReason
             : FormatChangeAvailability.OpenWithFormatDescription;
 

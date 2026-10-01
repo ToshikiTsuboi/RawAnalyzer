@@ -523,6 +523,79 @@ public class CompareViewUiTests
         Assert.True(((Button)view.FindName("AddImageButton")).IsEnabled);
     });
 
+    [Fact]
+    public Task AddPanesFromPaths_StopsAtLimit_AndReportsWhatWasNotAdded() => WpfTestHost.Run(async () =>
+    {
+        // 比較モード中の「開く」系の操作(一覧のダブルクリック・最近使ったファイル・左右のパネルへのドロップ)と
+        // 比較領域へのドロップは、ここで順に比較ペインへ追加する。以前は比較領域へのドロップの上限を超えた残りを
+        // 黙って捨て、「開く」系は比較画面に隠れた通常表示へ読み込んだ。追加できなかったものは理由とともに知らせる
+        using var fixture = new ImageFixture();
+        using var extra = new ImageFixture();
+        var view = NewView();
+        var refusals = new List<string>();
+        view.AddRefused += refusals.Add;
+        try
+        {
+            Assert.Null(view.AddRefusal);
+            for (int i = 0; i < 3; i++) Assert.True(await view.AddPaneFromPathAsync(fixture.Path));
+            await view.AddPanesFromPathsAsync(new[] { fixture.Path, extra.Path });
+
+            Assert.Equal(4, view.PaneCount);
+            Assert.Equal(CompareView.FullReason, view.AddRefusal);
+            string message = Assert.Single(refusals);
+            Assert.Contains(CompareView.FullReason, message);
+            Assert.Contains(Path.GetFileName(extra.Path), message);
+
+            // 4枚のまま「開く…」(Ctrl+O): ファイル選択ダイアログを出さずに理由を知らせる
+            int picks = 0;
+            view.PanePicker = _ =>
+            {
+                picks++;
+                return Task.FromResult<ComparePane?>(null);
+            };
+            await view.AddPaneFromPickerAsync();
+            Assert.Equal(0, picks);
+            Assert.Equal(2, refusals.Count);
+            Assert.Contains(CompareView.FullReason, refusals[1]);
+            Assert.Equal(4, view.PaneCount);
+        }
+        finally
+        {
+            await view.CloseAllAsync();
+        }
+    });
+
+    [Fact]
+    public Task AddPanesFromPaths_WhileLoading_ReportsWaitWithoutLoading() => WpfTestHost.Run(async () =>
+    {
+        // 前の画像の読み込み中(raw のフォーマット確認を含む)に別のファイルを開いたら、読み込まずに待つよう知らせる
+        var view = NewView();
+        var loaded = new List<string>();
+        var pending = new TaskCompletionSource<ComparePane?>();
+        view.PaneLoader = (path, _) =>
+        {
+            loaded.Add(path);
+            return pending.Task;
+        };
+        var refusals = new List<string>();
+        view.AddRefused += refusals.Add;
+        string first = Path.Combine(Path.GetTempPath(), "first.raw");
+        string second = Path.Combine(Path.GetTempPath(), "second.raw");
+
+        Task<bool> loading = view.AddPaneFromPathAsync(first);
+        Assert.Equal(CompareView.BusyReason, view.AddRefusal);
+        await view.AddPanesFromPathsAsync(new[] { second });
+
+        Assert.Equal(new[] { first }, loaded);
+        string message = Assert.Single(refusals);
+        Assert.Contains(CompareView.BusyReason, message);
+        Assert.Contains("second.raw", message);
+
+        pending.SetResult(null); // ダイアログで取り消した扱い
+        Assert.False(await loading);
+        Assert.Null(view.AddRefusal);
+    });
+
     // ボタンの押下と解放(移動なし)。入力の順と同じく Preview → 本体の順に送る
     private static void Click(ComparePaneView pane, System.Windows.Input.MouseButton button)
     {

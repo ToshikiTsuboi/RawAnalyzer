@@ -83,6 +83,31 @@ public class CompareModeCommandTests
     }
 
     [Fact]
+    public void OpenWithFormat_IsRefusedWhileComparing_WithTheReason()
+    {
+        // ファイル一覧の「フォーマットを指定して開く…」は通常表示へ開く(比較ペインはフォーマットを指定し直せない)。
+        // 以前は比較モード中も押せて、比較画面に隠れた通常表示へ読み込んだ。比較モード中は無効にして理由を示す
+        // (ダブルクリック・「開く」は比較ペインへの追加に回す)
+        var vm = new MainViewModel { SelectedFile = new FileEntry("a.raw", @"C:\data\a.raw") };
+        Assert.True(vm.CanOpenSelectedFileWithFormat);
+
+        var changed = new List<string>();
+        vm.PropertyChanged += (_, e) => changed.Add(e.PropertyName ?? "");
+        vm.IsCompareMode = true;
+
+        Assert.False(vm.CanOpenSelectedFileWithFormat);
+        Assert.Equal(CommandDisabledReasons.CompareMode, vm.OpenSelectedFileWithFormatToolTip);
+        Assert.Contains(nameof(MainViewModel.CanOpenSelectedFileWithFormat), changed);
+        Assert.Contains(nameof(MainViewModel.OpenSelectedFileWithFormatToolTip), changed);
+
+        changed.Clear();
+        vm.IsCompareMode = false;
+        Assert.True(vm.CanOpenSelectedFileWithFormat);
+        Assert.Equal(FormatChangeAvailability.OpenWithFormatDescription, vm.OpenSelectedFileWithFormatToolTip);
+        Assert.Contains(nameof(MainViewModel.CanOpenSelectedFileWithFormat), changed);
+    }
+
+    [Fact]
     public void BayerEdit_IsRefusedWhileComparing_WithTheReason()
     {
         // 右パネルの Bayer の選択は隠れた通常表示の画像のパターンを変え、同じファイル・同じサイズの記憶にも残る。

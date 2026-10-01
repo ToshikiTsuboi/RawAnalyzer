@@ -241,6 +241,8 @@ public partial class MainWindow : Window
         CompareArea.PanePicker = PickComparePaneAsync;
         CompareArea.PaneLoader = LoadComparePaneAsync;
         CompareArea.ExitRequested += async (_, _) => await ExitCompareModeAsync();
+        CompareArea.AddRefused += reason =>
+            MessageBox.Show(this, reason, "比較モード", MessageBoxButton.OK, MessageBoxImage.Information);
         Loaded += async (_, _) =>
         {
             // 起動時に構築してショートカット重複を早期に検出する
@@ -441,6 +443,13 @@ public partial class MainWindow : Window
 
     private async void OnOpenFileClick(object sender, RoutedEventArgs e)
     {
+        // 比較モード中は比較画面の「＋ 画像を追加」と同じく、選んだ画像を比較ペインへ追加する(通常表示へは開かない)
+        if (_compareMode)
+        {
+            await CompareArea.AddPaneFromPickerAsync();
+            return;
+        }
+
         var dialog = new OpenFileDialog { Filter = OpenImageFilter };
         if (dialog.ShowDialog(this) == true)
         {
@@ -573,10 +582,32 @@ public partial class MainWindow : Window
         {
             LoadFolder(entry.FullPath, selectPath: null);
         }
-        else
+        else if (!AddToCompareInstead(new[] { entry.FullPath }))
         {
             OpenPath(entry.FullPath);
         }
+    }
+
+    /// <summary>
+    /// 比較モード中なら、ファイルを開く操作(ファイル一覧のダブルクリック・右クリックの「開く」・最近使ったファイル・
+    /// 比較画面の外へのドロップ)を比較ペインへの追加に回す。
+    /// </summary>
+    /// <remarks>
+    /// 比較モードは通常表示の上に比較画面を重ねるだけなので、以前は比較中に開いた画像が比較画面に隠れた通常表示へ
+    /// 読み込まれ、見えている比較には何も起きなかった。比較画面へのドロップと同じ経路で順に追加し、4枚表示中・
+    /// 読み込み中で追加できないものは理由を示す(<see cref="Compare.CompareView.AddPanesFromPathsAsync"/>)。
+    /// </remarks>
+    /// <param name="paths">開こうとしたファイル。</param>
+    /// <returns>比較ペインへの追加に回したら true(通常表示へは開かない)。</returns>
+    private bool AddToCompareInstead(IReadOnlyList<string> paths)
+    {
+        if (!_compareMode)
+        {
+            return false;
+        }
+
+        _ = CompareArea.AddPanesFromPathsAsync(paths);
+        return true;
     }
 
     private void OnChangeFormatClick(object sender, RoutedEventArgs e)
@@ -1756,6 +1787,11 @@ public partial class MainWindow : Window
                         $"ファイルが見つかりません(移動・削除されたか、ネットワークに接続できません)。\n{captured}",
                         "最近使ったファイル", MessageBoxButton.OK, MessageBoxImage.Warning);
                     RemoveRecentMenuItems(new[] { captured });
+                    return;
+                }
+
+                if (AddToCompareInstead(new[] { captured }))
+                {
                     return;
                 }
 
@@ -5506,7 +5542,7 @@ public partial class MainWindow : Window
 
     private void OnFileCtxOpenClick(object sender, RoutedEventArgs e)
     {
-        if (_vm.SelectedFile is { IsDirectory: false } entry)
+        if (_vm.SelectedFile is { IsDirectory: false } entry && !AddToCompareInstead(new[] { entry.FullPath }))
         {
             OpenPath(entry.FullPath);
         }
@@ -5689,6 +5725,13 @@ public partial class MainWindow : Window
         }
         else if (File.Exists(path))
         {
+            // 比較モード中は、比較画面の外(左右のパネル・メニュー・ツールバー)へのドロップも、比較画面への
+            // ドロップと同じく全ファイルを比較ペインへ追加する
+            if (AddToCompareInstead(paths))
+            {
+                return;
+            }
+
             await LoadFolderAndOpenAsync(path);
         }
     }

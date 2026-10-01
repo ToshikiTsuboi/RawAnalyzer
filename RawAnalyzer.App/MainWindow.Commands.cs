@@ -212,6 +212,7 @@ public partial class MainWindow
                 Id = "open",
                 Category = "ファイル",
                 Title = "開く…",
+                Description = "比較モード中は、選んだ画像を比較ペインへ追加します",
                 Key = Key.O,
                 Modifiers = ModifierKeys.Control,
                 Execute = () => OnOpenFileClick(this, empty),
