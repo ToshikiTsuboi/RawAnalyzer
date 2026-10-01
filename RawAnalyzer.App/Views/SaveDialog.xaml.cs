@@ -6,7 +6,7 @@ namespace RawAnalyzer.App.Views;
 /// <summary>保存形式。</summary>
 public enum SaveFormat
 {
-    /// <summary>16bitコンテナのrawバイナリ。</summary>
+    /// <summary>rawバイナリ(16bitコンテナ。8bit以下の画像は1バイト/画素)。</summary>
     Raw,
 
     /// <summary>16bitグレースケールTIFF。</summary>
@@ -35,6 +35,9 @@ public enum SaveFormat
 /// <param name="ApplyDemosaic">デモザイク(カラー現像)を行うか。</param>
 /// <param name="WriteSidecar">処理内容のテキストを併せて保存するか。</param>
 /// <param name="Summary">出力内容の要約(サイドカーにも記録する)。</param>
+/// <param name="RawBytesPerPixel">
+/// raw出力の1画素のバイト数。8bit以下の画像は1(詰め方向・エンディアンはない)、それ以外は2(16bitコンテナ)。
+/// </param>
 public sealed record SaveChoice(
     SaveFormat Format,
     BitPacking Packing,
@@ -44,7 +47,8 @@ public sealed record SaveChoice(
     bool ApplyMatrix,
     bool ApplyDemosaic,
     bool WriteSidecar,
-    string Summary)
+    string Summary,
+    int RawBytesPerPixel = 2)
 {
     /// <summary>画素値に何らかの処理が焼き込まれるか。</summary>
     public bool IsProcessed => Format is SaveFormat.Png8 or SaveFormat.Jpeg8
@@ -61,16 +65,26 @@ public partial class SaveDialog : Window
     private readonly bool _allowFloatRaw;
     private readonly bool _hasBayer;
 
+    // 8bit 以下の画像の raw は1画素1バイトで書く(RawSaver)。16bitコンテナではなく、詰め方向・エンディアンもない
+    private readonly bool _byteRaw;
+
     /// <summary>ダイアログを生成する。</summary>
     /// <param name="totalPixels">対象画像の総画素数(巨大画像の形式制限判定用)。</param>
     /// <param name="allowFloatRaw">HDR合成中のfloat raw保存を選択肢に含めるか。</param>
     /// <param name="hasBayer">Bayerパターンが指定されている(デモザイク可能)か。</param>
-    public SaveDialog(long totalPixels, bool allowFloatRaw = false, bool hasBayer = false)
+    /// <param name="bitDepth">対象画像のビット深度。</param>
+    public SaveDialog(long totalPixels, bool allowFloatRaw = false, bool hasBayer = false, int bitDepth = 16)
     {
         InitializeComponent();
         _totalPixels = totalPixels;
         _allowFloatRaw = allowFloatRaw;
         _hasBayer = hasBayer;
+        _byteRaw = bitDepth <= 8;
+        if (_byteRaw)
+        {
+            ((System.Windows.Controls.ComboBoxItem)FormatCombo.Items[0]).Content = "raw (8bit・1バイト/画素・無処理)";
+        }
+
         if (allowFloatRaw)
         {
             FormatCombo.Items.Add(new System.Windows.Controls.ComboBoxItem
@@ -107,7 +121,7 @@ public partial class SaveDialog : Window
         }
 
         SaveFormat format = SelectedFormat;
-        RawOptions.Visibility = format == SaveFormat.Raw ? Visibility.Visible : Visibility.Collapsed;
+        RawOptions.Visibility = format == SaveFormat.Raw && !_byteRaw ? Visibility.Visible : Visibility.Collapsed;
 
         // 16bit/raw系は無処理固定。チェックを外して操作不可にする
         bool processed = IsEightBitOutput;
@@ -167,7 +181,9 @@ public partial class SaveDialog : Window
         switch (SelectedFormat)
         {
             case SaveFormat.Raw:
-                return "✓ 無処理: センサ出力そのままの画素値を16bitコンテナへ出力します"
+                return (_byteRaw
+                        ? "✓ 無処理: センサ出力そのままの画素値を8bit(1バイト/画素)で出力します"
+                        : "✓ 無処理: センサ出力そのままの画素値を16bitコンテナへ出力します")
                     + "(表示調整・WB・現像は一切反映されません)";
             case SaveFormat.Tiff16:
             case SaveFormat.Png16:
@@ -214,18 +230,27 @@ public partial class SaveDialog : Window
         }
     }
 
-    private void OnSaveClick(object sender, RoutedEventArgs e)
+    /// <summary>今の選択を保存の選択結果にする。</summary>
+    /// <returns>選択結果。</returns>
+    internal SaveChoice BuildChoice()
     {
-        Result = new SaveChoice(
+        // 1バイト/画素の raw には詰め方向・エンディアンがないので既定値にする(選択欄も出さない)
+        return new SaveChoice(
             SelectedFormat,
-            PackingCombo.SelectedIndex == 1 ? BitPacking.Msb : BitPacking.Lsb,
-            EndianCombo.SelectedIndex == 1 ? Endianness.Big : Endianness.Little,
+            !_byteRaw && PackingCombo.SelectedIndex == 1 ? BitPacking.Msb : BitPacking.Lsb,
+            !_byteRaw && EndianCombo.SelectedIndex == 1 ? Endianness.Big : Endianness.Little,
             LutCheck.IsChecked == true,
             WbCheck.IsChecked == true,
             MatrixCheck.IsChecked == true,
             DemosaicCheck.IsChecked == true,
             SidecarCheck.IsChecked == true,
-            BuildSummary());
+            BuildSummary(),
+            RawBytesPerPixel: _byteRaw ? 1 : 2);
+    }
+
+    private void OnSaveClick(object sender, RoutedEventArgs e)
+    {
+        Result = BuildChoice();
         DialogResult = true;
     }
 }

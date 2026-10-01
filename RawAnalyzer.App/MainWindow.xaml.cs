@@ -2040,7 +2040,8 @@ public partial class MainWindow : Window
         var dialog = new SaveDialog(
             (long)target.Width * target.Height,
             allowFloatRaw: targetFloat is not null,
-            hasBayer: ActiveFormat?.Bayer is not (null or BayerPattern.None))
+            hasBayer: ActiveFormat?.Bayer is not (null or BayerPattern.None),
+            bitDepth: target.Format.BitDepth)
         {
             Owner = this,
         };
@@ -2262,7 +2263,12 @@ public partial class MainWindow : Window
             sb.AppendLine();
             sb.AppendLine("[出力]");
             sb.Append("  形式: ").AppendLine(choice.Format.ToString());
-            if (choice.Format == SaveFormat.Raw)
+            if (choice.Format == SaveFormat.Raw && choice.RawBytesPerPixel == 1)
+            {
+                // 8bit 以下の画像は1画素1バイトで書き、詰め方向・エンディアンはない
+                sb.AppendLine("  画素: 1バイト/画素 (8bit)");
+            }
+            else if (choice.Format == SaveFormat.Raw)
             {
                 sb.Append("  詰め方向: ").AppendLine(
                     choice.Packing == BitPacking.Lsb ? "下詰め (LSB)" : "上詰め (MSB)");
