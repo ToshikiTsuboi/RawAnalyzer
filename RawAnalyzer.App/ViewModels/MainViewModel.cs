@@ -200,7 +200,17 @@ public sealed class MainViewModel : ObservableObject
             _suspendFileFilter = false;
         }
 
+        // 候補を差し替えると、絞り込み欄(編集可能 ComboBox)はドロップダウンで選んでいた候補が新しい候補に無ければ
+        // 選択を外し、入力欄を空にしてこちらへ書き戻す。利用者が消したのではないので条件を戻す(戻せば絞り込み直す)。
+        // 以前はフォルダを移るだけで、選んだ拡張子の絞り込みが黙って解除され、空がセッションに保存された
+        string filterText = _fileFilterText;
         FileExtensionPatterns = BuildExtensionPatterns(Files);
+        if (_fileFilterText != filterText)
+        {
+            FileFilterText = filterText;
+            return;
+        }
+
         ApplyFileFilter();
     }
 
