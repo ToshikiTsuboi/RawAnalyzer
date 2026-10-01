@@ -128,7 +128,12 @@ public class DefectPixelWindowTests
         // 検出結果・一覧・コピー/CSV の表は従来どおり
         Assert.Contains("白点 1 / 黒点 1", summary.Text);
         Assert.Equal(2, list.Items.Count);
-        Assert.Equal(3, window.BuildTable(',')!.Split('\n', StringSplitOptions.RemoveEmptyEntries).Length);
+
+        // 表は見出し+欠陥ごとに x,y,raw_code,type の1行(並び順は検出器しだいなので行の有無で見る)
+        string[] rows = window.BuildTable(',')!.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+        Assert.Equal(3, rows.Length);
+        Assert.Contains("5,7,4000,hot", rows);
+        Assert.Contains("20,15,10,dead", rows);
 
         // 検出・補正の失敗やキャンセルで操作可能へ戻しても、補正は押させない
         window.ResetRunButton();
