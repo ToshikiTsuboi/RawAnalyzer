@@ -294,22 +294,53 @@ public class LineProfileWindowTests
             var projection = (CheckBox)window.FindName("ProjectionCheck");
             window.SetProfiles(new double[] { 1, 2, 3 }, new double[] { 4, 5, 6 },
                 new double[] { 10, 20, 30 }, new double[] { 40, 50, 60 },
-                new RegionOfInterest(2100, 100, 3, 3), 0, 0, 4095, projectionInSplitView: true);
+                new RegionOfInterest(2100, 100, 3, 3), 0, 0, 4095,
+                projectionSourceRegion: new ChannelRegion(201, 200, 3, 3));
             projection.IsChecked = true;
 
             Assert.Contains("分割表示の座標", title.Text);
             Assert.DoesNotContain("画像座標", title.Text);
             Assert.Contains("分割表示", (string)axis.ToolTip);
             Assert.DoesNotContain("元画像上の画素座標", (string)axis.ToolTip);
-            Assert.StartsWith("x_display,value" + Environment.NewLine + "2100,10", window.BuildTable(','));
+            Assert.StartsWith("x_display,", window.BuildTable(','));
             ((RadioButton)window.FindName("VerticalRadio")).IsChecked = true;
-            Assert.StartsWith("y_display,value" + Environment.NewLine + "100,40", window.BuildTable(','));
+            Assert.StartsWith("y_display,", window.BuildTable(','));
 
             // 断面(行・列プロファイル)は分割表示でも元画像の列・行なので、従来どおり画像座標
             projection.IsChecked = false;
             Assert.Contains("画像座標", title.Text);
             Assert.Contains("元画像上の画素座標", (string)axis.ToolTip);
             Assert.StartsWith("y,value" + Environment.NewLine + "0,4", window.BuildTable(','));
+        }
+        finally
+        {
+            window.Close();
+        }
+    });
+
+    [Fact]
+    public Task SplitViewProjection_TableAlsoHasSourceCoordinates() => WpfTestHost.Run(() =>
+    {
+        // 残課題 2026-10-02 A5。チャネル分割表示の射影の CSV/TSV は表示(タイル)の座標 x_display / y_display だけで、
+        // 元画像のどの列・行の平均かを利用者が換算する必要があった。元画像の座標列(1チャネルの格子なので2画素おき)を
+        // 並べる。4000×3000 の分割表示で、右上の象限の (2100, 100) から 3×3 = 元画像の x 201,203,205 / y 200,202,204
+        var window = NewWindow();
+        try
+        {
+            window.SetProfiles(new double[] { 1, 2, 3 }, new double[] { 4, 5, 6 },
+                new double[] { 10, 20, 30 }, new double[] { 40, 50, 60 },
+                new RegionOfInterest(2100, 100, 3, 3), 0, 0, 4095,
+                projectionSourceRegion: new ChannelRegion(201, 200, 3, 3));
+            ((CheckBox)window.FindName("ProjectionCheck")).IsChecked = true;
+
+            string nl = Environment.NewLine;
+            Assert.Equal(
+                $"x_display,x_source,value{nl}2100,201,10{nl}2101,203,20{nl}2102,205,30{nl}",
+                window.BuildTable(','));
+            ((RadioButton)window.FindName("VerticalRadio")).IsChecked = true;
+            Assert.Equal(
+                $"y_display\ty_source\tvalue{nl}100\t200\t40{nl}101\t202\t50{nl}102\t204\t60{nl}",
+                window.BuildTable('\t'));
         }
         finally
         {

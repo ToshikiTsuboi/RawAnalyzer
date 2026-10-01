@@ -24,8 +24,9 @@ public partial class LineProfileWindow : Window
     private double[] _verticalProjection = Array.Empty<double>();
     private RegionOfInterest? _roi;
 
-    // チャネル分割表示で描いたROIの射影か(射影の座標は元画像ではなく分割表示(タイル)の座標)
-    private bool _projectionInSplitView;
+    // チャネル分割表示で描いたROIの射影なら、その画素の元画像の格子(射影の座標は元画像ではなく分割表示(タイル)の
+    // 座標。表には元画像の座標も並べる)。それ以外はnull
+    private ChannelRegion? _projectionSourceRegion;
 
     // 統計のキャッシュ(算出元の配列参照が変わったときだけ再計算する)
     private double[]? _statsSource;
@@ -138,8 +139,9 @@ public partial class LineProfileWindow : Window
     /// <param name="pointX">基準点X(元画像の座標。クリックした点、送り・差し替えの後は同じ点)。</param>
     /// <param name="pointY">基準点Y(元画像の座標)。</param>
     /// <param name="maxCode">ビット深度の最大raw code。</param>
-    /// <param name="projectionInSplitView">
-    /// チャネル分割表示で描いたROIの射影か。射影の座標は元画像ではなく、ROIを描いた分割表示(タイル)の座標になる。
+    /// <param name="projectionSourceRegion">
+    /// チャネル分割表示で描いたROIの射影なら、その画素の元画像の格子(1チャネルの2画素おきの格子)。射影の座標は
+    /// 元画像ではなく、ROIを描いた分割表示(タイル)の座標になる(表には元画像の座標も並べる)。通常の表示ではnull。
     /// </param>
     public void SetProfiles(
         double[] rowProfile,
@@ -150,10 +152,10 @@ public partial class LineProfileWindow : Window
         int pointX,
         int pointY,
         int maxCode,
-        bool projectionInSplitView = false)
+        ChannelRegion? projectionSourceRegion = null)
     {
         ApplyData(rowProfile, columnProfile, horizontalProjection, verticalProjection, roi,
-            pointX, pointY, maxCode, outsideImage: null, projectionInSplitView);
+            pointX, pointY, maxCode, outsideImage: null, projectionSourceRegion);
     }
 
     /// <summary>
@@ -172,7 +174,7 @@ public partial class LineProfileWindow : Window
     public void ShowOutsideImage(int pointX, int pointY, int imageWidth, int imageHeight, int maxCode)
     {
         ApplyData(Array.Empty<double>(), Array.Empty<double>(), Array.Empty<double>(), Array.Empty<double>(),
-            null, pointX, pointY, maxCode, (imageWidth, imageHeight), projectionInSplitView: false);
+            null, pointX, pointY, maxCode, (imageWidth, imageHeight), projectionSourceRegion: null);
     }
 
     private void ApplyData(
@@ -185,7 +187,7 @@ public partial class LineProfileWindow : Window
         int pointY,
         int maxCode,
         (int Width, int Height)? outsideImage,
-        bool projectionInSplitView)
+        ChannelRegion? projectionSourceRegion)
     {
         int previousCount = CurrentData.Length;
         int previousOffset = CoordinateOffset;
@@ -199,7 +201,7 @@ public partial class LineProfileWindow : Window
         _horizontalProjection = horizontalProjection;
         _verticalProjection = verticalProjection;
         _roi = roi;
-        _projectionInSplitView = projectionInSplitView;
+        _projectionSourceRegion = projectionSourceRegion;
         _pointX = pointX;
         _pointY = pointY;
         _maxCode = Math.Max(1, maxCode);
@@ -219,7 +221,7 @@ public partial class LineProfileWindow : Window
         && _horizontalProjection.Length > 0;
 
     /// <summary>表示中の射影の座標がチャネル分割表示(タイル)の座標か(断面は分割表示でも元画像の座標)。</summary>
-    private bool UseSplitViewCoordinates => UseProjection && _projectionInSplitView;
+    private bool UseSplitViewCoordinates => UseProjection && _projectionSourceRegion is not null;
 
     private double[] CurrentData => (IsHorizontal, UseProjection) switch
     {
@@ -403,13 +405,27 @@ public partial class LineProfileWindow : Window
             return null;
         }
 
+        // チャネル分割表示の射影は、表示(タイル)の座標に並べて元画像の座標(1チャネルの格子なので2画素おき)も出す
+        string axis = IsHorizontal ? "x" : "y";
+        ChannelRegion? source = UseSplitViewCoordinates ? _projectionSourceRegion : null;
+        long sourceOrigin = source is { } region ? IsHorizontal ? region.X : region.Y : 0;
         var sb = new StringBuilder();
-        sb.Append(IsHorizontal ? "x" : "y").Append(UseSplitViewCoordinates ? "_display" : "")
-            .Append(separator).Append("value").AppendLine();
+        sb.Append(axis).Append(source is null ? "" : "_display").Append(separator);
+        if (source is not null)
+        {
+            sb.Append(axis).Append("_source").Append(separator);
+        }
+
+        sb.Append("value").AppendLine();
         for (int i = 0; i < data.Length; i++)
         {
-            sb.Append((long)i + CoordinateOffset).Append(separator)
-                .Append(data[i].ToString("G6", CultureInfo.InvariantCulture)).AppendLine();
+            sb.Append((long)i + CoordinateOffset).Append(separator);
+            if (source is not null)
+            {
+                sb.Append(sourceOrigin + (2L * i)).Append(separator);
+            }
+
+            sb.Append(data[i].ToString("G6", CultureInfo.InvariantCulture)).AppendLine();
         }
 
         return sb.ToString();
