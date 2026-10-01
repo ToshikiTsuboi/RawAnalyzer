@@ -536,6 +536,20 @@ public static unsafe class TiffLoader
 
     // ------------------------------------------------------------------ ファイルアクセス
 
+    /// <summary>
+    /// テスト用: 真にすると、このフローの読み込みはローカルのファイルでもネットワーク上のファイルと同じく
+    /// マップせずに読む(両方の経路で同じ結果になることを確かめる)。
+    /// </summary>
+    internal static readonly AsyncLocal<bool> ForceStreamAccess = new();
+
+    /// <summary>ファイルをマップせずにストリームから読むか(ネットワーク上のファイル)。</summary>
+    /// <param name="path">TIFFファイルのパス。</param>
+    /// <returns>マップせずに読むならtrue。</returns>
+    internal static bool ReadsWithoutMapping(string path)
+    {
+        return ForceStreamAccess.Value || RawLoader.IsNetworkPath(path);
+    }
+
     private static bool WithMappedFile(
         string path, ref string reason, Func<TiffBytes, bool> action, bool rethrowInvalidData = false)
     {
@@ -565,6 +579,16 @@ public static unsafe class TiffLoader
 
         try
         {
+            if (ReadsWithoutMapping(path))
+            {
+                // ネットワーク上のファイルはマップしない(RawLoader と同じ理由)。NAS の切断・SMB の再接続で
+                // ページインが EXCEPTION_IN_PAGE_ERROR になると .NET では捕捉できずプロセスごと落ちる。
+                // ストリームから読めば IOException(理由付きの失敗)で済む
+                using var stream = new FileStream(
+                    path, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 0, FileOptions.RandomAccess);
+                return action(new TiffBytes(new StreamWindow(stream, fileLength)));
+            }
+
             // ヘッダとIFDの位置はファイル末尾のこともあるため全体をマップする。
             // 実際に触れたページしか読み込まれないので巨大ファイルでも安価
             using MemoryMappedFile mmf = MemoryMappedFile.CreateFromFile(
@@ -1880,26 +1904,33 @@ public static unsafe class TiffLoader
     /// uint32(4GB-1)なので、Spanのint長では2GB超のファイル後方に届かない。
     /// 範囲外参照はすべてInvalidDataException(不正TIFFの報告)にする。
     /// </summary>
+    /// <remarks>
+    /// マップしたメモリ(またはメモリ上のバイト列)を指すか、ネットワーク上のファイルを読む
+    /// <see cref="StreamWindow"/> を持つ。後者の <see cref="Slice"/> が返すスパンは次の読み出しまで有効で、
+    /// 呼び出し側はどれも読み出しの間にスパンを持ち越さない。
+    /// </remarks>
     private readonly struct TiffBytes
     {
         private readonly byte* _data;
+        private readonly StreamWindow? _stream;
 
         public TiffBytes(byte* data, long length)
         {
             _data = data;
+            _stream = null;
             Length = length;
+        }
+
+        public TiffBytes(StreamWindow stream)
+        {
+            _data = null;
+            _stream = stream;
+            Length = stream.Length;
         }
 
         public long Length { get; }
 
-        public byte this[long offset]
-        {
-            get
-            {
-                CheckRange(offset, 1);
-                return _data[offset];
-            }
-        }
+        public byte this[long offset] => Slice(offset, 1)[0];
 
         public ushort ReadU16(long offset, bool bigEndian)
         {
@@ -1925,7 +1956,9 @@ public static unsafe class TiffLoader
         public ReadOnlySpan<byte> Slice(long offset, int length)
         {
             CheckRange(offset, length);
-            return new ReadOnlySpan<byte>(_data + offset, length);
+            return _stream is null
+                ? new ReadOnlySpan<byte>(_data + offset, length)
+                : _stream.Read(offset, length);
         }
 
         private void CheckRange(long offset, int length)
@@ -1936,6 +1969,42 @@ public static unsafe class TiffLoader
             {
                 throw new InvalidDataException("参照がファイル範囲外を指しています。");
             }
+        }
+    }
+
+    /// <summary>
+    /// マップせずにファイルを読む窓。読んだ範囲(小さな読み出しは前方をまとめて <see cref="BlockSize"/> まで)を
+    /// 持ち、続く読み出しがその中なら読み直さない(IFDのエントリ、ストリップ内の行)。
+    /// </summary>
+    private sealed class StreamWindow(FileStream stream, long length)
+    {
+        private const int BlockSize = 64 * 1024;
+        private byte[] _buffer = new byte[BlockSize];
+        private long _start = -1;
+        private int _count;
+
+        public long Length { get; } = length;
+
+        /// <summary>範囲を読む(範囲は呼び出し側で検査済み)。返すスパンは次の読み出しまで有効。</summary>
+        public ReadOnlySpan<byte> Read(long offset, int length)
+        {
+            if (_start >= 0 && offset >= _start && offset - _start <= _count - length)
+            {
+                return _buffer.AsSpan((int)(offset - _start), length);
+            }
+
+            int count = (int)Math.Min(Math.Max(length, BlockSize), Length - offset);
+            if (_buffer.Length < count)
+            {
+                _buffer = new byte[count];
+            }
+
+            _start = -1;
+            stream.Position = offset;
+            stream.ReadExactly(_buffer, 0, count);
+            _start = offset;
+            _count = count;
+            return _buffer.AsSpan(0, length);
         }
     }
 }
