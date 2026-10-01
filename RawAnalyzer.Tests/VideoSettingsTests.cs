@@ -56,6 +56,20 @@ public class VideoSettingsTests
         Assert.Equal(expected, FpsInput.Parse(text, fallback: 15), 10);
     }
 
+    /// <summary>
+    /// 小数点のつもりかもしれないカンマ("7,5")は、他の数値入力欄(NumericInput)と同じく読めない入力として既定値へ
+    /// 落とし、そのことを示す。以前はカンマの手前だけを読んで 7 fps と黙って誤読した。
+    /// </summary>
+    [Theory]
+    [InlineData("7,5")]
+    [InlineData("７，５ fps")]
+    [InlineData("1,5000")]
+    public void Parse_AmbiguousCommaIsNotMisread(string text)
+    {
+        Assert.Equal(15, FpsInput.Parse(text, fallback: 15, out string? notice), 10);
+        Assert.Contains("読めない", notice);
+    }
+
     [Theory]
     [InlineData("-5")]  // 以前は符号を無視して 5 fps と読んだ
     [InlineData("－５")]

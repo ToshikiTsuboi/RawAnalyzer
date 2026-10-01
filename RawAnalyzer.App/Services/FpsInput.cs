@@ -62,8 +62,10 @@ internal static partial class FpsInput
 
         // NFKC で全角の数字・記号(－ ． ，)を半角へ寄せる。かな入力の「ー」(負号)と「。」(小数点)は
         // NFKC では変わらないので、そのまま拾って NumericInput に読ませる
-        Match match = NumberPattern().Match(text.Normalize(NormalizationForm.FormKC));
-        if (!match.Success || !NumericInput.TryParseFinite(match.Value, out double value))
+        string normalized = text.Normalize(NormalizationForm.FormKC);
+        Match match = NumberPattern().Match(normalized);
+        if (!match.Success || IsCutAtAmbiguousComma(normalized, match)
+            || !NumericInput.TryParseFinite(match.Value, out double value))
         {
             notice = $"「{text.Trim()}」からフレームレートを読めないため、{fallbackText}";
             return fallback;
@@ -86,6 +88,21 @@ internal static partial class FpsInput
     }
 
     private static string Format(double fps) => fps.ToString("0.###", CultureInfo.InvariantCulture);
+
+    /// <summary>
+    /// 取り出した数が、3桁区切りではないカンマの手前で切れているか("7,5" の "7"、"1,5000" の "1,500")。
+    /// </summary>
+    /// <remarks>
+    /// 小数点のつもりかもしれないカンマは、他の数値入力欄(<see cref="NumericInput"/>)と同じく読めない入力とする。
+    /// 以前はカンマの手前だけを読み、"7,5" を 7 fps と黙って誤読した。
+    /// </remarks>
+    private static bool IsCutAtAmbiguousComma(string text, Match match)
+    {
+        int end = match.Index + match.Length;
+        return end < text.Length
+            && (char.IsAsciiDigit(text[end])
+                || (text[end] == ',' && end + 1 < text.Length && char.IsAsciiDigit(text[end + 1])));
+    }
 
     /// <summary>
     /// 動画書き出し用に整数のフレームレートを取り出す(ライタが整数を要求するため)。
