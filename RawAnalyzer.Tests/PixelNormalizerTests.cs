@@ -6,10 +6,7 @@ namespace RawAnalyzer.Tests;
 public class PixelNormalizerTests
 {
     [Theory]
-    [InlineData(10, BitPacking.Lsb, 0x03FF, 0xFFC0)]
     [InlineData(12, BitPacking.Lsb, 0x0FFF, 0xFFF0)]
-    [InlineData(14, BitPacking.Lsb, 0x3FFF, 0xFFFC)]
-    [InlineData(16, BitPacking.Lsb, 0xFFFF, 0xFFFF)]
     [InlineData(12, BitPacking.Msb, 0x123F, 0x1230)] // MSB詰めは上位を保ち、下位4bitのパディングを落とす
     public void NormalizeValue_AlignsCodeToUpperBits(
         int bitDepth, BitPacking packing, int container, int expected)

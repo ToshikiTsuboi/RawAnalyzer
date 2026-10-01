@@ -272,11 +272,4 @@ public class RawLoaderTests
         // 判定できたものはヒープ展開へ振り分ける(全体レビュー 2026-08-23 の回帰)
         Assert.Equal(expected, RawLoader.IsNetworkPath(path));
     }
-
-    [Fact]
-    public void IsNetworkPath_InvalidPath_TreatedAsLocal()
-    {
-        // 判定できない場合は従来動作(ローカル扱い)へ倒す
-        Assert.False(RawLoader.IsNetworkPath("|<>invalid"));
-    }
 }

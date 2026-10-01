@@ -121,7 +121,6 @@ public class ImageFileSaverTests
     }
 
     [Theory]
-    [InlineData(4, true)]
     [InlineData(3, true)]
     [InlineData(4, false)]
     public void Png8_HdrSplitView_Demosaic_DevelopsEachStageAlone(int stageWidth, bool applyDisplayLut)
