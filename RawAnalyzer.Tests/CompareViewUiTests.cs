@@ -407,6 +407,99 @@ public class CompareViewUiTests
         }
     });
 
+    [Theory]
+    [InlineData(System.Windows.Input.MouseButton.Right)]
+    [InlineData(System.Windows.Input.MouseButton.Middle)]
+    [InlineData(System.Windows.Input.MouseButton.Left)] // 移動のない単クリック(アクティブ化)
+    public Task ClickWithoutViewChange_PanesKeepFittingAsGridChanges(
+        System.Windows.Input.MouseButton button) => WpfTestHost.Run(async () =>
+    {
+        // ビューを変えないクリックは操作ではない。追従を外すと、次のペイン増減でそのペインだけ
+        // 前の倍率のまま残り(追加したペインもそれに揃い)、全体表示のペインと視野がずれる
+        using var fixture = new ImageFixture(480, 320);
+        var view = NewView();
+        try
+        {
+            for (int i = 0; i < 2; i++)
+            {
+                Assert.True(await view.AddPaneFromPathAsync(fixture.Path));
+                await LayoutAsync(view, 1280, 720);
+            }
+
+            Click(PaneAt(view, 0), button);
+            await DrainAsync();
+            Assert.True(PaneAt(view, 0).IsAutoFit);
+
+            Assert.True(await view.AddPaneFromPathAsync(fixture.Path));
+            await LayoutAsync(view, 1280, 720);
+            AssertAllFitting(view);
+
+            await ClosePaneAsync(view, 2);
+            await LayoutAsync(view, 1280, 720);
+            AssertAllFitting(view);
+        }
+        finally
+        {
+            await view.CloseAllAsync();
+        }
+    });
+
+    [Fact]
+    public Task WheelZoom_StopsFittingAndSyncsOtherPanes() => WpfTestHost.Run(async () =>
+    {
+        // ビューの変わる入力(ホイールの拡大)は従来どおり操作として追従を外し、他ペインを揃える
+        using var fixture = new ImageFixture(480, 320);
+        var view = NewView();
+        try
+        {
+            for (int i = 0; i < 2; i++)
+            {
+                Assert.True(await view.AddPaneFromPathAsync(fixture.Path));
+                await LayoutAsync(view, 1280, 720);
+            }
+
+            ComparePaneView first = PaneAt(view, 0);
+            ComparePaneView second = PaneAt(view, 1);
+            double fitZoom = first.ViewportControl.Zoom;
+            var viewport = first.ViewportControl;
+            foreach (RoutedEvent routed in new[] { UIElement.PreviewMouseWheelEvent, UIElement.MouseWheelEvent })
+            {
+                viewport.RaiseEvent(new System.Windows.Input.MouseWheelEventArgs(
+                    System.Windows.Input.Mouse.PrimaryDevice, Environment.TickCount, 120) { RoutedEvent = routed });
+            }
+
+            await DrainAsync();
+            Assert.True(first.ViewportControl.Zoom > fitZoom);
+            Assert.False(first.IsAutoFit);
+            AssertSynced(0, first, second);
+
+            (double Zoom, double X, double Y) firstView = ViewOf(first);
+            Assert.True(await view.AddPaneFromPathAsync(fixture.Path));
+            await LayoutAsync(view, 1280, 720);
+            AssertKeepsView(firstView, first);
+            AssertSynced(0, first, PaneAt(view, 2));
+        }
+        finally
+        {
+            await view.CloseAllAsync();
+        }
+    });
+
+    // ボタンの押下と解放(移動なし)。入力の順と同じく Preview → 本体の順に送る
+    private static void Click(ComparePaneView pane, System.Windows.Input.MouseButton button)
+    {
+        var viewport = pane.ViewportControl;
+        foreach (RoutedEvent routed in new[]
+                 {
+                     UIElement.PreviewMouseDownEvent, UIElement.MouseDownEvent,
+                     UIElement.PreviewMouseUpEvent, UIElement.MouseUpEvent,
+                 })
+        {
+            viewport.RaiseEvent(new System.Windows.Input.MouseButtonEventArgs(
+                System.Windows.Input.Mouse.PrimaryDevice, Environment.TickCount, button) { RoutedEvent = routed });
+        }
+    }
+
     private static CompareView NewView() => new()
     {
         PaneLoader = async (path, token) => await ComparePane.LoadAsync(path, null, token),

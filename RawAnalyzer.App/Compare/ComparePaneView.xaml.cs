@@ -39,32 +39,19 @@ public partial class ComparePaneView : UserControl
             }
         };
 
-        // ズーム/パンの手動操作が入ったら追従をやめ、同期を発火する。
-        // ImageViewport自身のハンドラが状態を更新した「後」に読みたいので
-        // BeginInvokeで一拍置く(Previewイベントは処理前に来る)
-        Viewport.PreviewMouseWheel += (_, _) =>
-        {
-            _autoFit = false;
-            ScheduleViewChanged();
-        };
-        Viewport.PreviewMouseDown += (_, e) =>
-        {
-            _autoFit = false;
+        // ズーム/パンの手動操作でビューが変わったら追従をやめ、同期を発火する
+        // (判定は ScheduleViewChanged。ビューを変えない入力は操作に数えない)
+        Viewport.PreviewMouseWheel += (_, _) => ScheduleViewChanged();
 
-            // ダブルクリックは全体表示(FitToView)。ドラッグと違い移動が
-            // 一度で終わるので、ここで同期を促さないと他ペインが取り残される
-            if (e.ClickCount == 2)
-            {
-                ScheduleViewChanged();
-            }
-        };
+        // ダブルクリックは全体表示(FitToView)。ドラッグと違い移動が
+        // 一度で終わるので、押下でも確かめないと他ペインが取り残される
+        Viewport.PreviewMouseDown += (_, _) => ScheduleViewChanged();
 
-        // 矢印キーのパンもビューを変える
+        // 矢印キーのパン(Ctrl+矢印の画素カーソルも、見える位置へのスクロールで)もビューを変える
         Viewport.PreviewKeyDown += (_, e) =>
         {
             if (e.Key is Key.Left or Key.Right or Key.Up or Key.Down)
             {
-                _autoFit = false;
                 ScheduleViewChanged();
             }
         };
@@ -91,11 +78,35 @@ public partial class ComparePaneView : UserControl
         Viewport.MouseLeave += (_, _) => CursorLeft?.Invoke(this);
     }
 
+    /// <summary>
+    /// 入力の処理後にビューが変わっていたら、全体表示への追従をやめて同期を発火する。
+    /// </summary>
+    /// <remarks>
+    /// ImageViewport自身のハンドラが状態を更新した「後」に読みたいので
+    /// BeginInvokeで一拍置く(Previewイベントは処理前に来る)。
+    /// ビューの変わらない入力(アクティブ化の単クリック・右/中クリック・画面内での画素カーソル移動・
+    /// 全体表示中のダブルクリック)は操作に数えない。数えると未操作のまま追従が外れ、次のペイン増減や
+    /// リサイズでこのペインだけ全体表示に戻らず(新しいペインもこれに揃い)、視野同期がずれる。
+    /// </remarks>
     private void ScheduleViewChanged()
     {
+        (double Zoom, double OriginX, double OriginY) before = CurrentView;
         Dispatcher.BeginInvoke(
-            new Action(() => ViewChanged?.Invoke(this)), DispatcherPriority.Input);
+            new Action(() =>
+            {
+                if (CurrentView == before)
+                {
+                    return;
+                }
+
+                _autoFit = false;
+                ViewChanged?.Invoke(this);
+            }),
+            DispatcherPriority.Input);
     }
+
+    private (double Zoom, double OriginX, double OriginY) CurrentView =>
+        (Viewport.Zoom, Viewport.OriginX, Viewport.OriginY);
 
     /// <summary>「✕」が押されたときに発火する。</summary>
     public event Action<ComparePaneView>? CloseRequested;
