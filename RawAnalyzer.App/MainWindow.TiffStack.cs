@@ -65,7 +65,11 @@ public partial class MainWindow
 
             transferred = true;
             await ApplyTiffPageAsync(stack, decoded, index);
-            if (refreshAnalysis && ReferenceEquals(decoded.Luminance, _currentImage))
+
+            // 再生中の送りでも、読み込みの間に再生が止まっていたら送った先のページで作り直す
+            // (止めたときの作り直しは前のページに対して始まり、ページの入れ替えで取り消されている)
+            if (SequenceNavigation.RefreshesAnalysisAfterMove(refreshAnalysis, _playTimer?.IsEnabled == true)
+                && ReferenceEquals(decoded.Luminance, _currentImage))
             {
                 RefreshAfterSequenceMove();
             }

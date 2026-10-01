@@ -35,4 +35,30 @@ public class SequenceNavigationTests
         Assert.False(SequenceNavigation.IsAvailable(count: 25, derivedViewShown: true));
         Assert.False(SequenceNavigation.IsAvailable(count: 2, derivedViewShown: true));
     }
+
+    [Fact]
+    public void PlaybackStoppedWhileLoading_RefreshesAnalysisForTheShownImage()
+    {
+        // 再生のティックが始めた送り(作り直しは求めない)で次のファイル・ページを読んでいる間に再生を止める。
+        // 止めたときの作り直しは送る前の画像に対して始まり、読み終えた送りが状態を入れ替えるときに取り消される。
+        // 以前は要求時の指定だけを見て作り直さず、表示中の画像のヒストグラム・ROI統計・ラインプロファイル・
+        // 縮小ピラミッドが作られなかった(前の画像の統計が残り、縮小表示も等倍データから描き続けた)
+        Assert.True(SequenceNavigation.RefreshesAnalysisAfterMove(requested: false, playing: false));
+    }
+
+    [Fact]
+    public void StillPlaying_DefersAnalysisUntilStopped()
+    {
+        // 再生中は送りのたびに計算しない(止めたときに StopPlayback が作り直す)
+        Assert.False(SequenceNavigation.RefreshesAnalysisAfterMove(requested: false, playing: true));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void RequestedRefresh_IsKept(bool playing)
+    {
+        // ボタン・キー・停止中のスライダーでの送りは、従来どおり送った後に作り直す
+        Assert.True(SequenceNavigation.RefreshesAnalysisAfterMove(requested: true, playing));
+    }
 }

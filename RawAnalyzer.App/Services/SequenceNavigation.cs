@@ -26,4 +26,21 @@ internal static class SequenceNavigation
     /// <param name="derivedViewShown">HDR分割・合成の派生ビューを表示しているか。</param>
     /// <returns>使えるならtrue。</returns>
     internal static bool IsAvailable(int count, bool derivedViewShown) => count > 1 && !derivedViewShown;
+
+    /// <summary>
+    /// 送りを終えたときに、送った先の画像・フレームで解析(ヒストグラム・ROI統計・ラインプロファイル)と
+    /// 縮小ピラミッドを作り直すか。
+    /// </summary>
+    /// <remarks>
+    /// 再生中の送りは作り直さず、止めたときに作り直す(StopPlayback)。ところが、ファイル連番・TIFF のページの送りで
+    /// 次のファイル・ページを読んでいる間に止めると、止めたときの作り直しは送る前の画像に対して始まり、その後で
+    /// 読み終えた送りが状態を入れ替えるときに取り消される。送りを要求したときの指定(再生中は作り直さない)だけを
+    /// 見ると、送った先の解析と縮小ピラミッドは作られない。送りを終えた時点で再生していなければ作り直す。
+    /// </remarks>
+    /// <param name="requested">
+    /// 送りを要求したときに作り直しを求めたか(再生のティックと再生中のスライダー操作は求めない)。
+    /// </param>
+    /// <param name="playing">送りを終えた時点で再生しているか。</param>
+    /// <returns>作り直すならtrue。</returns>
+    internal static bool RefreshesAnalysisAfterMove(bool requested, bool playing) => requested || !playing;
 }

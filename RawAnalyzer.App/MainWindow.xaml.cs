@@ -4125,7 +4125,9 @@ public partial class MainWindow : Window
             _sequenceBusy = false;
         }
 
-        if (refreshAnalysis)
+        // 再生中の送りでも、読み込みの間に再生が止まっていたら送った先で作り直す(止めたときの作り直しは
+        // 送る前の画像に対して始まり、上の入れ替えで取り消されている)
+        if (SequenceNavigation.RefreshesAnalysisAfterMove(refreshAnalysis, _playTimer?.IsEnabled == true))
         {
             RefreshAfterSequenceMove();
         }
