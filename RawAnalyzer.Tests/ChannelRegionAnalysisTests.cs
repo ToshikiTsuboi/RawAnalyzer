@@ -95,17 +95,19 @@ public class ChannelRegionAnalysisTests
     public void ComputeHistogram_Sampled_ReadsOnlyThatChannel()
     {
         // 200×200 RGGB。R=1000 以外のチャネルは別の値。R格子全体(100×100)を
-        // 間引いても、拾うのはRの画素だけ
+        // 間引いても、拾うのはRの画素だけ。間引き間隔は ceil(√(10000/124)) = 9 で奇数なので、
+        // 間引くときだけ元画像の座標で進むと奇数番目の位置で他のチャネルを拾う。
+        // 拾う位置はチャネル座標の 0, 9, …, 99 の 12 行 × 12 列
         using RawImage image = BayerImage(200, 200, r: 1000, gr: 2000, gb: 3000, b: 4000);
         var region = new ChannelRegion(0, 0, 100, 100);
 
         HistogramResult result = ChannelRegionAnalysis.ComputeHistogram(
-            image, 0, region, maxSamples: 100);
+            image, 0, region, maxSamples: 124);
 
         Assert.True(result.IsSampled);
-        Assert.InRange(result.SampleCount, 1, 199);
-        Assert.Equal(result.SampleCount, result.Bins[1000]);
-        Assert.Equal(new RegionStatistics(1000, 0, 1000, 1000, result.SampleCount), result.Statistics);
+        Assert.Equal(144, result.SampleCount);
+        Assert.Equal(144, result.Bins[1000]);
+        Assert.Equal(new RegionStatistics(1000, 0, 1000, 1000, 144), result.Statistics);
     }
 
     [Fact]
