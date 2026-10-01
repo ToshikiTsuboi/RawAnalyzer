@@ -71,6 +71,35 @@ public class SequenceScannerNumberedTests
     }
 
     [Fact]
+    public void FindNumberedStack_CandidatesInOtherFolder_AreExcluded()
+    {
+        // カメラ由来の IMG_xxxx は別のフォルダにも同じ命名で並ぶ。基準ファイルと同じフォルダのものだけを連番にする
+        var candidates = new[]
+        {
+            new SequenceFile(@"C:\a\IMG_0001.tif", 10),
+            new SequenceFile(@"C:\a\IMG_0002.tif", 20),
+            new SequenceFile(@"C:\b\IMG_0003.tif", 30),
+        };
+
+        IReadOnlyList<string> stack = SequenceScanner.FindNumberedStack(@"C:\a\IMG_0001.tif", candidates);
+
+        Assert.Equal(new[] { @"C:\a\IMG_0001.tif", @"C:\a\IMG_0002.tif" }, stack);
+    }
+
+    [Fact]
+    public void FindNumberedStack_ReferenceNotAmongCandidates_ReturnsEmpty()
+    {
+        // 一覧が別フォルダのとき、以前はそのフォルダの IMG_ 連番を一括書き出しの対象にしていた
+        var otherFolder = new[]
+        {
+            new SequenceFile(@"C:\b\IMG_0001.tif", 10),
+            new SequenceFile(@"C:\b\IMG_0002.tif", 20),
+        };
+
+        Assert.Empty(SequenceScanner.FindNumberedStack(@"C:\a\IMG_0001.tif", otherFolder));
+    }
+
+    [Fact]
     public void FindNumberedStack_UnpaddedNumbers_SortNaturally()
     {
         IReadOnlyList<string> stack = SequenceScanner.FindNumberedStack(

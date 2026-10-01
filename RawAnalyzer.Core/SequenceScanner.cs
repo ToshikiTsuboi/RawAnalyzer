@@ -9,8 +9,16 @@ public readonly record struct SequenceFile(string Path, long Length);
 /// 同一フォルダ内の連番ファイル群(仮想スタック)を判定する。
 /// </summary>
 /// <remarks>
+/// <para>
 /// 再生とバッチ書き出しで別々に実装されていると、片方だけ直したときに
 /// 対象ファイルが食い違うため、判定はここへ一本化する。
+/// </para>
+/// <para>
+/// 候補のうち基準ファイルと同じフォルダにあるものだけを使い、基準ファイル自身が連番に入らなければ
+/// 空を返す(呼び出し側の一覧が別のフォルダのもの、基準ファイルが一覧に無いなど)。以前は候補のフォルダを
+/// 見なかったので、一覧が別のフォルダだとそのフォルダの同じサイズ・同じ命名のファイルを連番とし、
+/// 基準ファイルの位置も先頭(0)扱いになっていた。
+/// </para>
 /// </remarks>
 public static class SequenceScanner
 {
@@ -19,8 +27,10 @@ public static class SequenceScanner
     /// </summary>
     /// <param name="referencePath">基準ファイルのパス。</param>
     /// <param name="referenceLength">基準ファイルのサイズ。0以下なら判定不能として空を返す。</param>
-    /// <param name="candidates">同一フォルダ内の候補ファイル。</param>
-    /// <returns>スタックを構成するファイルパス(自然順)。</returns>
+    /// <param name="candidates">候補ファイル(基準ファイルと別のフォルダのものは使わない)。</param>
+    /// <returns>
+    /// スタックを構成するファイルパス(自然順)。基準ファイル自身が含まれない(候補に無い・サイズが違う)なら空。
+    /// </returns>
     public static IReadOnlyList<string> FindStack(
         string referencePath, long referenceLength, IEnumerable<SequenceFile> candidates)
     {
@@ -30,12 +40,14 @@ public static class SequenceScanner
         }
 
         string extension = Path.GetExtension(referencePath);
-        return candidates
-            .Where(c => c.Length == referenceLength && string.Equals(
-                Path.GetExtension(c.Path), extension, StringComparison.OrdinalIgnoreCase))
-            .Select(c => c.Path)
-            .OrderBy(p => p, NaturalOrderComparer.Instance)
-            .ToArray();
+        return ContainingReference(
+            referencePath,
+            InSameFolder(referencePath, candidates)
+                .Where(c => c.Length == referenceLength && string.Equals(
+                    Path.GetExtension(c.Path), extension, StringComparison.OrdinalIgnoreCase))
+                .Select(c => c.Path)
+                .OrderBy(p => p, NaturalOrderComparer.Instance)
+                .ToArray());
     }
 
     /// <summary>
@@ -49,8 +61,10 @@ public static class SequenceScanner
     /// 判定にファイルの中身を読まないので、低速なストレージでも待たされない。
     /// </remarks>
     /// <param name="referencePath">基準ファイルのパス。</param>
-    /// <param name="candidates">同一フォルダ内の候補ファイル。</param>
-    /// <returns>スタックを構成するファイルパス(自然順)。連番でなければ空。</returns>
+    /// <param name="candidates">候補ファイル(基準ファイルと別のフォルダのものは使わない)。</param>
+    /// <returns>
+    /// スタックを構成するファイルパス(自然順)。連番でない・基準ファイル自身が候補に無いなら空。
+    /// </returns>
     public static IReadOnlyList<string> FindNumberedStack(
         string referencePath, IEnumerable<SequenceFile> candidates)
     {
@@ -60,15 +74,39 @@ public static class SequenceScanner
         }
 
         string extension = Path.GetExtension(referencePath);
-        return candidates
-            .Where(c => string.Equals(
-                    Path.GetExtension(c.Path), extension, StringComparison.OrdinalIgnoreCase)
-                && TrySplitNumbering(c.Path, out string p, out string s)
-                && string.Equals(p, prefix, StringComparison.OrdinalIgnoreCase)
-                && string.Equals(s, suffix, StringComparison.OrdinalIgnoreCase))
-            .Select(c => c.Path)
-            .OrderBy(p => p, NaturalOrderComparer.Instance)
-            .ToArray();
+        return ContainingReference(
+            referencePath,
+            InSameFolder(referencePath, candidates)
+                .Where(c => string.Equals(
+                        Path.GetExtension(c.Path), extension, StringComparison.OrdinalIgnoreCase)
+                    && TrySplitNumbering(c.Path, out string p, out string s)
+                    && string.Equals(p, prefix, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(s, suffix, StringComparison.OrdinalIgnoreCase))
+                .Select(c => c.Path)
+                .OrderBy(p => p, NaturalOrderComparer.Instance)
+                .ToArray());
+    }
+
+    /// <summary>候補のうち、基準ファイルと同じフォルダにあるもの。</summary>
+    private static IEnumerable<SequenceFile> InSameFolder(
+        string referencePath, IEnumerable<SequenceFile> candidates)
+    {
+        string? folder = DirectoryOf(referencePath);
+        return folder is null
+            ? Enumerable.Empty<SequenceFile>()
+            : candidates.Where(c => string.Equals(
+                DirectoryOf(c.Path), folder, StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>連番に基準ファイル自身が含まれていればそのまま、含まれていなければ空を返す。</summary>
+    private static IReadOnlyList<string> ContainingReference(string referencePath, string[] stack)
+    {
+        return stack.Any(p => SamePath(p, referencePath)) ? stack : Array.Empty<string>();
+    }
+
+    private static bool SamePath(string a, string b)
+    {
+        return string.Equals(FullPath(a), FullPath(b), StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>
@@ -111,8 +149,47 @@ public static class SequenceScanner
     }
 
     /// <summary>
-    /// スタック内での基準ファイルの位置を返す。見つからない場合は0。
+    /// ファイルが指定のフォルダの直下にあるかを判定する(大文字小文字を区別せず、パスを正規化して比べる)。
     /// </summary>
+    /// <param name="path">ファイルのパス。</param>
+    /// <param name="folder">フォルダのパス(末尾の区切りの有無は問わない)。null なら false。</param>
+    /// <returns>直下にあれば true。</returns>
+    public static bool IsInFolder(string path, string? folder)
+    {
+        return folder is not null && DirectoryOf(path) is { } directory
+            && string.Equals(directory, NormalizeFolder(folder), StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>ファイルのあるフォルダ(正規化済み)。求められなければ null。</summary>
+    private static string? DirectoryOf(string path)
+    {
+        return Path.GetDirectoryName(FullPath(path)) is { } directory ? NormalizeFolder(directory) : null;
+    }
+
+    private static string NormalizeFolder(string folder)
+    {
+        return Path.TrimEndingDirectorySeparator(FullPath(folder));
+    }
+
+    private static string FullPath(string path)
+    {
+        try
+        {
+            return Path.GetFullPath(path);
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return path;
+        }
+    }
+
+    /// <summary>
+    /// スタック内での基準ファイルの位置を返す(大文字小文字を区別せず、パスを正規化して比べる)。見つからない場合は0。
+    /// </summary>
+    /// <remarks>
+    /// <see cref="FindStack"/>・<see cref="FindNumberedStack"/> の結果は基準ファイルを必ず含む(含まなければ空)ので、
+    /// その基準ファイルの位置は必ず見つかる。
+    /// </remarks>
     /// <param name="stack">スタックを構成するファイルパス。</param>
     /// <param name="referencePath">基準ファイルのパス。</param>
     /// <returns>0起点のインデックス。</returns>
@@ -120,7 +197,7 @@ public static class SequenceScanner
     {
         for (int i = 0; i < stack.Count; i++)
         {
-            if (string.Equals(stack[i], referencePath, StringComparison.OrdinalIgnoreCase))
+            if (SamePath(stack[i], referencePath))
             {
                 return i;
             }

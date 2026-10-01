@@ -32,6 +32,9 @@ public partial class MainWindow : Window
     // サイズ別フォーマット記憶(format-history.json)。raw の読み込みに成功するたびに記録・保存する
     private readonly FormatMemory _formatMemory = new(new FormatHistoryStore());
     private readonly RecentFilesStore _recentFiles = new();
+
+    // 連番判定・一括書き出しの候補を、表示中のファイルのフォルダの一覧から選ぶ(左パネルの一覧は別のフォルダのことがある)
+    private readonly SequenceCandidateSource _sequenceCandidates = new();
     private int _recentMenuGeneration;
     private int _folderGeneration;
     private readonly SessionStore _sessionStore = new();
@@ -2641,7 +2644,13 @@ public partial class MainWindow : Window
                 return;
             }
 
+            // 連番の候補は表示中のファイルのフォルダから選ぶ(左パネルの一覧が別のフォルダでも、そのフォルダの
+            // ファイルを書き出さない)。連番を決められなければ TIFF 等と同じく開いているファイル1件だけを対象にする
             targets = SequenceScanner.FindStack(_currentPath, size, CandidateFiles());
+            if (targets.Count == 0)
+            {
+                targets = new[] { _currentPath };
+            }
         }
         else if (_tiffStack is { PageNavigationEnabled: true })
         {
@@ -3813,10 +3822,11 @@ public partial class MainWindow : Window
                 // rawはファイルサイズが解像度そのものを表すためサイズ一致で判定できるが、
                 // 画像ファイルは解像度がヘッダにあるうえ圧縮でサイズが変わるので、
                 // ファイル名の連番で判定する
+                IReadOnlyList<SequenceFile> candidates = CandidateFiles();
                 IReadOnlyList<string> files = IsRawFile(_currentPath)
                     ? SequenceScanner.FindStack(
-                        _currentPath, CurrentFileLength(), CandidateFiles())
-                    : SequenceScanner.FindNumberedStack(_currentPath, CandidateFiles());
+                        _currentPath, CurrentFileLength(candidates), candidates)
+                    : SequenceScanner.FindNumberedStack(_currentPath, candidates);
                 if (files.Count > 1)
                 {
                     _sequenceMode = SequenceMode.Files;
@@ -3829,26 +3839,46 @@ public partial class MainWindow : Window
         UpdateSequenceUi();
     }
 
-    /// <summary>ファイル一覧を仮想スタック判定の候補へ変換する(サイズは列挙時のキャッシュ)。</summary>
-    private IEnumerable<SequenceFile> CandidateFiles()
+    /// <summary>
+    /// 表示中のファイルの仮想スタック判定・一括書き出しの候補(サイズは列挙時のキャッシュ)。
+    /// </summary>
+    /// <remarks>
+    /// 左パネルの一覧が表示中のファイルのフォルダのものならその一覧、別のフォルダのもの(フォルダツリーで
+    /// 移った後など)なら、表示中のファイルのフォルダの一覧を前に使ったときの内容から選ぶ(<see cref="SequenceCandidateSource"/>)。
+    /// </remarks>
+    private IReadOnlyList<SequenceFile> CandidateFiles()
     {
-        return _vm.Files
-            .Where(f => !f.IsDirectory)
-            .Select(f => new SequenceFile(f.FullPath, f.Length));
+        if (_currentPath is null)
+        {
+            return Array.Empty<SequenceFile>();
+        }
+
+        return _sequenceCandidates.Resolve(
+            _currentPath, _currentFolder,
+            _vm.Files
+                .Where(f => !f.IsDirectory)
+                .Select(f => new SequenceFile(f.FullPath, f.Length)));
     }
 
-    /// <summary>現在開いているファイルのサイズ。一覧のキャッシュを優先する。</summary>
-    private long CurrentFileLength()
+    /// <summary>現在開いているファイルのサイズ。候補(一覧の列挙時のキャッシュ)を優先する。</summary>
+    /// <param name="candidates">表示中のファイルの候補(<see cref="CandidateFiles"/>)。</param>
+    private long CurrentFileLength(IReadOnlyList<SequenceFile> candidates)
     {
         if (_currentPath is null)
         {
             return -1;
         }
 
-        FileEntry? entry = _vm.Files.FirstOrDefault(
-            f => !f.IsDirectory
-                && string.Equals(f.FullPath, _currentPath, StringComparison.OrdinalIgnoreCase));
-        return entry is { Length: > 0 } ? entry.Length : SafeFileSize(_currentPath);
+        foreach (SequenceFile file in candidates)
+        {
+            if (file.Length > 0
+                && string.Equals(file.Path, _currentPath, StringComparison.OrdinalIgnoreCase))
+            {
+                return file.Length;
+            }
+        }
+
+        return SafeFileSize(_currentPath);
     }
 
     private static long SafeFileSize(string path)
