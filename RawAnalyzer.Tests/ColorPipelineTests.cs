@@ -151,6 +151,22 @@ public class ColorPipelineTests
     }
 
     [Fact]
+    public void DemosaicBilinear_Canceled_ThrowsInsteadOfReturningUnfilledRows()
+    {
+        // 残課題 2026-10-02 A6。取り消されると例外を出さずに途中で戻り、処理されなかった行(確保直後の0や前の
+        // 内容)を正常な結果として呼び出し側へ返していた(書き出し・描画はそれぞれ後で確かめて補っていた)。
+        // 取り消しは OperationCanceledException で知らせる
+        const int size = 64;
+        ushort[] mosaic = BuildConstantMosaic(size, size, BayerPattern.Rggb, 1000, 2000, 3000);
+        var rgb = new ushort[size * size * 3];
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        Assert.ThrowsAny<OperationCanceledException>(() => ColorPipeline.DemosaicBilinear(
+            mosaic, size, size, 0, 0, BayerPattern.Rggb, rgb, cts.Token));
+    }
+
+    [Fact]
     public void DevelopLuts_WbGainsScaleTheirOwnChannels_GainScalesAll()
     {
         // GainR/GainG/GainB と全体の Gain を1回の Create で同時に与え、各WBゲインが自分のチャネルにだけ、

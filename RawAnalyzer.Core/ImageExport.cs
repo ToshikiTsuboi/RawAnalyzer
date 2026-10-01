@@ -265,9 +265,9 @@ public static class ImageExport
                 ColorPipeline.DemosaicBilinear(
                     mosaic, columns, bandHeight, 0, top, pattern, rgb16, cancellationToken);
 
-                // デモザイクは取り消されると例外を出さずに途中で戻る(ViewportRenderer と同じく呼び出し側で確かめる)。
-                // 確かめずに進むと、処理されなかった行の rgb16(確保直後の0や前のバンド・区画の値)をLUT変換して、
-                // 最後のバンドでは壊れた画像のまま正常に戻る(一括書き出しが正式名で保存して「完了」になる)
+                // デモザイクは取り消されると OperationCanceledException を出す(以前は例外を出さずに途中で戻った)。
+                // 処理されなかった行の rgb16(確保直後の0や前のバンド・区画の値)をLUT変換して、最後のバンドでは
+                // 壊れた画像のまま正常に戻らないよう(一括書き出しが正式名で保存して「完了」になる)、ここでも確かめる
                 cancellationToken.ThrowIfCancellationRequested();
 
                 DevelopLuts luts = segmentLuts[s];

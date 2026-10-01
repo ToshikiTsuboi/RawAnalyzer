@@ -411,6 +411,9 @@ public static class ColorPipeline
     /// <param name="rgb">出力RGB(width×height×3、R,G,Bの順)。</param>
     /// <param name="cancellationToken">キャンセルトークン。</param>
     /// <exception cref="ArgumentException">バッファ長が不足する場合。</exception>
+    /// <exception cref="OperationCanceledException">
+    /// 取り消された場合(出力の一部の行は書かれていない。途中の出力を結果として使わない)。
+    /// </exception>
     public static void DemosaicBilinear(
         ushort[] mosaic, int width, int height, int originX, int originY,
         BayerPattern pattern, ushort[] rgb, CancellationToken cancellationToken = default)
@@ -437,13 +440,13 @@ public static class ColorPipeline
 
         BayerChannel[] map = channelMap.ToArray();
 
-        // 同ファイル内の他の並列ループと同じく、キャンセル済みなら早期に降りる。
-        // パン中は可視領域ぶんのデモザイクが数十〜200ms 無駄に完走していた
-        Parallel.For(0, height, (y, state) =>
+        // キャンセル済みなら早期に降りる(パン中は可視領域ぶんのデモザイクが数十〜200ms 無駄に完走していた)。
+        // 降りたら例外で知らせる。以前は黙って戻り、書かれていない行を呼び出し側が正常な結果として使い得た
+        // (描画・書き出しはそれぞれ後で確かめていた)
+        Parallel.For(0, height, new ParallelOptions { CancellationToken = cancellationToken }, y =>
         {
             if (cancellationToken.IsCancellationRequested)
             {
-                state.Stop();
                 return;
             }
 
@@ -528,5 +531,8 @@ public static class ColorPipeline
                 rgb[outIndex + 2] = b;
             }
         });
+
+        // 最後の行の処理中に取り消されたなど、ループが例外を出さずに終えた場合も知らせる
+        cancellationToken.ThrowIfCancellationRequested();
     }
 }
