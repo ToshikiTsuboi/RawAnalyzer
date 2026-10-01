@@ -152,6 +152,10 @@ public partial class MainWindow : Window
     private bool _sequenceBusy;
     private bool _updatingSequenceUi;
 
+    // ファイル連番の送りで送り先を読んでいる間の取り消し(TIFFのページ送りの _tiffPageLoadCts と同じく、
+    // 表示中の画像の世代 _loadCts にリンクする)。開く・操作の開始(EnterBusyCore)・ウィンドウを閉じると取り消す
+    private CancellationTokenSource? _sequenceLoadCts;
+
     // ファイル連番の送りで画像ファイル(TIFF等)へ引き継ぐ、右パネルのBayer指定。
     // TIFFのページ送り(TiffStackSource.BayerOverride)と同じく、開いた画像の配列から始めて
     // 右パネルの変更で更新し、カラー画像を挟んでも保持してグレーの画像にだけ付ける(ImageFileBayer)
@@ -3965,25 +3969,39 @@ public partial class MainWindow : Window
                 // 値の対応関係の説明は送りが確定したときに状態へ入れる(送れなかったときに
                 // 表示中の画像と食い違わせない)
                 string? valueNote = null;
+
+                // 読み込みは取り消せるようにする。読む間に別ファイルを開く・操作を始める・ウィンドウを閉じると
+                // 結果は下で捨てるが、取り消さないと大きなファイルの読み込み(ネットワーク上の raw の一時コピー、
+                // TIFF のデコード)が最後まで走り、新しい読み込みや処理と I/O・メモリを奪い合う
+                var loadCts = CancellationTokenSource.CreateLinkedTokenSource(
+                    _loadCts?.Token ?? CancellationToken.None);
+                _sequenceLoadCts = loadCts;
                 try
                 {
-                    if (isRaw)
-                    {
-                        image = await Task.Run(() => RawLoader.Load(path, expectedFormat));
-                    }
-                    else
-                    {
-                        // TIFF等の連番。フォーマットはファイル自身が持っている
-                        DecodedImage decoded = await Task.Run(() => ImageFileLoader.Load(path));
-                        image = decoded.Luminance;
-                        color = decoded.Color;
-                        pageCount = decoded.PageCount;
-                        valueNote = decoded.ValueNote;
-                    }
+                    // raw は表示中のフォーマットで、TIFF等の連番はファイル自身のフォーマットで読む
+                    DecodedImage decoded = await Task.Run(
+                        () => SequenceFileLoad.Load(path, isRaw, expectedFormat, loadCts.Token), loadCts.Token);
+                    image = decoded.Luminance;
+                    color = decoded.Color;
+                    pageCount = decoded.PageCount;
+                    valueNote = decoded.ValueNote;
+                }
+                catch (OperationCanceledException)
+                {
+                    return; // 開く・操作の開始・終了で取り消した
                 }
                 catch (Exception)
                 {
                     return; // 消えた/読めないファイルはスキップ
+                }
+                finally
+                {
+                    if (ReferenceEquals(_sequenceLoadCts, loadCts))
+                    {
+                        _sequenceLoadCts = null;
+                    }
+
+                    loadCts.Dispose();
                 }
 
                 // await中にモーダル(保存・測定・演算)が開いていたら差し替えない。
@@ -4238,6 +4256,10 @@ public partial class MainWindow : Window
     private BusyScope EnterBusyCore(IDisposable? operation)
     {
         CancelTiffPageLoad();
+
+        // ファイル連番の送りの読み込みも取り消す(TIFFのページ送りと同じ。結果は実行中の判定で捨てるので、
+        // 読み込みを最後まで走らせない)
+        _sequenceLoadCts?.Cancel();
         StopPlayback();
         _busyDepth++;
         return new BusyScope(this, operation);
