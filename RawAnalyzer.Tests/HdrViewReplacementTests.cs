@@ -21,9 +21,11 @@ public class HdrViewReplacementTests
     {
         // 計算中に右パネルの Bayer が替わった(計算中は選べなくしているが、多重防御として照合する)。以前は照合せず、
         // 開始時のパターンで作った派生ビューを、右パネルが替えた後のパターンを示したまま表示した。
-        // RGGB → なし では行交互の既定の行単位も2行 → 1行に替わり、分割の仕方そのものが違う
+        // RGGB → なし では行交互の既定の行単位も2行 → 1行に替わり、分割の仕方そのものが違う。
+        // 照合は値で比べる。替えて同じ値へ戻した(同値の別インスタンスになった)だけなら断らない
         Assert.Equal(HdrViewReplacement.Refusal.None,
-            HdrViewReplacement.Check(modeReselected: false, sourceReplaced: false, Started, Started));
+            HdrViewReplacement.Check(modeReselected: false, sourceReplaced: false,
+                Started, Started with { Bayer = BayerPattern.None } with { Bayer = Started.Bayer }));
 
         Assert.Equal(HdrViewReplacement.Refusal.FormatChanged,
             HdrViewReplacement.Check(modeReselected: false, sourceReplaced: false,
