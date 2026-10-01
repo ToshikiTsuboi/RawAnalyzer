@@ -32,8 +32,7 @@ public class BatchFrameRendererTests
     }
 
     [Theory]
-    [InlineData(Output.Png)]
-    [InlineData(Output.AviJpeg)]
+    [InlineData(Output.Png)] // Bake の経路(AVI の JPEG も同じ Bake の後で符号化するだけ)
     [InlineData(Output.Mp4Rgb24)]
     public void MixedBitDepthTiff_DevelopsSaturatedPageWithItsOwnBitDepth(Output output)
     {
@@ -72,9 +71,8 @@ public class BatchFrameRendererTests
         Assert.NotNull(saturatedPage);
         Assert.Equal(size * size * 3, saturatedPage.Length);
 
-        // JPEG は非可逆なので数コードの誤差を許す(着色していれば G は 178 前後)
-        int tolerance = output == Output.AviJpeg ? 3 : 0;
-        Assert.All(saturatedPage, v => Assert.InRange((int)v, 255 - tolerance, 255));
+        // 着色していれば G は 178 前後
+        Assert.All(saturatedPage, v => Assert.Equal((byte)255, v));
     }
 
     [Theory]

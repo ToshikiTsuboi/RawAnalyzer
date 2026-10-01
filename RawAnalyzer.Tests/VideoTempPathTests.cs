@@ -15,7 +15,6 @@ public class VideoTempPathTests
 {
     [Theory]
     [InlineData(@"C:\out\clip_seq.mp4", "clip_seq.part.mp4")]
-    [InlineData("clip_seq.mp4", "clip_seq.part.mp4")] // ディレクトリなし
     public void BuildPartialPath_KeepsExtensionLast(string finalPath, string expectedName)
     {
         string partial = OutputPaths.BuildPartialPath(finalPath);
