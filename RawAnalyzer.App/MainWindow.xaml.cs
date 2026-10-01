@@ -1181,7 +1181,7 @@ public partial class MainWindow : Window
         double maxValue = 0;
         for (int c = 0; c < channels.Count; c++)
         {
-            double[] columns = HistogramTools.Aggregate(channels[c].Bins, width, cumulative);
+            double[] columns = HistogramTools.AggregateForDisplay(channels[c].Bins, width, cumulative);
             curves[c] = columns;
             maxValue = Math.Max(maxValue, columns.Max());
         }
@@ -1222,8 +1222,9 @@ public partial class MainWindow : Window
     {
         const int width = 210;
         const int height = 70;
-        // cumulative時は縦軸=累積頻度(そのcode以下の画素数)
-        double[] columns = HistogramTools.Aggregate(bins, width, cumulative);
+        // cumulative時は縦軸=累積頻度(そのcode以下の画素数)。非累積は列ごとの担当コード数の違いで
+        // 偽の櫛にならないよう、1コードあたりの度数で描く
+        double[] columns = HistogramTools.AggregateForDisplay(bins, width, cumulative);
         double maxValue = columns.Max();
         double maxScale = logScale ? Math.Log(1 + maxValue) : maxValue;
         var pixels = new byte[width * height * 4];

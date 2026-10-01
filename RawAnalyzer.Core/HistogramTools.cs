@@ -117,6 +117,55 @@ public static class HistogramTools
     }
 
     /// <summary>
+    /// ヒストグラムを表示列数へ集約する(棒の高さ用)。累積は <see cref="Aggregate"/> と同じ。
+    /// 非累積は、各列の度数合計をその列が担当するビン数で割った1ビンあたりの度数に、
+    /// 名目の列あたりビン数(ビン数÷列数)を掛けた値にする。
+    /// </summary>
+    /// <remarks>
+    /// ビン数が列数の整数倍でないと、比例写像では列ごとの担当ビン数が揃わない(8bit・210列では164列が1ビン、
+    /// 46列が2ビン。10bitでは184列が5ビン、26列が4ビン)。合計のまま描くと、平らな分布でも担当ビンの多い列が周期的に
+    /// 高く(少ない列が低く)なり、ADCのミッシングコードやDNLのような偽の櫛に見える。1ビンあたりにすれば揃い、
+    /// 欠けたコードは担当ビン数に応じた割合で低く描かれる。名目の列あたりビン数を掛けるのは、割り切れるとき
+    /// (全列の担当ビン数が同じ)に合計と同じ値にするため(対数表示の形も変えない)。累積は各列の最後のビンまでの
+    /// 累積値で櫛にならない。担当ビンのない列(ビン数が列数より少ないとき)は0。
+    /// </remarks>
+    /// <param name="bins">ヒストグラムのビン。</param>
+    /// <param name="columns">出力列数(1以上)。</param>
+    /// <param name="cumulative">trueなら累積(左から積み上げ)にする。</param>
+    /// <returns>長さcolumnsの集約結果。</returns>
+    /// <exception cref="ArgumentOutOfRangeException">columnsが1未満の場合。</exception>
+    public static double[] AggregateForDisplay(long[] bins, int columns, bool cumulative)
+    {
+        if (cumulative)
+        {
+            return Aggregate(bins, columns, cumulative: true);
+        }
+
+        if (columns < 1)
+        {
+            throw new ArgumentOutOfRangeException(nameof(columns), "列数は1以上である必要があります。");
+        }
+
+        // 写像は Aggregate と同じ比例写像
+        var result = new double[columns];
+        var binsPerColumn = new int[columns];
+        for (int i = 0; i < bins.Length; i++)
+        {
+            int column = (int)((long)i * columns / bins.Length);
+            result[column] += bins[i];
+            binsPerColumn[column]++;
+        }
+
+        double nominal = (double)bins.Length / columns;
+        for (int x = 0; x < columns; x++)
+        {
+            result[x] = binsPerColumn[x] > 0 ? result[x] / binsPerColumn[x] * nominal : 0;
+        }
+
+        return result;
+    }
+
+    /// <summary>
     /// ヒストグラムを表計算ソフトへ貼り付け可能なテキストにする。
     /// </summary>
     /// <param name="bins">全体のヒストグラム。</param>

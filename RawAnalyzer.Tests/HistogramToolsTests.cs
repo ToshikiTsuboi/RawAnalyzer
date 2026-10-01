@@ -160,6 +160,54 @@ public class HistogramToolsTests
         Assert.Equal(3_000_000_000d, columns[3], 0);
     }
 
+    [Theory]
+    [InlineData(8)]  // 256ビン → 164列が1ビン、46列が2ビン
+    [InlineData(10)] // 1024ビン → 184列が5ビン、26列が4ビン
+    [InlineData(12)] // 4096ビン → 106列が20ビン、104列が19ビン
+    public void AggregateForDisplay_FlatHistogram_IsFlatAcrossColumns(int bitDepth)
+    {
+        // 回帰テスト: 表示は列ごとの度数の合計をそのまま棒の高さにしていたので、ビン数が列数(210)の整数倍でない
+        // 8/10/12bit では、すべてのコードが同数の平らな分布でも担当ビンの多い列が周期的に高く(低く)描かれ、
+        // ミッシングコード・DNL のような偽の櫛に見えた。1ビンあたりの度数で描けば平らになる
+        var bins = new long[1 << bitDepth];
+        Array.Fill(bins, 1000L);
+
+        double[] columns = HistogramTools.AggregateForDisplay(bins, 210, cumulative: false);
+
+        Assert.Equal(210, columns.Length);
+        double nominal = 1000.0 * bins.Length / 210;
+        Assert.All(columns, c => Assert.Equal(nominal, c, 6));
+    }
+
+    [Fact]
+    public void AggregateForDisplay_DivisibleBins_SameAsAggregate_AndCumulativeUnchanged()
+    {
+        // 割り切れるとき(全列の担当ビン数が同じ)は合計と同じ値(対数表示の形も変わらない)。
+        // 累積は各列の最後のビンまでの累積で櫛にならないので、合計のまま
+        long[] bins = MakeBins(64, (0, 3), (20, 5), (21, 1), (63, 2));
+        long[] uneven = MakeBins(256, (0, 5), (100, 9), (255, 7));
+
+        Assert.Equal(HistogramTools.Aggregate(bins, 8), HistogramTools.AggregateForDisplay(bins, 8, false));
+        Assert.Equal(
+            HistogramTools.Aggregate(uneven, 210, cumulative: true),
+            HistogramTools.AggregateForDisplay(uneven, 210, cumulative: true));
+    }
+
+    [Fact]
+    public void AggregateForDisplay_FewerBinsThanColumns_LeavesUnassignedColumnsEmpty()
+    {
+        var bins = new long[16];
+        bins[0] = 1;
+        bins[15] = 2;
+
+        double[] columns = HistogramTools.AggregateForDisplay(bins, 210, cumulative: false);
+
+        // 名目の列幅 16/210 を掛ける(担当ビンのない列は0)
+        Assert.Equal(16.0 / 210, columns[0], 9);
+        Assert.Equal(2 * 16.0 / 210, columns[196], 9);
+        Assert.Equal(0, columns[1]);
+    }
+
     [Fact]
     public void Aggregate_InvalidColumns_Throws()
     {
