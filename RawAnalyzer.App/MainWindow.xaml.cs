@@ -678,16 +678,22 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            _vm.ImageInfoText = "読込失敗";
-            if (!cts.IsCancellationRequested && generation == _openGeneration)
+            // 取り消された・後から開いた読み込みに置き換わった読み込みの失敗は知らせない(利用者はもうこのファイルを
+            // 待っていない)。取り消しは読み込みの区切りでしか見ないので、ネットワーク上で固まった読み出しが後から
+            // IOException などで終わることがある。知らせると見ていないファイルのエラーを出し、表示中の画像の情報や
+            // 後続の読み込みの「読込中…」を「読込失敗」で上書きしていた
+            if (cts.IsCancellationRequested || generation != _openGeneration)
             {
-                // 読み込みを始めるときに取り消した、表示を続ける画像の縮小表示(Bayerを含む)の生成と
-                // ヒストグラム・ROI統計・ラインプロファイル・射影の計算を作り直す。作り直さないと、開き直すまで
-                // 縮小表示なしで等倍の行を読んで描き、ヒストグラム欄には前に表示していた画像の統計が残る
-                // (縮小表示は表示中の画像の世代として、取り消されていないこの読み込みのトークンで作る)
-                RefreshAfterSequenceMove();
+                return;
             }
 
+            _vm.ImageInfoText = "読込失敗";
+
+            // 読み込みを始めるときに取り消した、表示を続ける画像の縮小表示(Bayerを含む)の生成と
+            // ヒストグラム・ROI統計・ラインプロファイル・射影の計算を作り直す。作り直さないと、開き直すまで
+            // 縮小表示なしで等倍の行を読んで描き、ヒストグラム欄には前に表示していた画像の統計が残る
+            // (縮小表示は表示中の画像の世代として、取り消されていないこの読み込みのトークンで作る)
+            RefreshAfterSequenceMove();
             MessageBox.Show(this, $"読み込みに失敗しました: {ex.Message}", "RawAnalyzer",
                 MessageBoxButton.OK, MessageBoxImage.Error);
             return;
