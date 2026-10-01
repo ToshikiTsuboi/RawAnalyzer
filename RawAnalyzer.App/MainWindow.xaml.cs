@@ -1721,6 +1721,18 @@ public partial class MainWindow : Window
             string captured = path;
             item.Click += async (_, _) =>
             {
+                // 実在はメニューを作り直したときにしか確かめないので、その後に消えた・接続が切れたファイルの項目も
+                // 残っている。開く前に UI スレッドを止めずに確かめ、無ければ一度だけ知らせてメニューから外す
+                // (確かめずに開くと、フォルダを読み込めない警告に続けて、実在しない raw にフォーマット指定ダイアログを出していた)
+                if (!await Task.Run(() => File.Exists(captured)))
+                {
+                    MessageBox.Show(this,
+                        $"ファイルが見つかりません(移動・削除されたか、ネットワークに接続できません)。\n{captured}",
+                        "最近使ったファイル", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    RemoveRecentMenuItems(new[] { captured });
+                    return;
+                }
+
                 // 連番判定はファイル一覧を見るので、一覧が揃ってから開く
                 await LoadFolderAsync(Path.GetDirectoryName(captured)!, captured);
                 OpenPath(captured);
@@ -1756,6 +1768,13 @@ public partial class MainWindow : Window
             return; // 確認中に作り直された(結果は古い)
         }
 
+        RemoveRecentMenuItems(missing);
+    }
+
+    /// <summary>最近使ったファイルのメニューから、指定のファイルの項目を取り除く(履歴の記録は残す)。</summary>
+    /// <param name="missing">取り除くファイル(実在しないもの)。</param>
+    private void RemoveRecentMenuItems(ICollection<string> missing)
+    {
         foreach (System.Windows.Controls.MenuItem item in RecentMenu.Items
                      .OfType<System.Windows.Controls.MenuItem>()
                      .Where(i => i.ToolTip is string path && missing.Contains(path))
