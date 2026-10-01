@@ -251,19 +251,21 @@ public class ImageCalculatorTests
     [Fact]
     public void DivideGain_FlattensReferencePattern()
     {
-        // A = B(同一シェーディング)なら結果は全画素 ≈ mean(B)
+        // A × mean(B) / B。A が B と同じシェーディングで明るさが半分なら、結果は全画素 mean(B)/2 で平坦になる。
+        // A と B を取り違えると 5000(×16 は 65535 で頭打ち)、A の平均を使うと 625 になる
         ushort[] shading = { 1000, 2000, 3000, 4000 };
-        using RawImage imageA = TestImages.FromCodes(shading, 2, 2, bitDepth: 12);
+        ushort[] half = { 500, 1000, 1500, 2000 };
+        using RawImage imageA = TestImages.FromCodes(half, 2, 2, bitDepth: 12);
         using RawImage imageB = TestImages.FromCodes(shading, 2, 2, bitDepth: 12);
 
         using RawImage result = ImageCalculator.Apply(imageA, imageB, ImageOperation.DivideGain);
 
-        int expected = (int)((1000 + 2000 + 3000 + 4000) / 4.0 * 16);
+        const int expected = 1250 << 4; // mean(B)/2 = 2500/2 を16bitフルスケールへ
         for (int y = 0; y < 2; y++)
         {
             for (int x = 0; x < 2; x++)
             {
-                Assert.InRange((int)result.GetPixel(x, y), expected - 16, expected + 16);
+                Assert.Equal(expected, result.GetPixel(x, y));
             }
         }
     }
