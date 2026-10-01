@@ -688,7 +688,9 @@ public static unsafe class TiffLoader
 
     private static List<IfdEntry> ReadIfd(TiffBytes data, long ifdOffset, TiffHeader header)
     {
-        if (ifdOffset < 8 || ifdOffset + header.EntryCountSize > data.Length)
+        // 範囲検査は加算せず引き算で書く。BigTIFF・LONG8 のオフセットは long.MaxValue 近くまで入り得て、
+        // 位置 + 長さ が負へ回り込むと検査を素通りする(以下の範囲検査も同じ)
+        if (ifdOffset < 8 || ifdOffset > data.Length - header.EntryCountSize)
         {
             throw new InvalidDataException("IFDオフセットが不正です。");
         }
@@ -810,7 +812,7 @@ public static unsafe class TiffLoader
             long valueOffset = totalSize <= header.InlineValueSize
                 ? entry.ValueFieldOffset
                 : ReadOffset(data, entry.ValueFieldOffset, header);
-            if (valueOffset < 0 || valueOffset + totalSize > data.Length)
+            if (valueOffset < 0 || valueOffset > data.Length - totalSize)
             {
                 throw new InvalidDataException($"タグ{tag}の値がファイル範囲外を指しています。");
             }
@@ -930,7 +932,7 @@ public static unsafe class TiffLoader
 
             foreach (long sub in subIfds.Take(MaxSubIfds))
             {
-                if (sub < 8 || sub + header.EntryCountSize > data.Length || sub == ifd)
+                if (sub < 8 || sub > data.Length - header.EntryCountSize || sub == ifd)
                 {
                     continue;
                 }
@@ -1240,7 +1242,7 @@ public static unsafe class TiffLoader
             return false;
         }
 
-        if (offsets[0] < 0 || offsets[0] + total > fileLength)
+        if (offsets[0] < 0 || offsets[0] > fileLength - total)
         {
             reason = "画素データがファイル範囲外を指しています。";
             return false;
@@ -1439,7 +1441,7 @@ public static unsafe class TiffLoader
                 int columns = Math.Min(tileWidth, page.Width - x0);
                 long tile = firstTile + t;
                 if (counts[tile] < rows * tileRowBytes || offsets[tile] < 0
-                    || offsets[tile] + (rows * tileRowBytes) > data.Length)
+                    || offsets[tile] > data.Length - (rows * tileRowBytes))
                 {
                     throw new InvalidDataException($"タイル{tile}がファイル範囲外、または短すぎます。");
                 }
@@ -1471,7 +1473,7 @@ public static unsafe class TiffLoader
             ct.ThrowIfCancellationRequested();
             long rows = Math.Min(rowsPerStrip, page.Height - y);
             long needed = rows * rowBytes;
-            if (counts[s] < needed || offsets[s] < 0 || offsets[s] + needed > data.Length)
+            if (counts[s] < needed || offsets[s] < 0 || offsets[s] > data.Length - needed)
             {
                 throw new InvalidDataException($"ストリップ{s}がファイル範囲外、または短すぎます。");
             }
@@ -1827,7 +1829,7 @@ public static unsafe class TiffLoader
             }
 
             long offset = stripOffsets[strip];
-            if (offset < 0 || offset + expectedBytes > data.Length)
+            if (offset < 0 || offset > data.Length - expectedBytes)
             {
                 throw new InvalidDataException($"ストリップ{strip}がファイル範囲外を指しています。");
             }
@@ -1928,7 +1930,9 @@ public static unsafe class TiffLoader
 
         private void CheckRange(long offset, int length)
         {
-            if (offset < 0 || length < 0 || offset + length > Length)
+            // offset + length と書くと、long.MaxValue 近くの offset で負へ回り込んで素通りし、写像の外を
+            // 読んでプロセスごと落ちる(AccessViolationException は捕捉できない)。Length ≥ 0 なので引き算は溢れない
+            if (offset < 0 || length < 0 || offset > Length - length)
             {
                 throw new InvalidDataException("参照がファイル範囲外を指しています。");
             }
