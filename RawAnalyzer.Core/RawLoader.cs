@@ -138,40 +138,46 @@ public static class RawLoader
         // .NETでは捕捉できずプロセスごと落ちる(解析セッションが全損する)。
         // かといってヒープ展開では数GBを一度に確保することになるため、
         // ローカルの一時ファイルへ写してからマップする
-        string mapPath = path;
-        string? temporaryCopy = null;
+        //
+        // 一時ファイルは閉じたら OS が消すように開いたまま(FileOptions.DeleteOnClose)マップする。RawImage の
+        // 破棄に届かないまま終了した(ウィンドウの終了処理の await の後で破棄する、読み出し中で解放が遅延された)
+        // 場合や異常終了でも、プロセスのハンドルが閉じられた時点で消え、数GBの複製が残り続けない
+        MemoryMappedFile mmf;
+        string? temporaryCopyPath = null;
         if (IsNetworkPath(path))
         {
-            temporaryCopy = CopyToLocalTemporary(path, cancellationToken, progress);
-            mapPath = temporaryCopy;
+            FileStream temporaryCopy = CopyToLocalTemporary(path, cancellationToken, progress);
+            temporaryCopyPath = temporaryCopy.Name;
+            try
+            {
+                mmf = MemoryMappedFile.CreateFromFile(
+                    temporaryCopy, mapName: null, capacity: 0, MemoryMappedFileAccess.Read,
+                    HandleInheritability.None, leaveOpen: false);
+            }
+            catch
+            {
+                temporaryCopy.Dispose();
+                throw;
+            }
+        }
+        else
+        {
+            mmf = MemoryMappedFile.CreateFromFile(
+                path, FileMode.Open, mapName: null, capacity: 0, MemoryMappedFileAccess.Read);
         }
 
         try
         {
-            var mmf = MemoryMappedFile.CreateFromFile(
-                mapPath, FileMode.Open, mapName: null, capacity: 0, MemoryMappedFileAccess.Read);
-            try
-            {
-                MemoryMappedViewAccessor accessor =
-                    mmf.CreateViewAccessor(0, 0, MemoryMappedFileAccess.Read);
+            MemoryMappedViewAccessor accessor =
+                mmf.CreateViewAccessor(0, 0, MemoryMappedFileAccess.Read);
 
-                // MMFはマップするだけで実データの転送は表示時に発生するため、ここで完了扱い
-                progress?.Report(1.0);
-                return new RawImage(format, mmf, accessor, temporaryCopy);
-            }
-            catch
-            {
-                mmf.Dispose();
-                throw;
-            }
+            // MMFはマップするだけで実データの転送は表示時に発生するため、ここで完了扱い
+            progress?.Report(1.0);
+            return new RawImage(format, mmf, accessor, temporaryCopyPath);
         }
         catch
         {
-            if (temporaryCopy is not null)
-            {
-                AtomicFileWriter.TryDelete(temporaryCopy);
-            }
-
+            mmf.Dispose();
             throw;
         }
     }
@@ -251,24 +257,29 @@ public static class RawLoader
     /// <summary>
     /// ネットワーク上のファイルをローカルの一時ファイルへ複製する。
     /// </summary>
+    /// <remarks>
+    /// 複製先は閉じたら OS が消すように開き(<see cref="FileOptions.DeleteOnClose"/>)、閉じずに返す。
+    /// 呼び出し側はこのストリームをマップに渡して開いたままにし、画像の破棄でマップと一緒に閉じる
+    /// (閉じた時点で消える。破棄に届かないままプロセスが終わっても、OS がハンドルを閉じて消す)。
+    /// </remarks>
     /// <param name="path">元のパス。</param>
     /// <param name="cancellationToken">キャンセルトークン。</param>
     /// <param name="progress">転送の進捗(0〜1)。</param>
-    /// <returns>複製先のパス(呼び出し側が寿命を持つ)。</returns>
-    private static string CopyToLocalTemporary(
+    /// <returns>複製先の開いたストリーム(呼び出し側が寿命を持つ)。</returns>
+    private static FileStream CopyToLocalTemporary(
         string path, CancellationToken cancellationToken, IProgress<double>? progress)
     {
         string directory = Path.Combine(Path.GetTempPath(), "RawAnalyzer");
         Directory.CreateDirectory(directory);
         string destination = Path.Combine(
             directory, Guid.NewGuid().ToString("N") + Path.GetExtension(path));
+        var target = new FileStream(
+            destination, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.Read,
+            bufferSize: 1 << 20, FileOptions.DeleteOnClose);
         try
         {
             using var source = new FileStream(
                 path, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 1 << 20);
-            using var target = new FileStream(
-                destination, FileMode.CreateNew, FileAccess.Write, FileShare.None,
-                bufferSize: 1 << 20);
             byte[] buffer = ChunkPool.Rent(LoadChunkBytes);
             try
             {
@@ -294,11 +305,13 @@ public static class RawLoader
                 ChunkPool.Return(buffer);
             }
 
-            return destination;
+            // マップはこのストリームのハンドルで作るので、書き込みのバッファを先にファイルへ出す
+            target.Flush();
+            return target;
         }
         catch
         {
-            AtomicFileWriter.TryDelete(destination);
+            target.Dispose(); // 閉じれば消える
             throw;
         }
     }
