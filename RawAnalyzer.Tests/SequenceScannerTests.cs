@@ -41,13 +41,20 @@ public class SequenceScannerTests
     }
 
     [Theory]
-    [InlineData(0)]
-    [InlineData(-1)]
-    public void FindStack_UnknownReferenceLength_ReturnsEmpty(long length)
+    [InlineData(@"C:\d\empty.raw", 0)]    // 中身のないファイル(サイズ 0)
+    [InlineData(@"C:\d\broken.raw", -1)]  // サイズ不明
+    public void FindStack_UnknownReferenceLength_ReturnsEmpty(string reference, long length)
     {
-        // 基準サイズが不明なとき、サイズ不明ファイル同士が一致してしまうのを防ぐ
-        IReadOnlyList<string> stack = SequenceScanner.FindStack(
-            @"C:\d\broken.raw", length, Folder);
+        // 基準サイズが不明・0 のとき、サイズ不明ファイル同士・空ファイル同士が一致してしまうのを防ぐ
+        // (どちらも同じ長さのファイルが自分のほかにもある)
+        SequenceFile[] folder = Folder.Concat(new SequenceFile[]
+        {
+            new(@"C:\d\empty.raw", 0),
+            new(@"C:\d\empty2.raw", 0),
+            new(@"C:\d\broken2.raw", -1),
+        }).ToArray();
+
+        IReadOnlyList<string> stack = SequenceScanner.FindStack(reference, length, folder);
 
         Assert.Empty(stack);
     }

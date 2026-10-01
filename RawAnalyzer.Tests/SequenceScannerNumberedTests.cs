@@ -102,8 +102,9 @@ public class SequenceScannerNumberedTests
     [Fact]
     public void FindNumberedStack_UnpaddedNumbers_SortNaturally()
     {
+        // 一覧の並びによらず自然順に並べる(入力は逆順)
         IReadOnlyList<string> stack = SequenceScanner.FindNumberedStack(
-            @"C:\dir\img2.tif", Files("img1.tif", "img2.tif", "img10.tif"));
+            @"C:\dir\img2.tif", Files("img10.tif", "img2.tif", "img1.tif"));
 
         Assert.Equal(
             new[] { @"C:\dir\img1.tif", @"C:\dir\img2.tif", @"C:\dir\img10.tif" }, stack);
