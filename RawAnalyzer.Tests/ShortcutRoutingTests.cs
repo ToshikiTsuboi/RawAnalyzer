@@ -68,6 +68,33 @@ public class ShortcutRoutingTests
     });
 
     [Fact]
+    public Task MenuMode_LetsAccessKeysAndNavigationReachTheMenu() => WpfTestHost.Run(() =>
+    {
+        // Alt を押して離すとメニューモードになり、メニューの項目がフォーカスを持つ。続けて P を押せば
+        // 「処理(_P)」が開くはずが、以前はラインプロファイルモードの切替(P)に横取りされた。
+        // 開いたメニュー・右クリックメニューの中でも、Home/End/Space をフレーム送り・再生に取られていた
+        AppCommand profile = Command("profile-mode", Key.P);
+        AppCommand first = Command("seq-first", Key.Home);
+        AppCommand play = Command("seq-play", Key.Space);
+        AppCommand open = Command("open", Key.O, ModifierKeys.Control);
+        AppCommand[] commands = { profile, first, play, open };
+        var contextMenu = new ContextMenu();
+        var contextItem = new MenuItem();
+        contextMenu.Items.Add(contextItem);
+
+        foreach (object focused in new object[] { new MenuItem(), new Menu(), contextItem, contextMenu })
+        {
+            ShortcutFocus focus = ShortcutRouting.Classify(focused);
+            Assert.Null(ShortcutRouting.Resolve(commands, Key.P, ModifierKeys.None, focus));
+            Assert.Null(ShortcutRouting.Resolve(commands, Key.Home, ModifierKeys.None, focus));
+            Assert.Null(ShortcutRouting.Resolve(commands, Key.Space, ModifierKeys.None, focus));
+
+            // Ctrl 付きのショートカットは従来どおり
+            Assert.Same(open, ShortcutRouting.Resolve(commands, Key.O, ModifierKeys.Control, focus));
+        }
+    });
+
+    [Fact]
     public void TextEntry_KeepsTypingAndEditingGestures()
     {
         AppCommand roi = Command("roi-mode", Key.R);

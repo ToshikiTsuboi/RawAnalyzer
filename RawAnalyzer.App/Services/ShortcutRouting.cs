@@ -17,6 +17,9 @@ internal enum ShortcutFocus
 
     /// <summary>編集できない ComboBox(閉じた状態)と、開いたドロップダウンの項目。</summary>
     Selector,
+
+    /// <summary>メニュー(Alt を押して離したメニューモード・開いたメニュー・右クリックメニュー)。</summary>
+    Menu,
 }
 
 /// <summary>
@@ -36,6 +39,9 @@ internal static class ShortcutRouting
         // 編集できない ComboBox は文字入力欄ではない。閉じた状態ではコンボ自身が、開いた状態では
         // ドロップダウンの項目がフォーカスを持つ
         ComboBox or ComboBoxItem => ShortcutFocus.Selector,
+
+        // メニューモードではメニューの項目がフォーカスを持つ(右クリックメニューも同じ)
+        MenuItem or MenuBase => ShortcutFocus.Menu,
         _ => ShortcutFocus.Other,
     };
 
@@ -113,6 +119,11 @@ internal static class ShortcutRouting
             // それらのキーは譲る。ファンクションキー(F1・F5・F11 など)は使わないのでコマンドを実行する
             // (以前は ComboBox も入力中とみなし、表示モードを選んだ直後は F1・F11 などが黙って効かなかった)
             ShortcutFocus.Selector => !IsFunctionKey(key),
+
+            // メニューのアクセスキー(「処理(_P)」の P など)・項目の移動・決定はメニューへ渡す
+            // (以前は Alt を離してから P を押すとラインプロファイルモードの切替に取られ、開いたメニューの中でも
+            // Home/End/Space をフレーム送り・再生に取られた)
+            ShortcutFocus.Menu => true,
             _ => false,
         };
     }
