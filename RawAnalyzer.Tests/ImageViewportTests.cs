@@ -4,6 +4,7 @@ using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using System.Windows.Threading;
 using RawAnalyzer.App.Controls;
 using RawAnalyzer.App.Rendering;
 using RawAnalyzer.Core;
@@ -558,6 +559,82 @@ public class ImageViewportTests
             pyramid.Dispose();
         }
     });
+
+    [Fact]
+    public Task QualityPass_IsNotSkippedWhileTheFastRenderIsStillPending() => WpfTestHost.Run(async () =>
+    {
+        // LUT・現像パラメータの変更など表示範囲の変わらない操作は、1段粗い縮小レベルで速報を描き、操作が
+        // 止まって 200ms 後に品質パスで描き直す。品質パスを省くかは表示中の内容で判断していたため、速報の描画が
+        // 200ms を超えると、表示中の内容はまだ前の品質パスのものなので「同じ結果にしかならない」として省いていた。
+        // その後に速報の結果が表示され、粗い縮小レベル(32倍以上では raw 値オーバーレイなし)のまま止まった
+        const int size = 256;
+        var format = new RawFormat { Width = size, Height = size, BitDepth = 16 };
+        using RawImage image = TestImages.FromCodes(new ushort[size * size], format);
+        TilePyramid pyramid = TilePyramid.Create(image, maxLevelPixels: long.MaxValue);
+        var viewport = new ImageViewport();
+        viewport.Measure(new Size(240, 180));
+        viewport.Arrange(new Rect(0, 0, 240, 180));
+        viewport.SetImage(image, format);
+        viewport.SetPyramid(pyramid);
+
+        var factors = new List<int>();
+        var qualityShown = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        viewport.ViewportStateChanged += (_, e) =>
+        {
+            factors.Add(e.RenderedFactor);
+            if (e.Zoom == 0.25 && e.RenderedFactor == 4)
+            {
+                qualityShown.TrySetResult(); // 品質パス(L4)が表示された。速報は L8
+            }
+        };
+
+        try
+        {
+            viewport.CenterOn(size / 2, size / 2, 0.25);
+            await qualityShown.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            await DispatcherDelay(400); // 読み込み直後のアイドル時の描き直しを済ませる
+            factors.Clear();
+
+            // 描画はスレッドプールで動く。プールを塞いで、速報の描画をアイドル時の判定(200ms)より後まで始めさせない
+            using var gate = new ManualResetEventSlim();
+            Task[] blockers = Enumerable.Range(0, ThreadPool.ThreadCount + 32)
+                .Select(_ => Task.Run(() => gate.Wait()))
+                .ToArray();
+            try
+            {
+                viewport.SetLut(DisplayLut.Create(new DisplayParameters()));
+                await DispatcherDelay(400);
+            }
+            finally
+            {
+                gate.Set();
+            }
+
+            await Task.WhenAll(blockers);
+            await DispatcherDelay(600); // 描画結果の表示と、その後にありうる品質パスを待つ
+
+            Assert.NotEmpty(factors);
+            Assert.Equal(4, factors[^1]); // 最後に表示されたのは品質パス
+        }
+        finally
+        {
+            await viewport.ClearImageAsync();
+        }
+    });
+
+    /// <summary>UI スレッドのタイマーで待つ(スレッドプールを使わない)。</summary>
+    private static Task DispatcherDelay(int milliseconds)
+    {
+        var elapsed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(milliseconds) };
+        timer.Tick += (_, _) =>
+        {
+            timer.Stop();
+            elapsed.TrySetResult();
+        };
+        timer.Start();
+        return elapsed.Task;
+    }
 
     [Fact]
     public Task ClearRoiDuringRoiDrag_ReleasesMouseCaptureWhenButtonIsReleased() =>

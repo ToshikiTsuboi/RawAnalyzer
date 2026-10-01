@@ -1392,6 +1392,9 @@ public sealed class ImageViewport : FrameworkElement
         _idleTimer.Start();
     }
 
+    // 最新の描画要求が速報(fast)で、その結果がまだ表示されていないか(品質パスの要否判定に使う)
+    private bool _fastRenderPending;
+
     // 直近に表示した内容の素性(品質パスの要否判定に使う)
     private bool _overlayEvaluated;
     private double _presentedZoom = double.NaN;
@@ -1413,6 +1416,13 @@ public sealed class ImageViewport : FrameworkElement
     private bool QualityRenderIsRedundant()
     {
         if (_image is null || _bitmap is null)
+        {
+            return false;
+        }
+
+        // 速報の描画がまだ表示されていなければ(描画が 200ms を超えた)、表示中の内容は前の描画のもので、
+        // この後に速報の結果(粗い縮小レベル・オーバーレイなし)で置き換わる。表示中の内容では判断できない
+        if (_fastRenderPending)
         {
             return false;
         }
@@ -1543,6 +1553,7 @@ public sealed class ImageViewport : FrameworkElement
     private void RequestRender(bool fast)
     {
         _renderCts?.Cancel();
+        _fastRenderPending = false;
         if (_image is null || ActualWidth < 1 || ActualHeight < 1)
         {
             _bitmap = null;
@@ -1558,6 +1569,7 @@ public sealed class ImageViewport : FrameworkElement
 
         var cts = new CancellationTokenSource();
         _renderCts = cts;
+        _fastRenderPending = fast;
         int destW = Math.Max(1, (int)Math.Round(ActualWidth));
         int destH = Math.Max(1, (int)Math.Round(ActualHeight));
 
@@ -1624,6 +1636,9 @@ public sealed class ImageViewport : FrameworkElement
 
         _bitmap.WritePixels(new Int32Rect(0, 0, width, height), buffer, width * 4, 0);
         _renderedFactor = factor;
+
+        // 表示するのは最新の描画要求の結果だけ(古い要求は取り消され、表示前に捨てられる)
+        _fastRenderPending = false;
         _overlay = !fast && zoom >= RawOverlayMinZoom
             && _displayMode != ViewportDisplayMode.ChannelSplit
             ? FetchOverlayData()
