@@ -16,19 +16,43 @@ public class RawLoaderTemporaryCopyTests
 {
     private static readonly RawFormat Format = new() { Width = 16, Height = 8, BitDepth = 12 };
 
-    [Fact]
-    public void TemporaryCopy_ReadsSameValues_AndIsDeletedOnDispose()
+    [Theory]
+    [InlineData(1)]
+    [InlineData(3)]
+    public void TemporaryCopy_CopiesOnlyTheFrames_ReadsSameValues_AndIsDeletedOnDispose(int frames)
     {
-        ushort[] codes = TestData.MakePattern(Format.Width * Format.Height, Format.BitDepth);
-        (string source, string extension) = WriteSource(codes);
+        // 写すのはヘッダの後の読む範囲(全フレーム)だけ。多ページTIFFのページは HeaderOffset=ページの先頭とした
+        // 1フレームの raw として開くので、ファイル全体(全ページ)を写すとページを送るたびにファイルサイズぶん
+        // 転送していた(全体レビュー 2026-10-01 B12)。形式は元のまま返し、ビューの先頭を元ファイルの HeaderOffset に
+        // 対応づけて読む
+        RawFormat format = Format with { HeaderOffset = 4096, FrameCount = frames };
+        ushort[] codes = TestData.MakePattern(format.Width * format.Height * frames, format.BitDepth);
+        byte[] file = TestData.EncodeRawFile(codes, format).Concat(new byte[100_000]).ToArray(); // 後ろに別のページ
+        (string source, string extension) = WriteSource(file);
         try
         {
             string copy;
-            using (RawImage image = RawLoader.Load(ExtendedPath(source), Format, inMemoryPixelThreshold: 0))
+            using (RawImage image = RawLoader.Load(ExtendedPath(source), format, inMemoryPixelThreshold: 0))
             {
                 copy = FindCopy(extension);
                 Assert.True(image.IsMemoryMapped);
-                Assert.Equal((ushort)(codes[5] << 4), image.GetPixel(5, 0));
+                Assert.Equal(format, image.Format);
+
+                // 列挙で得た長さは開いている間更新されないことがあるので、パスから引き直す
+                Assert.Equal(format.FrameSizeInBytes * frames, new FileInfo(copy).Length);
+
+                int pixels = format.Width * format.Height;
+                var region = new ushort[pixels];
+                for (int frame = 0; frame < frames; frame++)
+                {
+                    image.CopyRegion(frame, 0, 0, format.Width, format.Height, region);
+                    for (int i = 0; i < pixels; i++)
+                    {
+                        ushort expected = (ushort)(codes[(frame * pixels) + i] << 4);
+                        Assert.Equal(expected, region[i]);
+                        Assert.Equal(expected, image.GetPixel(i % format.Width, i / format.Width, frame));
+                    }
+                }
             }
 
             Assert.False(File.Exists(copy));
@@ -150,10 +174,15 @@ public class RawLoaderTemporaryCopyTests
 
     private static (string Source, string Extension) WriteSource(ushort[] codes)
     {
+        return WriteSource(TestData.EncodeRawFile(codes, Format));
+    }
+
+    private static (string Source, string Extension) WriteSource(byte[] bytes)
+    {
         string extension = "." + Guid.NewGuid().ToString("N");
         string path = Path.Combine(Path.GetTempPath(), "RawAnalyzerTests", "copy" + extension);
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        File.WriteAllBytes(path, TestData.EncodeRawFile(codes, Format));
+        File.WriteAllBytes(path, bytes);
         return (path, extension);
     }
 

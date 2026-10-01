@@ -25,6 +25,9 @@ public sealed unsafe class RawImage : IDisposable
 
     // ネットワーク上のファイルをローカルへ写して開いた場合の複製。破棄時に消す
     private readonly string? _ownedTemporaryFile;
+
+    // ビューの先頭バイトに当たる元ファイル上の位置(読む範囲だけをローカルへ写したときは HeaderOffset)
+    private readonly long _mapOrigin;
     private byte* _mapBase;
 
     // 破棄要求フラグ。Interlocked で読み書きしメモリバリアを張る(0=生存 / 1=破棄要求済み)
@@ -46,12 +49,14 @@ public sealed unsafe class RawImage : IDisposable
         RawFormat format,
         MemoryMappedFile mmf,
         MemoryMappedViewAccessor accessor,
-        string? ownedTemporaryFile = null)
+        string? ownedTemporaryFile = null,
+        long mapOrigin = 0)
     {
         Format = format;
         _mmf = mmf;
         _accessor = accessor;
         _ownedTemporaryFile = ownedTemporaryFile;
+        _mapOrigin = mapOrigin;
         _needSwap = (format.Endianness == Endianness.Big) == BitConverter.IsLittleEndian;
         byte* pointer = null;
         accessor.SafeMemoryMappedViewHandle.AcquirePointer(ref pointer);
@@ -296,7 +301,8 @@ public sealed unsafe class RawImage : IDisposable
 
     private long FileByteOffset(int frame, int y, int x)
     {
-        return Format.HeaderOffset
+        // ビュー内の位置。ビューが元ファイルの途中(_mapOrigin)から始まるときはその分を引く
+        return Format.HeaderOffset - _mapOrigin
             + frame * Format.FrameSizeInBytes
             + ((long)y * Width + x) * Format.BytesPerPixel;
     }

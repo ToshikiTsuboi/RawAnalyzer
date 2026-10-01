@@ -188,11 +188,18 @@ public static class RawLoader
         // 一時ファイルは閉じたら OS が消すように開いたまま(FileOptions.DeleteOnClose)マップする。RawImage の
         // 破棄に届かないまま終了した(ウィンドウの終了処理の await の後で破棄する、読み出し中で解放が遅延された)
         // 場合や異常終了でも、プロセスのハンドルが閉じられた時点で消え、数GBの複製が残り続けない
+        //
+        // 写すのはヘッダの後の読む範囲(全フレーム)だけ。多ページTIFFのページは HeaderOffset=ページの先頭とした
+        // 1フレームとして開くので、ファイル全体(全ページ)を写すとページを送るたびにファイルサイズぶん転送する。
+        // ビューの先頭は元ファイルの HeaderOffset に当たる(RawImage に mapOrigin として渡す)
         MemoryMappedFile mmf;
         string? temporaryCopyPath = null;
+        long mapOrigin = 0;
         if (IsNetworkPath(path))
         {
-            FileStream temporaryCopy = CopyToLocalTemporary(path, cancellationToken, progress);
+            mapOrigin = format.HeaderOffset;
+            FileStream temporaryCopy = CopyToLocalTemporary(
+                path, mapOrigin, requiredBytes - mapOrigin, cancellationToken, progress);
             temporaryCopyPath = temporaryCopy.Name;
             try
             {
@@ -219,7 +226,7 @@ public static class RawLoader
 
             // MMFはマップするだけで実データの転送は表示時に発生するため、ここで完了扱い
             progress?.Report(1.0);
-            return new RawImage(format, mmf, accessor, temporaryCopyPath);
+            return new RawImage(format, mmf, accessor, temporaryCopyPath, mapOrigin);
         }
         catch
         {
@@ -301,7 +308,7 @@ public static class RawLoader
     }
 
     /// <summary>
-    /// ネットワーク上のファイルをローカルの一時ファイルへ複製する。
+    /// ネットワーク上のファイルの指定範囲をローカルの一時ファイルへ複製する。
     /// </summary>
     /// <remarks>
     /// 複製先は閉じたら OS が消すように開き(<see cref="FileOptions.DeleteOnClose"/>)、閉じずに返す。
@@ -309,11 +316,13 @@ public static class RawLoader
     /// (閉じた時点で消える。破棄に届かないままプロセスが終わっても、OS がハンドルを閉じて消す)。
     /// </remarks>
     /// <param name="path">元のパス。</param>
+    /// <param name="offset">複製する範囲の先頭(元ファイル上の位置)。</param>
+    /// <param name="length">複製するバイト数。</param>
     /// <param name="cancellationToken">キャンセルトークン。</param>
     /// <param name="progress">転送の進捗(0〜1)。</param>
     /// <returns>複製先の開いたストリーム(呼び出し側が寿命を持つ)。</returns>
     private static FileStream CopyToLocalTemporary(
-        string path, CancellationToken cancellationToken, IProgress<double>? progress)
+        string path, long offset, long length, CancellationToken cancellationToken, IProgress<double>? progress)
     {
         string directory = TemporaryCopyFolder;
         Directory.CreateDirectory(directory);
@@ -329,17 +338,18 @@ public static class RawLoader
             byte[] buffer = ChunkPool.Rent(LoadChunkBytes);
             try
             {
-                long total = source.Length;
+                source.Seek(offset, SeekOrigin.Begin);
                 long done = 0;
                 double lastReported = -1;
-                int read;
-                while ((read = source.Read(buffer, 0, buffer.Length)) > 0)
+                while (done < length)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
+                    int read = (int)Math.Min(buffer.Length, length - done);
+                    source.ReadExactly(buffer, 0, read);
                     target.Write(buffer, 0, read);
                     done += read;
-                    double ratio = (double)done / Math.Max(1, total);
-                    if (ratio - lastReported >= 0.01 || done == total)
+                    double ratio = (double)done / Math.Max(1, length);
+                    if (ratio - lastReported >= 0.01 || done == length)
                     {
                         lastReported = ratio;
                         progress?.Report(ratio);
