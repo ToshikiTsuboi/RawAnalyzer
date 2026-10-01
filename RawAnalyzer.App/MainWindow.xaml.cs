@@ -2231,7 +2231,7 @@ public partial class MainWindow : Window
         {
             if (choice.WriteSidecar)
             {
-                WriteProcessingSidecar(path, choice, developParameters, split);
+                WriteProcessingSidecar(path, choice, developParameters, split, frame, image.FrameCount);
             }
 
             // RawSaver はヘッダを出力しないため、保存したrawを開き直したときに
@@ -2266,8 +2266,11 @@ public partial class MainWindow : Window
     /// <param name="choice">保存ダイアログの選択。</param>
     /// <param name="developParameters">保存に使った現像パラメータ。</param>
     /// <param name="split">HDR分割ビューから保存したときの段ごとの表示調整(分割ビューでなければ null)。</param>
+    /// <param name="frame">保存したフレーム番号(raw 形式以外は表示中の1フレームだけを書き出す)。</param>
+    /// <param name="frameCount">保存した画像のフレーム数。</param>
     private void WriteProcessingSidecar(
-        string imagePath, SaveChoice choice, DevelopParameters developParameters, HdrSplitAdjustments? split)
+        string imagePath, SaveChoice choice, DevelopParameters developParameters, HdrSplitAdjustments? split,
+        int frame, int frameCount)
     {
         try
         {
@@ -2284,6 +2287,13 @@ public partial class MainWindow : Window
             if (_tiffStack is not null)
             {
                 sb.Append("元TIFFのページ: ").AppendLine($"{_tiffPageIndex + 1}/{_tiffStack.PageCount}");
+            }
+
+            // マルチフレームの画像から1フレームだけを書き出したら、どのフレームかを書く
+            if (ProcessingSidecar.SourceFrameLine(frameCount, frame, _tiffStack is not null, choice.Format)
+                is { } frameLine)
+            {
+                sb.AppendLine(frameLine);
             }
             if (_correctionLabel is not null)
             {
