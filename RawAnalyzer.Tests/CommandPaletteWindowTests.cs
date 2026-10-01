@@ -1,5 +1,7 @@
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
+using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
 using RawAnalyzer.App.Services;
@@ -143,6 +145,54 @@ public class CommandPaletteWindowTests
         second.Close();
     });
 
+    [Fact]
+    public Task DoubleClick_RunsOnlyWhenLeftButtonOnARow() => WpfTestHost.Run(() =>
+    {
+        // ListBox の MouseDoubleClick は一覧のどこでのダブルクリックでも(スクロールバー・行のない余白・右ボタンでも)来る。
+        // 以前はそれでも選択中のコマンドを実行し、スクロールバーを素早く2回押すとパレットが閉じて実行されていた
+        AppCommand[] commands = Enumerable.Range(0, 40)
+            .Select(i => Command($"cmd{i}", $"コマンド{i}", canExecute: () => true))
+            .ToArray();
+        var window = new CommandPaletteWindow(commands);
+        bool closed = false;
+        window.Closed += (_, _) => closed = true;
+        var list = (ListBox)window.FindName("CommandList");
+        Layout(window);
+        list.SelectedIndex = 3;
+
+        // 40件は窓に収まらず、スクロールバーが出る
+        ScrollBar scrollBar = FindDescendants<ScrollBar>(list)
+            .Single(s => s.Orientation == Orientation.Vertical);
+        Assert.Equal(Visibility.Visible, scrollBar.Visibility);
+        RepeatButton pageDown = FindDescendants<RepeatButton>(scrollBar)
+            .Single(b => b.Command == ScrollBar.PageDownCommand);
+        Thumb thumb = FindDescendants<Thumb>(scrollBar).Single();
+        ScrollContentPresenter content = FindDescendants<ScrollContentPresenter>(list).Single();
+
+        DoubleClick(list, pageDown, MouseButton.Left);
+        DoubleClick(list, thumb, MouseButton.Left);
+        DoubleClick(list, content, MouseButton.Left); // 行の外(行のない余白)
+        DoubleClick(list, RowRoot(list, 3), MouseButton.Right);
+        Assert.False(closed);
+        Assert.Null(window.SelectedCommand);
+
+        // 行の左ダブルクリックは従来どおり実行する
+        DoubleClick(list, RowRoot(list, 3), MouseButton.Left);
+        Assert.True(closed);
+        Assert.Same(commands[3], window.SelectedCommand);
+
+        // 行の文字の上(押した要素がテンプレートの Run)でも実行する
+        var second = new CommandPaletteWindow(commands);
+        var secondList = (ListBox)second.FindName("CommandList");
+        Layout(second);
+        secondList.SelectedIndex = 5;
+        Run title = FindDescendants<TextBlock>(RowRoot(secondList, 5))
+            .SelectMany(t => t.Inlines.OfType<Run>())
+            .Single(r => r.Text == "コマンド5");
+        DoubleClick(secondList, title, MouseButton.Left);
+        Assert.Same(commands[5], second.SelectedCommand);
+    });
+
     private const string NoImage = "画像を開いていないため実行できません。";
 
     private static AppCommand Command(
@@ -191,6 +241,37 @@ public class CommandPaletteWindowTests
         }
 
         return null;
+    }
+
+    private static IEnumerable<T> FindDescendants<T>(DependencyObject root) where T : DependencyObject
+    {
+        for (int i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++)
+        {
+            DependencyObject child = VisualTreeHelper.GetChild(root, i);
+            if (child is T match)
+            {
+                yield return match;
+            }
+
+            foreach (T nested in FindDescendants<T>(child))
+            {
+                yield return nested;
+            }
+        }
+    }
+
+    /// <summary>
+    /// 一覧の中の要素をダブルクリックしたときの MouseDoubleClick を送る。WPF の Control は2回目の押下を
+    /// OriginalSource(押した要素)のまま MouseDoubleClick として一覧へ上げる。
+    /// </summary>
+    private static void DoubleClick(ListBox list, DependencyObject pressed, MouseButton button)
+    {
+        var args = new MouseButtonEventArgs(Mouse.PrimaryDevice, Environment.TickCount, button)
+        {
+            RoutedEvent = Control.MouseDoubleClickEvent,
+            Source = pressed,
+        };
+        list.RaiseEvent(args);
     }
 
     /// <summary>パレットで Enter を押す(パレットはウィンドウの PreviewKeyDown でキーを捌く)。</summary>

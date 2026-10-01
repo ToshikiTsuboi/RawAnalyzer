@@ -176,8 +176,23 @@ public partial class CommandPaletteWindow : Window
         CommandList.ScrollIntoView(CommandList.SelectedItem);
     }
 
+    /// <summary>行の左ダブルクリックで実行する。</summary>
+    /// <remarks>
+    /// ListBox の MouseDoubleClick は一覧のどこでのダブルクリックでも来る(スクロールバー・行のない余白・右ボタンでも)。
+    /// 以前はそれでも選択中のコマンドを実行し、一覧を送ろうとスクロールバーを素早く2回押すとパレットが閉じて
+    /// 実行されていた(比較モード切替なら読み込み済みの比較ペインが破棄される)。
+    /// </remarks>
+    /// <param name="sender">一覧。</param>
+    /// <param name="e">押したボタンと押した要素。</param>
     private void OnListDoubleClick(object sender, MouseButtonEventArgs e)
     {
+        if (e.ChangedButton != MouseButton.Left
+            || e.OriginalSource is not DependencyObject pressed
+            || ItemsControl.ContainerFromElement(CommandList, pressed) is not ListBoxItem)
+        {
+            return;
+        }
+
         Commit();
     }
 
