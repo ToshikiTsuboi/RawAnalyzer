@@ -2941,7 +2941,8 @@ public partial class MainWindow : Window
     /// 表示する画像を差し替えた直後に、表示モードの選択とビューポートの表示モードを同じ結果にそろえる。
     /// </summary>
     /// <remarks>
-    /// ファイル連番の送り・TIFF のページ送り・処理結果の差し替えで共通(DisplayModeSelection の規約)。
+    /// ファイル連番の送り・TIFF のページ送り・処理結果の差し替え・右パネルの Bayer の変更で共通
+    /// (DisplayModeSelection の規約)。
     /// 選択中のモードは新しい画像でも成立すれば保ち、成立しないモードだけ選択ごと戻す。
     /// カラー画像は RGB のまま表示し、選択は Raw 表示・操作不可にする。
     /// 選択の変更は OnDisplayModeChanged を通るので、MainWindow の状態(画像・フォーマット・カラー画像)を
@@ -5048,6 +5049,17 @@ public partial class MainWindow : Window
         if (_derivedImage is null && _currentImage is not null)
         {
             Viewport.UpdateFormat(_currentFormat);
+
+            // 表示モードの選択も送り・処理結果の差し替えと同じ規約でパターンにそろえる。Bayer なしでは
+            // Bayerカラー・カラー現像・チャネル分割が成立しないので選択ごと Raw 表示へ戻す(残すとツールバーは
+            // カラー系のままグレーで描き、同じモードを選び直しても選択が変わらず理由も出ない)。
+            // 有効なパターンで Bayer 系の表示を続けるなら Bayer ピラミッドを用意する(作り済みなら何もしない)
+            DisplayModeSelection.Choice display = ApplyDisplayModeToNewImage(_colorImage is not null, format.Bayer);
+            if (display.ViewportMode is ViewportDisplayMode.BayerColor
+                or ViewportDisplayMode.ColorDevelop or ViewportDisplayMode.ChannelSplit)
+            {
+                _ = EnsureBayerPyramidAsync();
+            }
         }
 
         // カーソル位置のチャネル名を新しいパターンで出し直す
