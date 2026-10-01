@@ -1,4 +1,5 @@
 using System.Windows.Controls;
+using RawAnalyzer.App.Services;
 using RawAnalyzer.App.Views;
 using RawAnalyzer.Core;
 using Xunit;
@@ -218,7 +219,7 @@ public class DefectPixelWindowTests
         window.Close();
     });
 
-    private const string HdrReason = "HDR表示中は欠陥補正できません。Raw表示に戻してから検出し直して補正してください。";
+    private const string HdrReason = DefectCorrectionAvailability.HdrRefusal;
 
     /// <summary>欠陥を埋め込んでいない12bitの平坦な画像から検出した結果(0 件)。</summary>
     private static DefectDetectionResult DetectNoDefects()

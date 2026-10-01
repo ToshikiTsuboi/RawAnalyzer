@@ -4830,11 +4830,6 @@ public partial class MainWindow : Window
 
     private DefectPixelWindow? _defectWindow;
 
-    // HDR表示(派生ビュー)中は欠陥補正しない理由と次にすること。補正を断るときと、
-    // HDR表示中の検出結果に添えて欠陥ウィンドウに示すときの両方で使う
-    private const string HdrDefectCorrectionRefusal =
-        "HDR表示中は欠陥補正できません。Raw表示に戻してから検出し直して補正してください。";
-
     private void OnDefectDetectClick(object sender, RoutedEventArgs e)
     {
         if (ActiveImage is null)
@@ -4918,10 +4913,11 @@ public partial class MainWindow : Window
             return;
         }
 
-        // HDR表示中の検出結果は派生ビューの座標・画素のもので、補正は HDR 表示中は断る。
+        // HDR表示中の検出結果は派生ビューの座標・画素のもので、HDR素材(Raw表示を含む)の補正は断る。
         // 一覧・移動・コピー・CSV は使えるようにし、断られるだけの補正ボタンは有効にせず理由を示す
         _defectWindow.ShowResult(result, maxCode,
-            correctionUnavailableReason: _derivedImage is not null ? HdrDefectCorrectionRefusal : null);
+            correctionUnavailableReason: _currentFormat is null ? null
+                : DefectCorrectionAvailability.Refusal(_currentFormat, _derivedImage is not null));
         _defectSource = source;
         Viewport.SetDefectMarkers(result.Defects);
     }
@@ -5158,11 +5154,17 @@ public partial class MainWindow : Window
     private async void OnDefectCorrectionRequested(
         DefectDetectionResult detection, DefectCorrectionMethod method)
     {
-        if (_currentImage is null || _currentFormat is null || _derivedImage is not null)
+        if (_currentImage is null || _currentFormat is null)
         {
-            // HDR表示の出入りで検出結果は破棄する(派生ビューの一覧は元画像に使えない)ので、
-            // Raw表示へ戻したら検出からやり直すよう案内する
-            MessageBox.Show(this, HdrDefectCorrectionRefusal,
+            _defectWindow?.ResetRunButton();
+            return;
+        }
+
+        // HDR素材(派生ビューの表示中、HDR方式を指定した raw の Raw 表示)は補正しない。行交互では同色近傍に
+        // 露光の違う行が混ざり、結果は HDR 方式を失う。ビニング・フィルタと同じく分割して開くよう案内する
+        if (DefectCorrectionAvailability.Refusal(_currentFormat, _derivedImage is not null) is { } refusal)
+        {
+            MessageBox.Show(this, refusal,
                 "欠陥画素補正", MessageBoxButton.OK, MessageBoxImage.Information);
             _defectWindow?.ResetRunButton();
             return;
