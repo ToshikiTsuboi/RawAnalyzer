@@ -341,6 +341,32 @@ public class WideSampleTiffTests
         Assert.Equal("16bit値 -2〜100 → 16bit (1code≈0.00156)", actual.ValueNote);
     }
 
+    [Theory]
+    [InlineData(32, false)] // 32bit実数RGB: WICが生のビット列を返す経路(TryDecodeWideSamples)
+    [InlineData(16, false)] // 16bit実数RGB: 自前復号(チャンキー)
+    [InlineData(16, true)]  // 16bit実数RGB: 自前復号(プレーン分離)
+    public void NonFiniteRgb_IsCountedInPixelsNotSamples(int bits, bool planar)
+    {
+        // 「非数N画素は0」のNがRGBではサンプル数(画素数×3)になっていた(全体レビュー 2026-10-01 B32)。
+        // 3×2画像のうち2画素は R/G/B とも NaN、1画素は G だけ +∞ → 3画素(サンプルなら7)
+        float nan = float.NaN;
+        float[] rgb =
+        {
+            nan, nan, nan, 1f, float.PositiveInfinity, 2f, 3f, 4f, 5f,
+            nan, nan, nan, 6f, 7f, 8f, 0.5f, 9f, 10f,
+        };
+        byte[] samples = bits == 32 ? FloatSamples(rgb) : HalfSamples(rgb);
+        TiffBuilder.Page page = planar
+            ? PlanarPage(3, 2, bits, 3, 3, samples)
+            : TiffBuilder.GrayPage(3, 2, bits, samples, photometric: 2, sampleFormat: 3, samplesPerPixel: 3);
+
+        DecodedImage decoded = Load(page);
+        using RawImage owned = decoded.Luminance;
+
+        Assert.NotNull(decoded.Color);
+        Assert.Equal($"{bits}bit値 0〜10 → 16bit (1code≈0.000153)・非数3画素は0", decoded.ValueNote);
+    }
+
     [Fact]
     public void Float16Rgb_Compressed_IsRejectedWithReason()
     {

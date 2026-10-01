@@ -700,7 +700,7 @@ internal static class ImageFileLoader
         }
 
         long samples = pixels * outputChannels;
-        SampleRange range = SampleScaling.Scan(bits, samples, interpretation, ct);
+        SampleRange range = SampleScaling.Scan(bits, samples, interpretation, outputChannels, ct);
         SampleScaling scaling = SampleScaling.FromRange(range);
         progress?.Report(0.85);
 

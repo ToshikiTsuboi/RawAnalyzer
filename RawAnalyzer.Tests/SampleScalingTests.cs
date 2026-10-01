@@ -119,4 +119,21 @@ public class SampleScalingTests
         Assert.Equal(0, scaling.ToCode(double.NaN));
         Assert.Contains("非数", scaling.Describe());
     }
+
+    [Fact]
+    public void NonFinite_InColor_IsCountedPerPixel()
+    {
+        // RGBは画素ごとに数える(いずれかの成分が非有限の画素を1つ)。説明は「画素」で出す
+        int[] bits = FloatBits(
+            float.NaN, float.NaN, float.NaN,
+            1f, float.NegativeInfinity, 3f,
+            4f, 5f, 6f,
+            float.NaN, 8f, 9f);
+        SampleRange range = SampleScaling.Scan(bits, bits.Length, SampleInterpretation.Float, samplesPerPixel: 3);
+
+        Assert.Equal(3, range.NonFiniteCount);
+        Assert.Equal(1, range.Minimum, 6);
+        Assert.Equal(9, range.Maximum, 6);
+        Assert.EndsWith("・非数3画素は0", SampleScaling.FromRange(range).Describe());
+    }
 }

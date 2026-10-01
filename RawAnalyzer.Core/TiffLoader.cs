@@ -1,5 +1,6 @@
 ﻿using System.Buffers.Binary;
 using System.IO.MemoryMappedFiles;
+using System.Numerics;
 using System.Text;
 using System.Text.RegularExpressions;
 
@@ -1709,25 +1710,58 @@ public static unsafe class TiffLoader
         int planes = planar ? 3 : 1;
         var values = new ulong[(long)width * samplesPerPixel];
 
-        // 1パス目: RGBの3成分をまとめた値域(アルファは入れない)
+        // 1パス目: RGBの3成分をまとめた値域(アルファは入れない)。NaN・無限大は「非数N画素」と出すので、
+        // いずれかの成分が非有限の画素を1つと数える。プレーン分離は成分ごとに走査するので、画素に印を付けて数える
         var accumulator = new SampleRangeAccumulator();
+        long nonFinitePixels = 0;
+        ulong[]? nonFiniteMarks = null;
         for (int plane = 0; plane < planes; plane++)
         {
             ForEachRow(data, page, (y, x0, count, bytes) =>
             {
                 UnpackRow(bytes, count * samplesPerPixel, page.Bits, bigEndian, values);
+                long rowStart = ((long)y * width) + x0;
                 for (int i = 0; i < count; i++)
                 {
+                    bool finite = true;
                     for (int c = 0; c < channelsPerPass; c++)
                     {
-                        accumulator.Add(ToValue(values[(i * samplesPerPixel) + c], page.Bits, page.Format));
+                        double value = ToValue(values[(i * samplesPerPixel) + c], page.Bits, page.Format);
+                        if (double.IsFinite(value))
+                        {
+                            accumulator.Add(value);
+                        }
+                        else
+                        {
+                            finite = false;
+                        }
                     }
+
+                    if (finite)
+                    {
+                        continue;
+                    }
+
+                    if (!planar)
+                    {
+                        nonFinitePixels++;
+                        continue;
+                    }
+
+                    long pixel = rowStart + i;
+                    nonFiniteMarks ??= new ulong[(((long)width * height) + 63) / 64];
+                    nonFiniteMarks[pixel / 64] |= 1UL << (int)(pixel % 64);
                 }
             }, ct, progress, 0.5 * plane / planes, 0.5 / planes, samplesPerPixel, plane);
         }
 
+        foreach (ulong marks in nonFiniteMarks ?? Array.Empty<ulong>())
+        {
+            nonFinitePixels += BitOperations.PopCount(marks);
+        }
+
         // 2パス目: 16bitコードへ写してRGBのインターリーブへ置く
-        SampleScaling result = SampleScaling.FromRange(accumulator.ToRange());
+        SampleScaling result = SampleScaling.FromRange(accumulator.ToRange() with { NonFiniteCount = nonFinitePixels });
         var codes = new ushort[(long)width * height * 3];
         for (int plane = 0; plane < planes; plane++)
         {

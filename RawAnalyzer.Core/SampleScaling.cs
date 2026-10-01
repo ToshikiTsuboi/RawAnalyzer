@@ -21,11 +21,14 @@ public enum SampleInterpretation
 /// <summary>32bitサンプルの値域。</summary>
 /// <param name="Minimum">有限値の最小。有限値が1つもなければ0。</param>
 /// <param name="Maximum">有限値の最大。有限値が1つもなければ0。</param>
-/// <param name="NonFiniteCount">NaN・無限大の個数。</param>
+/// <param name="NonFiniteCount">
+/// NaN・無限大を含む画素の数(カラーはいずれかの成分がNaN・無限大の画素を1つと数える)。
+/// <see cref="SampleRangeAccumulator"/> で1値ずつ集計したときはNaN・無限大の値の個数。
+/// </param>
 public readonly record struct SampleRange(double Minimum, double Maximum, long NonFiniteCount);
 
 /// <summary>
-/// 値域を1サンプルずつ集計する(ストリーミング版の <see cref="SampleScaling.Scan"/>)。
+/// 値域を1サンプルずつ集計する(ストリーミング版の <see cref="SampleScaling.Scan(int[], long, SampleInterpretation, CancellationToken)"/>)。
 /// </summary>
 public struct SampleRangeAccumulator
 {
@@ -123,7 +126,7 @@ public sealed record SampleScaling(double Offset, double Upper, SampleRange Rang
     }
 
     /// <summary>
-    /// サンプル列の値域を調べる。
+    /// サンプル列(1画素1サンプル)の値域を調べる。
     /// </summary>
     /// <param name="bits">32bitビット列の配列。</param>
     /// <param name="count">走査する要素数。</param>
@@ -134,8 +137,26 @@ public sealed record SampleScaling(double Offset, double Upper, SampleRange Rang
         int[] bits, long count, SampleInterpretation interpretation,
         CancellationToken cancellationToken = default)
     {
+        return Scan(bits, count, interpretation, 1, cancellationToken);
+    }
+
+    /// <summary>
+    /// 1画素に <paramref name="samplesPerPixel"/> サンプルが並ぶサンプル列(RGBのインターリーブなど)の値域を調べる。
+    /// NaN・無限大は、いずれかのサンプルが非有限の画素の数として数える(「非数N画素」の表示に合わせる)。
+    /// </summary>
+    /// <param name="bits">32bitビット列の配列。</param>
+    /// <param name="count">走査する要素数(<paramref name="samplesPerPixel"/> の倍数)。</param>
+    /// <param name="interpretation">解釈方法。</param>
+    /// <param name="samplesPerPixel">1画素のサンプル数(1以上)。</param>
+    /// <param name="cancellationToken">キャンセルトークン。</param>
+    /// <returns>値域。</returns>
+    public static SampleRange Scan(
+        int[] bits, long count, SampleInterpretation interpretation, int samplesPerPixel,
+        CancellationToken cancellationToken = default)
+    {
         ArgumentNullException.ThrowIfNull(bits);
-        if (count < 0 || count > bits.LongLength)
+        ArgumentOutOfRangeException.ThrowIfLessThan(samplesPerPixel, 1);
+        if (count < 0 || count > bits.LongLength || count % samplesPerPixel != 0)
         {
             throw new ArgumentOutOfRangeException(nameof(count));
         }
@@ -144,43 +165,54 @@ public sealed record SampleScaling(double Offset, double Upper, SampleRange Rang
         double totalMin = double.PositiveInfinity;
         double totalMax = double.NegativeInfinity;
         long totalNonFinite = 0;
+        long pixels = count / samplesPerPixel;
 
         // 行単位ではなく区画分割にして、区画あたりの確保をなくす
         int partitions = (int)Math.Clamp(
-            Environment.ProcessorCount, 1, Math.Max(1, count / 65536));
+            Environment.ProcessorCount, 1, Math.Max(1, pixels / 65536));
         Parallel.For(
             0,
             partitions,
             new ParallelOptions { CancellationToken = cancellationToken },
             partition =>
             {
-                long first = count * partition / partitions;
-                long last = count * (partition + 1) / partitions;
+                long first = pixels * partition / partitions;
+                long last = pixels * (partition + 1) / partitions;
                 double min = double.PositiveInfinity;
                 double max = double.NegativeInfinity;
                 long nonFinite = 0;
-                for (long i = first; i < last; i++)
+                for (long p = first; p < last; p++)
                 {
-                    if ((i & 0xFFFFF) == 0)
+                    if ((p & 0xFFFFF) == 0)
                     {
                         cancellationToken.ThrowIfCancellationRequested();
                     }
 
-                    double value = ToValue(bits[i], interpretation);
-                    if (!double.IsFinite(value))
+                    bool finite = true;
+                    long start = p * samplesPerPixel;
+                    for (int c = 0; c < samplesPerPixel; c++)
+                    {
+                        double value = ToValue(bits[start + c], interpretation);
+                        if (!double.IsFinite(value))
+                        {
+                            finite = false;
+                            continue;
+                        }
+
+                        if (value < min)
+                        {
+                            min = value;
+                        }
+
+                        if (value > max)
+                        {
+                            max = value;
+                        }
+                    }
+
+                    if (!finite)
                     {
                         nonFinite++;
-                        continue;
-                    }
-
-                    if (value < min)
-                    {
-                        min = value;
-                    }
-
-                    if (value > max)
-                    {
-                        max = value;
                     }
                 }
 
