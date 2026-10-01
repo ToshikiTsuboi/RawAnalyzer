@@ -91,7 +91,11 @@ public class CompareViewUiTests
         try
         {
             for (int i = 0; i < 4; i++) Assert.True(await view.AddPaneFromPathAsync(fixture.Path));
-            await ArrangeAsync(view, 1280, 720);
+
+            // 閉じるボタンを探すにはテンプレートの適用(レイアウト)だけでよく、描画の完了は待たない
+            await LayoutAsync(view, 1280, 720);
+            var paneGrid = (UniformGrid)view.FindName("PaneGrid");
+            Assert.Equal((2, 2), (paneGrid.Columns, paneGrid.Rows)); // 4枚は2×2
             for (int count = 3; count >= 0; count--)
             {
                 var grid = (UniformGrid)view.FindName("PaneGrid");
@@ -102,6 +106,9 @@ public class CompareViewUiTests
                 await DrainAsync();
                 Assert.Equal(count, view.PaneCount);
                 Assert.Equal(count, grid.Children.Count);
+
+                // 残った枚数で並べ直す: 1〜3枚は横一列(0枚でも1列)
+                Assert.Equal((Math.Max(1, count), 1), (grid.Columns, grid.Rows));
                 Assert.True(((Button)view.FindName("AddImageButton")).IsEnabled);
                 if (count > 0)
                 {
