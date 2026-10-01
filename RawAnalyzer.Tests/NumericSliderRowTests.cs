@@ -112,6 +112,20 @@ public class NumericSliderRowTests
         Assert.Equal("128", row.ValueBox.Text);
     });
 
+    [Fact]
+    public Task ExternalValueChange_DiscardsPendingEdit() => WpfTestHost.Run(() =>
+    {
+        // 打ちかけの間にバインド元が値を変えると(処理の完了でレベルを表し直すなど)、欄はその値で
+        // 書き直される。編集中の印が残ると、あとでフォーカスが離れたときに表示桁へ丸めた値で
+        // 確定し直し、触っていない値が動く(6.0206 dB → 6.0 dB)
+        var row = NewRow(decimals: 1, step: 0.5, maximum: 60);
+        row.ValueBox.Text = "5";
+        row.Value = 6.0206;
+        Assert.Equal("6.0", row.ValueBox.Text);
+        LoseKeyboardFocus(row.ValueBox, newFocus: null);
+        Assert.Equal(6.0206, row.Value, 10);
+    });
+
     private static NumericSliderRow NewRow(int decimals, double step, double maximum) => new()
     {
         Minimum = 0,

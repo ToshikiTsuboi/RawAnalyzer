@@ -215,6 +215,10 @@ public partial class NumericSliderRow : UserControl
             : Minimum;
         ValueSlider.Value = displayed;
         ValueBox.Text = displayed.ToString(Format, CultureInfo.InvariantCulture);
+
+        // 欄を値で書き直したので、打ちかけの入力は残っていない。印が残ると、あとで
+        // フォーカスが離れたときに表示桁へ丸めた値で確定し直し、触っていない値が動く
+        _textEdited = false;
         UnitText.Text = Unit;
 
         // 目盛は幅が限られるので末尾の0を落として詰める(-20.0 → -20)
