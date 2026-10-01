@@ -16,6 +16,52 @@ public static class RawLoader
     /// <summary>この画素数(全フレーム合計)以下ならヒープに展開し、超過ならMemoryMappedFileを使う既定閾値。</summary>
     public const long DefaultInMemoryPixelThreshold = 100_000_000;
 
+    /// <summary>
+    /// ネットワーク上の大きなファイルを開くときに作るローカルの一時コピーのフォルダ(%TEMP%\RawAnalyzer)。
+    /// </summary>
+    public static string TemporaryCopyFolder => Path.Combine(Path.GetTempPath(), "RawAnalyzer");
+
+    /// <summary>
+    /// 一時コピーのフォルダに残っている、使われていない一時コピーを消す。
+    /// </summary>
+    /// <remarks>
+    /// 一時コピーは閉じたら OS が消すように開くが、電源断などで OS が後始末できなかったものや、以前の版が
+    /// 残したもの(終了時の破棄に届かなかった数GBの複製)は残り続けるので、起動時に呼ぶ。
+    /// 実行中の別のインスタンスが開いている一時コピーは削除の共有を許さずに開いているので消せず、そのまま残す。
+    /// </remarks>
+    /// <param name="folder">一時コピーのフォルダ(通常は <see cref="TemporaryCopyFolder"/>)。</param>
+    /// <returns>消したファイルの数。</returns>
+    public static int DeleteUnusedTemporaryCopies(string folder)
+    {
+        int deleted = 0;
+        try
+        {
+            if (!Directory.Exists(folder))
+            {
+                return 0;
+            }
+
+            foreach (string file in Directory.EnumerateFiles(folder))
+            {
+                try
+                {
+                    File.Delete(file);
+                    deleted++;
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    // 使用中(実行中の別のインスタンスが開いている)。次の起動に任せる
+                }
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // フォルダを列挙できない。消せた分だけ返す
+        }
+
+        return deleted;
+    }
+
     private static readonly DimensionCandidate[] KnownResolutionsTable =
     {
         new(640, 480),
@@ -269,7 +315,7 @@ public static class RawLoader
     private static FileStream CopyToLocalTemporary(
         string path, CancellationToken cancellationToken, IProgress<double>? progress)
     {
-        string directory = Path.Combine(Path.GetTempPath(), "RawAnalyzer");
+        string directory = TemporaryCopyFolder;
         Directory.CreateDirectory(directory);
         string destination = Path.Combine(
             directory, Guid.NewGuid().ToString("N") + Path.GetExtension(path));

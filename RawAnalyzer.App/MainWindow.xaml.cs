@@ -223,6 +223,10 @@ public partial class MainWindow : Window
         {
             // 起動時に構築してショートカット重複を早期に検出する
             _ = Commands;
+
+            // 電源断などで後始末されなかった・以前の版が残した、ネットワーク上の大きな raw のローカル一時コピー
+            // (数GB)を消す。使用中(実行中の別のインスタンス)のものは残る。UI スレッドで待たない
+            _ = Task.Run(() => RawLoader.DeleteUnusedTemporaryCopies(RawLoader.TemporaryCopyFolder));
             _vm.LeftPanelVisible = _session.LeftPanelVisible;
             _vm.RightPanelVisible = _session.RightPanelVisible;
             _vm.FileFilterText = _session.FileFilter ?? "";

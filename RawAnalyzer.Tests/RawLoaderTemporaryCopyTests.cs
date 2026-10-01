@@ -14,8 +14,6 @@ namespace RawAnalyzer.Tests;
 /// </remarks>
 public class RawLoaderTemporaryCopyTests
 {
-    private static readonly string CopyFolder = Path.Combine(Path.GetTempPath(), "RawAnalyzer");
-
     private static readonly RawFormat Format = new() { Width = 16, Height = 8, BitDepth = 12 };
 
     [Fact]
@@ -67,6 +65,81 @@ public class RawLoaderTemporaryCopyTests
         }
     }
 
+    [Fact]
+    public void TemporaryCopy_IsCreatedInTemporaryCopyFolder()
+    {
+        ushort[] codes = TestData.MakePattern(Format.Width * Format.Height, Format.BitDepth);
+        (string source, string extension) = WriteSource(codes);
+        try
+        {
+            using RawImage image = RawLoader.Load(ExtendedPath(source), Format, inMemoryPixelThreshold: 0);
+
+            Assert.Single(Directory.GetFiles(RawLoader.TemporaryCopyFolder, "*" + extension));
+        }
+        finally
+        {
+            File.Delete(source);
+        }
+    }
+
+    [Fact]
+    public void DeleteUnusedTemporaryCopies_DeletesLeftovers()
+    {
+        // 電源断などで OS が後始末できなかった・以前の版が残した一時コピーを、次の起動で消す
+        string folder = MakeFolder();
+        File.WriteAllBytes(Path.Combine(folder, "a.raw"), new byte[16]);
+        File.WriteAllBytes(Path.Combine(folder, "b.bin"), new byte[16]);
+
+        Assert.Equal(2, RawLoader.DeleteUnusedTemporaryCopies(folder));
+        Assert.Empty(Directory.GetFiles(folder));
+        Directory.Delete(folder);
+    }
+
+    [Fact]
+    public void DeleteUnusedTemporaryCopies_KeepsCopiesInUse()
+    {
+        // 実行中の別のインスタンスが開いている一時コピー(以前の版のマップ・この版の削除予約付きのハンドル)は消さない
+        string folder = MakeFolder();
+        string mapped = Path.Combine(folder, "mapped.raw");
+        string copying = Path.Combine(folder, "copying.raw");
+        string leftover = Path.Combine(folder, "leftover.raw");
+        File.WriteAllBytes(mapped, new byte[16]);
+        File.WriteAllBytes(leftover, new byte[16]);
+        try
+        {
+            using (new FileStream(mapped, FileMode.Open, FileAccess.Read, FileShare.Read))
+            using (new FileStream(
+                copying, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.Read, 4096, FileOptions.DeleteOnClose))
+            {
+                Assert.Equal(1, RawLoader.DeleteUnusedTemporaryCopies(folder));
+                Assert.True(File.Exists(mapped));
+                Assert.True(File.Exists(copying));
+                Assert.False(File.Exists(leftover));
+            }
+        }
+        finally
+        {
+            File.Delete(mapped);
+            Directory.Delete(folder);
+        }
+    }
+
+    [Fact]
+    public void DeleteUnusedTemporaryCopies_MissingFolder_DoesNothing()
+    {
+        string folder = Path.Combine(Path.GetTempPath(), "RawAnalyzerTests", Guid.NewGuid().ToString("N"));
+
+        Assert.Equal(0, RawLoader.DeleteUnusedTemporaryCopies(folder));
+    }
+
+    private static string MakeFolder()
+    {
+        // 利用者の実際の一時コピーのフォルダには触れない
+        string folder = Path.Combine(Path.GetTempPath(), "RawAnalyzerTests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(folder);
+        return folder;
+    }
+
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static string LoadAndAbandon(string source, string extension)
     {
@@ -93,6 +166,7 @@ public class RawLoaderTemporaryCopyTests
 
     private static string FindCopy(string extension)
     {
-        return Assert.Single(Directory.GetFiles(CopyFolder, "*" + extension));
+        return Assert.Single(Directory.GetFiles(
+            Path.Combine(Path.GetTempPath(), "RawAnalyzer"), "*" + extension));
     }
 }
