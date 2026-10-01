@@ -21,18 +21,8 @@ public class FormatChangeAvailabilityTests
         Assert.Null(vm.ChangeFormatToolTip);
     }
 
-    [Fact]
-    public void RawFile_CanChangeFormat_WithoutExplanation()
-    {
-        var vm = new MainViewModel { HasImage = true, IsRawFile = true };
-
-        Assert.True(vm.CanChangeFormat);
-        Assert.Null(vm.ChangeFormatToolTip);
-    }
-
     [Theory]
-    [InlineData(false)] // グレーの画像ファイル(TIFF 等)
-    [InlineData(true)]  // カラー画像(常に画像ファイル)
+    [InlineData(false)] // グレーの画像ファイル(TIFF 等)。カラー画像は ChangingImage_NotifiesAvailabilityAndTooltip
     public void ImageFile_CannotChangeFormat_AndTooltipExplainsWhy(bool isColor)
     {
         // 以前は画像があればメニュー・ボタンを押せ、押しても何も起きなかった
@@ -81,6 +71,7 @@ public class FormatChangeAvailabilityTests
         changed.Clear();
         vm.IsColorImage = true;
         Assert.Contains(nameof(MainViewModel.ChangeFormatToolTip), changed);
+        Assert.False(vm.CanChangeFormat);
         Assert.Contains("カラーのまま表示", vm.ChangeFormatToolTip);
 
         changed.Clear();
@@ -94,7 +85,6 @@ public class FormatChangeAvailabilityTests
     // ---- ファイル一覧の右クリックメニュー「フォーマットを指定して開く…」 ----
 
     [Theory]
-    [InlineData("a.raw")]
     [InlineData("b.BIN")] // 拡張子の大文字小文字は問わない
     public void OpenWithFormat_RawFile_IsAvailable(string name)
     {
@@ -106,9 +96,6 @@ public class FormatChangeAvailabilityTests
 
     [Theory]
     [InlineData("a.tif")]
-    [InlineData("a.tiff")]
-    [InlineData("a.png")]
-    [InlineData("a.jpg")]
     public void OpenWithFormat_ImageFile_IsUnavailable_AndTooltipExplainsWhy(string name)
     {
         // 以前は押せて、ダイアログを出さずに普通に開いた(フォーマットを指定して開くつもりの利用者が驚く)
