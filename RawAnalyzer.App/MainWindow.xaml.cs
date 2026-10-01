@@ -2184,7 +2184,7 @@ public partial class MainWindow : Window
 
     // ---- 保存 ----
 
-    private void OnSaveClick(object sender, RoutedEventArgs e)
+    private async void OnSaveClick(object sender, RoutedEventArgs e)
     {
         if (ActiveImage is null || _currentFormat is null)
         {
@@ -2247,10 +2247,11 @@ public partial class MainWindow : Window
             return;
         }
 
-        ExecuteSave(choice, fileDialog.FileName);
+        // 付随テキストの書き出しまで待つ(その間も表示画像を差し替えさせない)
+        await ExecuteSaveAsync(choice, fileDialog.FileName);
     }
 
-    private void ExecuteSave(SaveChoice choice, string path)
+    private async Task ExecuteSaveAsync(SaveChoice choice, string path)
     {
         if (_tiffStack?.IsSourcePath(path) == true)
         {
@@ -2338,7 +2339,7 @@ public partial class MainWindow : Window
         else if (!result.WasCanceled)
         {
             string sidecarNote = choice.WriteSidecar
-                ? WriteProcessingSidecar(path, choice, developParameters, split, frame, image.FrameCount)
+                ? await WriteProcessingSidecarAsync(path, choice, developParameters, split, frame, image.FrameCount)
                 : "";
 
             // RawSaver はヘッダを出力しないため、保存したrawを開き直したときに
@@ -2370,6 +2371,10 @@ public partial class MainWindow : Window
     }
 
     /// <summary>保存画像に何が適用されたかを記録するテキストを書き出す。</summary>
+    /// <remarks>
+    /// 本文は表示状態から UI スレッドで作り、書き出し先の決定(同名の .txt の確認)と書き込みは UI スレッドの外で行う
+    /// (<see cref="ProcessingSidecar.Write"/>。保存先はネットワーク上のことがあり、切断していればタイムアウトまで戻らない)。
+    /// </remarks>
     /// <param name="imagePath">保存した画像のパス。</param>
     /// <param name="choice">保存ダイアログの選択。</param>
     /// <param name="developParameters">保存に使った現像パラメータ。</param>
@@ -2380,7 +2385,7 @@ public partial class MainWindow : Window
     /// 保存完了の表示に添える注記。画像と同名の .txt へ書いたときは空。既存のファイルを残すため別名へ書いたとき・
     /// 書けなかったときはそのことを示す。
     /// </returns>
-    private string WriteProcessingSidecar(
+    private async Task<string> WriteProcessingSidecarAsync(
         string imagePath, SaveChoice choice, DevelopParameters developParameters, HdrSplitAdjustments? split,
         int frame, int frameCount)
     {
@@ -2522,17 +2527,10 @@ public partial class MainWindow : Window
 
             sb.Append("  デモザイク: ").AppendLine(choice.ApplyDemosaic ? "適用 (バイリニア)" : "なし");
 
-            // 同名の .txt に利用者のファイル(撮影メモなど)や別の画像の付随テキストがあれば上書きせず別名へ書く
-            string? sidecarPath = ProcessingSidecar.ResolvePath(imagePath);
-            if (sidecarPath is null)
-            {
-                return " / 付随テキストは同名・別名の .txt がすべて使われているため保存していません";
-            }
-
-            File.WriteAllText(sidecarPath, sb.ToString(), Encoding.UTF8);
-            return string.Equals(sidecarPath, Path.ChangeExtension(imagePath, ".txt"), StringComparison.OrdinalIgnoreCase)
-                ? ""
-                : $" / 付随テキスト: {Path.GetFileName(sidecarPath)} (同名の .txt は別のファイルのため残しました)";
+            // 同名の .txt に利用者のファイル(撮影メモなど)や別の画像の付随テキストがあれば上書きせず別名へ書く。
+            // 書き出し先の確認と書き込みは UI スレッドの外で行う
+            string text = sb.ToString();
+            return await Task.Run(() => ProcessingSidecar.Write(imagePath, text));
         }
         catch (Exception)
         {

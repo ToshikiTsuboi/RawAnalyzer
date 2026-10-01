@@ -5,7 +5,8 @@ using RawAnalyzer.App.Views;
 namespace RawAnalyzer.App.Services;
 
 /// <summary>
-/// 保存の付随テキスト(保存した画像に何が適用されたかの記録。MainWindow の WriteProcessingSidecar が書く)の判断。
+/// 保存の付随テキスト(保存した画像に何が適用されたかの記録。本文は MainWindow の WriteProcessingSidecarAsync が作る)の
+/// 判断と書き出し。
 /// </summary>
 internal static class ProcessingSidecar
 {
@@ -48,6 +49,40 @@ internal static class ProcessingSidecar
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// 付随テキストを書き出し先(<see cref="ResolvePath"/>)へ書き、保存完了の表示に添える注記を返す。
+    /// </summary>
+    /// <remarks>
+    /// 書き出し先の確認(同名の .txt の実在・中身)と書き込みはファイルシステムに触れるので、UI スレッドの外で呼ぶ
+    /// (保存先はネットワーク上のことがあり、切断していればタイムアウトまで戻らない)。付随テキストを書けなくても
+    /// 本体の保存結果には影響させず、注記で知らせる。
+    /// </remarks>
+    /// <param name="imagePath">保存した画像のパス。</param>
+    /// <param name="text">付随テキストの本文。</param>
+    /// <returns>
+    /// 画像と同名の .txt へ書いたときは空。既存のファイルを残すため別名へ書いたとき・書けなかったときはそのことを示す注記。
+    /// </returns>
+    internal static string Write(string imagePath, string text)
+    {
+        try
+        {
+            string? sidecarPath = ResolvePath(imagePath);
+            if (sidecarPath is null)
+            {
+                return " / 付随テキストは同名・別名の .txt がすべて使われているため保存していません";
+            }
+
+            File.WriteAllText(sidecarPath, text, Encoding.UTF8);
+            return string.Equals(sidecarPath, Path.ChangeExtension(imagePath, ".txt"), StringComparison.OrdinalIgnoreCase)
+                ? ""
+                : $" / 付随テキスト: {Path.GetFileName(sidecarPath)} (同名の .txt は別のファイルのため残しました)";
+        }
+        catch (Exception)
+        {
+            return " / 付随テキストを保存できませんでした";
+        }
     }
 
     /// <summary>

@@ -5,7 +5,7 @@ using Xunit;
 namespace RawAnalyzer.Tests;
 
 /// <summary>
-/// 保存の付随テキスト(MainWindow の WriteProcessingSidecar が書く)の判断。
+/// 保存の付随テキスト(本文は MainWindow の WriteProcessingSidecarAsync が作る)の判断と書き出し。
 /// </summary>
 public class ProcessingSidecarTests
 {
@@ -62,6 +62,35 @@ public class ProcessingSidecarTests
 
         File.WriteAllText(sameName, SidecarOf("FOO.png"), System.Text.Encoding.UTF8);
         Assert.Equal(sameName, ProcessingSidecar.ResolvePath(image));
+    }
+
+    [Fact]
+    public void Write_WritesToTheResolvedPath_AndNotesWhenItIsNotTheSameNameTxt()
+    {
+        // 残課題 2026-10-02 I1。書き出し先の確認(同名の .txt の実在・中身)と書き込みは、以前は保存の後に UI スレッドで
+        // 行い、保存先の NAS が切断するとタイムアウトまで固まった。UI スレッドの外で呼ぶ Write にまとめる
+        using var folder = new TempFolder();
+        string image = Path.Combine(folder.Path, "foo.png");
+        string sameName = Path.Combine(folder.Path, "foo.txt");
+
+        Assert.Equal("", ProcessingSidecar.Write(image, SidecarOf("foo.png")));
+        Assert.Equal(SidecarOf("foo.png"), File.ReadAllText(sameName));
+
+        File.WriteAllText(sameName, "メモ\n");
+        string note = ProcessingSidecar.Write(image, SidecarOf("foo.png"));
+
+        Assert.Contains("foo.png.txt", note);
+        Assert.Equal("メモ\n", File.ReadAllText(sameName));
+        Assert.Equal(SidecarOf("foo.png"), File.ReadAllText(image + ".txt"));
+    }
+
+    [Fact]
+    public void Write_FailureIsNotedWithoutThrowing()
+    {
+        // 付随テキストを書けなくても本体の保存結果には影響させず、注記で知らせる
+        string image = Path.Combine(Path.GetTempPath(), "RawAnalyzerTests", Guid.NewGuid().ToString("N"), "foo.png");
+
+        Assert.Equal(" / 付随テキストを保存できませんでした", ProcessingSidecar.Write(image, SidecarOf("foo.png")));
     }
 
     private static string SidecarOf(string imageFileName) =>

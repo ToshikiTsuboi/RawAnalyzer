@@ -6,7 +6,7 @@ namespace RawAnalyzer.Tests;
 
 /// <summary>
 /// HDR派生ビュー(分割・合成)の表示中に保存したとき、保存の付随テキストへ書く来歴の節
-/// (MainWindow の WriteProcessingSidecar が使う)。
+/// (MainWindow の WriteProcessingSidecarAsync が使う)。
 /// </summary>
 public class HdrViewSidecarTests
 {
