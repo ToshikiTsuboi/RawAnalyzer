@@ -1,5 +1,6 @@
 using System.Windows.Controls;
 using RawAnalyzer.App.Views;
+using RawAnalyzer.Core;
 using Xunit;
 
 namespace RawAnalyzer.Tests;
@@ -61,6 +62,56 @@ public class NoiseMeasureDialogTests
         dialog.UpdateSource("other.raw", null, newMax, false, 0);
 
         Assert.Equal(expected, Saturation(dialog).Text);
+        dialog.Close();
+    });
+
+    private static TextBlock Result(NoiseMeasureDialog dialog) => (TextBlock)dialog.FindName("ResultText");
+
+    private static readonly NoiseMeasurement Measured = new(10_000, 64.2, 3.1, 2.1, 2.28, 4095);
+
+    [Fact]
+    public Task ResultOfPreviousImage_IsClearedWhenTargetChanges() => WpfTestHost.Run(() =>
+    {
+        // dark_001 の測定結果を出したまま dark_002 へ送った(またはフィルタを適用した)。以前は対象の名前だけが
+        // 替わり、結果欄とコピーされる値は dark_001 のまま残って、新しい画像の値として記録されてしまった
+        var first = new object();
+        var dialog = new NoiseMeasureDialog("dark_001.raw", null, 4095, false, 0, first);
+        string initial = Result(dialog).Text;
+        dialog.ShowResult(Measured, 12, "dark_100.raw");
+        Assert.Contains("2.100", Result(dialog).Text);
+
+        dialog.UpdateSource("dark_002.raw", null, 4095, false, 0, new object());
+
+        Assert.Equal(initial, Result(dialog).Text);
+        Assert.Equal("", dialog.CopyText);
+        dialog.Close();
+    });
+
+    [Fact]
+    public Task ResultOfSameImage_IsKeptWhenReopened() => WpfTestHost.Run(() =>
+    {
+        // 同じ画像のままメニューから開き直した(ROI の有無も同じ経路で更新される)。結果は消さない
+        var image = new object();
+        var dialog = new NoiseMeasureDialog("dark_001.raw", null, 4095, false, 0, image);
+        dialog.ShowResult(Measured, 12, null);
+        string shown = Result(dialog).Text;
+
+        dialog.UpdateSource("dark_001.raw", null, 4095, true, 0, image);
+
+        Assert.Equal(shown, Result(dialog).Text);
+        Assert.Equal(shown, dialog.CopyText);
+        dialog.Close();
+    });
+
+    [Fact]
+    public Task Result_NamesMeasuredTarget() => WpfTestHost.Run(() =>
+    {
+        // コピーした値の出典が分かるよう、結果の本文にも測った対象の名前を入れる
+        var dialog = new NoiseMeasureDialog("dark_001.raw [フレーム 3/8]", null, 4095, false, 0, new object());
+
+        dialog.ShowResult(Measured, 12, "dark_100.raw");
+
+        Assert.StartsWith("対象 A: dark_001.raw [フレーム 3/8]", dialog.CopyText);
         dialog.Close();
     });
 

@@ -4962,7 +4962,8 @@ public partial class MainWindow : Window
                 _currentFolder,
                 (1 << ActiveFormat.BitDepth) - 1,
                 HasAnalyzableRoi,
-                ExpectedReferenceSize())
+                ExpectedReferenceSize(),
+                ActiveImage)
             {
                 Owner = this,
             };
@@ -5044,12 +5045,14 @@ public partial class MainWindow : Window
             return;
         }
 
+        // 表示中の画像(派生ビューならその画像)が替わったら、ダイアログは前の画像の測定結果を消す
         _noiseWindow.UpdateSource(
             NoiseSourceName(),
             _currentFolder,
             (1 << ActiveFormat.BitDepth) - 1,
             HasAnalyzableRoi,
-            ExpectedReferenceSize());
+            ExpectedReferenceSize(),
+            ActiveImage);
     }
 
     private void OnNoiseMeasureRequested(NoiseMeasureRequest request)
