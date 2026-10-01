@@ -65,6 +65,56 @@ public class VideoSettingsTests
         Assert.Equal(15, FpsInput.Parse(text, fallback: 15), 10);
     }
 
+    /// <summary>
+    /// 既定値へ落としたこと・範囲へ収めたことを説明で返す(入力欄の赤枠とツールチップに出す)。
+    /// 以前は黙って落としたので、打った値と違う速さで再生・書き出しになったことが見えなかった。
+    /// </summary>
+    [Theory]
+    [InlineData(null, 15, "空のため、既定の 15 fps を使います")]
+    [InlineData("abc", 15, "「abc」からフレームレートを読めないため、既定の 15 fps を使います")]
+    [InlineData("-5", 15, "-5 fps は使えない")]
+    [InlineData("0", 15, "0 fps は使えない")]
+    [InlineData("999", 240, "999 fps は範囲 0.1〜240 fps の外のため、240 fps を使います")]
+    [InlineData("0.01", 0.1, "0.01 fps は範囲 0.1〜240 fps の外のため、0.1 fps を使います")]
+    public void Parse_ReportsFallbackAndClamping(string? text, double expected, string expectedNotice)
+    {
+        Assert.Equal(expected, FpsInput.Parse(text, fallback: 15, out string? notice), 10);
+        Assert.NotNull(notice);
+        Assert.Contains(expectedNotice, notice);
+    }
+
+    [Theory]
+    [InlineData("15 fps")]
+    [InlineData("7.5")]
+    [InlineData("３０")]
+    [InlineData("0.1")]
+    [InlineData("240")]
+    public void Parse_UsableInput_HasNoNotice(string text)
+    {
+        FpsInput.Parse(text, fallback: 15, out string? notice);
+        Assert.Null(notice);
+    }
+
+    [Theory]
+    [InlineData("0.4", 1, "範囲 1〜240 fps の外のため、1 fps を使います")] // 書き出しは整数の 1 fps から
+    [InlineData("1000", 240, "範囲 1〜240 fps の外のため、240 fps を使います")]
+    [InlineData("abc", 15, "既定の 15 fps を使います")]
+    [InlineData("29.97", 30, null)] // 整数への丸めは知らせない(書き出しの仕様)
+    [InlineData("1", 1, null)]
+    public void ParseInteger_ReportsFallbackAndClampingButNotRounding(
+        string text, int expected, string? expectedNotice)
+    {
+        Assert.Equal(expected, FpsInput.ParseInteger(text, fallback: 15, out string? notice));
+        if (expectedNotice is null)
+        {
+            Assert.Null(notice);
+        }
+        else
+        {
+            Assert.Contains(expectedNotice, notice);
+        }
+    }
+
     [Theory]
     [InlineData("12.5", 13)] // 以前は銀行丸めで 12(13.5 は 14)と .5 の向きが値でそろわなかった
     [InlineData("13.5", 14)]

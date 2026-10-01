@@ -4515,6 +4515,12 @@ public partial class MainWindow : Window
     {
         // 手入力(編集可能コンボ)はSelectionChangedが出ないのでこちらで拾う
         ApplyPlaybackFps();
+
+        // 読めない・0 以下・範囲外の入力は既定値・範囲へ落として再生する。以前は黙って落としたので、打った値と
+        // 違う速さで再生していることが見えなかった。ファイル一覧の絞り込み欄と同じく赤枠とツールチップの理由で示す。
+        // 一覧から選んだときも欄の文字が変わってここへ来る(SelectionChanged の時点では Text がまだ前の値)
+        FpsInput.Parse(FpsCombo.Text, DefaultPlaybackFps, out string? notice);
+        InputFeedback.SetError(FpsCombo, notice);
     }
 
     private void ApplyPlaybackFps()

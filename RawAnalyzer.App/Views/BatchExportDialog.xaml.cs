@@ -2,6 +2,7 @@
 using System.Windows;
 using Microsoft.Win32;
 
+using RawAnalyzer.App.Controls;
 using RawAnalyzer.App.Services;
 
 namespace RawAnalyzer.App.Views;
@@ -219,6 +220,14 @@ public partial class BatchExportDialog : Window
 
     private void OnVideoSettingChanged(object sender, RoutedEventArgs e)
     {
+        if (FpsCombo is not null)
+        {
+            // 読めない・0 以下・範囲外のフレームレートは既定値・範囲へ落として書き出す。以前は黙って落としたので、
+            // 打った値と違うフレームレートになったことが見えなかった。絞り込み欄と同じく赤枠と理由で示す
+            FpsInput.ParseInteger(FpsCombo.Text, DefaultFps, out string? notice);
+            InputFeedback.SetError(FpsCombo, notice);
+        }
+
         UpdateQualityNote();
     }
 
