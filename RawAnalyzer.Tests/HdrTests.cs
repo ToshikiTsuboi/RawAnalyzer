@@ -336,6 +336,24 @@ public class HdrSplitterTests
             () => HdrSplitter.Split(image, format, frame));
     }
 
+    [Theory]
+    [InlineData(HdrMode.LineInterleaved, 1)]
+    [InlineData(HdrMode.FrameSequential, 2)]
+    public void Split_CanceledToken_ThrowsOperationCanceled(HdrMode hdr, int frames)
+    {
+        // 回帰テスト: HDR分割は取り消しの手段がなく、計算中に別のファイルを開いても全画素のコピーが最後まで走り、
+        // 終わるまで新しいファイルを表示できなかった(CLAUDE.md 性能ルール4)。取り消しを受け付ける
+        var format = new RawFormat
+        {
+            Width = 4, Height = 8, BitDepth = 16, FrameCount = frames, Hdr = hdr, HdrStages = 2,
+        };
+        using RawImage image = TestImages.FromCodes(new ushort[4 * 8 * frames], format);
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        Assert.ThrowsAny<OperationCanceledException>(() => HdrSplitter.Split(image, format, 0, cts.Token));
+    }
+
     /// <summary>
     /// 1行ごとに長秒/短秒が交互に並ぶ行交互HDRのフレーム群を作る(フレーム順に連結)。
     /// </summary>
@@ -791,6 +809,23 @@ public class HdrMergerTests
             {
                 File.Delete(path);
             }
+        }
+    }
+
+    [Fact]
+    public void ToRawImage16_CanceledToken_ThrowsOperationCanceled()
+    {
+        // 合成ビューへの量子化(1億画素で全画素)も取り消しを受け付ける
+        (RawImage longFrame, RawImage shortFrame, _) = MakeConsistentPair(16, 4, ratio: 16, step: 4096);
+        using (longFrame)
+        using (shortFrame)
+        {
+            HdrImage merged = HdrMerger.Merge(
+                new[] { longFrame, shortFrame }, new HdrMergeParameters(ExposureRatio: 16));
+            using var cts = new CancellationTokenSource();
+            cts.Cancel();
+
+            Assert.ThrowsAny<OperationCanceledException>(() => merged.ToRawImage16(cts.Token));
         }
     }
 

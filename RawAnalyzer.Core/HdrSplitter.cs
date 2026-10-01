@@ -51,14 +51,17 @@ public static class HdrSplitter
     /// フレーム連結ではフレームそのものが各露光のため常に全フレームを使い、
     /// この値は範囲の検証にだけ使う(露光の選択には使わない)。
     /// </param>
+    /// <param name="cancellationToken">キャンセルトークン。</param>
     /// <returns>分割された各フレーム(長秒→短秒の順、各Hdr=None)。</returns>
     /// <exception cref="ArgumentException">画素レイアウトが画像と一致しない場合。</exception>
     /// <exception cref="ArgumentOutOfRangeException">フレーム番号が範囲外の場合。</exception>
+    /// <exception cref="OperationCanceledException">取り消された場合(作りかけのフレームは破棄する)。</exception>
     /// <exception cref="InvalidOperationException">
     /// HDR方式が未指定、フレーム構成が不正、または展開する画素数
     /// (行交互は1フレーム分、フレーム連結は全フレームの合計)が1億画素を超える場合。
     /// </exception>
-    public static IReadOnlyList<RawImage> Split(RawImage image, RawFormat format, int frame)
+    public static IReadOnlyList<RawImage> Split(
+        RawImage image, RawFormat format, int frame, CancellationToken cancellationToken = default)
     {
         // フォーマットパネルで変更した Bayer パターンや HDR 方式を反映するための経路。
         // 画素の読み出し位置は image.Format 側で決まるので、レイアウトの一致は必須。
@@ -111,8 +114,8 @@ public static class HdrSplitter
         }
 
         return layout == HdrMode.FrameSequential
-            ? SplitFrameSequential(image, format, stages)
-            : SplitLineInterleaved(image, format, stages, frame);
+            ? SplitFrameSequential(image, format, stages, cancellationToken)
+            : SplitLineInterleaved(image, format, stages, frame, cancellationToken);
     }
 
     /// <summary>
@@ -145,7 +148,7 @@ public static class HdrSplitter
     }
 
     private static IReadOnlyList<RawImage> SplitFrameSequential(
-        RawImage image, RawFormat format, int stages)
+        RawImage image, RawFormat format, int stages, CancellationToken cancellationToken)
     {
         var frames = new RawImage[stages];
         RawFormat subFormat = format with
@@ -155,22 +158,31 @@ public static class HdrSplitter
         };
         int width = image.Width;
         int height = image.Height;
-        for (int stage = 0; stage < stages; stage++)
+        var options = new ParallelOptions { CancellationToken = cancellationToken };
+        try
         {
-            var pixels = new ushort[(long)width * height];
-            int stageIndex = stage;
-            Parallel.For(0, height, y =>
+            for (int stage = 0; stage < stages; stage++)
             {
-                image.CopyRegion(stageIndex, 0, y, width, 1, pixels.AsSpan(y * width, width));
-            });
-            frames[stage] = new RawImage(subFormat, pixels);
+                var pixels = new ushort[(long)width * height];
+                int stageIndex = stage;
+                Parallel.For(0, height, options, y =>
+                {
+                    image.CopyRegion(stageIndex, 0, y, width, 1, pixels.AsSpan(y * width, width));
+                });
+                frames[stage] = new RawImage(subFormat, pixels);
+            }
+        }
+        catch
+        {
+            DisposeAll(frames);
+            throw;
         }
 
         return frames;
     }
 
     private static IReadOnlyList<RawImage> SplitLineInterleaved(
-        RawImage image, RawFormat format, int stages, int frame)
+        RawImage image, RawFormat format, int stages, int frame, CancellationToken cancellationToken)
     {
         int width = image.Width;
 
@@ -202,29 +214,47 @@ public static class HdrSplitter
         BayerPattern alignedBayer = BayerHelper.ShiftOrigin(format.Bayer, 0, -lowest);
 
         var frames = new RawImage[stages];
-        for (int stage = 0; stage < stages; stage++)
+        var options = new ParallelOptions { CancellationToken = cancellationToken };
+        try
         {
-            int startRow = offsetStep * stage - lowest;
-            var pixels = new ushort[(long)width * subHeight];
-            int stageIndex = stage;
-            Parallel.For(0, subHeight, y =>
+            for (int stage = 0; stage < stages; stage++)
             {
-                int subY = y + startRow;
-                int sourceY = subY / blockHeight * period
-                    + stageIndex * blockHeight + subY % blockHeight;
-                image.CopyRegion(frame, 0, sourceY, width, 1, pixels.AsSpan(y * width, width));
-            });
+                int startRow = offsetStep * stage - lowest;
+                var pixels = new ushort[(long)width * subHeight];
+                int stageIndex = stage;
+                Parallel.For(0, subHeight, options, y =>
+                {
+                    int subY = y + startRow;
+                    int sourceY = subY / blockHeight * period
+                        + stageIndex * blockHeight + subY % blockHeight;
+                    image.CopyRegion(frame, 0, sourceY, width, 1, pixels.AsSpan(y * width, width));
+                });
 
-            RawFormat subFormat = format with
-            {
-                Height = subHeight,
-                FrameCount = 1,
-                Hdr = HdrMode.None,
-                Bayer = alignedBayer,
-            };
-            frames[stage] = new RawImage(subFormat, pixels);
+                RawFormat subFormat = format with
+                {
+                    Height = subHeight,
+                    FrameCount = 1,
+                    Hdr = HdrMode.None,
+                    Bayer = alignedBayer,
+                };
+                frames[stage] = new RawImage(subFormat, pixels);
+            }
+        }
+        catch
+        {
+            DisposeAll(frames);
+            throw;
         }
 
         return frames;
+    }
+
+    /// <summary>作りかけのフレームを破棄する(取り消し・失敗で返さないとき)。</summary>
+    private static void DisposeAll(RawImage?[] frames)
+    {
+        foreach (RawImage? frame in frames)
+        {
+            frame?.Dispose();
+        }
     }
 }

@@ -3174,6 +3174,19 @@ public partial class MainWindow : Window
         return _hdrSourceFrame.Capture(Viewport.Frame, derivedViewShown: _derivedImage is not null);
     }
 
+    /// <summary>
+    /// HDR分割・合成の計算を取り消した・結果を捨てたときに、表示モードの選択が計算を始めたモードのままなら
+    /// Raw 表示へ戻す(選び直されていればそのまま残す)。
+    /// </summary>
+    /// <param name="computingModeIndex">計算を始めた表示モード(分割=4、合成=5)。</param>
+    private void ResetHdrModeSelection(int computingModeIndex)
+    {
+        if (DisplayModeCombo.SelectedIndex == computingModeIndex)
+        {
+            DisplayModeCombo.SelectedIndex = 0;
+        }
+    }
+
     private async Task EnterHdrSplitAsync()
     {
         // 読み込み中・縮小表示の作成中・他の処理(HDR分割・合成の計算を含む)の実行中は始めない。
@@ -3200,16 +3213,21 @@ public partial class MainWindow : Window
         // フォーマットパネルで変更したBayerパターンやHDR方式を反映する
         // (image.Format は読み込み時のまま固定なので _currentFormat を渡す)。適用時にもこのフォーマットのままか照合する
         RawFormat splitFormat = _currentFormat!;
+
+        // 計算は表示中の画像の世代(_loadCts)のトークンで走らせる。別のファイルを開く・ウィンドウを閉じると世代が
+        // 進んで取り消され、開く要求は計算の終わりを待たずに表示へ進める(全画素のコピーを最後まで走らせない)
+        CancellationToken ct = _loadCts?.Token ?? CancellationToken.None;
         IReadOnlyList<RawImage> frames;
         try
         {
-            frames = await Task.Run(() => HdrSplitter.Split(image, splitFormat, sourceFrame));
+            frames = await Task.Run(() => HdrSplitter.Split(image, splitFormat, sourceFrame, ct), ct);
         }
         catch (Exception ex) when (TaskRaceGuard.IsAbandoned(ex))
         {
-            // 別ファイルへの切替と競合して元画像が破棄された。結果は不要
-            // (InvalidOperationExceptionの派生なので先に受ける)
-            DisplayModeCombo.SelectedIndex = 0;
+            // 別ファイルへの切替で取り消された・元画像が破棄された。結果は不要
+            // (InvalidOperationExceptionの派生なので先に受ける)。計算中に表示モードを選び直して取り消されたときは
+            // (合成ビューからRaw表示へ戻すなど)、選び直した表示モードを残す
+            ResetHdrModeSelection(4);
             return;
         }
         catch (InvalidOperationException ex)
@@ -3234,32 +3252,45 @@ public partial class MainWindow : Window
         int subWidth = frames[0].Width;
         int subHeight = frames[0].Height;
         int compositeWidth = subWidth * stages;
-        RawImage composite = await Task.Run(() =>
+        RawImage composite;
+        try
         {
-            var pixels = new ushort[(long)compositeWidth * subHeight];
-            Parallel.For(0, subHeight, y =>
+            composite = await Task.Run(() =>
             {
-                for (int stage = 0; stage < stages; stage++)
+                var pixels = new ushort[(long)compositeWidth * subHeight];
+                Parallel.For(0, subHeight, new ParallelOptions { CancellationToken = ct }, y =>
                 {
-                    frames[stage].CopyRegion(0, 0, y, subWidth, 1,
-                        pixels.AsSpan(y * compositeWidth + stage * subWidth, subWidth));
-                }
-            });
-            RawFormat format = splitFormat with
-            {
-                Width = compositeWidth,
-                Height = subHeight,
-                FrameCount = 1,
-                Hdr = HdrMode.None,
+                    for (int stage = 0; stage < stages; stage++)
+                    {
+                        frames[stage].CopyRegion(0, 0, y, subWidth, 1,
+                            pixels.AsSpan(y * compositeWidth + stage * subWidth, subWidth));
+                    }
+                });
+                RawFormat format = splitFormat with
+                {
+                    Width = compositeWidth,
+                    Height = subHeight,
+                    FrameCount = 1,
+                    Hdr = HdrMode.None,
 
-                // 負の行オフセットでは整列後の位相が元と変わる(分割フレーム側に合わせる)
-                Bayer = frames[0].Format.Bayer,
-            };
-            return RawImage.FromPixels(format, pixels);
-        });
-        foreach (RawImage frame in frames)
+                    // 負の行オフセットでは整列後の位相が元と変わる(分割フレーム側に合わせる)
+                    Bayer = frames[0].Format.Bayer,
+                };
+                return RawImage.FromPixels(format, pixels);
+            }, ct);
+        }
+        catch (Exception ex) when (TaskRaceGuard.IsAbandoned(ex))
         {
-            frame.Dispose();
+            // 別ファイルを開いた・ウィンドウを閉じた・表示モードを選び直したので取り消された。結果は不要
+            ResetHdrModeSelection(4);
+            return;
+        }
+        finally
+        {
+            foreach (RawImage frame in frames)
+            {
+                frame.Dispose();
+            }
         }
 
         if (!CanApplyHdrView(4, image, sourceFrame, splitFormat))
@@ -3328,18 +3359,22 @@ public partial class MainWindow : Window
         // 元画像(分割ビューからの切替では分割フレーム。どちらも未減算)の黒点を減算して合成する。
         // 計算中に黒レベルを動かしても、合成に使う値はここで決める(UIの状態を計算のスレッドから読まない)
         ushort mergeBlackPoint = _blackPoint;
+
+        // 計算は表示中の画像の世代(_loadCts)のトークンで走らせる(HDR分割と同じ。別のファイルを開く・
+        // ウィンドウを閉じると取り消され、分割・線形化・合成・量子化を最後まで走らせない)
+        CancellationToken ct = _loadCts?.Token ?? CancellationToken.None;
         HdrImage merged;
         RawImage quantized;
         try
         {
             (merged, quantized) = await Task.Run(() =>
             {
-                IReadOnlyList<RawImage> frames = HdrSplitter.Split(image, format, sourceFrame);
+                IReadOnlyList<RawImage> frames = HdrSplitter.Split(image, format, sourceFrame, ct);
                 try
                 {
                     HdrImage result = HdrMerger.Merge(frames, new HdrMergeParameters(
-                        format.ExposureRatio, mergeBlackPoint));
-                    return (result, result.ToRawImage16());
+                        format.ExposureRatio, mergeBlackPoint), ct);
+                    return (result, result.ToRawImage16(ct));
                 }
                 finally
                 {
@@ -3348,13 +3383,14 @@ public partial class MainWindow : Window
                         frame.Dispose();
                     }
                 }
-            });
+            }, ct);
         }
         catch (Exception ex) when (TaskRaceGuard.IsAbandoned(ex))
         {
-            // 別ファイルへの切替と競合して元画像が破棄された。結果は不要
-            // (InvalidOperationExceptionの派生なので先に受ける)
-            DisplayModeCombo.SelectedIndex = 0;
+            // 別ファイルへの切替で取り消された・元画像が破棄された。結果は不要
+            // (InvalidOperationExceptionの派生なので先に受ける)。計算中に表示モードを選び直して取り消されたときは
+            // (分割ビューからRaw表示・Bayer表示へ戻すなど)、選び直した表示モードを残す
+            ResetHdrModeSelection(5);
             return;
         }
         catch (InvalidOperationException ex)

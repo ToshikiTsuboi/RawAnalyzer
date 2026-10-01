@@ -98,12 +98,14 @@ public sealed class HdrImage
     /// (<see cref="Pixels"/> の負値)は0に切り詰める(暗部の平均は上振れし、σは小さく出る)。
     /// 無損失のデータが必要な場合は <see cref="Pixels"/>(float)または float raw 保存を使うこと。
     /// </remarks>
+    /// <param name="cancellationToken">キャンセルトークン。</param>
     /// <returns>量子化された画像(16bit、Bayer付きフォーマット)。</returns>
-    public RawImage ToRawImage16()
+    /// <exception cref="OperationCanceledException">取り消された場合。</exception>
+    public RawImage ToRawImage16(CancellationToken cancellationToken = default)
     {
         var pixels = new ushort[(long)Width * Height];
         float scale = FullScale > 0 ? 65535f / FullScale : 0f;
-        Parallel.For(0, Height, y =>
+        Parallel.For(0, Height, new ParallelOptions { CancellationToken = cancellationToken }, y =>
         {
             int offset = y * Width;
             for (int x = 0; x < Width; x++)
@@ -214,7 +216,7 @@ public static class HdrMerger
             }
 
             float[] merged = current;
-            Parallel.For(0, height, y =>
+            Parallel.For(0, height, new ParallelOptions { CancellationToken = cancellationToken }, y =>
             {
                 int offset = y * width;
                 for (int x = 0; x < width; x++)
