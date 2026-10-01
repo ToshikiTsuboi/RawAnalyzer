@@ -5016,8 +5016,10 @@ public partial class MainWindow : Window
             return HdrSplitComposite.ReferenceReadFormat(_currentFormat).RequiredBytes();
         }
 
-        RawFormat? format = ActiveFormat;
-        return format is null ? 0 : format.HeaderOffset + format.FrameSizeInBytes;
+        // raw の2枚目はファイルを読んだ形式で読む(処理結果の形式ではない。処理結果では2枚目の raw を断る)
+        return _currentFormat is null
+            ? 0
+            : ReferenceImage.ExpectedRawSize(ReferenceImage.RawReadFormat(_currentFormat, _openedRawFormat));
     }
 
     /// <summary>
@@ -5063,7 +5065,9 @@ public partial class MainWindow : Window
         bool rawReference = request.ReferencePath is not null && IsRawFile(request.ReferencePath);
         bool mergedView = _derivedImage is not null && _hdrFloatImage is not null;
         RawFormat? splitFormat = _derivedImage is not null && !mergedView && rawReference ? _currentFormat : null;
-        if (rawReference && NoiseReference.RawReferenceRefusal(mergedView) is { } rawRefusal)
+        RawFormat rawReadFormat = ReferenceImage.RawReadFormat(_currentFormat ?? format, _openedRawFormat);
+        if (rawReference
+            && NoiseReference.RawReferenceRefusal(_correctionLabel is not null, mergedView) is { } rawRefusal)
         {
             MessageBox.Show(this, rawRefusal, "ノイズ測定", MessageBoxButton.OK, MessageBoxImage.Warning);
             _noiseWindow?.ResetRunButton();
@@ -5124,7 +5128,7 @@ public partial class MainWindow : Window
                 using RawImage reference = splitFormat is not null
                     ? HdrSplitComposite.LoadReference(request.ReferencePath, splitFormat, targetScaling, ct)
                     : ReferenceImage.Load(
-                        request.ReferencePath, rawReference, format with { FrameCount = 1 }, targetScaling, ct);
+                        request.ReferencePath, rawReference, rawReadFormat, targetScaling, ct);
                 measurement = RoiAnalysis.MeasureNoise(
                     image, reference, frame, target, format.Bayer,
                     request.SaturationCode, ct);

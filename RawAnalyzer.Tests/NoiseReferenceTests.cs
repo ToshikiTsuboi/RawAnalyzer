@@ -52,11 +52,23 @@ public class NoiseReferenceTests
     public void RawReference_InMergedView_IsRefusedWithReason()
     {
         // 合成ビューの対象Aと、合成していない2枚目の raw は同じ画素・同じ値の対応で比べられない
-        string? reason = NoiseReference.RawReferenceRefusal(mergedView: true);
+        string? reason = NoiseReference.RawReferenceRefusal(processed: false, mergedView: true);
 
         Assert.NotNull(reason);
         Assert.Contains("分割ビュー", reason);
-        Assert.Null(NoiseReference.RawReferenceRefusal(mergedView: false));
+        Assert.Null(NoiseReference.RawReferenceRefusal(processed: false, mergedView: false));
+    }
+
+    [Fact]
+    public void RawReference_ForProcessedTarget_IsRefusedWithReason()
+    {
+        // ビニング・フィルタの結果(16bit・ヘッダ0)を対象Aにすると、2枚目の raw は以前その処理結果の形式で
+        // 読まれ、12bit 下詰めの raw では正規化されない値(約1/16)との差分を、サイズ警告も出さずに測っていた。
+        // ファイルの形式で読んでも、処理した A と処理していない B の差分は時間ノイズにならない
+        string? reason = NoiseReference.RawReferenceRefusal(processed: true, mergedView: false);
+
+        Assert.NotNull(reason);
+        Assert.Contains("開き直", reason);
     }
 
     [Fact]
