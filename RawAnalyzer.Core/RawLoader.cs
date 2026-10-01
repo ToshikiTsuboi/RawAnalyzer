@@ -195,7 +195,7 @@ public static class RawLoader
         MemoryMappedFile mmf;
         string? temporaryCopyPath = null;
         long mapOrigin = 0;
-        if (IsNetworkPath(path))
+        if (ForceTemporaryCopy.Value || IsNetworkPath(path))
         {
             mapOrigin = format.HeaderOffset;
             FileStream temporaryCopy = CopyToLocalTemporary(
@@ -278,10 +278,17 @@ public static class RawLoader
         ArrayPool<byte>.Create(LoadChunkBytes, maxArraysPerBucket: 4);
 
     /// <summary>
+    /// テスト用: 真にすると、このフローの読み込みはローカルのファイルでもネットワーク上のファイルと同じく、
+    /// マップする前にローカルの一時ファイルへ写す(ネットワーク上のパスはテストで用意できない)。
+    /// </summary>
+    internal static readonly AsyncLocal<bool> ForceTemporaryCopy = new();
+
+    /// <summary>
     /// パスがネットワーク上(UNC またはネットワークドライブ)かを判定する。
     /// </summary>
     /// <remarks>
-    /// 判定できない場合はローカル扱い(false)にして従来どおりの経路を選ぶ。
+    /// デバイスパス(\\?\C:\… や \\.\C:\…)は \\ で始まるが UNC ではなく、接頭辞の後ろのドライブで判定する
+    /// (<see cref="IsUncPath"/>)。判定できない場合はローカル扱い(false)にして従来どおりの経路を選ぶ。
     /// </remarks>
     /// <param name="path">対象のパス。</param>
     /// <returns>ネットワーク上ならtrue。</returns>
@@ -290,14 +297,13 @@ public static class RawLoader
         try
         {
             string full = Path.GetFullPath(path);
-            if (full.StartsWith(@"\\", StringComparison.Ordinal))
+            if (IsUncPath(full, out string? driveRoot))
             {
-                return true; // UNC (\\server\share\...)
+                return true;
             }
 
-            string? root = Path.GetPathRoot(full);
-            return root is { Length: > 0 }
-                && new DriveInfo(root).DriveType == DriveType.Network;
+            return driveRoot is not null
+                && new DriveInfo(driveRoot).DriveType == DriveType.Network;
         }
         catch (Exception ex) when (
             ex is ArgumentException or IOException or UnauthorizedAccessException
@@ -305,6 +311,48 @@ public static class RawLoader
         {
             return false;
         }
+    }
+
+    /// <summary>
+    /// 完全パスが UNC(ネットワーク上の共有)かを判定し、そうでなければドライブ文字のパスのドライブの根を返す。
+    /// </summary>
+    /// <remarks>
+    /// UNC は \\server\share\… と、デバイスパスの形の \\?\UNC\…・\\.\UNC\…。デバイスパス(\\?\ と \\.\)は
+    /// \\ で始まっても UNC ではなく、接頭辞の後ろで判断する。\\?\C:\… はドライブ C: のパス(根は C:\)。
+    /// ボリューム GUID(\\?\Volume{…}\…)・パイプ・物理ドライブなどは根を返さない(ローカルのデバイスとして扱う)。
+    /// ファイルシステムには触れない。
+    /// </remarks>
+    /// <param name="fullPath">完全パス(<see cref="Path.GetFullPath(string)"/> の結果)。</param>
+    /// <param name="driveRoot">UNC でなくドライブ文字のパスなら、そのドライブの根(C:\)。それ以外は null。</param>
+    /// <returns>UNC なら true。</returns>
+    internal static bool IsUncPath(string fullPath, out string? driveRoot)
+    {
+        driveRoot = null;
+        if (fullPath.StartsWith(@"\\?\", StringComparison.Ordinal)
+            || fullPath.StartsWith(@"\\.\", StringComparison.Ordinal))
+        {
+            string target = fullPath[4..];
+            if (target.StartsWith(@"UNC\", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            if (target.Length >= 2 && char.IsAsciiLetter(target[0]) && target[1] == ':')
+            {
+                driveRoot = target[..2] + @"\";
+            }
+
+            return false;
+        }
+
+        if (fullPath.StartsWith(@"\\", StringComparison.Ordinal))
+        {
+            return true; // \\server\share\…
+        }
+
+        string? root = Path.GetPathRoot(fullPath);
+        driveRoot = string.IsNullOrEmpty(root) ? null : root;
+        return false;
     }
 
     /// <summary>

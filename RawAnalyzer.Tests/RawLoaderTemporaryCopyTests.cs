@@ -8,8 +8,8 @@ namespace RawAnalyzer.Tests;
 /// ネットワーク上の1億画素超のファイルをローカルの一時ファイルへ写してから開く経路(RawLoader)の検証。
 /// </summary>
 /// <remarks>
-/// ネットワーク上のパスは用意できないので、<see cref="RawLoader.IsNetworkPath"/> がネットワーク扱いする
-/// 拡張パス(\\?\C:\...)でローカルのファイルを指して複製の経路を通し、閾値0でMMF経路にする。
+/// ネットワーク上のパスは用意できないので、テスト用の切り替え(<see cref="RawLoader.ForceTemporaryCopy"/>)で
+/// ローカルのファイルにも複製の経路を通し、閾値0でMMF経路にする。
 /// 一時ファイルは元ファイルの拡張子を引き継ぐので、テストごとに一意な拡張子にして見分ける。
 /// </remarks>
 public class RawLoaderTemporaryCopyTests
@@ -32,7 +32,7 @@ public class RawLoaderTemporaryCopyTests
         try
         {
             string copy;
-            using (RawImage image = RawLoader.Load(ExtendedPath(source), format, inMemoryPixelThreshold: 0))
+            using (RawImage image = LoadCopied(source, format))
             {
                 copy = FindCopy(extension);
                 Assert.True(image.IsMemoryMapped);
@@ -96,7 +96,7 @@ public class RawLoaderTemporaryCopyTests
         (string source, string extension) = WriteSource(codes);
         try
         {
-            using RawImage image = RawLoader.Load(ExtendedPath(source), Format, inMemoryPixelThreshold: 0);
+            using RawImage image = LoadCopied(source, Format);
 
             Assert.Single(Directory.GetFiles(RawLoader.TemporaryCopyFolder, "*" + extension));
         }
@@ -167,7 +167,7 @@ public class RawLoaderTemporaryCopyTests
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static string LoadAndAbandon(string source, string extension)
     {
-        RawImage image = RawLoader.Load(ExtendedPath(source), Format, inMemoryPixelThreshold: 0);
+        RawImage image = LoadCopied(source, Format);
         Assert.True(image.IsMemoryMapped);
         return FindCopy(extension);
     }
@@ -186,11 +186,21 @@ public class RawLoaderTemporaryCopyTests
         return (path, extension);
     }
 
-    private static string ExtendedPath(string path)
+    private static RawImage LoadCopied(string source, RawFormat format)
     {
-        string extended = @"\\?\" + Path.GetFullPath(path);
-        Assert.True(RawLoader.IsNetworkPath(extended)); // 複製の経路を通ることの前提
-        return extended;
+        // ローカルのファイルを、ネットワーク上のファイルと同じく一時ファイルへ写してから開く。以前は \\?\C:\… が
+        // ネットワーク扱いになることに頼っていたが、ローカルのデバイスパスはローカルと判定するよう直した
+        // (残課題 2026-10-02 I2)
+        Assert.False(RawLoader.IsNetworkPath(source));
+        RawLoader.ForceTemporaryCopy.Value = true;
+        try
+        {
+            return RawLoader.Load(source, format, inMemoryPixelThreshold: 0);
+        }
+        finally
+        {
+            RawLoader.ForceTemporaryCopy.Value = false;
+        }
     }
 
     private static string FindCopy(string extension)

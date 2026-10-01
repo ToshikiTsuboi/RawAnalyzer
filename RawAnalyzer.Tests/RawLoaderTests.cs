@@ -272,4 +272,37 @@ public class RawLoaderTests
         // 判定できたものはヒープ展開へ振り分ける(全体レビュー 2026-08-23 の回帰)
         Assert.Equal(expected, RawLoader.IsNetworkPath(path));
     }
+
+    [Fact]
+    public void IsNetworkPath_LocalDevicePaths_AreNotNetwork()
+    {
+        // \\?\C:\… や \\.\C:\… は \\ で始まるがローカルのドライブを指す。以前は \\ 始まりをすべて UNC とみなし、
+        // ローカルのファイルでも 1 億画素超の raw を一時ファイルへ複製し、TIFF をマップせずにストリームで読んでいた
+        // (残課題 2026-10-02 I2)。\\?\UNC\… は UNC と同じくネットワーク
+        string local = Path.Combine(Path.GetTempPath(), "dark.raw");
+
+        Assert.False(RawLoader.IsNetworkPath(@"\\?\" + local));
+        Assert.False(RawLoader.IsNetworkPath(@"\\.\" + local));
+        Assert.False(TiffLoader.ReadsWithoutMapping(@"\\?\" + Path.ChangeExtension(local, ".tif")));
+        Assert.True(RawLoader.IsNetworkPath(@"\\?\UNC\nas\share\dark.raw"));
+        Assert.True(RawLoader.IsNetworkPath(@"\\.\UNC\nas\share\dark.raw"));
+    }
+
+    [Theory]
+    [InlineData(@"\\nas\share\dark.raw", true, null)]
+    [InlineData(@"\\?\UNC\nas\share\dark.raw", true, null)]
+    [InlineData(@"\\.\unc\nas\share\dark.raw", true, null)]
+    [InlineData(@"C:\Temp\dark.raw", false, @"C:\")]
+    [InlineData(@"\\?\C:\Temp\dark.raw", false, @"C:\")]
+    [InlineData(@"\\.\d:\Temp\dark.raw", false, @"d:\")]
+    [InlineData(@"\\?\Volume{12345678-1234-1234-1234-123456789abc}\dark.raw", false, null)]
+    [InlineData(@"\\.\pipe\dark", false, null)]
+    [InlineData(@"\\.\PhysicalDrive0", false, null)]
+    public void IsUncPath_JudgesDevicePathsByTheirTarget(string path, bool unc, string? driveRoot)
+    {
+        // デバイスパス(\\?\ と \\.\)は接頭辞の後ろで判断する。ドライブ文字ならそのドライブの種類で決め(根を返す)、
+        // ボリューム GUID・パイプ・物理ドライブなどはローカルのデバイスとして扱う(根を返さない)
+        Assert.Equal(unc, RawLoader.IsUncPath(path, out string? root));
+        Assert.Equal(driveRoot, root);
+    }
 }
