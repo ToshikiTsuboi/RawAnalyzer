@@ -28,4 +28,17 @@ public class FullscreenWindowStateTests
         Assert.Equal(expected, FullscreenWindowState.IsMaximizedToSave(
             current, fullscreen: false, beforeFullscreen: WindowState.Maximized));
     }
+
+    [Fact]
+    public void LeavingFullscreen_MaximizesAgainFromNormal()
+    {
+        // 枠のない状態で最大化した矩形は画面全体(タスクバーの領域を含む)。元が最大化なら WindowState は変わらず、
+        // 枠を戻しても最大化の矩形が作業領域に戻らなかった(ステータスバーがタスクバーに隠れる)。入るときと同じく、
+        // 一度通常に戻してから最大化し直す
+        Assert.Equal(new[] { WindowState.Normal, WindowState.Maximized },
+            FullscreenWindowState.StatesOnLeaving(WindowState.Maximized));
+
+        // 元が通常のウィンドウなら通常へ戻すだけ
+        Assert.Equal(new[] { WindowState.Normal }, FullscreenWindowState.StatesOnLeaving(WindowState.Normal));
+    }
 }

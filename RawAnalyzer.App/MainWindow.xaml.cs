@@ -4480,7 +4480,12 @@ public partial class MainWindow : Window
 
             WindowStyle = _preFullscreenStyle;
             ResizeMode = _preFullscreenResize;
-            WindowState = _preFullscreenState;
+
+            // 元が最大化でも一度通常へ戻してから最大化し直す(枠のない状態で計算した画面全体の最大化の矩形を残さない)
+            foreach (WindowState state in FullscreenWindowState.StatesOnLeaving(_preFullscreenState))
+            {
+                WindowState = state;
+            }
         }
 
         Viewport.Focus();
