@@ -177,7 +177,8 @@
                            VerticalAlignment="Center" Margin="0,0,4,0" FontSize="12" />
                 <ComboBox x:Name="DisplayModeCombo" SelectedIndex="0" VerticalAlignment="Center"
                           FontSize="12" MinWidth="110" IsEnabled="{Binding HasImage}"
-                          SelectionChanged="OnDisplayModeChanged">
+                          SelectionChanged="OnDisplayModeChanged"
+                          DropDownClosed="OnSelectorDropDownClosed">
                     <ComboBoxItem Content="Raw表示" />
                     <ComboBoxItem Content="Bayerカラー" />
                     <ComboBoxItem Content="カラー現像" />
@@ -554,7 +555,8 @@
                                                Converter={StaticResource BoolToVis}}">
                                     <TextBlock Style="{StaticResource RowLabel}" Text="調整対象"
                                                Width="64" VerticalAlignment="Center" />
-                                    <ComboBox x:Name="HdrTargetCombo" FontSize="11" />
+                                    <ComboBox x:Name="HdrTargetCombo" FontSize="11"
+                                              DropDownClosed="OnSelectorDropDownClosed" />
                                 </DockPanel>
                                 <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
                                     <Button Style="{StaticResource ToolButton}" Content="自動 (0.35%クリップ)"
@@ -781,6 +783,7 @@
                                               MinWidth="96" FontSize="11"
                                               IsEnabled="{Binding CanEditBayer}"
                                               SelectionChanged="OnFmtBayerChanged"
+                                              DropDownClosed="OnSelectorDropDownClosed"
                                               ToolTip="{Binding BayerEditToolTip}"
                                               ToolTipService.ShowOnDisabled="True">
                                         <ComboBoxItem Content="RGGB" />

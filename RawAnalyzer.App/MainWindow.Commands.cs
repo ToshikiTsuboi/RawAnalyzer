@@ -36,64 +36,34 @@ public partial class MainWindow
         }
 
         Key key = e.Key == Key.System ? e.SystemKey : e.Key;
-        ModifierKeys modifiers = Keyboard.Modifiers;
-
-        // 入力中は修飾キーなし/Shiftのみのショートカットを無効にする
-        bool typing = IsTextEntryFocused();
-        if (typing && IsTextEditingGesture(key, modifiers))
+        AppCommand? command = ShortcutRouting.Resolve(
+            Commands, key, Keyboard.Modifiers, ShortcutRouting.Classify(Keyboard.FocusedElement));
+        if (command is null)
         {
-            // Ctrl+C(コピー)やCtrl+A(全選択)などの標準編集操作は
-            // テキストボックスに渡す。ここで横取りすると選択テキストの
-            // コピーのつもりが「画素値コピー」「自動コントラスト」になる
             return;
         }
 
-        foreach (AppCommand command in Commands)
-        {
-            if (!command.HasGesture || command.Key != key || command.Modifiers != modifiers)
-            {
-                continue;
-            }
-
-            if (typing && (modifiers & (ModifierKeys.Control | ModifierKeys.Alt)) == 0)
-            {
-                return;
-            }
-
-            if (!command.IsEnabled())
-            {
-                return;
-            }
-
-            e.Handled = true;
-            RunCommand(command);
-            return;
-        }
+        e.Handled = true;
+        RunCommand(command);
     }
 
     /// <summary>
-    /// フォーカスが文字入力コントロールにあるか。
-    /// 編集可能ComboBoxは内部のTextBoxがフォーカスを持つのでTextBoxBaseで拾える。
+    /// 編集できないコンボ(ツールバーの表示モード・右パネルの Bayer と HDR の調整対象)のドロップダウンを閉じたら、
+    /// フォーカスをビューポートへ戻す。
     /// </summary>
-    private static bool IsTextEntryFocused()
+    /// <remarks>
+    /// 項目を選んだ後もフォーカスがコンボに残ると、続けて押した1文字キー(R・B・G など)・Home/End・矢印が
+    /// コンボの文字検索・選択の移動に使われ、ショートカットのつもりで Bayer や表示モードを黙って書き換えていた
+    /// (Bayer は同じファイル・同じサイズのフォーマットの記憶にも残る)。キーボードだけで閉じたままのコンボを
+    /// 操作するとき(Tab で移って矢印で選ぶ)はドロップダウンを開かないので、フォーカスは動かさない。
+    /// 比較モード中は通常表示が比較画面に隠れているので戻さない。
+    /// </remarks>
+    private void OnSelectorDropDownClosed(object? sender, EventArgs e)
     {
-        return Keyboard.FocusedElement is TextBoxBase or ComboBox;
-    }
-
-    /// <summary>テキスト編集の標準ショートカット(入力中はコマンドに横取りさせない)。</summary>
-    private static bool IsTextEditingGesture(Key key, ModifierKeys modifiers)
-    {
-        if (modifiers == ModifierKeys.Control)
+        if (!_compareMode && sender is ComboBox { IsKeyboardFocusWithin: true })
         {
-            return key is Key.A or Key.C or Key.V or Key.X or Key.Z or Key.Y or Key.Insert;
+            Viewport.Focus();
         }
-
-        if (modifiers == (ModifierKeys.Control | ModifierKeys.Shift))
-        {
-            return key is Key.Z; // やり直し(Redo)
-        }
-
-        return modifiers == ModifierKeys.Shift && key is Key.Insert or Key.Delete;
     }
 
     /// <summary>コマンドを実行する(例外はログへ送り、UIは落とさない)。</summary>
