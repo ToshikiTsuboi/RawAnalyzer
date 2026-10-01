@@ -663,6 +663,15 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             _vm.ImageInfoText = "読込失敗";
+            if (!cts.IsCancellationRequested && generation == _openGeneration)
+            {
+                // 読み込みを始めるときに取り消した、表示を続ける画像の縮小表示(Bayerを含む)の生成と
+                // ヒストグラム・ROI統計・ラインプロファイル・射影の計算を作り直す。作り直さないと、開き直すまで
+                // 縮小表示なしで等倍の行を読んで描き、ヒストグラム欄には前に表示していた画像の統計が残る
+                // (縮小表示は表示中の画像の世代として、取り消されていないこの読み込みのトークンで作る)
+                RefreshAfterSequenceMove();
+            }
+
             MessageBox.Show(this, $"読み込みに失敗しました: {ex.Message}", "RawAnalyzer",
                 MessageBoxButton.OK, MessageBoxImage.Error);
             return;
