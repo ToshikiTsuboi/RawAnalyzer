@@ -93,6 +93,54 @@ public class ChannelSplitRenderTests
     }
 
     [Theory]
+    [InlineData(1.3)]   // 左の象限の中ほどだけ
+    [InlineData(6.3)]   // 左の象限の中ほど〜端数の帯
+    [InlineData(12.3)]  // 右の象限の中ほどだけ
+    [InlineData(17.3)]  // 右の象限の中ほど〜端数の帯(画像の右端の手前まで)
+    public void FromBayerLevel_OneQuadrantInView_ReadsOnlyThatRange(double originX)
+    {
+        // 見える列が1つの象限に収まるときは、その象限で要る列だけを読む(上の Theory はどの原点でも
+        // 継ぎ目をまたいで全幅を読む)。端数の帯は読み出し位置を最終ブロックへ寄せたうえで、
+        // 読んだ範囲の中の位置を引く。22×22・L4 は象限 11、レベルの象限 2 ブロック(端数 3)
+        const int width = 22;
+        const int height = 22;
+        const int factor = 4;
+        const double zoom = 1.0; // 1/縮小率より拡大して、見える列を1つの象限に収める
+        const int quadSize = 11;
+        var format = new RawFormat
+        {
+            Width = width, Height = height, BitDepth = 16, Bayer = BayerPattern.Rggb,
+        };
+        using RawImage image = TestImages.FromCodes(BlockCodes(width, height, factor), format);
+        using BayerPyramid pyramid =
+            BayerPyramid.Create(image, format, maxLevelPixels: long.MaxValue);
+        RawImage level = pyramid.GetLevel(factor)!;
+        int levelQuadSize = level.Width / 2;
+        Assert.Equal(2, levelQuadSize);
+
+        var source = new ChannelSplitRenderSource(level, 0, factor, width, height);
+        const int destWidth = 4; // レベルの2画素にかかる幅
+        byte[] pixels = Render(source, zoom, originX, 0, destWidth, height);
+        for (int dy = 0; dy < height; dy++)
+        {
+            for (int dx = 0; dx < destWidth; dx++)
+            {
+                double tiledX = originX + ((dx + 0.5) / zoom);
+                double tiledY = dy + 0.5;
+                int quadX = tiledX < quadSize ? 0 : 1;
+                int quadY = tiledY < quadSize ? 0 : 1;
+                Assert.Equal(quadX, originX < quadSize ? 0 : 1); // 見える列は1つの象限に収まる
+                int blockX = Math.Min((int)(tiledX - quadX * quadSize) / factor, levelQuadSize - 1);
+                int blockY = Math.Min((int)(tiledY - quadY * quadSize) / factor, levelQuadSize - 1);
+                byte expected = Lut.Map(BlockValue(quadY * 2 + quadX, blockX, blockY));
+                Assert.True(
+                    expected == pixels[(dy * destWidth + dx) * 4],
+                    $"タイル座標({tiledX},{tiledY}): {pixels[(dy * destWidth + dx) * 4]}(期待 {expected})");
+            }
+        }
+    }
+
+    [Theory]
     [InlineData(8, 6, 3.0)]  // 拡大
     [InlineData(9, 7, 0.7)]  // 縮小レベルを使わない縮小、奇数寸法: 最終列・最終行はどの象限にも並ばない
     public void FromActualSize_ShowsSourcePixelOfEachTilePixel(int width, int height, double zoom)
@@ -131,6 +179,49 @@ public class ChannelSplitRenderTests
 
                         Assert.Equal(expected, pixels[(dy * size + dx) * 4]);
                     }
+                }
+            }
+        }
+    }
+
+    [Theory]
+    [InlineData(0.3)] // 左の象限の中だけ
+    [InlineData(5.3)] // 右の象限の中だけ(右端まで)
+    public void FromActualSize_OneQuadrantInView_ReadsOnlyThatRange(double originX)
+    {
+        // 見える列が1つの象限に収まるときは、その象限で要る列だけを読む(上の Theory はどの原点でも
+        // 継ぎ目をまたいで全幅を読む)。読み出しの始点や、読んだ範囲の中の位置がずれると隣の画素を示す
+        const int width = 8;
+        const int height = 6;
+        const double zoom = 8;
+        const int size = 16; // 見えるのはタイル2画素ぶんの幅
+        var codes = new ushort[width * height];
+        for (int i = 0; i < codes.Length; i++)
+        {
+            codes[i] = (ushort)(500 + i * 1000);
+        }
+
+        using RawImage image = TestImages.FromCodes(codes, width, height, bayer: BayerPattern.Rggb);
+        var source = new ChannelSplitRenderSource(image, 0);
+        foreach (double originY in OriginsY)
+        {
+            byte[] pixels = Render(source, zoom, originX, originY, size, size);
+            for (int dy = 0; dy < size; dy++)
+            {
+                for (int dx = 0; dx < size; dx++)
+                {
+                    double tiledX = originX + ((dx + 0.5) * (1.0 / zoom));
+                    double tiledY = originY + ((dy + 0.5) * (1.0 / zoom));
+                    Assert.Equal(tiledX < width / 2, originX < width / 2); // 見える列は1つの象限に収まる
+                    byte expected = Background;
+                    if (tiledY >= 0 && tiledY < height)
+                    {
+                        (int sourceX, int sourceY) = BayerSplit.MapTiledToSource(
+                            (int)tiledX, (int)tiledY, width, height);
+                        expected = Lut.Map(codes[sourceY * width + sourceX]);
+                    }
+
+                    Assert.Equal(expected, pixels[(dy * size + dx) * 4]);
                 }
             }
         }
