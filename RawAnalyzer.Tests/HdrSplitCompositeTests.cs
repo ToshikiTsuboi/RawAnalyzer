@@ -102,6 +102,62 @@ public class HdrSplitCompositeTests
     }
 
     [Fact]
+    public void Compose_PlacesStagesLeftToRight_AsSplitViewImage()
+    {
+        // 残課題 2026-10-02 A7。HDR分割ビューの表示画像(MainWindow)も Compose で作るようにした(以前は同じ並置を
+        // MainWindow に重複して書いていた)。各段を左から長秒→短秒の順に並べ、単一フレーム・HDR方式なし・
+        // 分割フレームの Bayer になること
+        var format = new RawFormat
+        {
+            Width = 4, Height = 2, BitDepth = 12, Bayer = BayerPattern.Rggb,
+            Hdr = HdrMode.FrameSequential, HdrStages = 3, FrameCount = 3,
+        };
+        var frames = new[]
+        {
+            TestImages.FromCodes(new ushort[] { 1, 2, 3, 4, 5, 6, 7, 8 }, 4, 2, 12, BayerPattern.Gbrg),
+            TestImages.FromCodes(new ushort[] { 11, 12, 13, 14, 15, 16, 17, 18 }, 4, 2, 12, BayerPattern.Gbrg),
+            TestImages.FromCodes(new ushort[] { 21, 22, 23, 24, 25, 26, 27, 28 }, 4, 2, 12, BayerPattern.Gbrg),
+        };
+        try
+        {
+            using RawImage composite = HdrSplitComposite.Compose(frames, format);
+
+            Assert.Equal(format with
+            {
+                Width = 12, Height = 2, FrameCount = 1, Hdr = HdrMode.None, Bayer = BayerPattern.Gbrg,
+            }, composite.Format);
+            ushort[] expected =
+            {
+                1, 2, 3, 4, 11, 12, 13, 14, 21, 22, 23, 24,
+                5, 6, 7, 8, 15, 16, 17, 18, 25, 26, 27, 28,
+            };
+            for (int i = 0; i < expected.Length; i++)
+            {
+                Assert.Equal(expected[i] << 4, composite.GetPixel(i % 12, i / 12));
+            }
+        }
+        finally
+        {
+            foreach (RawImage frame in frames)
+            {
+                frame.Dispose();
+            }
+        }
+    }
+
+    [Fact]
+    public void Compose_Canceled_Throws()
+    {
+        // 分割表示は表示中の画像の世代のトークンで並置する(別のファイルを開く・閉じると取り消して結果を捨てる)
+        using RawImage stage = TestImages.FromCodes(new ushort[64], 8, 8, 12);
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        Assert.ThrowsAny<OperationCanceledException>(() => HdrSplitComposite.Compose(
+            new[] { stage, stage }, new RawFormat { Width = 8, Height = 16, BitDepth = 12 }, cts.Token));
+    }
+
+    [Fact]
     public void ReferenceReadFormat_LineInterleavedReadsFirstFrame_FrameSequentialReadsAllStages()
     {
         RawFormat lineInterleaved = new()

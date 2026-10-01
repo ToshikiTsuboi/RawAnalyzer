@@ -3341,37 +3341,13 @@ public partial class MainWindow : Window
             return;
         }
 
-        // 長秒/短秒を左右並置した合成画像を作る
+        // 長秒/短秒を左右並置した合成画像を作る(ノイズ測定の2枚目の並置と同じ HdrSplitComposite.Compose)
         int stages = frames.Count;
         int subWidth = frames[0].Width;
-        int subHeight = frames[0].Height;
-        int compositeWidth = subWidth * stages;
         RawImage composite;
         try
         {
-            composite = await Task.Run(() =>
-            {
-                var pixels = new ushort[(long)compositeWidth * subHeight];
-                Parallel.For(0, subHeight, new ParallelOptions { CancellationToken = ct }, y =>
-                {
-                    for (int stage = 0; stage < stages; stage++)
-                    {
-                        frames[stage].CopyRegion(0, 0, y, subWidth, 1,
-                            pixels.AsSpan(y * compositeWidth + stage * subWidth, subWidth));
-                    }
-                });
-                RawFormat format = splitFormat with
-                {
-                    Width = compositeWidth,
-                    Height = subHeight,
-                    FrameCount = 1,
-                    Hdr = HdrMode.None,
-
-                    // 負の行オフセットでは整列後の位相が元と変わる(分割フレーム側に合わせる)
-                    Bayer = frames[0].Format.Bayer,
-                };
-                return RawImage.FromPixels(format, pixels);
-            }, ct);
+            composite = await Task.Run(() => HdrSplitComposite.Compose(frames, splitFormat, ct), ct);
         }
         catch (Exception ex) when (TaskRaceGuard.IsAbandoned(ex))
         {

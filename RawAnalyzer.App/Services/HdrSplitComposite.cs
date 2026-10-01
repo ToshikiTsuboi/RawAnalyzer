@@ -8,18 +8,24 @@ namespace RawAnalyzer.App.Services;
 /// </summary>
 internal static class HdrSplitComposite
 {
-    /// <summary>分割した各段を左から順に並べた1枚にする(HDR分割ビューの表示画像と同じ並び)。</summary>
+    /// <summary>
+    /// 分割した各段を左から順に並べた1枚にする。HDR分割ビューの表示画像(MainWindow の分割表示)と、
+    /// ノイズ測定の2枚目の並置の両方がこれを使う。
+    /// </summary>
     /// <param name="frames">HdrSplitter.Split の結果(長秒→短秒、同じ寸法)。</param>
     /// <param name="splitFormat">分割に使ったフォーマット。</param>
+    /// <param name="cancellationToken">キャンセルトークン。</param>
     /// <returns>並置した画像(単一フレーム・Hdr=None)。</returns>
-    internal static RawImage Compose(IReadOnlyList<RawImage> frames, RawFormat splitFormat)
+    /// <exception cref="OperationCanceledException">取り消された場合。</exception>
+    internal static RawImage Compose(
+        IReadOnlyList<RawImage> frames, RawFormat splitFormat, CancellationToken cancellationToken = default)
     {
         int stages = frames.Count;
         int subWidth = frames[0].Width;
         int subHeight = frames[0].Height;
         int compositeWidth = subWidth * stages;
         var pixels = new ushort[(long)compositeWidth * subHeight];
-        Parallel.For(0, subHeight, y =>
+        Parallel.For(0, subHeight, new ParallelOptions { CancellationToken = cancellationToken }, y =>
         {
             for (int stage = 0; stage < stages; stage++)
             {
