@@ -104,6 +104,78 @@ public class ImageAnalysisTests
                 image, 0, new RegionOfInterest(0, 0, 64, 64), cts.Token));
     }
 
+    /// <summary>
+    /// 行交互HDR(RGGB・12bit・ライン単位は既定の2)の画像。段 s の行はすべて code 100×(s+1)。
+    /// 行 y の段は (y mod (段数×2)) / 2(HdrSplitter の行の振り分けと同じ)。
+    /// </summary>
+    internal static RawImage MakeLineInterleavedHdr(int size, int stages)
+    {
+        var codes = new ushort[size * size];
+        for (int y = 0; y < size; y++)
+        {
+            int stage = y % (stages * 2) / 2;
+            Array.Fill(codes, (ushort)(100 * (stage + 1)), y * size, size);
+        }
+
+        return TestImages.FromCodes(codes, new RawFormat
+        {
+            Width = size, Height = size, BitDepth = 12, Bayer = BayerPattern.Rggb,
+            Hdr = HdrMode.LineInterleaved, HdrStages = stages, ExposureRatio = 16,
+        });
+    }
+
+    [Fact]
+    public void ComputeHistogram_SampledLineInterleavedHdr_IncludesEveryStage()
+    {
+        // 回帰テスト: 刻みは Bayer の偶奇だけを見て奇数にしていたので、3段・ライン単位2(周期6行)で
+        // 刻み3になると行 0,3,6,9… の段は 0,1,0,1… となり、最短秒の段2が1行も入らなかった。
+        // 60x60 / maxSamples=400 で素の刻みは3。周期と互いに素な5へ上げ、12行が各段4行ずつ入る
+        using RawImage image = MakeLineInterleavedHdr(60, stages: 3);
+
+        HistogramResult result = ImageAnalysis.ComputeHistogram(image, 0, maxSamples: 400);
+
+        Assert.True(result.IsSampled);
+        Assert.True(result.Bins[100] > 0);
+        Assert.True(result.Bins[200] > 0);
+        Assert.True(result.Bins[300] > 0);
+        Assert.Equal(result.Bins[100], result.Bins[300]);
+        Assert.Equal(200, result.Statistics.Mean, 10);
+    }
+
+    [Fact]
+    public void ComputeStatistics_SampledLineInterleavedHdr_IncludesEveryStage()
+    {
+        // ROI 統計の間引きもヒストグラムと同じ基準(同じ回帰)
+        using RawImage image = MakeLineInterleavedHdr(60, stages: 3);
+
+        RegionStatistics stats = ImageAnalysis.ComputeStatistics(
+            image, 0, new RegionOfInterest(0, 0, 60, 60), maxSamples: 400);
+
+        Assert.True(stats.SampleCount < 3600);
+        Assert.Equal(100, stats.Min);
+        Assert.Equal(300, stats.Max);
+        Assert.Equal(200, stats.Mean, 10);
+    }
+
+    [Theory]
+    [InlineData(2, 40)] // 周期4行・素の刻み2ブロック → 行 4k,4k+1 は長秒だけだった
+    [InlineData(3, 60)] // 周期6行・素の刻み3ブロック → 行 6k,6k+1 は長秒だけだった
+    public void ComputeChannelAnalysis_SampledLineInterleavedHdr_IncludesEveryStage(int stages, int size)
+    {
+        // 回帰テスト: チャネル別の間引きは2x2ブロック単位で、刻み(ブロック数)が行交互の周期と公約数を持つと
+        // 読む行(ブロックの上下2行)が特定の段に固定され、ヒストグラム・統計・飽和率が1つの露光だけの値になった
+        using RawImage image = MakeLineInterleavedHdr(size, stages);
+
+        ChannelAnalysisResult result = ImageAnalysis.ComputeChannelAnalysis(
+            image, 0, BayerPattern.Rggb, maxSamples: 400);
+
+        Assert.True(result.Total.IsSampled);
+        for (int stage = 0; stage < stages; stage++)
+        {
+            Assert.True(result.Total.Bins[100 * (stage + 1)] > 0, $"段{stage}の行が集計されていない");
+        }
+    }
+
     [Fact]
     public void RegionOfInterest_Clamp_LimitsToImageBounds()
     {

@@ -10,6 +10,21 @@ namespace RawAnalyzer.Tests;
 public class ChannelRegionAnalysisTests
 {
     [Fact]
+    public void ComputeHistogram_SampledLineInterleavedHdr_IncludesEveryStage()
+    {
+        // 回帰テスト: 格子の行 j は元画像の行 2j。2段・ライン単位2(周期4行)では格子の行が交互に長秒・短秒になり、
+        // 刻みが偶数(2)だと元画像の行 0,4,8… の長秒だけを集計していた
+        using RawImage image = ImageAnalysisTests.MakeLineInterleavedHdr(80, stages: 2);
+        var region = new ChannelRegion(0, 0, 40, 40); // R の格子(1600画素)
+
+        HistogramResult result = ChannelRegionAnalysis.ComputeHistogram(image, 0, region, maxSamples: 400);
+
+        Assert.True(result.IsSampled);
+        Assert.True(result.Bins[100] > 0);
+        Assert.True(result.Bins[200] > 0);
+    }
+
+    [Fact]
     public void TryMapTiledRegion_MatchesPerPixelMapping()
     {
         // タイル画像 10×6(象限 5×3)上のすべての矩形について、

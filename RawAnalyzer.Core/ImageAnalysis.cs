@@ -171,12 +171,9 @@ public static class ImageAnalysis
         {
             stride = Math.Max(1, (int)Math.Ceiling(Math.Sqrt((double)roi.PixelCount / maxSamples)));
 
-            // ヒストグラムと同じ理由でstrideは奇数にする。
+            // ヒストグラムと同じ理由でstrideは奇数にし、HDR行交互の周期とも互いに素にする。
             // 偶数だと走査位置のx/y偶奇が固定され、BayerではRだけの統計になる
-            if ((stride & 1) == 0)
-            {
-                stride++;
-            }
+            stride = SamplingStride(stride, image.Format);
         }
 
         int shift = 16 - image.Format.BitDepth;
@@ -293,10 +290,9 @@ public static class ImageAnalysis
         // strideが偶数だと走査位置のx/y偶奇が固定され、Bayer画像では
         // 4チャネルのうち1つ(例: Rのみ)しかサンプリングされず統計値が別物になる。
         // 奇数にすると行・列とも偶奇が交互に進み、4チャネルが均等に含まれる。
-        if ((stride & 1) == 0)
-        {
-            stride++;
-        }
+        // HDR行交互の周期(段数×ライン単位)と公約数を持つと特定の段(露光)の行しか読まないので、
+        // 周期とも互いに素にする
+        stride = SamplingStride(stride, image.Format);
 
         bool sampled = stride > 1;
 
@@ -342,6 +338,89 @@ public static class ImageAnalysis
             Statistics = new RegionStatistics(
                 mean, Math.Sqrt(Math.Max(0, variance)), min, max, count),
         };
+    }
+
+    /// <summary>
+    /// 行・列を同じ刻みで間引くときの刻み。Bayer の偶奇(2)とHDR行交互の周期のどちらとも互いに素になるまで切り上げる。
+    /// </summary>
+    /// <param name="stride">素の刻み(1以上)。</param>
+    /// <param name="format">画像のフォーマット(HDR行交互の周期を決める)。</param>
+    /// <returns>奇数で、HDR行交互の周期とも公約数を持たない刻み。1はそのまま。</returns>
+    internal static int SamplingStride(int stride, RawFormat format)
+    {
+        int period = HdrRowPeriod(format);
+        return CoprimeStride(stride, period % 2 == 0 ? period : period * 2);
+    }
+
+    /// <summary>
+    /// HDR行交互で露光が一巡する行数(段数×ライン単位)。HDRでない・フレーム連結の画像は1。
+    /// </summary>
+    /// <remarks>
+    /// ライン単位が未指定(0)のときは2とみなす。既定のライン単位は Bayer なら2・なしなら1で、右パネルの Bayer の
+    /// 指定は画像のフォーマットへ反映されないため、どちらでも互いに素になるよう大きい方(1の倍数の2)を使う。
+    /// 自動でレイアウトを決められないときも行交互とみなす(刻みが少し変わるだけで害はない)。
+    /// </remarks>
+    /// <param name="format">画像のフォーマット。</param>
+    /// <returns>周期(行数)。</returns>
+    internal static int HdrRowPeriod(RawFormat format)
+    {
+        if (format.Hdr == HdrMode.None || format.HdrStages < 2)
+        {
+            return 1;
+        }
+
+        HdrMode layout;
+        try
+        {
+            layout = HdrSplitter.ResolveLayout(format, format.HdrStages);
+        }
+        catch (InvalidOperationException)
+        {
+            layout = HdrMode.LineInterleaved;
+        }
+
+        if (layout != HdrMode.LineInterleaved)
+        {
+            return 1;
+        }
+
+        // 桁あふれするほど大きいライン単位は画像の高さを超えて実質周期を持たないので、避けない
+        int lineBlock = format.HdrLineBlock > 0 ? format.HdrLineBlock : 2;
+        long period = (long)format.HdrStages * lineBlock;
+        return period > int.MaxValue / 2 ? 1 : (int)period;
+    }
+
+    /// <summary>
+    /// 間引きの刻みを、周期と互いに素になるまで切り上げる(1はそのまま)。互いに素なら、刻みごとに読む行が
+    /// 周期の全ての位相を巡る。
+    /// </summary>
+    /// <param name="stride">素の刻み。</param>
+    /// <param name="period">避ける周期(1なら何もしない)。</param>
+    /// <returns>周期と互いに素な刻み。</returns>
+    internal static int CoprimeStride(int stride, int period)
+    {
+        stride = Math.Max(1, stride);
+        if (stride == 1 || period <= 1)
+        {
+            return stride;
+        }
+
+        while (GreatestCommonDivisor(stride, period) != 1)
+        {
+            stride++;
+        }
+
+        return stride;
+    }
+
+    private static int GreatestCommonDivisor(int a, int b)
+    {
+        while (b != 0)
+        {
+            (a, b) = (b, a % b);
+        }
+
+        return a;
     }
 
     /// <summary>
@@ -403,9 +482,13 @@ public static class ImageAnalysis
         var totalBins = new long[binCount];
 
         // 間引きの刻みはブロック単位(各軸 strideBlocks ブロックごとに1ブロック)。
-        // 集計数は領域の画素数の約 1/strideBlocks² になる
+        // 集計数は領域の画素数の約 1/strideBlocks² になる。
+        // 読む行はブロックの上下2行(2·k·strideBlocks と +1)なので、刻みがHDR行交互の周期と公約数を
+        // 持つと特定の段(露光)の行しか読まない(2段・ライン単位2で刻み2なら長秒だけ)。周期と互いに素にする
         int strideBlocks = maxSamples > 0 && roi.PixelCount > maxSamples
-            ? (int)Math.Ceiling(Math.Sqrt((double)roi.PixelCount / maxSamples))
+            ? CoprimeStride(
+                (int)Math.Ceiling(Math.Sqrt((double)roi.PixelCount / maxSamples)),
+                HdrRowPeriod(image.Format))
             : 1;
         bool sampled = strideBlocks > 1;
 

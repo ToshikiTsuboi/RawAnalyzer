@@ -48,9 +48,13 @@ public static class ChannelRegionAnalysis
             };
         }
 
-        // 格子は単一チャネルなので、刻みが偶数でも特定チャネルへ偏ることはない
+        // 格子は単一チャネルなので、刻みが偶数でも特定チャネルへ偏ることはない。
+        // ただし格子の行 j は元画像の行 2j なので、刻みがHDR行交互の周期と公約数を持つと特定の段(露光)の
+        // 行しか読まない(2段・ライン単位2では格子の行が交互に長秒・短秒になり、刻み2なら長秒だけ)。周期と互いに素にする
         int stride = maxSamples > 0
-            ? Math.Max(1, (int)Math.Ceiling(Math.Sqrt((double)region.PixelCount / maxSamples)))
+            ? ImageAnalysis.CoprimeStride(
+                (int)Math.Ceiling(Math.Sqrt((double)region.PixelCount / maxSamples)),
+                ImageAnalysis.HdrRowPeriod(image.Format))
             : 1;
         var row = new ushort[SourceSpan(region)];
         long sum = 0;
