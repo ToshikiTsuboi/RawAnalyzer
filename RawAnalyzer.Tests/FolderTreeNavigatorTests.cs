@@ -220,6 +220,34 @@ public class FolderTreeNavigatorTests
         Assert.Equal(@"Z:\fast", selected.Tag);
     });
 
+    [Theory]
+    [InlineData(@"\\server\share\run03")] // UNC パス(ツリーはドライブだけ)
+    [InlineData(@"Q:\data")] // 起動後に接続したドライブ(ツリーは起動時のドライブだけ)
+    [InlineData(@"Z:\.hidden\run03")] // 隠し属性のフォルダの下(ツリーに出さない)
+    public Task SyncToFolder_NotInTree_ClearsThePreviousSelection(string folder) => WpfTestHost.Run(async () =>
+    {
+        // 表示中のフォルダがツリーにないときは、前のフォルダの選択を外す。以前は前のフォルダ X が選択された
+        // ままになり、TreeView は選択済みの項目をクリックしても選択の変更を出さないので、X をクリックしても
+        // 一覧が X に戻らなかった(別の項目を一度選ぶ必要があった)
+        var navigator = new FolderTreeNavigator(path =>
+            path.Equals(@"Z:\", StringComparison.OrdinalIgnoreCase) ? [Entry(@"Z:\x")] : []);
+        var tree = new TreeView();
+        tree.Items.Add(FolderTreeNavigator.CreateItem("💽 Z:", @"Z:\"));
+        await navigator.SyncToFolderAsync(tree, @"Z:\x");
+        TreeViewItem x = Assert.IsType<TreeViewItem>(tree.SelectedItem);
+        var changes = new List<(object? NewValue, bool Syncing)>();
+        tree.SelectedItemChanged += (_, e) => changes.Add((e.NewValue, navigator.IsSyncingSelection));
+
+        await navigator.SyncToFolderAsync(tree, folder);
+
+        Assert.Null(tree.SelectedItem);
+        Assert.False(x.IsSelected);
+
+        // 選択を外したのは同期(フォルダを開き直さない)。その後で X をクリックすると、X を開く選択の変更が届く
+        x.IsSelected = true;
+        Assert.Equal(new (object?, bool)[] { (null, true), (x, false) }, changes);
+    });
+
     [Fact]
     public void EnumerateChildFolders_SkipsHiddenAndSortsNaturally()
     {

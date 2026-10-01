@@ -114,7 +114,10 @@ internal sealed class FolderTreeNavigator
     /// </summary>
     /// <remarks>
     /// 祖先の各階層を順に展開し、未列挙なら列挙を待つ。待つ間に次の同期が始まったら(別のフォルダを開いた)、
-    /// この同期はそこでやめる。ツリーにない(ルートや途中の階層が見つからない)ときは選択を変えない。
+    /// この同期はそこでやめる。
+    /// ツリーにない(UNC パス、起動後に接続したドライブ、隠し・システム属性のフォルダの下など、ルートや途中の階層が
+    /// 見つからない)ときは、前のフォルダの選択を外す。残すと、TreeView は選択済みの項目をクリックしても選択の
+    /// 変更を出さないので、その項目をクリックしても前のフォルダへ戻れない。
     /// </remarks>
     /// <param name="tree">フォルダツリー。最上位の項目はドライブのルート(Tag にルートのパス)。</param>
     /// <param name="folder">選択するフォルダのフルパス。</param>
@@ -125,6 +128,7 @@ internal sealed class FolderTreeNavigator
         string? root = Path.GetPathRoot(folder);
         if (string.IsNullOrEmpty(root))
         {
+            Select(tree, null);
             return;
         }
 
@@ -133,6 +137,7 @@ internal sealed class FolderTreeNavigator
             .FirstOrDefault(i => string.Equals(i.Tag as string, root, StringComparison.OrdinalIgnoreCase));
         if (node is null)
         {
+            Select(tree, null);
             return;
         }
 
@@ -154,6 +159,7 @@ internal sealed class FolderTreeNavigator
                         Path.GetFileName(i.Tag as string), segment, StringComparison.OrdinalIgnoreCase));
                 if (next is null)
                 {
+                    Select(tree, null);
                     return;
                 }
 
@@ -168,17 +174,33 @@ internal sealed class FolderTreeNavigator
             }
         }
 
+        Select(tree, node);
+        node.BringIntoView();
+    }
+
+    /// <summary>
+    /// 同期として項目を選択する。null なら選択中のフォルダの項目の選択を外す。
+    /// </summary>
+    /// <param name="tree">フォルダツリー。</param>
+    /// <param name="node">選択する項目。null なら選択を外す。</param>
+    private void Select(TreeView tree, TreeViewItem? node)
+    {
         IsSyncingSelection = true;
         try
         {
-            node.IsSelected = true;
+            if (node is not null)
+            {
+                node.IsSelected = true;
+            }
+            else if (tree.SelectedItem is TreeViewItem selected)
+            {
+                selected.IsSelected = false;
+            }
         }
         finally
         {
             IsSyncingSelection = false;
         }
-
-        node.BringIntoView();
     }
 
     /// <summary>
