@@ -10,16 +10,17 @@ public class CompareSyncTests
     {
         // ソース: 1600px幅の画像を半分だけ表示(zoom=1, view=800)
         var source = new PaneViewState(1.0, 0, 0, 800, 600, 1600, 1200);
-        // ターゲット: 800px幅の画像、ビューは400px
-        var target = new PaneViewState(0.123, 5, 7, 400, 300, 800, 600);
+        // ターゲット: 縦横比の違う 800×800 の画像、ビューは400×300px。
+        // 相対幅を合わせると zoom=1、相対高さ(50%)を合わせると 800*0.5=400px 分を view 300px へ → zoom=0.75 で分かれる
+        var target = new PaneViewState(0.123, 5, 7, 400, 300, 800, 800);
 
         ViewTransform mapped = CompareSync.MapView(CompareSyncMode.FieldOfView, source, target);
 
         // 同じ相対幅(50%)を写すには 800*0.5=400px 分を view 400px へ → zoom=1
         Assert.Equal(1.0, mapped.Zoom, 10);
-        // ソース中心 rel=(0.25, 0.25) → ターゲット中心 (200,150) → 原点 (0,0)
+        // ソース中心 rel=(0.25, 0.25) → ターゲット中心 (200,200) → 原点 (200-400/2, 200-300/2) = (0,50)
         Assert.Equal(0, mapped.OriginX, 10);
-        Assert.Equal(0, mapped.OriginY, 10);
+        Assert.Equal(50, mapped.OriginY, 10);
     }
 
     [Fact]
