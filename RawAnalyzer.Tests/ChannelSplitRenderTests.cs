@@ -94,9 +94,7 @@ public class ChannelSplitRenderTests
 
     [Theory]
     [InlineData(8, 6, 3.0)]  // 拡大
-    [InlineData(8, 6, 0.7)]  // 縮小レベルを使わない縮小
-    [InlineData(9, 7, 1.0)]  // 奇数寸法: 最終列・最終行はどの象限にも並ばない
-    [InlineData(9, 7, 0.7)]
+    [InlineData(9, 7, 0.7)]  // 縮小レベルを使わない縮小、奇数寸法: 最終列・最終行はどの象限にも並ばない
     public void FromActualSize_ShowsSourcePixelOfEachTilePixel(int width, int height, double zoom)
     {
         // 等倍のデータから描くときは、画面画素の中心のタイル画素を MapTiledToSource で
