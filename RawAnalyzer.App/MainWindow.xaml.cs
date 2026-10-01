@@ -173,6 +173,11 @@ public partial class MainWindow : Window
     // HDR分割/合成の派生ビュー
     private RawImage? _derivedImage;
     private HdrImage? _hdrFloatImage;
+
+    // オーバーレイに出す表示中のHDR派生ビューの説明(派生画像と組で持ち、その派生画像の表示中だけ出す)と、
+    // 最後に描画した間引きの縮小率
+    private (RawImage Image, string Note)? _derivedViewNote;
+    private int _overlayRenderedFactor = 1;
     private TilePyramid? _mainPyramid;
     private BayerPyramid? _mainBayerPyramid;
     private BayerPyramid? _derivedBayerPyramid;
@@ -3324,7 +3329,7 @@ public partial class MainWindow : Window
         HdrTargetCombo.SelectedIndex = 0;
         _vm.HdrTargetVisible = true;
         ApplySplitLuts();
-        _vm.LevelOverlayText = $"HDR分割表示 (左: 長秒 → 右: 短秒, {stages}段)";
+        SetDerivedViewNote(LevelOverlay.DescribeSplit(stages));
     }
 
     private async Task EnterHdrMergeAsync()
@@ -3417,15 +3422,32 @@ public partial class MainWindow : Window
         UpdateProcessingBadge();
         _vm.HdrTargetVisible = false;
 
-        // 16bit量子化で情報が落ちる構成では、解析値がその精度で読まれることを明示する
-        // (LostBitsは元素材のLSB基準。12bit・2段・露光比16などは無損失なので出ない)。
+        // 16bit量子化で情報が落ちる構成では、解析値がその精度で読まれることを明示する。
         // 16bitの合成画像は黒点未満を0に切り詰めている(float raw は負値のまま)ので、暗部の統計が偏ることも示す
-        string lossNote = merged.LostBits >= 0.5
-            ? $", 表示・解析は16bit量子化後 (1LSB={merged.QuantizationStep:F1}, " +
-              $"元素材比 約{merged.LostBits:F0}bit損失 / 無損失はfloat raw保存)"
-            : "";
-        _vm.LevelOverlayText =
-            $"HDR合成表示 (フルスケール {merged.FullScale:F0}, ゲイン=露出, 黒点未満は0{lossNote})";
+        SetDerivedViewNote(LevelOverlay.DescribeMerge(merged));
+    }
+
+    /// <summary>
+    /// 表示中のHDR派生ビューの説明をオーバーレイに出す。描画のたびの間引きレベルの表示で消さず、派生ビューを
+    /// 抜けるまで(表示中の派生画像がこの画像のあいだ)残す。
+    /// </summary>
+    /// <param name="note">派生ビューの説明。</param>
+    private void SetDerivedViewNote(string note)
+    {
+        _derivedViewNote = _derivedImage is { } derived ? (derived, note) : null;
+        UpdateLevelOverlay();
+    }
+
+    /// <summary>
+    /// オーバーレイを、表示中の派生ビューの説明・フルスクリーンの案内と、最後に描画した間引きレベルで出し直す。
+    /// </summary>
+    private void UpdateLevelOverlay()
+    {
+        string? derivedNote = _derivedViewNote is { } note && ReferenceEquals(note.Image, _derivedImage)
+            ? note.Note
+            : null;
+        _vm.LevelOverlayText = LevelOverlay.Describe(
+            _overlayRenderedFactor, derivedNote, _vm.IsFullscreen ? LevelOverlay.FullscreenHint : null);
     }
 
     /// <summary>
@@ -3565,6 +3587,7 @@ public partial class MainWindow : Window
 
         _derivedImage?.Dispose();
         _derivedImage = null;
+        _derivedViewNote = null;
         _vm.IsHdrViewShown = false;
 
         // 派生ビューで検出した結果は、ここで破棄する派生画像のもの。HDR表示に入るときに元画像の
@@ -3800,9 +3823,10 @@ public partial class MainWindow : Window
         int levelIndex = (int)Math.Round(Math.Log2(e.RenderedFactor));
         _vm.ZoomPercentText = percent;
         _vm.ZoomStatusText = $"Zoom {percent} · L{levelIndex}";
-        _vm.LevelOverlayText = e.RenderedFactor > 1
-            ? $"1/{e.RenderedFactor} 間引き表示 (ピラミッド L{levelIndex})"
-            : "等倍データ表示 (L0)";
+
+        // HDR派生ビューの説明・フルスクリーンの案内を上書きで消さず、間引きレベルをその下に出す
+        _overlayRenderedFactor = e.RenderedFactor;
+        UpdateLevelOverlay();
     }
 
     private void OnCursorPixelChanged(object? sender, CursorPixelEventArgs e)
@@ -4627,7 +4651,6 @@ public partial class MainWindow : Window
             ResizeMode = ResizeMode.NoResize;
             WindowState = WindowState.Normal; // 一度戻さないと最大化が効かない場合がある
             WindowState = WindowState.Maximized;
-            _vm.LevelOverlayText = "フルスクリーン (F11 / Esc で解除)";
         }
         else
         {
@@ -4645,6 +4668,9 @@ public partial class MainWindow : Window
                 WindowState = state;
             }
         }
+
+        // フルスクリーンの案内は表示中のあいだオーバーレイに残す(描画のたびの間引きレベルの表示で消さない)
+        UpdateLevelOverlay();
 
         Viewport.Focus();
     }
