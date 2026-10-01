@@ -234,10 +234,18 @@ public partial class MainWindow : Window
                 return;
             }
 
-            if (_vm.Files.Count == 0 && _session.LastFolder is { } folder
-                && Directory.Exists(folder))
+            if (_vm.Files.Count == 0 && _session.LastFolder is { } folder)
             {
-                LoadFolder(folder, selectPath: null);
+                // 前回のフォルダの存在確認は UI スレッドで行わない。切断された NAS/UNC では SMB のタイムアウト
+                // (十数秒〜数十秒)まで返らず、起動直後のウィンドウが固まる(列挙と同じくバックグラウンドで確かめる)
+                int folderGeneration = _folderGeneration;
+                bool exists = await Task.Run(() => Directory.Exists(folder));
+
+                // 確かめている間に利用者がフォルダ・ファイルを開いていたら、前回のフォルダで一覧を上書きしない
+                if (exists && folderGeneration == _folderGeneration && _vm.Files.Count == 0)
+                {
+                    LoadFolder(folder, selectPath: null);
+                }
             }
         };
         Closing += (_, _) => SaveWindowPlacement();
@@ -259,7 +267,8 @@ public partial class MainWindow : Window
     /// <param name="path">ファイルまたはフォルダのパス。</param>
     private async Task OpenStartupPath(string path)
     {
-        if (Directory.Exists(path))
+        // 起動直後に UI スレッドでネットワーク上のパスを確かめない(起動前の引数の解釈で実在は確かめてある)
+        if (await Task.Run(() => Directory.Exists(path)))
         {
             await LoadFolderAsync(path, selectPath: null);
             return;
