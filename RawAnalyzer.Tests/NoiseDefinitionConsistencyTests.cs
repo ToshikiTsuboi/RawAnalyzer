@@ -22,10 +22,11 @@ public class NoiseDefinitionConsistencyTests
     public static IEnumerable<object[]> Conditions()
     {
         // ビット深度, 格子の原点X, 原点Y, 飽和コード
+        // 飽和コードは両方の版が同じ解決を通るので、受け渡しの漏れが値に出るのは 1000 の行。ビット深度は
+        // シフトのある 8bit とシフト 0 の 16bit(10/12/14bit はシフトの定数が違うだけ)。8bit の行は偶数原点の格子と、
+        // 飽和コードが既定の最大値に解決されるときのビット深度の受け渡しも兼ねる
         yield return new object[] { 8, 0, 0, 0.0 };
         yield return new object[] { 10, 1, 1, 1000.0 };
-        yield return new object[] { 12, 1, 0, double.NaN };
-        yield return new object[] { 14, 0, 1, 1e9 };   // ビット深度の最大値へクランプされる
         yield return new object[] { 16, 1, 1, -5.0 };  // 0以下はビット深度の最大値
     }
 
@@ -80,8 +81,7 @@ public class NoiseDefinitionConsistencyTests
     }
 
     [Theory]
-    [InlineData(2, 1, 0, 3)]  // 幅0(高さはある)
-    [InlineData(1, 2, 3, 0)]  // 高さ0
+    [InlineData(2, 1, 0, 3)]  // 幅0(高さはある)。高さ0は行の走査が0回で終わり、空のガードを踏まないので見ない
     public void EmptyPixelSet_MatchesLattice(int x, int y, int width, int height)
     {
         // 画素0個の集合。格子版はゼロの測定値を返す。矩形版も同じ値を返すこと

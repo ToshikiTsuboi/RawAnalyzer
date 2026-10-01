@@ -21,21 +21,14 @@ public class NoiseReferenceTests
     }
 
     [Fact]
-    public void SameTiff_FirstPageShown_IsSameData()
+    public void SameRawFile_SecondFrameShown_IsDifferentData()
     {
-        Assert.True(NoiseReference.ReadsSameDataAsTarget(
-            Stack, Stack, isDerivedView: false, frame: 0, tiffPageIndex: 0));
-    }
-
-    [Theory]
-    [InlineData(0, true)]   // 先頭フレーム同士は同一データ
-    [InlineData(1, false)]  // マルチフレームrawの2フレーム目とBの先頭フレームは別データ
-    public void SameRawFile_DependsOnShownFrame(int frame, bool expected)
-    {
+        // マルチフレームrawの2フレーム目とBの先頭フレームは別データ(先頭フレーム同士が同一データになることは
+        // SameFileWrittenDifferently_IsSameData が見る)
         const string raw = @"C:\data\burst.raw";
 
-        Assert.Equal(expected, NoiseReference.ReadsSameDataAsTarget(
-            raw, raw, isDerivedView: false, frame, tiffPageIndex: 0));
+        Assert.False(NoiseReference.ReadsSameDataAsTarget(
+            raw, raw, isDerivedView: false, frame: 1, tiffPageIndex: 0));
     }
 
     [Fact]

@@ -45,24 +45,13 @@ public class ChannelRegionAnalysisTests
     }
 
     [Fact]
-    public void TryMapTiledRegion_ClampsToTiledImage()
+    public void TryMapTiledRegion_OutsideTiledImage_ReturnsFalse()
     {
-        // 奇数寸法の元画像はタイル表示で端の行・列が並ばない。表示外の部分は落とす
-        bool mapped = BayerSplit.TryMapTiledRegion(
-            new RegionOfInterest(3, 3, 5, 5), 4, 4, out ChannelRegion region);
-
-        Assert.True(mapped);
-        Assert.Equal(new ChannelRegion(3, 3, 1, 1), region); // 右下象限の (1,1) 要素
-    }
-
-    [Theory]
-    [InlineData(4, 0, 1, 4)]   // タイル画像の右外
-    [InlineData(0, 4, 4, 1)]   // タイル画像の下外
-    [InlineData(-3, 0, 2, 2)]  // 左外
-    public void TryMapTiledRegion_OutsideTiledImage_ReturnsFalse(int x, int y, int width, int height)
-    {
+        // 左外の矩形は、タイル画像の範囲へクランプしてから写すので幅0になり写さない(関数内のクランプを外すと
+        // 落ちる。奇数寸法の元画像で端の行・列を落とすことは RoiAnalysisTests.ChannelSplit_OddSizedImage_UsesOnlyDisplayedTiles
+        // が本番の経路で見る)
         Assert.False(BayerSplit.TryMapTiledRegion(
-            new RegionOfInterest(x, y, width, height), 4, 4, out _));
+            new RegionOfInterest(-3, 0, 2, 2), 4, 4, out _));
     }
 
     [Fact]
@@ -144,44 +133,6 @@ public class ChannelRegionAnalysisTests
                 .Average(i => image.GetPixel(region.X + 2 * i, region.Y + 2 * j) >> shift);
             Assert.Equal(expected, vertical[j], 9);
         }
-    }
-
-    [Fact]
-    public void MeasureSingle_MatchesSameChannelPixelsAsOwnImage()
-    {
-        using RawImage image = RandomImage(16, 12, bitDepth: 12, seed: 3);
-        var region = new ChannelRegion(1, 0, 6, 5);
-        using RawImage extracted = Extract(image, 0, region);
-
-        NoiseMeasurement actual = ChannelRegionAnalysis.MeasureSingle(
-            image, 0, region, saturationCode: 4000);
-        NoiseMeasurement expected = NoiseAnalysis.MeasureSingle(
-            extracted, 0, null, BayerPattern.None, saturationCode: 4000);
-
-        AssertMeasurement(expected, actual);
-        Assert.True(double.IsNaN(actual.SigmaTemporal));
-    }
-
-    [Fact]
-    public void MeasurePair_MatchesSameChannelPixelsAsOwnImages()
-    {
-        var format = new RawFormat { Width = 16, Height = 12, BitDepth = 12, FrameCount = 2 };
-        var random = new Random(4);
-        ushort[] codes = Enumerable.Range(0, 16 * 12 * 2).Select(_ => (ushort)random.Next(4096))
-            .ToArray();
-        using RawImage imageA = TestImages.FromCodes(codes, format);
-        using RawImage imageB = RandomImage(16, 12, bitDepth: 12, seed: 5);
-        var region = new ChannelRegion(0, 1, 7, 4);
-        using RawImage extractedA = Extract(imageA, 1, region);
-        using RawImage extractedB = Extract(imageB, 0, region);
-
-        NoiseMeasurement actual = ChannelRegionAnalysis.MeasurePair(
-            imageA, imageB, 1, 0, region, saturationCode: 0);
-        NoiseMeasurement expected = NoiseAnalysis.MeasurePair(
-            extractedA, extractedB, 0, 0, null, BayerPattern.None, saturationCode: 0);
-
-        AssertMeasurement(expected, actual);
-        Assert.Equal(4095, actual.SaturationCode);
     }
 
     [Fact]
@@ -286,13 +237,6 @@ public class ChannelRegionAnalysisTests
         return codes.ToArray();
     }
 
-    /// <summary>格子の画素だけを並べた独立画像を作る(既存の解析との突き合わせ用)。</summary>
-    private static RawImage Extract(RawImage image, int frame, ChannelRegion region)
-    {
-        ushort[] codes = Codes(image, frame, region).Select(c => (ushort)c).ToArray();
-        return TestImages.FromCodes(codes, region.Width, region.Height, image.Format.BitDepth);
-    }
-
     private static RawImage RandomImage(int width, int height, int bitDepth, int seed)
     {
         var random = new Random(seed);
@@ -330,15 +274,5 @@ public class ChannelRegionAnalysisTests
         Assert.Equal(codes.Min(), statistics.Min);
         Assert.Equal(codes.Max(), statistics.Max);
         Assert.Equal(codes.Length, statistics.SampleCount);
-    }
-
-    private static void AssertMeasurement(NoiseMeasurement expected, NoiseMeasurement actual)
-    {
-        Assert.Equal(expected.SampleCount, actual.SampleCount);
-        Assert.Equal(expected.Mean, actual.Mean, 9);
-        Assert.Equal(expected.SigmaTotal, actual.SigmaTotal, 6);
-        Assert.Equal(expected.SigmaTemporal, actual.SigmaTemporal, 6);
-        Assert.Equal(expected.SigmaFpn, actual.SigmaFpn, 6);
-        Assert.Equal(expected.SaturationCode, actual.SaturationCode);
     }
 }

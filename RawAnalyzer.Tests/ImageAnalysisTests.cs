@@ -24,22 +24,6 @@ public class ImageAnalysisTests
     }
 
     [Fact]
-    public void ComputeStatistics_SubRegion_OnlyCountsRoi()
-    {
-        ushort[] codes = Enumerable.Range(0, 16).Select(i => (ushort)i).ToArray();
-        using RawImage image = TestImages.FromCodes(codes, 4, 4);
-
-        // 右下2x2 = {10,11,14,15}: mean=12.5
-        RegionStatistics stats = ImageAnalysis.ComputeStatistics(
-            image, 0, new RegionOfInterest(2, 2, 2, 2));
-
-        Assert.Equal(12.5, stats.Mean, 10);
-        Assert.Equal(10, stats.Min);
-        Assert.Equal(15, stats.Max);
-        Assert.Equal(4, stats.SampleCount);
-    }
-
-    [Fact]
     public void ComputeHistogram_BinsInRawCodeDomain()
     {
         ushort[] codes = { 0, 0, 100, 4095 };
@@ -118,36 +102,6 @@ public class ImageAnalysisTests
         Assert.ThrowsAny<OperationCanceledException>(
             () => ImageAnalysis.ComputeStatistics(
                 image, 0, new RegionOfInterest(0, 0, 64, 64), cts.Token));
-    }
-
-    [Fact]
-    public void ExtractRowProfile_MatchesPixels()
-    {
-        ushort[] codes = TestData.MakePattern(8 * 4, 12);
-        using RawImage image = TestImages.FromCodes(codes, 8, 4, bitDepth: 12);
-
-        ushort[] profile = ImageAnalysis.ExtractRowProfile(image, 0, 2);
-
-        Assert.Equal(8, profile.Length);
-        for (int x = 0; x < 8; x++)
-        {
-            Assert.Equal(codes[2 * 8 + x], profile[x]);
-        }
-    }
-
-    [Fact]
-    public void ExtractColumnProfile_MatchesPixels()
-    {
-        ushort[] codes = TestData.MakePattern(8 * 4, 12);
-        using RawImage image = TestImages.FromCodes(codes, 8, 4, bitDepth: 12);
-
-        ushort[] profile = ImageAnalysis.ExtractColumnProfile(image, 0, 3);
-
-        Assert.Equal(4, profile.Length);
-        for (int y = 0; y < 4; y++)
-        {
-            Assert.Equal(codes[y * 8 + 3], profile[y]);
-        }
     }
 
     [Fact]

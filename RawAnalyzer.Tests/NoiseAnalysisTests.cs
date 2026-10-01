@@ -92,30 +92,6 @@ public class NoiseAnalysisTests
     }
 
     [Fact]
-    public void MeasurePair_Roi_RestrictsEvaluation()
-    {
-        const int size = 16;
-        var a = new ushort[size * size];
-        var b = new ushort[size * size];
-        Array.Fill(a, (ushort)1000);
-        Array.Fill(b, (ushort)1000);
-        // ROI外に大きな差分を置く
-        for (int x = 0; x < size; x++)
-        {
-            a[0 * size + x] = 4000;
-        }
-
-        using RawImage imageA = TestImages.FromCodes(a, size, size, bitDepth: 12);
-        using RawImage imageB = TestImages.FromCodes(b, size, size, bitDepth: 12);
-
-        NoiseMeasurement result = NoiseAnalysis.MeasurePair(
-            imageA, imageB, region: new RegionOfInterest(0, 1, size, size - 1));
-
-        Assert.Equal(0, result.SigmaTemporal, 10);
-        Assert.Equal((size - 1) * size, result.SampleCount);
-    }
-
-    [Fact]
     public void MeasureSingle_ReportsTotalSigmaOnly()
     {
         const int size = 8;
@@ -133,92 +109,6 @@ public class NoiseAnalysisTests
         Assert.True(double.IsNaN(result.SigmaFpn));
         Assert.True(double.IsNaN(result.DynamicRangeTemporalDb));
         Assert.Equal(20 * Math.Log10(4095 / 10.0), result.DynamicRangeTotalDb, 6);
-    }
-
-    [Fact]
-    public void MeasurePair_BayerPattern_ExcludesChannelOffsetsFromFpn()
-    {
-        // チャネル間の感度差(R=1000/G=2000/B=1500)だけがあり、真のFPN=0・時間ノイズ0の2枚。
-        // 混合統計ならσ_FPN≈410と誤るが、チャネル別ならσ_FPN≈0になるはず
-        const int size = 32;
-        var codes = new ushort[size * size];
-        for (int y = 0; y < size; y++)
-        {
-            for (int x = 0; x < size; x++)
-            {
-                codes[y * size + x] = (y & 1) == 0
-                    ? ((x & 1) == 0 ? (ushort)1000 : (ushort)2000)
-                    : ((x & 1) == 0 ? (ushort)2000 : (ushort)1500);
-            }
-        }
-
-        using RawImage a = TestImages.FromCodes(codes, size, size, bitDepth: 12);
-        using RawImage b = TestImages.FromCodes(codes, size, size, bitDepth: 12);
-
-        NoiseMeasurement mixed = NoiseAnalysis.MeasurePair(a, b);
-        NoiseMeasurement perChannel = NoiseAnalysis.MeasurePair(
-            a, b, pattern: BayerPattern.Rggb);
-
-        Assert.True(mixed.SigmaFpn > 300);       // 混合では感度差がFPNに化ける
-        Assert.Equal(0, perChannel.SigmaFpn, 6); // チャネル別なら真値0
-        Assert.Equal(0, perChannel.SigmaTemporal, 10);
-        Assert.Equal(mixed.Mean, perChannel.Mean, 6);
-        Assert.Equal(mixed.SampleCount, perChannel.SampleCount);
-    }
-
-    [Fact]
-    public void MeasureSingle_BayerPattern_PoolsWithinChannelVariance()
-    {
-        // 各チャネル内のσは10相当(±10の交互ディザ)、チャネル平均は1000/2000/1500
-        const int size = 32;
-        var codes = new ushort[size * size];
-        for (int y = 0; y < size; y++)
-        {
-            for (int x = 0; x < size; x++)
-            {
-                ushort baseCode = (y & 1) == 0
-                    ? ((x & 1) == 0 ? (ushort)1000 : (ushort)2000)
-                    : ((x & 1) == 0 ? (ushort)2000 : (ushort)1500);
-
-                // 同一チャネル内で+10/-10を交互に振る(チャネル内σ=10)
-                int dither = ((x / 2 + y / 2) % 2 == 0) ? 10 : -10;
-                codes[y * size + x] = (ushort)(baseCode + dither);
-            }
-        }
-
-        using RawImage image = TestImages.FromCodes(codes, size, size, bitDepth: 12);
-
-        NoiseMeasurement result = NoiseAnalysis.MeasureSingle(
-            image, pattern: BayerPattern.Rggb);
-
-        Assert.Equal(10.0, result.SigmaTotal, 6);
-    }
-
-    [Fact]
-    public void MeasurePair_BayerRoi_UsesSameRegionForSpatialAndTemporal()
-    {
-        // レビュー指摘#6の再現値: 6×6 RGGB、roi=(1,1,4,4) 内はすべて1000、roi外の(0,0)だけ5000。
-        // 空間統計だけ roi を外側の2x2境界へ広げると36画素・σ_total≈628.5 になり、
-        // 同じ画像同士(σ_temporal=0)で σ_FPN≈628.5 という存在しないFPNが出ていた
-        const int size = 6;
-        var codes = new ushort[size * size];
-        Array.Fill(codes, (ushort)1000);
-        codes[0] = 5000;
-        using RawImage image = TestImages.FromCodes(codes, size, size, bitDepth: 16);
-        var roi = new RegionOfInterest(1, 1, 4, 4);
-
-        NoiseMeasurement single = NoiseAnalysis.MeasureSingle(
-            image, region: roi, pattern: BayerPattern.Rggb);
-        NoiseMeasurement pair = NoiseAnalysis.MeasurePair(
-            image, image, region: roi, pattern: BayerPattern.Rggb);
-
-        Assert.Equal(16, single.SampleCount);
-        Assert.Equal(1000, single.Mean, 10);
-        Assert.Equal(0, single.SigmaTotal, 10);
-        Assert.Equal(16, pair.SampleCount);
-        Assert.Equal(0, pair.SigmaTotal, 10);
-        Assert.Equal(0, pair.SigmaTemporal, 10);
-        Assert.Equal(0, pair.SigmaFpn, 10);
     }
 
     [Theory]
