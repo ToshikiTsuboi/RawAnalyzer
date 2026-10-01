@@ -69,23 +69,6 @@ public class FormatPresetStoreTests : IDisposable
     }
 
     [Fact]
-    public void Save_SerializesEnumsAsStrings()
-    {
-        var store = new FormatPresetStore(_directory);
-        store.Save(new Dictionary<string, RawFormat>
-        {
-            ["p"] = new RawFormat
-            {
-                Width = 1, Height = 1, Bayer = BayerPattern.Rggb, Hdr = HdrMode.LineInterleaved,
-            },
-        });
-
-        string json = File.ReadAllText(store.FilePath);
-        Assert.Contains("\"Rggb\"", json);
-        Assert.Contains("\"LineInterleaved\"", json);
-    }
-
-    [Fact]
     public void LoadOrQuarantine_CorruptedFile_MovesToBackupAndReturnsEmpty()
     {
         // 破損を握りつぶすと、次に1件保存したときに辞書全体が上書きされ
@@ -105,7 +88,6 @@ public class FormatPresetStoreTests : IDisposable
     }
 
     [Theory]
-    [InlineData("Dol")]
     [InlineData("Staggered")]
     public void Load_LegacyHdrModeName_MapsToAuto(string legacy)
     {

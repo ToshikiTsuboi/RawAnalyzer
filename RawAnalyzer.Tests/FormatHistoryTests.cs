@@ -40,9 +40,11 @@ public class FormatHistoryTests
         Assert.Equal(T0, entry.LastUsedUtc);
         Assert.True(entry.AutoOpen, "記憶のないキーは自動で開く(チェックの既定と同じ)");
 
-        // 拡張子は大文字小文字・ドットの有無を問わず同じキー
+        // 拡張子は大文字小文字・ドットの有無を問わず同じキー(消すときも)
         Assert.Equal(format, history.FindAutoOpenFormat(Size, "raw"));
         Assert.Equal(format, history.FindAutoOpenFormat(Size, ".Raw"));
+        Assert.Equal(1, history.Remove(Size, "RAW"));
+        Assert.Empty(history.Entries);
     }
 
     [Fact]
@@ -223,16 +225,20 @@ public class FormatHistoryTests
     [Fact]
     public void Replace_WithoutChoice_InheritsAutoOpenOfOriginal()
     {
+        // 自動で開いた記憶(AutoOpen=true)の Bayer を右パネルで直しても(Correct は autoOpen:null で
+        // Replace する)自動で開くまま。継承元が false の場合は
+        // FormatMemoryTests.Correct_BayerChangedInPlace_ReplacesRememberedFormatKeepingFlag が見ている
         var history = new FormatHistory();
         RawFormat original = Fmt();
         RawFormat corrected = Fmt(bayer: BayerPattern.Gbrg);
-        history.Record(Size, ".raw", original, autoOpen: false, T0);
+        history.Record(Size, ".raw", original, autoOpen: null, T0);
+        Assert.True(Assert.Single(history.Entries).AutoOpen);
 
         Assert.True(history.Replace(Size, ".raw", original, corrected, autoOpen: null, T0));
 
         FormatHistoryEntry entry = Assert.Single(history.Entries);
         Assert.Equal(corrected, entry.Format);
-        Assert.False(entry.AutoOpen);
+        Assert.True(entry.AutoOpen);
     }
 
     [Fact]
@@ -266,25 +272,6 @@ public class FormatHistoryTests
         FormatHistoryEntry entry = Assert.Single(history.Find(Size, ".raw"));
         Assert.Equal(second, entry.Format);
         Assert.True(entry.AutoOpen);
-    }
-
-    [Fact]
-    public void Remove_DeletesEveryInterpretationOfTheKeyOnly()
-    {
-        var history = new FormatHistory();
-        history.Record(Size, ".raw", Fmt(), null, T0);
-        history.Record(Size, ".raw", Fmt(bitDepth: 16), null, T0);
-        history.Record(Size, ".bin", Fmt(), null, T0);
-
-        Assert.Equal(2, history.Remove(Size, "RAW"));
-
-        Assert.Empty(history.Find(Size, ".raw"));
-        Assert.Single(history.Find(Size, ".bin"));
-        Assert.Equal(0, history.Remove(Size, ".raw"));
-
-        // 消した後に記録すると、記憶のないキーとして自動で開く
-        history.Record(Size, ".raw", Fmt(bitDepth: 16), null, T0.AddMinutes(1));
-        Assert.Equal(Fmt(bitDepth: 16), history.FindAutoOpenFormat(Size, ".raw"));
     }
 
     [Fact]

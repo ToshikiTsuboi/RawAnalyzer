@@ -30,6 +30,9 @@ public class FormatHistoryStoreTests : IDisposable
     {
         var store = new FormatHistoryStore(_directory);
         Assert.Equal(Path.Combine(_directory, "format-history.json"), store.FilePath);
+        Assert.Empty(store.LoadOrQuarantine(out bool corrupted).Entries);
+        Assert.False(corrupted, "ファイル未存在は破損ではないこと");
+
         var history = new FormatHistory();
         RawFormat hdr = new()
         {
@@ -43,7 +46,7 @@ public class FormatHistoryStoreTests : IDisposable
         history.Record(640 * 480 * 2, ".bin", mono, autoOpen: false, T0.AddHours(1));
 
         store.Save(history);
-        FormatHistory loaded = new FormatHistoryStore(_directory).LoadOrQuarantine(out bool corrupted);
+        FormatHistory loaded = new FormatHistoryStore(_directory).LoadOrQuarantine(out corrupted);
 
         Assert.False(corrupted);
         Assert.False(File.Exists(store.BackupPath));
@@ -66,7 +69,8 @@ public class FormatHistoryStoreTests : IDisposable
 
         store.Save(history);
 
-        // 列挙型はプリセットと同じく文字列で保存する(手で読める・並びを変えても壊れない)
+        // 列挙型はプリセットと同じく文字列で保存する(手で読める・並びを変えても壊れない)。
+        // 文字列化は型に付けた変換器の働きで、プリセット(FormatPresetStore)も同じ SerializerOptions で書く
         string json = File.ReadAllText(store.FilePath);
         Assert.Contains("\"Rggb\"", json);
         Assert.Contains("\"LineInterleaved\"", json);
@@ -103,18 +107,6 @@ public class FormatHistoryStoreTests : IDisposable
         FormatHistoryEntry entry = Assert.Single(loaded.Entries);
         Assert.Equal(".raw", entry.Extension);
         Assert.Equal(HdrMode.Auto, entry.Format.Hdr);
-    }
-
-    [Fact]
-    public void LoadOrQuarantine_MissingFile_StartsEmptyWithoutBackup()
-    {
-        var store = new FormatHistoryStore(_directory);
-
-        FormatHistory loaded = store.LoadOrQuarantine(out bool corrupted);
-
-        Assert.False(corrupted, "ファイル未存在は破損ではないこと");
-        Assert.Empty(loaded.Entries);
-        Assert.False(File.Exists(store.BackupPath));
     }
 
     [Fact]
