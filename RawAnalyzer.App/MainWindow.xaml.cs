@@ -461,7 +461,9 @@ public partial class MainWindow : Window
         _vm.FolderPath = $"📂 {folder}";
         _vm.ReplaceFiles(entries);
 
-        ExpandTreeToFolder(folder);
+        // 祖先の各階層の初回の列挙は UI スレッドの外で行い、待たずに一覧の続きへ進む(別のフォルダを開いたら
+        // 前の同期はやめる)
+        _ = _folderTreeNavigator.SyncToFolderAsync(FolderTree, folder);
         _session.LastFolder = folder;
         _session.FileFilter = _vm.FileFilterText;
         _sessionStore.Save(_session);
@@ -4544,8 +4546,8 @@ public partial class MainWindow : Window
 
     // ---- フォルダツリー ----
 
-    private const string TreeDummyChild = "…";
-    private bool _syncingTree;
+    // 子フォルダの列挙は UI スレッドの外で行う(ネットワーク共有・切断中のドライブで固まらない)
+    private readonly FolderTreeNavigator _folderTreeNavigator = new();
 
     private void InitFolderTree()
     {
@@ -4553,12 +4555,8 @@ public partial class MainWindow : Window
         var items = new List<(System.Windows.Controls.TreeViewItem Item, DriveInfo Drive)>();
         foreach (DriveInfo drive in DriveInfo.GetDrives())
         {
-            var item = new System.Windows.Controls.TreeViewItem
-            {
-                Header = $"💽 {drive.Name.TrimEnd('\\')}",
-                Tag = drive.RootDirectory.FullName,
-            };
-            item.Items.Add(TreeDummyChild);
+            System.Windows.Controls.TreeViewItem item = FolderTreeNavigator.CreateItem(
+                $"💽 {drive.Name.TrimEnd('\\')}", drive.RootDirectory.FullName);
             FolderTree.Items.Add(item);
             items.Add((item, drive));
         }
@@ -4597,114 +4595,27 @@ public partial class MainWindow : Window
     {
         if (e.OriginalSource is System.Windows.Controls.TreeViewItem item)
         {
-            PopulateTreeItem(item);
+            _ = _folderTreeNavigator.PopulateAsync(item);
         }
     }
 
-    private static void PopulateTreeItem(System.Windows.Controls.TreeViewItem item)
+    private async void OnFolderTreeSelected(object sender, RoutedPropertyChangedEventArgs<object> e)
     {
-        if (item.Items.Count != 1 || !Equals(item.Items[0], TreeDummyChild)
-            || item.Tag is not string path)
+        // 開いたフォルダへツリーを同期しただけの選択では開き直さない
+        if (_folderTreeNavigator.IsSyncingSelection)
         {
             return;
         }
 
-        item.Items.Clear();
-        try
+        if (e.NewValue is System.Windows.Controls.TreeViewItem { Tag: string path } item)
         {
-            // 属性は列挙結果に含まれているものを使う。ディレクトリごとに
-            // File.GetAttributes を呼ぶとSMBでは1件ごとに往復が増え、
-            // フォルダ数の多いネットワーク共有では展開1回で数秒固まる
-            foreach (DirectoryInfo dir in new DirectoryInfo(path).EnumerateDirectories()
-                .Where(d => (d.Attributes & (FileAttributes.Hidden | FileAttributes.System)) == 0)
-                .OrderBy(d => d.FullName, NaturalOrderComparer.Instance))
+            // 存在の確認も切断されたネットワークドライブではタイムアウトまで戻らないので、UI スレッドの外で行う。
+            // 確かめる間に別の項目を選んでいたら開かない
+            bool exists = await Task.Run(() => Directory.Exists(path));
+            if (exists && ReferenceEquals(FolderTree.SelectedItem, item))
             {
-                var child = new System.Windows.Controls.TreeViewItem
-                {
-                    Header = $"📁 {dir.Name}",
-                    Tag = dir.FullName,
-                };
-                child.Items.Add(TreeDummyChild);
-                item.Items.Add(child);
+                LoadFolder(path, selectPath: null);
             }
-        }
-        catch (UnauthorizedAccessException)
-        {
-        }
-        catch (IOException)
-        {
-        }
-    }
-
-    private void OnFolderTreeSelected(object sender, RoutedPropertyChangedEventArgs<object> e)
-    {
-        if (_syncingTree)
-        {
-            return;
-        }
-
-        if (e.NewValue is System.Windows.Controls.TreeViewItem { Tag: string path }
-            && Directory.Exists(path))
-        {
-            LoadFolder(path, selectPath: null);
-        }
-    }
-
-    /// <summary>フォルダツリーを指定パスまで展開して選択する(ベストエフォート)。</summary>
-    private void ExpandTreeToFolder(string folder)
-    {
-        if (_syncingTree)
-        {
-            return;
-        }
-
-        _syncingTree = true;
-        try
-        {
-            string? root = Path.GetPathRoot(folder);
-            if (string.IsNullOrEmpty(root))
-            {
-                return;
-            }
-
-            System.Windows.Controls.TreeViewItem? node = FolderTree.Items
-                .OfType<System.Windows.Controls.TreeViewItem>()
-                .FirstOrDefault(i => string.Equals(
-                    (string)i.Tag, root, StringComparison.OrdinalIgnoreCase));
-            if (node is null)
-            {
-                return;
-            }
-
-            node.IsExpanded = true;
-            PopulateTreeItem(node);
-            string relative = folder[root.Length..].Trim('\\');
-            if (relative.Length > 0)
-            {
-                foreach (string segment in relative.Split('\\'))
-                {
-                    System.Windows.Controls.TreeViewItem? next = node.Items
-                        .OfType<System.Windows.Controls.TreeViewItem>()
-                        .FirstOrDefault(i => string.Equals(
-                            Path.GetFileName((string)i.Tag), segment,
-                            StringComparison.OrdinalIgnoreCase));
-                    if (next is null)
-                    {
-                        return;
-                    }
-
-                    next.IsExpanded = true;
-                    PopulateTreeItem(next);
-                    node = next;
-                }
-            }
-
-            node.IsSelected = true;
-            node.BringIntoView();
-        }
-        finally
-        {
-            _syncingTree = false;
         }
     }
 
@@ -5403,13 +5314,7 @@ public partial class MainWindow : Window
     {
         if (FolderTree.SelectedItem is System.Windows.Controls.TreeViewItem item)
         {
-            bool wasExpanded = item.IsExpanded;
-            item.Items.Clear();
-            item.Items.Add(TreeDummyChild);
-            if (wasExpanded)
-            {
-                PopulateTreeItem(item);
-            }
+            _ = _folderTreeNavigator.RefreshAsync(item);
         }
     }
 
