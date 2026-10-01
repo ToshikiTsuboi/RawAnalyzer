@@ -38,6 +38,31 @@ public class CompareSyncTests
         Assert.Equal(325, mapped.OriginY, 10);
     }
 
+    [Theory]
+    [InlineData(1.5, 1.0)]
+    [InlineData(1.0, 1.25)]
+    [InlineData(2.0, 1.5)]
+    public void MapView_Pixel_MatchesDeviceZoomAcrossDisplayScales(double sourceScale, double targetScale)
+    {
+        // 等倍同期は画面のデバイス画素で倍率を合わせる(等倍は元画像 1 画素 = 1 デバイス画素で、ズームは
+        // DIP 基準の 1/倍率)。DIP 基準のズームをそのまま写すと、倍率の違うペインでは等倍にならない
+        foreach (double deviceZoom in new[] { 1.0, 4.0, 0.5 })
+        {
+            var source = new PaneViewState(deviceZoom / sourceScale, 0, 0, 500, 500, 1000, 1000, sourceScale);
+            var target = new PaneViewState(0.123, 0, 0, 400, 300, 2000, 2000, targetScale);
+
+            ViewTransform mapped = CompareSync.MapView(CompareSyncMode.PixelZoom, source, target);
+
+            Assert.Equal(deviceZoom / targetScale, mapped.Zoom, 12);
+        }
+
+        // 同じ倍率(同じウィンドウ)のペイン同士はズームをそのまま写す
+        var same = new PaneViewState(0.3, 0, 0, 500, 500, 1000, 1000, sourceScale);
+        Assert.Equal(
+            0.3,
+            CompareSync.MapView(CompareSyncMode.PixelZoom, same, same with { ImageWidth = 2000 }).Zoom);
+    }
+
     [Fact]
     public void MapView_Fov_RoundTripsBackToSource()
     {

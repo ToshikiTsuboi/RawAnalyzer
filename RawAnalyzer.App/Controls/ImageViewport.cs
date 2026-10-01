@@ -14,8 +14,14 @@ namespace RawAnalyzer.App.Controls;
 /// <summary>ビューポート状態(ズーム率・使用ピラミッドレベル)の通知引数。</summary>
 public sealed class ViewportStateEventArgs : EventArgs
 {
-    /// <summary>ズーム率(表示px / 元画像px)。</summary>
+    /// <summary>ズーム率(表示 DIP / 元画像画素。<see cref="ImageViewport.Zoom"/> と同じ単位)。</summary>
     public double Zoom { get; init; }
+
+    /// <summary>
+    /// デバイス基準のズーム率(画面のデバイス画素 / 元画像画素。表示倍率 100% では <see cref="Zoom"/> と同じ)。
+    /// 倍率の表示はこちらで行う(等倍で 100%)。
+    /// </summary>
+    public double DeviceZoom { get; init; }
 
     /// <summary>直近の描画に使った縮小率(1=元画像)。</summary>
     public int RenderedFactor { get; init; }
@@ -61,7 +67,6 @@ public sealed class ImageViewport : FrameworkElement
     private const double MinZoom = 1.0 / 512;
     private const double MaxZoom = 128;
     private const double ZoomStep = 1.25;
-    private const double RawOverlayMinZoom = 32;
     private const int MaxOverlayCells = 8192;
 
     private static readonly Brush CanvasBrush =
@@ -273,6 +278,12 @@ public sealed class ImageViewport : FrameworkElement
 
     /// <summary>現在のズーム率(表示 DIP / 元画像画素)。</summary>
     public double Zoom => _zoom;
+
+    /// <summary>
+    /// raw 値オーバーレイが出る最小のズーム率(DIP 基準。元画像 1 画素が 32 デバイス画素になる 32/表示倍率)。
+    /// 拡大して画素値を見せる操作は <see cref="CenterOn"/> にこれ以上のズームを渡す。
+    /// </summary>
+    public double RawOverlayZoom => DeviceScaling.RawOverlayZoom(DeviceScale);
 
     /// <summary>
     /// 表示倍率(1 DIP あたりのデバイス画素数。Windows の表示スケールが 125% なら 1.25)。
@@ -1547,7 +1558,7 @@ public sealed class ImageViewport : FrameworkElement
         // オーバーレイは品質パスでしか取得しない(分割表示か否かは描画と同じ判定。
         // 表示モードがチャネル分割でも Bayer が「なし」なら Raw として描き、オーバーレイも出す)
         if (!_overlayEvaluated
-            && _zoom >= RawOverlayMinZoom
+            && DeviceScaling.ShowsRawOverlay(_zoom, scale)
             && !IsChannelSplitLayout)
         {
             return false;
@@ -1753,7 +1764,7 @@ public sealed class ImageViewport : FrameworkElement
 
         // 表示するのは最新の描画要求の結果だけ(古い要求は取り消され、表示前に捨てられる)
         _fastRenderPending = false;
-        _overlay = !fast && zoom >= RawOverlayMinZoom
+        _overlay = !fast && DeviceScaling.ShowsRawOverlay(zoom, scale)
             && !IsChannelSplitLayout
             ? FetchOverlayData()
             : null;
@@ -1769,6 +1780,7 @@ public sealed class ImageViewport : FrameworkElement
         ViewportStateChanged?.Invoke(this, new ViewportStateEventArgs
         {
             Zoom = zoom,
+            DeviceZoom = DeviceScaling.ToDeviceZoom(zoom, scale),
             RenderedFactor = factor,
         });
     }
@@ -1802,7 +1814,7 @@ public sealed class ImageViewport : FrameworkElement
 
     private void DrawRawValueOverlay(DrawingContext dc)
     {
-        if (_overlay is null || _format is null || _zoom < RawOverlayMinZoom)
+        if (_overlay is null || _format is null || !DeviceScaling.ShowsRawOverlay(_zoom, DeviceScale))
         {
             return;
         }
@@ -1839,7 +1851,7 @@ public sealed class ImageViewport : FrameworkElement
         using (DrawingContext dc = group.Open())
         {
             int shift = 16 - _format!.BitDepth;
-            double fontSize = Math.Clamp(_zoom / 4.5, 9, 15);
+            double fontSize = DeviceScaling.RawOverlayFontSize(_zoom);
             double pixelsPerDip = VisualTreeHelper.GetDpi(this).PixelsPerDip;
             Brush dark = Brushes.Black;
             Brush light = Brushes.White;

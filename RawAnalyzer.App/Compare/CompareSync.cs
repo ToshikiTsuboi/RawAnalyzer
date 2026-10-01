@@ -1,3 +1,5 @@
+using RawAnalyzer.App.Rendering;
+
 namespace RawAnalyzer.App.Compare;
 
 /// <summary>ペイン間同期のモード。</summary>
@@ -13,7 +15,7 @@ public enum CompareSyncMode
     FieldOfView,
 
     /// <summary>
-    /// 等倍同期: ズーム倍率(1画素=1px)を合わせ、位置は相対で追従する。
+    /// 等倍同期: ズーム倍率(元画像 1 画素あたりの画面のデバイス画素数)を合わせ、位置は相対で追従する。
     /// ノイズ感・解像感を等倍で見比べる用途向け。
     /// </summary>
     PixelZoom,
@@ -26,13 +28,14 @@ public enum CompareSyncMode
 public readonly record struct ViewTransform(double Zoom, double OriginX, double OriginY);
 
 /// <summary>ペインのビュー状態(同期計算の入力)。</summary>
-/// <param name="Zoom">ズーム倍率。</param>
+/// <param name="Zoom">ズーム倍率(表示 DIP / 元画像画素)。</param>
 /// <param name="OriginX">表示原点X。</param>
 /// <param name="OriginY">表示原点Y。</param>
-/// <param name="ViewWidth">ビューポートの幅(px)。</param>
-/// <param name="ViewHeight">ビューポートの高さ(px)。</param>
+/// <param name="ViewWidth">ビューポートの幅(DIP)。</param>
+/// <param name="ViewHeight">ビューポートの高さ(DIP)。</param>
 /// <param name="ImageWidth">画像の幅(画素)。</param>
 /// <param name="ImageHeight">画像の高さ(画素)。</param>
+/// <param name="DeviceScale">表示倍率(1 DIP あたりのデバイス画素数。ImageViewport.DeviceScale)。</param>
 public readonly record struct PaneViewState(
     double Zoom,
     double OriginX,
@@ -40,7 +43,8 @@ public readonly record struct PaneViewState(
     double ViewWidth,
     double ViewHeight,
     int ImageWidth,
-    int ImageHeight);
+    int ImageHeight,
+    double DeviceScale = 1.0);
 
 /// <summary>
 /// ペイン間のビュー・カーソル同期の座標計算(純関数)。
@@ -70,7 +74,12 @@ public static class CompareSync
         double zoom;
         if (mode == CompareSyncMode.PixelZoom)
         {
-            zoom = source.Zoom;
+            // 等倍は画面のデバイス画素で合わせる(等倍は元画像 1 画素 = 1 デバイス画素)。
+            // 同じ倍率のペイン同士(同じウィンドウ)ならズームをそのまま写す
+            zoom = source.DeviceScale == target.DeviceScale
+                ? source.Zoom
+                : DeviceScaling.FromDeviceZoom(
+                    DeviceScaling.ToDeviceZoom(source.Zoom, source.DeviceScale), target.DeviceScale);
         }
         else
         {

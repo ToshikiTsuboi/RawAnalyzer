@@ -532,7 +532,8 @@ public partial class CompareView : UserControl
         return new PaneViewState(
             viewport.Zoom, viewport.OriginX, viewport.OriginY,
             viewport.ActualWidth, viewport.ActualHeight,
-            pane.Pane!.Image.Width, pane.Pane.Image.Height);
+            pane.Pane!.Image.Width, pane.Pane.Image.Height,
+            viewport.DeviceScale);
     }
 
     private void OnPaneCursorMoved(ComparePaneView source, int x, int y)

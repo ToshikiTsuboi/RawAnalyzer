@@ -3892,9 +3892,10 @@ public partial class MainWindow : Window
 
     private void OnViewportStateChanged(object? sender, ViewportStateEventArgs e)
     {
-        string percent = e.Zoom >= 0.1
-            ? $"{e.Zoom * 100:F0}%"
-            : $"{e.Zoom * 100:F2}%";
+        // 倍率は画面のデバイス画素あたり(等倍で 100%。表示倍率 100% 以外でも元画像 1 画素 = 1 デバイス画素)
+        string percent = e.DeviceZoom >= 0.1
+            ? $"{e.DeviceZoom * 100:F0}%"
+            : $"{e.DeviceZoom * 100:F2}%";
         int levelIndex = (int)Math.Round(Math.Log2(e.RenderedFactor));
         _vm.ZoomPercentText = percent;
         _vm.ZoomStatusText = $"Zoom {percent} · L{levelIndex}";
@@ -5052,8 +5053,9 @@ public partial class MainWindow : Window
             return;
         }
 
-        // 欠陥は元画像の座標。チャネル分割表示ではその画素が並ぶ象限上の位置へ移動する
-        Viewport.CenterOnSourcePixel(defect.X, defect.Y, Math.Max(Viewport.Zoom, 32));
+        // 欠陥は元画像の座標。チャネル分割表示ではその画素が並ぶ象限上の位置へ移動する。
+        // 画素値が重ねて見えるズーム(デバイス基準の 32 倍)まで拡大する
+        Viewport.CenterOnSourcePixel(defect.X, defect.Y, Math.Max(Viewport.Zoom, Viewport.RawOverlayZoom));
     }
 
     // ---- ノイズ / ダイナミックレンジ測定 ----
@@ -5539,8 +5541,10 @@ public partial class MainWindow : Window
     {
         if (_lastCursorInside)
         {
-            // カーソル位置は元画像の座標で持っている(分割表示ではタイル上の位置へ戻す)
-            Viewport.CenterOnSourcePixel(_lastCursorX, _lastCursorY, Math.Max(Viewport.Zoom, 32));
+            // カーソル位置は元画像の座標で持っている(分割表示ではタイル上の位置へ戻す)。
+            // 画素値が重ねて見えるズーム(デバイス基準の 32 倍)まで拡大する
+            Viewport.CenterOnSourcePixel(
+                _lastCursorX, _lastCursorY, Math.Max(Viewport.Zoom, Viewport.RawOverlayZoom));
         }
     }
 

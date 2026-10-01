@@ -128,6 +128,7 @@ public class ImageViewportDeviceScaleTests
             ViewportStateEventArgs first = await shown.WaitAsync(TimeSpan.FromSeconds(10));
 
             Assert.Equal(1 / scale, viewport.Zoom, 12);
+            Assert.Equal(1.0, first.DeviceZoom); // ステータスバーの倍率は 100%
             Assert.Equal(1, first.RenderedFactor);
             (BitmapSource bitmap, _, byte[] pixels) = Rendered(viewport);
             Assert.Empty(PatternMismatches(viewport, image, bitmap, pixels, deviceZoom: 1.0));
@@ -174,6 +175,74 @@ public class ImageViewportDeviceScaleTests
             image.Dispose();
         }
     });
+
+    [Theory]
+    [InlineData(1.0)]
+    [InlineData(1.25)]
+    [InlineData(1.5)]
+    [InlineData(2.0)]
+    public Task RawOverlay_AppearsAtDeviceZoom32_AndFitsItsCell(double scale) => WpfTestHost.Run(async () =>
+    {
+        // raw 値オーバーレイは元画像 1 画素が 32 デバイス画素以上(倍率表示 3200% 以上)で出す。
+        // 「ここを拡大」・欠陥一覧からの移動はこのズーム(RawOverlayZoom)へ寄せる。高DPIではこのときの
+        // マスが 32 DIP より小さい(200% で 16 DIP)ので、コード値 5 桁がマスに収まる大きさの文字で描く
+        const int size = 16;
+        var format = new RawFormat { Width = size, Height = size, BitDepth = 16 };
+        var codes = new ushort[size * size];
+        for (int i = 0; i < codes.Length; i++)
+        {
+            codes[i] = (ushort)(60000 + i); // 5 桁。中央 (8,8) は 60136
+        }
+
+        using RawImage image = TestImages.FromCodes(codes, format);
+        var viewport = new ImageViewport();
+        viewport.OverrideDeviceScale(scale);
+        viewport.Measure(new Size(ViewWidth, ViewHeight));
+        viewport.Arrange(new Rect(0, 0, ViewWidth, ViewHeight));
+        viewport.SetImage(image, format);
+        try
+        {
+            double zoom = viewport.RawOverlayZoom;
+            Assert.Equal(32 / scale, zoom, 12);
+            ViewportStateEventArgs shown = await CenterOnAndWaitAsync(viewport, 8, 8, zoom);
+            Assert.Equal(32.0, shown.DeviceZoom); // ステータスバーの倍率は 3200%
+
+            viewport.UpdateLayout(); // OnRender → 画素値オーバーレイ
+            List<GlyphRun> runs = CollectGlyphRuns(VisualTreeHelper.GetDrawing(viewport));
+            Assert.Contains(runs, run => new string(run.Characters.ToArray()) == "60136");
+            Assert.All(runs, run => Assert.True(
+                run.AdvanceWidths.Sum() <= zoom,
+                $"{new string(run.Characters.ToArray())}: 幅 {run.AdvanceWidths.Sum()} > マス {zoom}"));
+        }
+        finally
+        {
+            await viewport.ClearImageAsync();
+        }
+    });
+
+    private static List<GlyphRun> CollectGlyphRuns(Drawing? drawing)
+    {
+        var runs = new List<GlyphRun>();
+        Collect(drawing);
+        return runs;
+
+        void Collect(Drawing? node)
+        {
+            switch (node)
+            {
+                case DrawingGroup group:
+                    foreach (Drawing child in group.Children)
+                    {
+                        Collect(child);
+                    }
+
+                    break;
+                case GlyphRunDrawing { GlyphRun: { } run }:
+                    runs.Add(run);
+                    break;
+            }
+        }
+    }
 
     private static (ImageViewport Viewport, RawImage Image) CreateViewport(double scale, int width, int height)
     {
