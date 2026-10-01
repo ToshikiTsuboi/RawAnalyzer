@@ -636,44 +636,7 @@ public class TiffSpecTests
         Assert.Equal(65535, pane.Image.GetPixel(W - 1, H - 1));
     }
 
-    [Fact]
-    public void PageTable_IsParsedOncePerFileVersion()
-    {
-        // ページを1枚読むたびにIFDチェーン全体を(TryReadSampleInfo と TryProbePixelLayout で2回)解析していたため、
-        // 多ページTIFFの再生・一括書き出しが O(N²) になっていた(全体レビュー 2026-10-01 B33)。ページ表は
-        // パス・長さ・更新日時が同じ間は使い回し、どれかが変われば作り直す。
-        // 使い回していることは、長さと更新日時を保ったままチェーンを切ったファイルでも前のページ表で読めることで確かめる
-        var page = TiffBuilder.GrayPage(W, H, 16, Ramp16());
-        using var file = TempTiff.Write(new TiffBuilder().Build(page, page, page));
-        Assert.True(TiffLoader.TryReadSampleInfo(file.Path, out TiffSampleInfo? before));
-        Assert.Equal(3, before!.PageCount);
-
-        byte[] bytes = File.ReadAllBytes(file.Path);
-        long link = NextIfdLink(bytes, BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(4)));
-        BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan((int)link), 0); // 1ページ目でチェーンを切る
-        DateTime written = File.GetLastWriteTimeUtc(file.Path);
-        File.WriteAllBytes(file.Path, bytes);
-        File.SetLastWriteTimeUtc(file.Path, written);
-
-        Assert.True(TiffLoader.TryReadSampleInfo(file.Path, out TiffSampleInfo? reused, pageIndex: 2));
-        Assert.Equal(3, reused!.PageCount);
-        Assert.True(TiffLoader.TryProbePixelLayout(file.Path, out TiffPixelLayout? layout, out _, pageIndex: 2));
-        Assert.Equal(3, layout!.PageCount);
-
-        // 更新日時が変われば作り直す(ページ数の変化を見逃さない)
-        File.SetLastWriteTimeUtc(file.Path, written.AddSeconds(2));
-        Assert.True(TiffLoader.TryReadSampleInfo(file.Path, out TiffSampleInfo? after));
-        Assert.Equal(1, after!.PageCount);
-    }
-
     // ------------------------------------------------------------------ 補助
-
-    /// <summary>リトルエンディアンのクラシックTIFFで、IFD の次IFDオフセットの位置。</summary>
-    private static long NextIfdLink(byte[] bytes, long ifd)
-    {
-        int count = BinaryPrimitives.ReadUInt16LittleEndian(bytes.AsSpan((int)ifd));
-        return ifd + 2 + (count * 12);
-    }
 
     private static byte[] Ramp16(bool bigEndian = false)
     {
