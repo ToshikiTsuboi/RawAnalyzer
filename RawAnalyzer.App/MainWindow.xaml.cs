@@ -3607,6 +3607,15 @@ public partial class MainWindow : Window
 
         // 派生ビューで出していたラインプロファイルも、元画像(HDR表示の元にしたフレーム)で計算し直す
         RefreshLineProfile();
+
+        // 派生ビューの出入り・分割⇔合成の切替で世代を進めると(CancelDerivedBayerPyramidBuild)、同じトークンで
+        // 走っていた元画像の縮小ピラミッドの生成(フレーム送りの後に始めたものなど)も取り消される。表示し直した
+        // フレームのピラミッドがなければ作り直す(作らないと次に送るまで等倍データから縮小描画する。性能ルール2)。
+        // 読み込みの確定待ちなら、まもなく差し替わる元画像のためには作らない
+        if (!Viewport.HasPyramidForCurrentFrame && !_imageGate.IsLoadPending)
+        {
+            _ = BuildPyramidAsync(_currentImage!, _loadCts?.Token ?? CancellationToken.None, Viewport.Frame);
+        }
     }
 
     private DisplayParameters CurrentDisplayParameters()
