@@ -193,8 +193,9 @@ public class ImageProcessingTests
             }
         }
 
+        // 入力を書き換えない。source は rgb を写さずに包むので、rgb ではなく元の値の定数と比べる
         source.GetPixel(0, 0, out ushort originalR, out _, out _);
-        Assert.Equal(rgb[0], originalR);
+        Assert.Equal((ushort)733, originalR); // (0 × 1973 + 733) % 65536
     }
 
     [Fact]
@@ -223,7 +224,7 @@ public class ImageProcessingTests
     }
 
     [Fact]
-    public void InvalidParametersAndCancellationAreRejectedBeforeAllocation()
+    public void InvalidParametersAndPreCancelledToken_Throw()
     {
         using RawImage source = Raw(8, 8, (_, _) => 500);
         foreach (int factor in new[] { 1, 17 })
