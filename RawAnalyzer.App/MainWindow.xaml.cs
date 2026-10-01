@@ -1713,6 +1713,10 @@ public partial class MainWindow : Window
 
     // ---- カラーマトリクス ----
 
+    /// <summary>カラーマトリクスの入力欄(M11〜M33 の行優先)。</summary>
+    private System.Windows.Controls.TextBox[] MatrixBoxes =>
+        new[] { M11Box, M12Box, M13Box, M21Box, M22Box, M23Box, M31Box, M32Box, M33Box };
+
     private void OnMatrixChanged(object sender, RoutedEventArgs e)
     {
         if (_updatingMatrixBoxes || M33Box is null || MatrixStateText is null)
@@ -1720,25 +1724,14 @@ public partial class MainWindow : Window
             return;
         }
 
-        var boxes = new[]
+        // 読めない欄は赤枠とツールチップの理由で示し、前の行列のまま現像する
+        if (!ColorMatrixInput.TryRead(MatrixBoxes, out ColorMatrix? matrix))
         {
-            M11Box, M12Box, M13Box, M21Box, M22Box, M23Box, M31Box, M32Box, M33Box,
-        };
-        var values = new double[9];
-        for (int i = 0; i < 9; i++)
-        {
-            // NaN/Infinity が入ると現像結果が全画素破綻するので有限値だけ通す
-            if (!NumericInput.TryParseFinite(boxes[i].Text, out values[i]))
-            {
-                MatrixStateText.Text = "入力エラー";
-                return;
-            }
+            MatrixStateText.Text = "入力エラー";
+            return;
         }
 
-        _colorMatrix = new ColorMatrix(
-            values[0], values[1], values[2],
-            values[3], values[4], values[5],
-            values[6], values[7], values[8]);
+        _colorMatrix = matrix;
         MatrixStateText.Text = _colorMatrix.IsIdentity ? "単位行列 (無効)" : "適用中";
         if (_vm.HasImage)
         {
@@ -1759,6 +1752,11 @@ public partial class MainWindow : Window
         M32Box.Text = "0.00";
         M33Box.Text = "1.00";
         _updatingMatrixBoxes = false;
+        foreach (System.Windows.Controls.TextBox box in MatrixBoxes)
+        {
+            InputFeedback.SetError(box, null); // 書き直した欄に前の入力の不正の知らせを残さない
+        }
+
         _colorMatrix = ColorMatrix.Identity;
         MatrixStateText.Text = "単位行列 (無効)";
         if (_vm.HasImage)
