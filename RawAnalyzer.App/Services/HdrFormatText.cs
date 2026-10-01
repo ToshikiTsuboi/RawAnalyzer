@@ -3,7 +3,7 @@ using RawAnalyzer.Core;
 
 namespace RawAnalyzer.App.Services;
 
-/// <summary>フォーマットのHDR設定の文字列(右パネルのフォーマット欄の要約)。</summary>
+/// <summary>フォーマットのHDR設定の文字列(右パネルのフォーマット欄の要約と、保存の付随テキストのHDR行)。</summary>
 /// <remarks>
 /// <para>
 /// ライン単位と行オフセットは行交互の分割だけが使う(フレーム連結は各フレームが1つの露光で、整列しない)。
@@ -46,6 +46,29 @@ internal static class HdrFormatText
                 + (format.HdrRowOffset != 0 ? $" / 行オフセット{FormatRowOffset(format.HdrRowOffset)}" : "")
             : "";
         return $"{layoutText} {format.HdrStages}段 (露光比 {FormatRatio(format.ExposureRatio)}){detail}";
+    }
+
+    /// <summary>
+    /// 保存の付随テキストの[入力フォーマット]のHDR行の値(HDR方式・段数・露光比と、行交互ならライン単位・行オフセット)。
+    /// </summary>
+    /// <remarks>
+    /// 行交互ではライン単位が行の振り分けを、行オフセットが各段の切り出し位置と Bayer 位相を決める。書かないと、
+    /// ライン単位1と2や行オフセット+2と−2のように派生画像の寸法が同じになる分割・合成を後から区別できない。
+    /// ライン単位は実効値(未指定なら Bayer で決まる値)、行オフセットは0でも書く。
+    /// </remarks>
+    /// <param name="format">元画像のフォーマット(右パネルで指定した Bayer を含む。分割・合成に使ったもの)。</param>
+    /// <returns>HDR行の値(HDRでなければ「None」)。</returns>
+    internal static string DescribeSidecar(RawFormat format)
+    {
+        if (format.Hdr == HdrMode.None)
+        {
+            return format.Hdr.ToString();
+        }
+
+        string text = $"{format.Hdr} {format.HdrStages}段 露光比{FormatRatio(format.ExposureRatio)}";
+        return TryResolveLayout(format) == HdrMode.LineInterleaved
+            ? text + $" ライン単位{format.EffectiveHdrLineBlock} 行オフセット{FormatRowOffset(format.HdrRowOffset)}"
+            : text;
     }
 
     /// <summary>露光比(整数に丸めない。HDR派生ビューの来歴と同じ書式)。</summary>

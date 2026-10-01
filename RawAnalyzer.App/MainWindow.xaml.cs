@@ -2311,9 +2311,7 @@ public partial class MainWindow : Window
                         format.Packing == BitPacking.Lsb ? "下詰め" : "上詰め");
                 sb.Append("  エンディアン: ").AppendLine(format.Endianness.ToString());
                 sb.Append("  Bayer: ").AppendLine(format.Bayer.ToString());
-                sb.Append("  HDR: ").Append(format.Hdr).Append(' ')
-                    .AppendLine(format.Hdr == HdrMode.None
-                        ? "" : $"{format.HdrStages}段 露光比{format.ExposureRatio:F1}");
+                sb.Append("  HDR: ").AppendLine(HdrFormatText.DescribeSidecar(format));
             }
 
             // HDR派生ビューから保存した画像は元ファイルの画素ではない。どの派生ビューか(合成なら合成で減算した黒点・

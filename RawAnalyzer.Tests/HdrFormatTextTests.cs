@@ -66,6 +66,43 @@ public class HdrFormatTextTests
     }
 
     [Fact]
+    public void Sidecar_LineInterleaved_RecordsEffectiveLineBlockAndRowOffset()
+    {
+        // 回帰テスト: 保存の付随テキストの[入力フォーマット]のHDR行は段数と露光比だけで、分割を決めるライン単位と
+        // 行オフセットを書かなかった。Bayer でライン単位1と2(オフセット0)や、行オフセット+2と−2の画像は、派生画像の
+        // 寸法も同じになり、どちらの整列で作った画像か判別できなかった。露光比は F1 から 0.### にそろえる
+        var basis = new RawFormat
+        {
+            Width = 8, Height = 12, BitDepth = 12, Bayer = BayerPattern.Rggb,
+            Hdr = HdrMode.LineInterleaved, HdrStages = 2, ExposureRatio = 4.5,
+        };
+
+        Assert.Equal("LineInterleaved 2段 露光比4.5 ライン単位2 行オフセット0", HdrFormatText.DescribeSidecar(basis));
+        Assert.Equal(
+            "LineInterleaved 2段 露光比4.5 ライン単位1 行オフセット0",
+            HdrFormatText.DescribeSidecar(basis with { HdrLineBlock = 1 }));
+        Assert.Equal(
+            "LineInterleaved 2段 露光比4.5 ライン単位2 行オフセット+2",
+            HdrFormatText.DescribeSidecar(basis with { HdrRowOffset = 2 }));
+        Assert.Equal(
+            "LineInterleaved 2段 露光比4.5 ライン単位2 行オフセット-2",
+            HdrFormatText.DescribeSidecar(basis with { HdrRowOffset = -2 }));
+    }
+
+    [Fact]
+    public void Sidecar_FrameSequentialOrNone_HasNoLineBlock()
+    {
+        var frames = new RawFormat
+        {
+            Width = 8, Height = 8, BitDepth = 12, FrameCount = 2, Hdr = HdrMode.Auto, HdrStages = 2,
+            ExposureRatio = 16, HdrRowOffset = 2,
+        };
+
+        Assert.Equal("Auto 2段 露光比16", HdrFormatText.DescribeSidecar(frames));
+        Assert.Equal("None", HdrFormatText.DescribeSidecar(new RawFormat { Width = 4, Height = 4, BitDepth = 12 }));
+    }
+
+    [Fact]
     public void Panel_None()
     {
         Assert.Equal("なし", HdrFormatText.DescribePanel(new RawFormat { Width = 4, Height = 4, BitDepth = 12 }));
