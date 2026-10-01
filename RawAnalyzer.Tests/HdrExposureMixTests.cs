@@ -28,6 +28,69 @@ public class HdrExposureMixTests
         Assert.Equal(expected, HdrExposureMix.InFrame(Format(hdr, frameCount)));
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void Noise_LineInterleavedRawView_IsRefusedWhateverTheRoi(bool wholeImage)
+    {
+        RoiAnalysisTarget target = wholeImage
+            ? new WholeImageTarget()
+            : new SourceRoiTarget(new RegionOfInterest(2, 2, 4, 4));
+
+        // 行交互HDRの Raw 表示では、どの ROI にも長秒と短秒の行が交互に入り、露光差(行ごとの段差)が
+        // σ_total・σ_FPN・DR に乗る。以前は HDR を見ずに、もっともらしい値を警告なしで出していた
+        string? reason = HdrExposureMix.NoiseRefusal(
+            lineInterleavedRawView: true, splitSegmentWidth: 0, target);
+
+        Assert.NotNull(reason);
+        Assert.Contains("分割ビュー", reason);
+    }
+
+    [Theory]
+    [InlineData(90, 0, 20, 10, true)]     // 段の境界(x=100)をまたぐ
+    [InlineData(10, 5, 80, 40, false)]    // 長秒の段の中
+    [InlineData(100, 5, 100, 40, false)]  // 短秒の段の中(右端まで)
+    public void Noise_SplitView_RequiresRoiInsideOneStage(int x, int y, int width, int height, bool refused)
+    {
+        // 分割ビューは長秒(左)と短秒(右)を並べた1枚。段をまたぐと露光差が σ に乗る
+        var target = new SourceRoiTarget(new RegionOfInterest(x, y, width, height));
+
+        string? reason = HdrExposureMix.NoiseRefusal(
+            lineInterleavedRawView: false, splitSegmentWidth: 100, target);
+
+        Assert.Equal(refused, reason is not null);
+    }
+
+    [Fact]
+    public void Noise_SplitView_WholeImage_IsRefusedAndGuidedToRoi()
+    {
+        // 「ROI内のみ」なし(画像全体)は両方の段を含み、平均も2露光の中間になる
+        string? reason = HdrExposureMix.NoiseRefusal(
+            lineInterleavedRawView: false, splitSegmentWidth: 100, new WholeImageTarget());
+
+        Assert.NotNull(reason);
+        Assert.Contains("ROI", reason);
+    }
+
+    [Fact]
+    public void Noise_SplitViewChannelGrid_IsCheckedByItsSourceExtent()
+    {
+        // チャネル分割表示の1象限の ROI は元画像では2画素刻みの格子。格子の右端の画素で段をまたぐかを見る
+        var inside = new ChannelRoiTarget(
+            new ChannelRegion(90, 0, 5, 4), BayerChannel.R, new RegionOfInterest(45, 0, 5, 4));  // x=90..98
+        var across = new ChannelRoiTarget(
+            new ChannelRegion(90, 0, 6, 4), BayerChannel.R, new RegionOfInterest(45, 0, 6, 4));  // x=90..100
+
+        Assert.Null(HdrExposureMix.NoiseRefusal(false, 100, inside));
+        Assert.NotNull(HdrExposureMix.NoiseRefusal(false, 100, across));
+    }
+
+    [Fact]
+    public void Noise_OrdinaryImage_IsMeasured()
+    {
+        Assert.Null(HdrExposureMix.NoiseRefusal(false, 0, new WholeImageTarget()));
+    }
+
     [Fact]
     public void DefectDetection_LineInterleavedRawView_IsRefusedAndGuidedToSplitView()
     {

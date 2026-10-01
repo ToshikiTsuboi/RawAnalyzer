@@ -5139,6 +5139,18 @@ public partial class MainWindow : Window
             return;
         }
 
+        // HDR素材で露光の違う行・段を1つの集合として測ると、露光差が σ_FPN・DR に乗る。行交互の Raw 表示は
+        // 分割ビューへ、分割ビューでは段の中の ROI へ案内する
+        if (HdrExposureMix.NoiseRefusal(
+                _derivedImage is null && _currentFormat is not null && HdrExposureMix.InFrame(_currentFormat),
+                _derivedImage is not null && !mergedView ? _hdrSegmentWidth : 0,
+                target) is { } hdrRefusal)
+        {
+            MessageBox.Show(this, hdrRefusal, "ノイズ測定", MessageBoxButton.OK, MessageBoxImage.Warning);
+            _noiseWindow?.ResetRunButton();
+            return;
+        }
+
         NoiseMeasurement measurement = default;
 
         ProgressWindow result = ProgressWindow.Run(
