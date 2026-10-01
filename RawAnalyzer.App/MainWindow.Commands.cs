@@ -320,6 +320,10 @@ public partial class MainWindow
                 Title = "ファイルパネルの表示切替",
                 Key = Key.L,
                 Modifiers = ModifierKeys.Control,
+
+                // フルスクリーンではパネルを表示しないので、見えない表示状態だけを反転して解除後に驚かせない
+                CanExecute = () => !_vm.IsFullscreen,
+                DisabledReason = () => CommandDisabledReasons.Fullscreen,
                 Execute = () => _vm.LeftPanelVisible = !_vm.LeftPanelVisible,
             },
             new()
@@ -329,7 +333,7 @@ public partial class MainWindow
                 Title = "ファイル一覧を絞り込む",
                 Key = Key.F,
                 Modifiers = ModifierKeys.Control,
-                Description = "拡張子・ワイルドカード・/正規表現/ で左パネルの一覧を絞り込む欄へ移動",
+                Description = "拡張子・ワイルドカード・/正規表現/ で左パネルの一覧を絞り込む欄へ移動(フルスクリーンは解除する)",
                 Execute = FocusFileFilter,
             },
             new()
@@ -339,6 +343,8 @@ public partial class MainWindow
                 Title = "調整パネルの表示切替",
                 Key = Key.R,
                 Modifiers = ModifierKeys.Control,
+                CanExecute = () => !_vm.IsFullscreen,
+                DisabledReason = () => CommandDisabledReasons.Fullscreen,
                 Execute = () => _vm.RightPanelVisible = !_vm.RightPanelVisible,
             },
             new()

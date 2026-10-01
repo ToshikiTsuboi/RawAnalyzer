@@ -30,6 +30,10 @@ internal static class CommandDisabledReasons
     /// <summary>ROI を設定していない(ROI の解除)。</summary>
     public const string NoRoi = "ROI を設定していないため実行できません。";
 
+    /// <summary>フルスクリーン中(左右パネルの表示切替。フルスクリーンではパネルを表示しない)。</summary>
+    public const string Fullscreen =
+        "フルスクリーン中はパネルを表示しないため切り替えられません。F11 か Esc でフルスクリーンを解除してから切り替えてください。";
+
     /// <summary>
     /// メインの画像・通常表示を対象にするコマンド(画像があり比較モードでないこと)を実行できない理由。
     /// </summary>

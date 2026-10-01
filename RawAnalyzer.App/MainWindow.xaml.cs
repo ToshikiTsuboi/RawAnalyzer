@@ -5296,15 +5296,31 @@ public partial class MainWindow : Window
         }
     }
 
-    /// <summary>絞り込み欄へフォーカスを移す(Ctrl+F)。左パネルが隠れていれば表示する。</summary>
+    /// <summary>
+    /// 絞り込み欄へフォーカスを移す(Ctrl+F)。左パネルが隠れていれば表示し、フルスクリーンなら解除する。
+    /// </summary>
+    /// <remarks>
+    /// フルスクリーンでは左パネルを出さない(UpdatePanelLayout)。以前は解除せずにフォーカスを移そうとして何も起きず、
+    /// 続けて打った文字が1文字ショートカットとして実行された。
+    /// </remarks>
     private void FocusFileFilter()
     {
+        if (_vm.IsFullscreen)
+        {
+            _vm.IsFullscreen = false;
+        }
+
         if (!_vm.LeftPanelVisible)
         {
             _vm.LeftPanelVisible = true;
         }
 
         FileFilterCombo.Focus();
+        if (!FileFilterCombo.IsKeyboardFocusWithin)
+        {
+            // 表示したばかりでまだフォーカスを受けられないときは、次のキー入力より先(Loaded 優先度)に移す
+            Dispatcher.BeginInvoke(DispatcherPriority.Loaded, () => FileFilterCombo.Focus());
+        }
     }
 
     private void OnTreePreviewRightClick(object sender, MouseButtonEventArgs e)
