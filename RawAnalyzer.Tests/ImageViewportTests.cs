@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Interop;
@@ -532,6 +533,106 @@ public class ImageViewportTests
             image.Dispose();
         }
     });
+
+    [Theory]
+    [InlineData(1.0)]  // 等倍: 以前は交点が4画素右下の画素を指していた
+    [InlineData(0.25)] // 縮小表示: 以前は18画素右下
+    [InlineData(16.0)] // 枠が画素と同じ大きさになる拡大(以前から正しい)
+    public Task KeyboardPixelCursor_CrossesAtCenterOfItsPixel(double zoom) => WpfTestHost.Run(async () =>
+    {
+        // Ctrl+矢印の画素カーソルは、ステータスバーに値を出す画素の中心で十字が交わり、枠もその画素を
+        // 中心に描く(ゴーストカーソル・プロファイルマーカーと同じ規約)。以前は最小 9px の枠を画素の
+        // 左上から描いて交点を枠の中心に置いていたため、ズーム 9 未満では右下へ最大 4.5 画面px ずれた
+        // 別の画素を指していた
+        (ImageViewport viewport, RawImage image) = CreateBayerViewport(BayerPattern.None, 64, 64);
+        var reported = new List<CursorPixelEventArgs>();
+        viewport.CursorPixelChanged += (_, e) => reported.Add(e);
+        try
+        {
+            viewport.CenterOn(20, 30, zoom);
+            PressWithControl(viewport, Key.Right); // 最初の Ctrl+矢印でビュー中央の画素にカーソルが出る
+            CursorPixelEventArgs pixel = Assert.Single(reported);
+            viewport.UpdateLayout();
+
+            Point center = ScreenCenter(viewport, pixel.X, pixel.Y);
+            (double? rowY, double? columnX) = ProfileMarkerLines(viewport); // ガイド線の横線・縦線
+            Assert.Equal(center.Y, rowY!.Value, 9);
+            Assert.Equal(center.X, columnX!.Value, 9);
+
+            Rect frame = Assert.Single(
+                CollectDrawings<GeometryDrawing>(VisualTreeHelper.GetDrawing(viewport))
+                    .Where(drawing => drawing.Brush is null && drawing.Geometry is RectangleGeometry)
+                    .Select(drawing => ((RectangleGeometry)drawing.Geometry).Rect));
+            Assert.Equal(center.X, frame.X + frame.Width / 2, 9);
+            Assert.Equal(center.Y, frame.Y + frame.Height / 2, 9);
+            Assert.True(frame.Width >= zoom && frame.Height >= zoom); // 画素全体を囲む
+        }
+        finally
+        {
+            await viewport.ClearImageAsync();
+            image.Dispose();
+        }
+    });
+
+    /// <summary>
+    /// Ctrl を押したまま矢印キーを押す。ビューポートは Ctrl の状態を <see cref="Keyboard.Modifiers"/>
+    /// (このスレッドのキーボード状態)から読むので、その間だけこのスレッドのキーボード状態で Ctrl を押した扱いにする
+    /// (ほかのスレッド・アプリの入力には影響しない)。
+    /// </summary>
+    private static void PressWithControl(UIElement target, Key key)
+    {
+        const int VkControl = 0x11;
+        const int VkLeftControl = 0xA2;
+        var saved = new byte[256];
+        Assert.True(GetKeyboardState(saved));
+        var pressed = (byte[])saved.Clone();
+        pressed[VkControl] |= 0x80;
+        pressed[VkLeftControl] |= 0x80;
+        Assert.True(SetKeyboardState(pressed));
+        try
+        {
+            Assert.Equal(ModifierKeys.Control, Keyboard.Modifiers);
+            var source = new TestInputSource();
+            var preview = new KeyEventArgs(Keyboard.PrimaryDevice, source, Environment.TickCount, key)
+            {
+                RoutedEvent = Keyboard.PreviewKeyDownEvent,
+            };
+            target.RaiseEvent(preview);
+            target.RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice, source, Environment.TickCount, key)
+            {
+                RoutedEvent = Keyboard.KeyDownEvent,
+                Handled = preview.Handled,
+            });
+        }
+        finally
+        {
+            SetKeyboardState(saved);
+        }
+    }
+
+    [DllImport("user32.dll", ExactSpelling = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetKeyboardState(byte[] keyState);
+
+    [DllImport("user32.dll", ExactSpelling = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetKeyboardState(byte[] keyState);
+
+    /// <summary>ウィンドウを表示せずにキー入力イベントを作るための入力元。</summary>
+    private sealed class TestInputSource : PresentationSource
+    {
+        private Visual? _root;
+
+        public override Visual RootVisual
+        {
+            get => _root!;
+            set => _root = value;
+        }
+
+        public override bool IsDisposed => false;
+
+        protected override CompositionTarget GetCompositionTargetCore() => null!;
+    }
 
     /// <summary>
     /// マウスキャプチャは PresentationSource に載った要素でしか取れないので、表示しない HWND に載せる。

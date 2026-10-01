@@ -817,16 +817,17 @@ public sealed class ImageViewport : FrameworkElement
             return;
         }
 
-        double left = (_keyCursorX - _originX) * _zoom;
-        double top = (_keyCursorY - _originY) * _zoom;
+        // 十字は画素の中心で交わらせる(ゴーストカーソル・プロファイルマーカーと同じ規約)。
+        // 枠は縮小表示でも見えるよう最小 9px にし、その中心も画素の中心に置く
+        // (枠を画素の左上から描くと、ズーム 9 未満では交点が右下の別の画素を指す)
+        double cx = (_keyCursorX + 0.5 - _originX) * _zoom;
+        double cy = (_keyCursorY + 0.5 - _originY) * _zoom;
         double size = Math.Max(9, _zoom);
 
         // 画面外まで伸びるガイド線で、拡大時でも位置を見失わないようにする
-        double cx = left + size / 2;
-        double cy = top + size / 2;
         dc.DrawLine(KeyCursorGuidePen, new Point(0, cy), new Point(ActualWidth, cy));
         dc.DrawLine(KeyCursorGuidePen, new Point(cx, 0), new Point(cx, ActualHeight));
-        dc.DrawRectangle(null, KeyCursorPen, new Rect(left, top, size, size));
+        dc.DrawRectangle(null, KeyCursorPen, new Rect(cx - size / 2, cy - size / 2, size, size));
     }
 
     private static readonly Pen ProfileActivePen = CreateProfilePen(dashed: false);
