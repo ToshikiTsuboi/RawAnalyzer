@@ -40,9 +40,17 @@ internal sealed class ComparePane : IDisposable
     /// <summary>読み込み元のファイルパス。</summary>
     public string Path { get; }
 
-    /// <summary>表示用のファイル名。TIFFのページ数と、32bit等の値域換算があればその説明を添える。</summary>
+    /// <summary>
+    /// 表示用のファイル名。TIFFのページ数、マルチフレーム raw のフレーム数(どちらも先頭を表示する)と、
+    /// 32bit等の値域換算があればその説明を添える。
+    /// </summary>
+    /// <remarks>
+    /// 比較モードへ入ったときにメイン表示の画像を読み直すペインも先頭フレームを表示するので、メイン表示で
+    /// 別のフレームを見ていても、どのフレームを比べているかが分かるようにする。
+    /// </remarks>
     public string FileName => System.IO.Path.GetFileName(Path)
         + (PageCount > 1 ? $" [TIFFページ 1/{PageCount}]" : "")
+        + (Image.FrameCount > 1 ? $" [フレーム 1/{Image.FrameCount}]" : "")
         + (ValueNote is null ? "" : $" · {ValueNote}");
 
     /// <summary>元データを16bitへ写した対応関係の説明(該当しなければnull)。</summary>
