@@ -1714,7 +1714,8 @@ public partial class MainWindow : Window
         {
             var item = new System.Windows.Controls.MenuItem
             {
-                Header = Path.GetFileName(path),
+                // 見出しはアクセスキーとして解釈されるので、ファイル名の「_」を消さずに文字どおり出す
+                Header = AccessKeyText.Escape(Path.GetFileName(path)),
                 ToolTip = path,
             };
             string captured = path;
