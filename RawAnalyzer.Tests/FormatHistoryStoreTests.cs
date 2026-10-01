@@ -110,6 +110,70 @@ public class FormatHistoryStoreTests : IDisposable
     }
 
     [Fact]
+    public void Update_AppliesChangeToLatestSavedHistoryNotToOwnSnapshot()
+    {
+        // 複数起動: 先に読んだストア(B)が、後から別のストア(A)が保存した記憶を巻き戻さない
+        var b = new FormatHistoryStore(_directory);
+        FormatHistory snapshot = b.LoadOrQuarantine(out _);
+        var a = new FormatHistoryStore(_directory);
+        FormatHistory saved = a.LoadOrQuarantine(out _);
+        saved.Record(8, ".raw", new RawFormat { Width = 2, Height = 2 }, null, T0);
+        a.Save(saved);
+
+        FormatHistory updated = b.Update(history =>
+        {
+            history.Record(18, ".raw", new RawFormat { Width = 3, Height = 3 }, null, T0.AddMinutes(1));
+            return true;
+        });
+
+        Assert.Empty(snapshot.Entries);
+        Assert.Equal(2, updated.Entries.Count);
+        Assert.Equal(2, new FormatHistoryStore(_directory).Load().Entries.Count);
+    }
+
+    [Fact]
+    public void Load_FileWithUtf8Bom_IsRead()
+    {
+        var store = new FormatHistoryStore(_directory);
+        var history = new FormatHistory();
+        history.Record(8, ".raw", new RawFormat { Width = 2, Height = 2 }, null, T0);
+        store.Save(history);
+        File.WriteAllText(store.FilePath, File.ReadAllText(store.FilePath), new System.Text.UTF8Encoding(true));
+
+        Assert.Single(new FormatHistoryStore(_directory).Load().Entries);
+    }
+
+    [Fact]
+    public void Update_WithoutChange_DoesNotWrite()
+    {
+        var store = new FormatHistoryStore(_directory);
+
+        FormatHistory result = store.Update(_ => false);
+
+        Assert.Empty(result.Entries);
+        Assert.False(File.Exists(store.FilePath));
+    }
+
+    [Fact]
+    public void ReloadIfChanged_ReturnsHistoryOnlyAfterAnotherStoreSaves()
+    {
+        var b = new FormatHistoryStore(_directory);
+        b.LoadOrQuarantine(out _);
+        Assert.Null(b.ReloadIfChanged());
+
+        var a = new FormatHistoryStore(_directory);
+        a.Update(history =>
+        {
+            history.Record(8, ".raw", new RawFormat { Width = 2, Height = 2 }, null, T0);
+            return true;
+        });
+
+        Assert.Single(b.ReloadIfChanged()!.Entries);
+        Assert.Null(b.ReloadIfChanged());
+        Assert.Null(a.ReloadIfChanged()); // 自分の保存は読み直さない
+    }
+
+    [Fact]
     public void LoadOrQuarantine_CorruptedFile_MovesToBackupAndStartsEmpty()
     {
         // 握りつぶして空から始めると、次の保存で記憶が上書きされ復旧できなくなる

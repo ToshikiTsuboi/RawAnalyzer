@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 
@@ -8,13 +9,30 @@ namespace RawAnalyzer.Core;
 /// 既定では %AppData%/RawAnalyzer/format-history.json に保存する。
 /// </summary>
 /// <remarks>
+/// <para>
 /// JSON の書式はプリセット(<see cref="FormatPresetStore"/>)と同じ設定を使う
 /// (列挙型は文字列、HDR 方式の旧名は読み込み時に写す)。
+/// </para>
+/// <para>
+/// RawAnalyzer は複数起動でき、どのインスタンスも同じファイルを使う。起動時に読んだ記憶を丸ごと書き戻すと、
+/// 別のインスタンスで直した・消した・足した記憶が古い内容で巻き戻るため、変更は <see cref="Update"/> で
+/// 「他のインスタンスと排他して最新を読み直し、変更を当てて保存する」。他のインスタンスの変更は
+/// <see cref="ReloadIfChanged"/> で取り込む。スレッドセーフではない(UI スレッドから使う)。
+/// </para>
 /// </remarks>
 public sealed class FormatHistoryStore
 {
     /// <summary>保存ファイル名。</summary>
     public const string DefaultFileName = "format-history.json";
+
+    /// <summary>他のインスタンスとの排他を待つ上限。読み書きは数ミリ秒で終わる。</summary>
+    private static readonly TimeSpan LockTimeout = TimeSpan.FromSeconds(5);
+
+    /// <summary>このストアが最後に読んだ・保存したファイルの内容(ファイルがなければ null)。</summary>
+    private byte[]? _knownContent;
+
+    /// <summary><see cref="_knownContent"/> が有効か(まだ一度も読み書きしていなければ false)。</summary>
+    private bool _known;
 
     /// <summary>
     /// 既定の保存先(%AppData%/RawAnalyzer)を使うストアを生成する。
@@ -48,15 +66,63 @@ public sealed class FormatHistoryStore
     /// <exception cref="JsonException">ファイル内容がJSONとして不正な場合。</exception>
     public FormatHistory Load()
     {
-        if (!File.Exists(FilePath))
+        byte[]? content = ReadContent();
+
+        // 壊れた内容も「読んだ内容」として覚え、ReloadIfChanged で毎回解釈し直さない
+        Remember(content);
+        return Parse(content);
+    }
+
+    /// <summary>
+    /// 保存ファイルが、このストアが最後に読んだ・保存した内容から変わっていれば(別のインスタンスが保存した)、
+    /// 読み直した記憶を返す。他のインスタンスの保存とは排他する。
+    /// </summary>
+    /// <returns>読み直した記憶。変わっていなければ null。</returns>
+    /// <exception cref="JsonException">ファイル内容がJSONとして不正な場合(次に内容が変わるまで再び解釈しない)。</exception>
+    /// <exception cref="IOException">読めない、または他のインスタンスが長く使用中の場合。</exception>
+    /// <exception cref="UnauthorizedAccessException">読む権限がない場合。</exception>
+    public FormatHistory? ReloadIfChanged()
+    {
+        byte[]? content;
+        using (AcquireLock())
         {
-            return new FormatHistory();
+            content = ReadContent();
         }
 
-        using FileStream stream = File.OpenRead(FilePath);
-        Document? document = JsonSerializer.Deserialize<Document>(
-            stream, FormatPresetStore.SerializerOptions);
-        return new FormatHistory(document?.Entries ?? new List<FormatHistoryEntry?>());
+        if (IsKnown(content))
+        {
+            return null;
+        }
+
+        Remember(content);
+        return Parse(content);
+    }
+
+    /// <summary>
+    /// 他のインスタンスと排他しながら、保存されている最新の記憶を読み直して変更を当て、変更したときだけ保存する。
+    /// </summary>
+    /// <remarks>
+    /// 手元に持っている記憶ではなく読み直した記憶へ当てるので、別のインスタンスがその後に保存した記録・訂正・
+    /// 削除を巻き戻さない。保存先ディレクトリがなければ作成する。
+    /// </remarks>
+    /// <param name="change">読み直した記憶への変更。変更したら true を返す。</param>
+    /// <returns>変更を当てた記憶(変更がなければ読み直した記憶)。</returns>
+    /// <exception cref="JsonException">保存されている内容がJSONとして不正な場合(何も保存しない)。</exception>
+    /// <exception cref="IOException">読み書きできない、または他のインスタンスが長く使用中の場合。</exception>
+    /// <exception cref="UnauthorizedAccessException">読み書きする権限がない場合。</exception>
+    public FormatHistory Update(Func<FormatHistory, bool> change)
+    {
+        ArgumentNullException.ThrowIfNull(change);
+        using (AcquireLock())
+        {
+            FormatHistory history = Load();
+            if (change(history))
+            {
+                Save(history);
+            }
+
+            return history;
+        }
     }
 
     /// <summary>
@@ -81,6 +147,7 @@ public sealed class FormatHistoryStore
                 {
                     File.Move(FilePath, BackupPath, overwrite: true);
                     corrupted = true;
+                    Remember(null);
                 }
             }
             catch (Exception moveError) when (
@@ -105,11 +172,98 @@ public sealed class FormatHistoryStore
         Directory.CreateDirectory(directory);
         var document = new Document { Entries = history.Entries.ToList<FormatHistoryEntry?>() };
         string json = JsonSerializer.Serialize(document, FormatPresetStore.SerializerOptions);
-        AtomicFileWriter.Write(FilePath, stream =>
+        byte[] content = new UTF8Encoding(false).GetBytes(json);
+        AtomicFileWriter.Write(FilePath, stream => stream.Write(content));
+        Remember(content);
+    }
+
+    /// <summary>保存ファイルの内容。ファイルがなければ null。</summary>
+    private byte[]? ReadContent()
+    {
+        return File.Exists(FilePath) ? File.ReadAllBytes(FilePath) : null;
+    }
+
+    private static FormatHistory Parse(byte[]? content)
+    {
+        if (content is null)
         {
-            using var writer = new StreamWriter(stream, new UTF8Encoding(false), 1 << 12, leaveOpen: true);
-            writer.Write(json);
-        });
+            return new FormatHistory();
+        }
+
+        // 手で編集して BOM 付きで保存されたファイルも読む(ストリームから読んでいたときと同じ)
+        ReadOnlySpan<byte> json = content;
+        if (json.StartsWith((ReadOnlySpan<byte>)[0xEF, 0xBB, 0xBF]))
+        {
+            json = json[3..];
+        }
+
+        Document? document = JsonSerializer.Deserialize<Document>(json, FormatPresetStore.SerializerOptions);
+        return new FormatHistory(document?.Entries ?? new List<FormatHistoryEntry?>());
+    }
+
+    private void Remember(byte[]? content)
+    {
+        _knownContent = content;
+        _known = true;
+    }
+
+    private bool IsKnown(byte[]? content)
+    {
+        return _known && (content is null
+            ? _knownContent is null
+            : _knownContent is not null && content.AsSpan().SequenceEqual(_knownContent));
+    }
+
+    /// <summary>
+    /// 同じ記憶ファイルを使う他のプロセス(複数起動した RawAnalyzer)と排他する。名前付きミューテックスは
+    /// 取得したスレッドで解放する必要があるため、同じスレッドで同期に使う。
+    /// </summary>
+    private IDisposable AcquireLock()
+    {
+        // ミューテックス名に \ は使えないので、正規化したフルパスのハッシュで名前を作る
+        byte[] hash = SHA256.HashData(Encoding.UTF8.GetBytes(Path.GetFullPath(FilePath).ToUpperInvariant()));
+        var mutex = new Mutex(initiallyOwned: false, @"Local\RawAnalyzer.FormatHistory." + Convert.ToHexString(hash, 0, 16));
+        try
+        {
+            bool acquired;
+            try
+            {
+                acquired = mutex.WaitOne(LockTimeout);
+            }
+            catch (AbandonedMutexException)
+            {
+                // 保持したまま終了したプロセスがあった。所有権は得ている(書きかけは AtomicFileWriter が置き換えない)
+                acquired = true;
+            }
+
+            if (!acquired)
+            {
+                throw new IOException("他の RawAnalyzer がフォーマットの記憶ファイルを使用中のため、読み書きできませんでした。");
+            }
+
+            return new LockRelease(mutex);
+        }
+        catch
+        {
+            mutex.Dispose();
+            throw;
+        }
+    }
+
+    /// <summary>取得したミューテックスを解放して破棄する。</summary>
+    private sealed class LockRelease(Mutex mutex) : IDisposable
+    {
+        private Mutex? _mutex = mutex;
+
+        public void Dispose()
+        {
+            if (_mutex is { } held)
+            {
+                _mutex = null;
+                held.ReleaseMutex();
+                held.Dispose();
+            }
+        }
     }
 
     /// <summary>保存ファイルの中身(将来の書式変更に備えて版を持つ)。</summary>

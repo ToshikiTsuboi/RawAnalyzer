@@ -36,6 +36,34 @@ public class AtomicFileWriterTests
     }
 
     [Fact]
+    public void Write_TemporaryNameIsUniquePerProcess()
+    {
+        // 一時ファイル名がスレッドIDだけだと、どのプロセスでも UI スレッドのIDは同じなので、複数起動した
+        // RawAnalyzer が同じ記憶ファイルを同時に保存すると同じ .part を取り合い、一方の保存が失われる
+        // (全体レビュー 2026-10-01 B8)
+        string path = TempPath();
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        string? temporary = null;
+        try
+        {
+            AtomicFileWriter.Write(path, s =>
+            {
+                temporary = s.Name;
+                s.WriteByte(1);
+            });
+
+            Assert.NotNull(temporary);
+            Assert.StartsWith(path + ".part", temporary, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains($".part{Environment.ProcessId}-", Path.GetFileName(temporary));
+            Assert.False(File.Exists(temporary));
+        }
+        finally
+        {
+            AtomicFileWriter.TryDelete(path);
+        }
+    }
+
+    [Fact]
     public void Write_Throws_KeepsExistingFileIntact()
     {
         // 上書き保存が途中で失敗しても、元のファイルを失わず、一時ファイルも残さないこと

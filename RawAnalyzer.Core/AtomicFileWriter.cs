@@ -24,9 +24,12 @@ public static class AtomicFileWriter
     public static void Write(string path, Action<FileStream> write, int bufferSize = 1 << 20)
     {
         // 置き換えを確実にするため、一時ファイルは同じフォルダに作る
-        // (別ボリュームだとFile.Moveがコピーになり原子性が崩れる)
-        string temporary = path + ".part" + Environment.CurrentManagedThreadId
-            .ToString(System.Globalization.CultureInfo.InvariantCulture);
+        // (別ボリュームだとFile.Moveがコピーになり原子性が崩れる)。
+        // 名前にはプロセスIDも入れる。スレッドIDだけだと、どのプロセスでも UI スレッドのIDは同じなので、
+        // 複数起動したインスタンスが同じファイル(記憶・セッション)を同時に保存すると同じ一時ファイルを取り合う
+        string temporary = string.Create(
+            System.Globalization.CultureInfo.InvariantCulture,
+            $"{path}.part{Environment.ProcessId}-{Environment.CurrentManagedThreadId}");
         try
         {
             using (var stream = new FileStream(

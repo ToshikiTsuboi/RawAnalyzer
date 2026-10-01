@@ -286,9 +286,11 @@ public class RawImportDialogTests : IDisposable
             string path = CreateFile("b.raw", FileSize);
             FormatMemory memory = CreateMemory();
             RawFormat first = Fmt(640, 480, bayer: BayerPattern.Rggb);
-            memory.History.Record(FileSize, ".raw", first, autoOpen: true, T0);
-            memory.History.Record(FileSize, ".raw", Fmt(480, 640, bitDepth: 16), autoOpen: false, T0);
-            memory.History.Record(FileSize, ".bin", first, autoOpen: true, T0);
+            // 記憶は保存されたものが正(他のインスタンスの変更を巻き戻さないよう、削除は保存されている最新の
+            // 記憶に当てる)ので、手元の記憶を直接いじらず読み込み成功の記録として保存しておく
+            memory.RememberLoaded(path, FileSize, first, autoOpen: true);
+            memory.RememberLoaded(path, FileSize, Fmt(480, 640, bitDepth: 16), autoOpen: false);
+            memory.RememberLoaded(Path.ChangeExtension(path, ".bin"), FileSize, first, autoOpen: true);
 
             RawImportDialog dialog = CreateDialog(path, memory, initial: first);
             var button = Find<Button>(dialog, "ForgetSizeButton");
