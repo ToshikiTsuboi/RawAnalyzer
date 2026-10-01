@@ -136,7 +136,7 @@ public partial class MainWindow
         // 同じ基準点で計算し直し、寸法の違うページで範囲外になったら範囲外であることを示す
         if (sizeChanged)
         {
-            _lastCursorInside = false;
+            ClearCursorReadout();
         }
 
         _updatingSliders = true;
@@ -160,6 +160,9 @@ public partial class MainWindow
         _vm.ImageInfoText = $"{image.Width}×{image.Height} · {format.BitDepth}bit"
             + (decoded.Color is null ? "" : " · RGB") + TiffPageNote + ValueNoteSuffix;
         UpdateNoiseWindowSource();
+
+        // カーソル位置の画素値も送った先のページから読み直す(寸法の違うページでは上で消している)
+        RefreshCursorReadout();
         try
         {
             await pending;

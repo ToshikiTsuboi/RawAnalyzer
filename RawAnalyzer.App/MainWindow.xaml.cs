@@ -732,6 +732,7 @@ public partial class MainWindow : Window
         _valueNote = valueNote;
         _histogram = null;
         _vm.HasRoi = false;
+        ClearCursorReadout();
         _vm.BlackLevelMax = (1 << image.Format.BitDepth) - 1;
         ResetDisplayParameters();
 
@@ -2509,7 +2510,7 @@ public partial class MainWindow : Window
         _histogram = null;
         _channelHistograms = null;
         _vm.HasRoi = false;
-        _lastCursorInside = false;
+        ClearCursorReadout();
         // 演算結果の16bit化や寸法変更に合わせてUIを更新する。
         // 表示LUTの内部値は維持し、コード値だけ新しいビット深度へ換算する。
         _updatingSliders = true;
@@ -3351,6 +3352,9 @@ public partial class MainWindow : Window
         _hdrFrameParams = null;
         _vm.HasRoi = false;
 
+        // 派生ビューは元画像と座標の意味が違う(分割は段の並置)。カーソル位置の表示を消す
+        ClearCursorReadout();
+
         // HDR合成の画像は黒レベル減算済みで、合成域のフルスケールを65535へ量子化している。元画像の黒点のまま
         // 表示すると黒を二重に引き、元画像で下げた白点のままだと合成で取り戻した高輝度を白飛びとして切るので、
         // 合成ビューへ入る前の黒点・白点を控えて表示黒点を0、表示白点を65535にする。合成 → 分割では控えた
@@ -3435,6 +3439,9 @@ public partial class MainWindow : Window
         _hdrFrameParams = null;
         _vm.HdrTargetVisible = false;
         _vm.HasRoi = false;
+
+        // 派生ビューの座標で持っていたカーソル位置の表示を消す(元画像とは座標の意味が違う)
+        ClearCursorReadout();
 
         // 合成ビューから戻るなら、合成ビューへ入る前の元画像の黒点・白点へ戻す(合成画像は黒レベル減算済みで
         // 値域も元画像と別物。合成ビューで動かした黒/白レベルは合成ビューの表示だけのもの)。分割ビューからはそのまま
@@ -3669,16 +3676,8 @@ public partial class MainWindow : Window
             return;
         }
 
-        ushort value;
-        try
-        {
-            value = image.GetPixel(sourceX, sourceY, Viewport.Frame);
-        }
-        catch (ObjectDisposedException)
-        {
-            return;
-        }
-        catch (ArgumentOutOfRangeException)
+        if (CursorReadout.Compose(image, format, _colorImage, sourceX, sourceY, Viewport.Frame)
+            is not { } text)
         {
             return;
         }
@@ -3686,30 +3685,47 @@ public partial class MainWindow : Window
         _lastCursorX = sourceX;
         _lastCursorY = sourceY;
         _lastCursorInside = true;
+        _vm.CursorStatusText = text.Status;
+        _vm.CursorOverlayText = text.Overlay;
+    }
 
-        int code = value >> CurrentShift;
-        int maxCode = (1 << format.BitDepth) - 1;
-
-        // カラー画像はRGBとYCbCrを表示する
-        if (_colorImage is { } color && sourceX < color.Width && sourceY < color.Height)
+    /// <summary>
+    /// カーソル位置を保ったまま表示中の画像・フレーム・フォーマットが替わった後に、カーソル位置の画素値の表示を
+    /// 表示中の画像・フレームから作り直す(読めなければ消す)。
+    /// </summary>
+    /// <remarks>
+    /// 表示は <see cref="OnCursorPixelChanged"/>(マウス移動・キーボードの画素カーソル)でしか作られないので、
+    /// フレーム・ページ・ファイルの送り、再生、右パネルの Bayer の変更の後に呼ばないと、前の画像・フレームの値と
+    /// 前のパターンのチャネル名を出し続ける。座標の意味が変わる差し替え(HDR表示の出入り、別ファイルを開く、
+    /// 寸法の変わる差し替え)では読み直さず <see cref="ClearCursorReadout"/> で消す。
+    /// </remarks>
+    private void RefreshCursorReadout()
+    {
+        if (_lastCursorInside && ActiveImage is { } image && ActiveFormat is { } format
+            && CursorReadout.Compose(image, format, _colorImage, _lastCursorX, _lastCursorY, Viewport.Frame)
+                is { } text)
         {
-            color.GetPixel(sourceX, sourceY, out ushort r16, out ushort g16, out ushort b16);
-            int shift = 16 - color.BitDepth;
-            int r = r16 >> shift;
-            int g = g16 >> shift;
-            int b = b16 >> shift;
-            (int y, int cb, int cr) = ColorConvert.RgbToYCbCr(r, g, b, (1 << color.BitDepth) - 1);
-            _vm.CursorStatusText =
-                $"({sourceX}, {sourceY}) RGB=({r}, {g}, {b}) YCbCr=({y}, {cb}, {cr})";
-            _vm.CursorOverlayText =
-                $"({sourceX}, {sourceY})  RGB: {r} {g} {b}  YCbCr: {y} {cb} {cr}";
+            _vm.CursorStatusText = text.Status;
+            _vm.CursorOverlayText = text.Overlay;
             return;
         }
 
-        string channel = BayerHelper.GetLabel(
-            BayerHelper.GetChannel(format.Bayer, sourceX, sourceY));
-        _vm.CursorStatusText = $"({sourceX}, {sourceY}) raw={code}";
-        _vm.CursorOverlayText = $"({sourceX}, {sourceY})  raw: {code} / {maxCode}  {channel}";
+        ClearCursorReadout();
+    }
+
+    /// <summary>
+    /// カーソル位置の画素値の表示を消し、カーソル位置を持たない状態にする。
+    /// </summary>
+    /// <remarks>
+    /// 座標の意味が変わる差し替え(HDR表示の出入り、別ファイルを開く、寸法の変わる差し替え)で呼ぶ。位置を残すと、
+    /// 前の画像の値を出し続けるうえ、Ctrl+C(カーソル位置の画素値・座標のコピー)が新しい画像の同じ数値座標、
+    /// つまり別の画素を黙ってコピーする。次にマウス・画素カーソルを動かせば表示し直す。
+    /// </remarks>
+    private void ClearCursorReadout()
+    {
+        _lastCursorInside = false;
+        _vm.CursorStatusText = "";
+        _vm.CursorOverlayText = "";
     }
 
     // ---- ズーム操作 ----
@@ -3917,6 +3933,9 @@ public partial class MainWindow : Window
                 Viewport.SetFrame(index);
                 _sequenceIndex = index;
 
+                // カーソル位置の画素値も送った先のフレームから読み直す(再生中も毎フレーム)
+                RefreshCursorReadout();
+
                 if (oldBayer is not null)
                 {
                     try
@@ -4070,6 +4089,10 @@ public partial class MainWindow : Window
                 // ノイズ測定ウィンドウの対象名・飽和コード・ROI の有無を新しい画像へ合わせる
                 // (表示モードの適用後に行う。分割表示かどうかで ROI を測れるかが変わる)
                 UpdateNoiseWindowSource();
+
+                // カーソル位置の画素値も送った先の画像から読み直す(寸法は同じ。ビット深度・パターンは
+                // 送った先のもの)
+                RefreshCursorReadout();
 
                 long frameFileSize = SafeFileSize(path);
                 _vm.ImageInfoText =
@@ -5064,6 +5087,9 @@ public partial class MainWindow : Window
         {
             Viewport.UpdateFormat(_currentFormat);
         }
+
+        // カーソル位置のチャネル名を新しいパターンで出し直す
+        RefreshCursorReadout();
 
         // 欠陥検出の結果は検出したときのパターンのもの(閾値はパターンのチャネル別の統計で決まり、
         // 補正はパターンで選んだ近傍から補う)。表示中の画像のパターンが替わったら、他の差し替え経路と
