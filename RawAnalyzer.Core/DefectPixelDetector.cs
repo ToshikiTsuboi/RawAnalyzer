@@ -90,6 +90,9 @@ public sealed class DefectDetectionResult
 /// </summary>
 public static class DefectPixelDetector
 {
+    // 判定パスで1つのワーカが一度に取り出す行の塊のおよその画素数(幅が広ければ1行)
+    private const int ChunkPixels = 1 << 16;
+
     /// <summary>
     /// 欠陥画素を検出する。
     /// </summary>
@@ -217,99 +220,128 @@ public static class DefectPixelDetector
 
         int shift = 16 - image.Format.BitDepth;
 
-        // パス2: 閾値超過画素の収集(行並列)
+        // パス2: 閾値超過画素の収集。行の塊を上から順に取り出して並列に走査し、結果は塊ごとに持つ。
+        // 上限で打ち切るときは、上から(y→x順)の先頭 limit 件を残す。先頭から途切れずに揃った塊までの
+        // 件数が上限を超えたら、その塊より下は走査しない(結果も持たない)。以前はスレッドローカルを一定件数
+        // ごとに共有リストへ移し、先に移したスレッドの行範囲が残ったため、打ち切ると同じ画像・同じ条件でも
+        // 実行ごとに残る欠陥(帯の位置・白点/黒点の件数)が変わり、補正もその任意の部分集合に掛かった。
+        // 塊は上から順に取り出すので、揃うのを待って持っている塊はワーカ数程度に収まる(ヒット率が高い画像でも
+        // 全ヒットを同時に抱えない)。
+        int limit = Math.Max(0, maxResults);
+        int chunkRows = Math.Max(1, ChunkPixels / Math.Max(1, width));
+        int chunkCount = (int)(((long)height + chunkRows - 1) / chunkRows);
+        var chunkHits = new List<DefectPixel>?[chunkCount];
         object gate = new();
-        var defects = new List<DefectPixel>();
-        bool truncated = false;
+        int nextChunk = -1;
+        int completePrefix = 0;
+        long prefixHits = 0;
+        int cutoffChunk = int.MaxValue;
         long rowsDone = 0;
 
-        // スレッドローカルのListを最後まで貯めると、ヒット率が高い画像で
-        // (ワーカ数 × 全ヒット数)ぶんが同時生存しOOMになる。
-        // 一定件数ごとにグローバルへ吸い上げてローカルを空にする。
-        const int FlushThreshold = 4096;
-
-        void Flush(List<DefectPixel> local)
-        {
-            if (local.Count == 0)
-            {
-                return;
-            }
-
-            lock (gate)
-            {
-                int space = maxResults - defects.Count;
-                if (space <= 0)
-                {
-                    truncated = true;
-                }
-                else if (local.Count > space)
-                {
-                    defects.AddRange(local.Take(space));
-                    truncated = true;
-                }
-                else
-                {
-                    defects.AddRange(local);
-                }
-            }
-
-            local.Clear();
-        }
-
+        int workers = Math.Max(1, Math.Min(Environment.ProcessorCount, chunkCount));
         Parallel.For(
             0,
-            height,
+            workers,
             new ParallelOptions { CancellationToken = cancellationToken },
-            () => (Buffer: new ushort[width], Local: new List<DefectPixel>()),
-            (y, state, local) =>
+            _ =>
             {
-                if (Volatile.Read(ref truncated))
+                var buffer = new ushort[width];
+                while (!cancellationToken.IsCancellationRequested)
                 {
-                    state.Stop();
-                    return local;
-                }
-
-                image.CopyRegion(frame, 0, y, width, 1, local.Buffer);
-                for (int segment = 0; segment < segments; segment++)
-                {
-                    int t = segment * 4 + (y & 1) * 2;
-                    double hotEvenX = hotTable[t];
-                    double hotOddX = hotTable[t + 1];
-                    double deadEvenX = deadTable[t];
-                    double deadOddX = deadTable[t + 1];
-                    int right = Math.Min(width, (segment + 1) * segmentSize);
-                    for (int x = segment * segmentSize; x < right; x++)
+                    int chunk = Interlocked.Increment(ref nextChunk);
+                    if (chunk >= chunkCount || chunk > Volatile.Read(ref cutoffChunk))
                     {
-                        int code = local.Buffer[x] >> shift;
-                        bool evenX = (x & 1) == 0;
-                        if (detectHot && code > (evenX ? hotEvenX : hotOddX))
+                        return;
+                    }
+
+                    var hits = new List<DefectPixel>();
+                    int top = chunk * chunkRows;
+                    int bottom = Math.Min(height, top + chunkRows);
+
+                    // この塊だけで上限を超えたら、塊の残りは要らない(打ち切りはこの塊より上で決まる)
+                    for (int y = top; y < bottom && hits.Count <= limit; y++)
+                    {
+                        if (cancellationToken.IsCancellationRequested)
                         {
-                            local.Local.Add(new DefectPixel(x, y, code, DefectType.Hot));
+                            return;
                         }
-                        else if (detectDead && code < (evenX ? deadEvenX : deadOddX))
+
+                        image.CopyRegion(frame, 0, y, width, 1, buffer);
+                        for (int segment = 0; segment < segments; segment++)
                         {
-                            local.Local.Add(new DefectPixel(x, y, code, DefectType.Dead));
+                            int t = segment * 4 + (y & 1) * 2;
+                            double hotEvenX = hotTable[t];
+                            double hotOddX = hotTable[t + 1];
+                            double deadEvenX = deadTable[t];
+                            double deadOddX = deadTable[t + 1];
+                            int right = Math.Min(width, (segment + 1) * segmentSize);
+                            for (int x = segment * segmentSize; x < right; x++)
+                            {
+                                int code = buffer[x] >> shift;
+                                bool evenX = (x & 1) == 0;
+                                if (detectHot && code > (evenX ? hotEvenX : hotOddX))
+                                {
+                                    hits.Add(new DefectPixel(x, y, code, DefectType.Hot));
+                                }
+                                else if (detectDead && code < (evenX ? deadEvenX : deadOddX))
+                                {
+                                    hits.Add(new DefectPixel(x, y, code, DefectType.Dead));
+                                }
+                            }
+                        }
+
+                        long done = Interlocked.Increment(ref rowsDone);
+                        if ((done & 1023) == 0)
+                        {
+                            progress?.Report(0.5 + 0.5 * done / height);
+                        }
+                    }
+
+                    lock (gate)
+                    {
+                        // 打ち切りの位置より下の塊の結果は使わない
+                        if (chunk > cutoffChunk)
+                        {
+                            continue;
+                        }
+
+                        chunkHits[chunk] = hits;
+                        while (cutoffChunk == int.MaxValue && completePrefix < chunkCount
+                            && chunkHits[completePrefix] is { } complete)
+                        {
+                            prefixHits += complete.Count;
+                            if (prefixHits > limit)
+                            {
+                                cutoffChunk = completePrefix;
+                                Array.Clear(chunkHits, completePrefix + 1, chunkCount - completePrefix - 1);
+                            }
+
+                            completePrefix++;
                         }
                     }
                 }
-
-                if (local.Local.Count >= FlushThreshold)
-                {
-                    Flush(local.Local);
-                }
-
-                long done = Interlocked.Increment(ref rowsDone);
-                if ((done & 1023) == 0)
-                {
-                    progress?.Report(0.5 + 0.5 * done / height);
-                }
-
-                return local;
-            },
-            local => Flush(local.Local));
+            });
 
         cancellationToken.ThrowIfCancellationRequested();
-        defects.Sort((a, b) => a.Y != b.Y ? a.Y - b.Y : a.X - b.X);
+
+        // 塊の中は y→x 順に走査しているので、上の塊から並べれば y→x 順になる
+        var defects = new List<DefectPixel>((int)Math.Min(prefixHits, limit));
+        bool truncated = false;
+        int lastChunk = Math.Min(cutoffChunk, chunkCount - 1);
+        for (int chunk = 0; chunk <= lastChunk && !truncated; chunk++)
+        {
+            foreach (DefectPixel defect in chunkHits[chunk]!)
+            {
+                if (defects.Count == limit)
+                {
+                    truncated = true;
+                    break;
+                }
+
+                defects.Add(defect);
+            }
+        }
+
         progress?.Report(1.0);
         return new DefectDetectionResult(
             defects, stats, scalarHot, scalarDead, truncated, channelThresholds, segments);

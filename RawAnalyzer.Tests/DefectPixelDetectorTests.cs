@@ -209,6 +209,58 @@ public class DefectPixelDetectorTests
     }
 
     [Fact]
+    public void Detect_Truncated_KeepsFirstDefectsInRowOrder_AndIsRepeatable()
+    {
+        // 上半分は1行に白点1つ(まばら)、下半分は1画素おきに白点(密)。上限で打ち切るとき、残すのは
+        // 上から(y→x順)の先頭の件数。以前は並列走査で先に共有リストへ移したスレッド(密な下半分を走査した
+        // スレッド)の行範囲が残り、上半分の白点が落ちて、どの帯が残るかも実行ごとに変わった
+        const int width = 256;
+        const int height = 512;
+        var codes = new ushort[width * height];
+        var expected = new List<DefectPixel>();
+        for (int y = 0; y < height; y++)
+        {
+            for (int x = 0; x < width; x++)
+            {
+                bool hot = y < height / 2 ? x == (y * 7 % width) : (x & 1) == 0;
+                codes[y * width + x] = hot ? (ushort)4000 : (ushort)(1000 + ((x + y) % 2));
+                if (hot)
+                {
+                    expected.Add(new DefectPixel(x, y, 4000, DefectType.Hot));
+                }
+            }
+        }
+
+        using RawImage image = TestImages.FromCodes(codes, width, height, bitDepth: 12);
+        const int limit = 1000;
+
+        for (int run = 0; run < 3; run++)
+        {
+            DefectDetectionResult result = DefectPixelDetector.Detect(
+                image, sigmaFactor: 0.5, detectDead: false, maxResults: limit);
+
+            Assert.True(result.Truncated);
+            Assert.Equal(expected.Take(limit), result.Defects);
+        }
+    }
+
+    [Fact]
+    public void Detect_ExactlyMaxResults_IsNotTruncated()
+    {
+        // 上限ちょうどの件数は打ち切りではない(上限を超える欠陥があったときだけ打ち切りと示す)
+        ushort[] codes = MakeFlatWithDefects(64, 64, 1000, (3, 3, 4000), (40, 50, 4000));
+        using RawImage image = TestImages.FromCodes(codes, 64, 64, bitDepth: 12);
+
+        DefectDetectionResult result = DefectPixelDetector.Detect(image, maxResults: 2);
+        DefectDetectionResult truncated = DefectPixelDetector.Detect(image, maxResults: 1);
+
+        Assert.False(result.Truncated);
+        Assert.Equal(2, result.Defects.Count);
+        Assert.True(truncated.Truncated);
+        Assert.Equal(new DefectPixel(3, 3, 4000, DefectType.Hot), Assert.Single(truncated.Defects));
+    }
+
+    [Fact]
     public void Detect_CancelledToken_ThrowsOperationCanceled()
     {
         ushort[] codes = MakeFlatWithDefects(64, 64, 1000, (5, 5, 4000));
