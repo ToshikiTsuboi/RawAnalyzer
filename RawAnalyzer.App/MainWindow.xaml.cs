@@ -2485,8 +2485,9 @@ public partial class MainWindow : Window
         // (ビニング・フィルタの結果の 16bit 形式で読むと下詰めNbitの参照が正規化されない)
         long expectedSize = ReferenceImage.ExpectedRawSize(
             ReferenceImage.RawReadFormat(_currentFormat, _openedRawFormat));
+        // 対象名には演算するフレーム・TIFFページも示す(ビニング・フィルタと同じ。演算は表示中の1フレームだけ)
         var dialog = new ImageCalculatorDialog(
-            Path.GetFileName(_currentPath) + (_correctionLabel is null ? "" : $" [{_correctionLabel}]"),
+            NoiseSourceName() + (_tiffStack is null ? CalculationFrameNote(_currentImage, Viewport.Frame) : ""),
             _currentFolder, expectedSize)
         {
             Owner = this,
@@ -2546,9 +2547,23 @@ public partial class MainWindow : Window
             ImageOperation.AbsoluteDifference => "|−|",
             _ => "÷",
         };
+
+        // 結果は演算した1フレームだけになるので、どのフレーム・ページの結果かをラベル(タイトル・バッジ・
+        // 保存の付随テキスト)に残す(ビニング・フィルタと同じ)
         await ApplyProcessedImageAsync(
-            source, corrected, $"{opLabel} {Path.GetFileName(choice.ReferencePath)}");
+            source, corrected,
+            $"{opLabel} {Path.GetFileName(choice.ReferencePath)}{CalculationFrameNote(source, frame)}");
     }
+
+    /// <summary>
+    /// 演算した元画像のフレーム・TIFFページの注記(ビニング・フィルタのラベルと同じ書式)。単一フレームなら空。
+    /// </summary>
+    /// <param name="source">演算の元にした画像。</param>
+    /// <param name="frame">演算したフレーム。</param>
+    /// <returns>注記(先頭に空白を含む)。</returns>
+    private string CalculationFrameNote(RawImage source, int frame) =>
+        _tiffStack is not null ? TiffPageNote
+            : source.FrameCount > 1 ? $" [フレーム {frame + 1}/{source.FrameCount}]" : "";
 
     /// <summary>
     /// 加工済み画像を現在の画像として差し替える(以後の解析・現像・保存すべてに反映)。
