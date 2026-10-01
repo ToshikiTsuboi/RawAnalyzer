@@ -68,15 +68,15 @@
                 <MenuItem x:Name="RecentMenu" Header="最近使ったファイル" />
                 <Separator />
                 <MenuItem Header="保存…" InputGestureText="Ctrl+S" Click="OnSaveClick"
-                          IsEnabled="{Binding HasImage}" />
+                          IsEnabled="{Binding CanUseMainView}" />
                 <Separator />
                 <MenuItem Header="終了" Click="OnExitClick" />
             </MenuItem>
             <MenuItem Header="表示(_V)">
-                <MenuItem Header="ズームイン" Click="OnZoomInClick" IsEnabled="{Binding HasImage}" />
-                <MenuItem Header="ズームアウト" Click="OnZoomOutClick" IsEnabled="{Binding HasImage}" />
-                <MenuItem Header="等倍 (1:1)" Click="OnActualSizeClick" IsEnabled="{Binding HasImage}" />
-                <MenuItem Header="全体表示" Click="OnFitClick" IsEnabled="{Binding HasImage}" />
+                <MenuItem Header="ズームイン" Click="OnZoomInClick" IsEnabled="{Binding CanUseMainView}" />
+                <MenuItem Header="ズームアウト" Click="OnZoomOutClick" IsEnabled="{Binding CanUseMainView}" />
+                <MenuItem Header="等倍 (1:1)" Click="OnActualSizeClick" IsEnabled="{Binding CanUseMainView}" />
+                <MenuItem Header="全体表示" Click="OnFitClick" IsEnabled="{Binding CanUseMainView}" />
                 <Separator />
                 <MenuItem Header="フルスクリーン" InputGestureText="F11"
                           IsCheckable="True" IsChecked="{Binding IsFullscreen}" />
@@ -92,9 +92,9 @@
                 <Separator />
                 <MenuItem Header="ゼブラ (飽和/黒潰れ警告)" IsCheckable="True"
                           IsChecked="{Binding ZebraOn}"
-                          IsEnabled="{Binding HasImage}" />
+                          IsEnabled="{Binding CanUseMainView}" />
                 <Separator />
-                <MenuItem Header="表示モード" IsEnabled="{Binding HasImage}">
+                <MenuItem Header="表示モード" IsEnabled="{Binding CanUseMainView}">
                     <MenuItem Header="Raw表示" Click="OnMenuDisplayModeClick" Tag="0" />
                     <MenuItem Header="Bayerカラー" Click="OnMenuDisplayModeClick" Tag="1" />
                     <MenuItem Header="カラー現像" Click="OnMenuDisplayModeClick" Tag="2" />
@@ -103,29 +103,29 @@
             </MenuItem>
             <MenuItem Header="処理(_P)">
                 <MenuItem Header="自動コントラスト (0.35%クリップ)" Click="OnAutoContrastClick"
-                          IsEnabled="{Binding HasImage}" />
+                          IsEnabled="{Binding CanUseMainView}" />
                 <MenuItem Header="表示調整をリセット" Click="OnResetDisplayClick"
-                          IsEnabled="{Binding HasImage}" />
+                          IsEnabled="{Binding CanUseMainView}" />
                 <Separator />
                 <MenuItem Header="AWB (グレーワールド)" Click="OnGrayWorldClick"
-                          IsEnabled="{Binding HasImage}" />
+                          IsEnabled="{Binding CanUseMainView}" />
                 <MenuItem Header="カラーマトリクスをリセット" Click="OnMatrixResetClick"
-                          IsEnabled="{Binding HasImage}" />
+                          IsEnabled="{Binding CanUseMainView}" />
                 <Separator />
                 <MenuItem Header="画像演算 (ダーク減算/フラット補正)…" Click="OnImageCalculatorClick"
-                          IsEnabled="{Binding HasImage}" />
+                          IsEnabled="{Binding CanUseMainView}" />
                 <MenuItem Header="デジタルビニング (2×2 / 4×4…)…" Click="OnBinningClick"
-                          IsEnabled="{Binding HasImage}" />
+                          IsEnabled="{Binding CanUseMainView}" />
                 <MenuItem Header="画像フィルタ (平滑化 / シャープ / エッジ…)…" Click="OnFilterClick"
-                          IsEnabled="{Binding HasImage}" />
+                          IsEnabled="{Binding CanUseMainView}" />
                 <MenuItem Header="バッチ現像 / 動画書き出し…" Click="OnBatchExportClick"
-                          IsEnabled="{Binding HasImage}" />
+                          IsEnabled="{Binding CanUseMainView}" />
             </MenuItem>
             <MenuItem Header="HDR(_D)">
                 <MenuItem Header="HDR分割表示 (長/短)" Click="OnMenuDisplayModeClick" Tag="4"
-                          IsEnabled="{Binding HasImage}" />
+                          IsEnabled="{Binding CanUseMainView}" />
                 <MenuItem Header="HDR合成表示" Click="OnMenuDisplayModeClick" Tag="5"
-                          IsEnabled="{Binding HasImage}" />
+                          IsEnabled="{Binding CanUseMainView}" />
                 <Separator />
                 <!-- raw 以外(画像ファイル)では使えないので無効にし、理由をツールチップで示す -->
                 <MenuItem Header="HDR方式の設定 (フォーマット変更)…" Click="OnChangeFormatClick"
@@ -136,22 +136,22 @@
             <MenuItem Header="ツール(_T)">
                 <MenuItem Header="ROI選択モード" IsCheckable="True"
                           IsChecked="{Binding IsChecked, ElementName=RoiToggle, Mode=TwoWay}"
-                          IsEnabled="{Binding HasImage}" />
+                          IsEnabled="{Binding CanUseMainView}" />
                 <MenuItem Header="ラインプロファイルモード" IsCheckable="True"
                           IsChecked="{Binding IsChecked, ElementName=ProfileToggle, Mode=TwoWay}"
-                          IsEnabled="{Binding HasImage}" />
+                          IsEnabled="{Binding CanUseMainView}" />
                 <MenuItem Header="WBスポイトモード" IsCheckable="True"
                           IsChecked="{Binding IsChecked, ElementName=WbPickToggle, Mode=TwoWay}"
-                          IsEnabled="{Binding HasImage}" />
+                          IsEnabled="{Binding CanUseMainView}" />
                 <Separator />
                 <MenuItem Header="欠陥画素検出…" Click="OnDefectDetectClick"
-                          IsEnabled="{Binding HasImage}" />
+                          IsEnabled="{Binding CanUseMainView}" />
                 <MenuItem Header="ノイズ / ダイナミックレンジ測定…" Click="OnNoiseMeasureClick"
-                          IsEnabled="{Binding HasImage}" />
+                          IsEnabled="{Binding CanUseMainView}" />
                 <MenuItem Header="ヒストグラム再計算" Click="OnHistogramRefreshClick"
-                          IsEnabled="{Binding HasImage}" />
+                          IsEnabled="{Binding CanUseMainView}" />
                 <MenuItem Header="ヒストグラムをCSVで保存…" Click="OnHistogramSaveCsvClick"
-                          IsEnabled="{Binding HasImage}" />
+                          IsEnabled="{Binding CanUseMainView}" />
                 <Separator />
                 <MenuItem Header="プリセットフォルダを開く" Click="OnOpenPresetFolderClick" />
             </MenuItem>
@@ -187,26 +187,30 @@
                     <ComboBoxItem Content="HDR合成" />
                 </ComboBox>
                 <Border Style="{StaticResource ToolSep}" />
-                <Button Style="{StaticResource ToolButton}" Content="−" Click="OnZoomOutClick" />
+                <Button Style="{StaticResource ToolButton}" Content="−" Click="OnZoomOutClick"
+                        IsEnabled="{Binding CanUseMainView}" />
                 <TextBlock Text="{Binding ZoomPercentText}" FontFamily="Consolas" FontSize="12"
                            VerticalAlignment="Center" MinWidth="46" TextAlignment="Center" />
-                <Button Style="{StaticResource ToolButton}" Content="＋" Click="OnZoomInClick" />
-                <Button Style="{StaticResource ToolButton}" Content="1:1" Click="OnActualSizeClick" />
-                <Button Style="{StaticResource ToolButton}" Content="全体" Click="OnFitClick" />
+                <Button Style="{StaticResource ToolButton}" Content="＋" Click="OnZoomInClick"
+                        IsEnabled="{Binding CanUseMainView}" />
+                <Button Style="{StaticResource ToolButton}" Content="1:1" Click="OnActualSizeClick"
+                        IsEnabled="{Binding CanUseMainView}" />
+                <Button Style="{StaticResource ToolButton}" Content="全体" Click="OnFitClick"
+                        IsEnabled="{Binding CanUseMainView}" />
                 <ToggleButton x:Name="ZebraToggle" Content="ゼブラ"
-                              Style="{StaticResource ToolToggle}" IsEnabled="{Binding HasImage}"
+                              Style="{StaticResource ToolToggle}" IsEnabled="{Binding CanUseMainView}"
                               ToolTip="飽和(≥98%)を赤 / 黒潰れ(≤2%)を青のストライプで警告"
                               IsChecked="{Binding ZebraOn, Mode=TwoWay}" />
                 <Border Style="{StaticResource ToolSep}" />
                 <ToggleButton x:Name="ProfileToggle" Content="ラインプロファイル"
-                              Style="{StaticResource ToolToggle}" IsEnabled="{Binding HasImage}"
+                              Style="{StaticResource ToolToggle}" IsEnabled="{Binding CanUseMainView}"
                               Checked="OnProfileToggleChanged" Unchecked="OnProfileToggleChanged" />
                 <ToggleButton x:Name="RoiToggle" Content="ROI"
-                              Style="{StaticResource ToolToggle}" IsEnabled="{Binding HasImage}"
+                              Style="{StaticResource ToolToggle}" IsEnabled="{Binding CanUseMainView}"
                               Checked="OnRoiToggleChanged" Unchecked="OnRoiToggleChanged" />
                 <Border Style="{StaticResource ToolSep}" />
                 <Button Style="{StaticResource ToolButton}" Content="💾 保存"
-                        Click="OnSaveClick" IsEnabled="{Binding HasImage}" />
+                        Click="OnSaveClick" IsEnabled="{Binding CanUseMainView}" />
             </StackPanel>
         </Border>
 

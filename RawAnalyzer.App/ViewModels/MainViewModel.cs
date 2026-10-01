@@ -246,6 +246,7 @@ public sealed class MainViewModel : ObservableObject
                 OnPropertyChanged(nameof(BayerEditToolTip));
                 OnPropertyChanged(nameof(CanChangeFormat));
                 OnPropertyChanged(nameof(ChangeFormatToolTip));
+                OnPropertyChanged(nameof(CanUseMainView));
             }
         }
     }
@@ -257,12 +258,31 @@ public sealed class MainViewModel : ObservableObject
         set => SetProperty(ref _imageInfoText, value);
     }
 
-    /// <summary>比較モード中か(メニューのチェック表示に使う)。</summary>
+    /// <summary>比較モード中か(メニューのチェック表示と、メイン画像を対象にする操作の可否に使う)。</summary>
     public bool IsCompareMode
     {
         get => _isCompareMode;
-        set => SetProperty(ref _isCompareMode, value);
+        set
+        {
+            if (SetProperty(ref _isCompareMode, value))
+            {
+                OnPropertyChanged(nameof(CanUseMainView));
+                OnPropertyChanged(nameof(CanChangeFormat));
+                OnPropertyChanged(nameof(ChangeFormatToolTip));
+            }
+        }
     }
+
+    /// <summary>
+    /// 通常表示(メインの画像・ビューポート)を操作できるか。画像を開いていて、比較モードでないとき。
+    /// </summary>
+    /// <remarks>
+    /// 比較モードは通常表示の上に比較画面を重ねるだけなので、比較中にメイン画像を対象にする操作(ズーム・
+    /// 表示モード・表示調整・ROI・コピー・保存・解析など)を受け付けると、見えている比較ペインではなく隠れた
+    /// 通常表示に効いてしまう(画素値・表示のコピーは別の画像の値・描画を黙ってコピーしていた)。メニュー・
+    /// ツールバーの該当項目はこの値で有効・無効を決め、コマンド表(キー・コマンドパレット)も同じ条件で断る。
+    /// </remarks>
+    public bool CanUseMainView => _hasImage && !_isCompareMode;
 
     /// <summary>ファイル読み込み中か(ステータスバーの進捗バー表示に使う)。</summary>
     public bool IsLoading
@@ -675,14 +695,17 @@ public sealed class MainViewModel : ObservableObject
     /// <remarks>
     /// 読み込みダイアログでフォーマットを指定し直して開き直せるのは raw だけ。画像ファイル(TIFF 等)は
     /// フォーマットをファイル自身が持つので使えない(以前は押せて、押しても何も起きなかった)。
+    /// 比較モード中は、比較画面に隠れた通常表示の raw を開き直すことになるので使えない(<see cref="CanUseMainView"/>)。
     /// </remarks>
-    public bool CanChangeFormat => _hasImage && _isRawFile;
+    public bool CanChangeFormat => _hasImage && _isRawFile && !_isCompareMode;
 
     /// <summary>
     /// 「フォーマット変更…」を使えないときに示す理由(ツールチップ)。使えるとき・画像がないときは null。
     /// </summary>
-    public string? ChangeFormatToolTip => _hasImage && !_isRawFile
-        ? FormatChangeAvailability.ExplainUnavailable(_isColorImage)
+    public string? ChangeFormatToolTip =>
+        !_hasImage ? null
+        : _isCompareMode ? CommandDisabledReasons.CompareMode
+        : !_isRawFile ? FormatChangeAvailability.ExplainUnavailable(_isColorImage)
         : null;
 
     /// <summary>

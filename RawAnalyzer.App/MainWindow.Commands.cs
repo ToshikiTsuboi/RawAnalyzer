@@ -140,22 +140,23 @@ public partial class MainWindow
         }
     }
 
-    // ---- 実行できない理由(コマンドパレットで示す。各コマンドの CanExecute が false のときだけ使う) ----
+    // ---- 実行の前提と、実行できない理由(コマンドパレットで示す。各コマンドの CanExecute が false のときだけ使う) ----
+    //
+    // 比較モードは通常表示の上に比較画面を重ねるだけなので、メインの画像・ビューポートを対象にするコマンドは
+    // 比較モード中は断る(見えている比較ペインではなく隠れた通常表示に効き、Ctrl+C は別の画像の値をコピーしていた)。
+    // メニュー・ツールバーの該当項目も同じ条件(MainViewModel.CanUseMainView)で無効にする
 
-    /// <summary>CanExecute が画像の有無のコマンドの理由。</summary>
-    private static string NoImageReason() => CommandDisabledReasons.NoImage;
+    /// <summary>メインの画像・通常表示を対象にするコマンドの前提(画像があり、比較モードでないこと)。</summary>
+    private bool MainViewAvailable() => _vm.HasImage && !_compareMode;
 
-    /// <summary>ビニング・フィルタ(画像があり比較モードでないこと)の理由。比較モードなら画像の有無より先に示す。</summary>
-    private string ProcessingDisabledReason() =>
-        _compareMode ? CommandDisabledReasons.CompareMode : CommandDisabledReasons.NoImage;
+    /// <summary>メインの画像・通常表示を対象にするコマンドの理由。比較モードなら画像の有無より先に示す。</summary>
+    private string MainViewReason() => CommandDisabledReasons.ForMainView(_compareMode);
 
-    /// <summary>フレーム送り・再生(送れるフレームがあること)の理由。</summary>
-    private string NoSequenceReason() =>
-        _vm.HasImage ? CommandDisabledReasons.NoSequence : CommandDisabledReasons.NoImage;
+    /// <summary>フレーム送り・再生(送れるフレームがあり、比較モードでないこと)の理由。</summary>
+    private string NoSequenceReason() => CommandDisabledReasons.ForSequence(_vm.HasImage, _compareMode);
 
-    /// <summary>ROI の解除(ROI があること)の理由。</summary>
-    private string NoRoiReason() =>
-        _vm.HasImage ? CommandDisabledReasons.NoRoi : CommandDisabledReasons.NoImage;
+    /// <summary>ROI の解除(ROI があり、比較モードでないこと)の理由。</summary>
+    private string NoRoiReason() => CommandDisabledReasons.ForRoi(_vm.HasImage, _compareMode);
 
     private IReadOnlyList<AppCommand> BuildCommands()
     {
@@ -222,8 +223,8 @@ public partial class MainWindow
                 Title = "保存…",
                 Key = Key.S,
                 Modifiers = ModifierKeys.Control,
-                CanExecute = () => _vm.HasImage,
-                DisabledReason = NoImageReason,
+                CanExecute = MainViewAvailable,
+                DisabledReason = MainViewReason,
                 Execute = () => OnSaveClick(this, empty),
             },
             new()
@@ -233,8 +234,8 @@ public partial class MainWindow
                 Title = "バッチ現像 / 動画書き出し…",
                 Key = Key.B,
                 Modifiers = ModifierKeys.Control,
-                CanExecute = () => _vm.HasImage,
-                DisabledReason = NoImageReason,
+                CanExecute = MainViewAvailable,
+                DisabledReason = MainViewReason,
                 Execute = () => OnBatchExportClick(this, empty),
             },
             new()
@@ -248,8 +249,8 @@ public partial class MainWindow
                 // raw 以外(画像ファイル)では実行時に理由をダイアログで出す(AppCommand.CanExecute の方針。
                 // ビニング・フィルタの実行中の判定と同じ扱い)。ここで無効にすると、パレットは理由を示せても
                 // F2 は黙って無視される
-                CanExecute = () => _vm.HasImage,
-                DisabledReason = NoImageReason,
+                CanExecute = MainViewAvailable,
+                DisabledReason = MainViewReason,
                 Execute = () => OnChangeFormatClick(this, empty),
             },
 
@@ -260,8 +261,8 @@ public partial class MainWindow
                 Category = "表示",
                 Title = "ズームイン",
                 Key = Key.OemPlus,
-                CanExecute = () => _vm.HasImage,
-                DisabledReason = NoImageReason,
+                CanExecute = MainViewAvailable,
+                DisabledReason = MainViewReason,
                 Execute = Viewport.ZoomIn,
             },
             new()
@@ -270,8 +271,8 @@ public partial class MainWindow
                 Category = "表示",
                 Title = "ズームアウト",
                 Key = Key.OemMinus,
-                CanExecute = () => _vm.HasImage,
-                DisabledReason = NoImageReason,
+                CanExecute = MainViewAvailable,
+                DisabledReason = MainViewReason,
                 Execute = Viewport.ZoomOut,
             },
             new()
@@ -280,8 +281,8 @@ public partial class MainWindow
                 Category = "表示",
                 Title = "等倍 (1:1)",
                 Key = Key.D1,
-                CanExecute = () => _vm.HasImage,
-                DisabledReason = NoImageReason,
+                CanExecute = MainViewAvailable,
+                DisabledReason = MainViewReason,
                 Execute = Viewport.ActualSize,
             },
             new()
@@ -290,8 +291,8 @@ public partial class MainWindow
                 Category = "表示",
                 Title = "全体表示",
                 Key = Key.D0,
-                CanExecute = () => _vm.HasImage,
-                DisabledReason = NoImageReason,
+                CanExecute = MainViewAvailable,
+                DisabledReason = MainViewReason,
                 Execute = Viewport.FitToView,
             },
             new()
@@ -336,8 +337,8 @@ public partial class MainWindow
                 Category = "表示",
                 Title = "ゼブラ (飽和/黒潰れ警告) 切替",
                 Key = Key.Z,
-                CanExecute = () => _vm.HasImage,
-                DisabledReason = NoImageReason,
+                CanExecute = MainViewAvailable,
+                DisabledReason = MainViewReason,
                 Execute = () => _vm.ZebraOn = !_vm.ZebraOn,
             },
             new()
@@ -347,8 +348,8 @@ public partial class MainWindow
                 Title = "Raw表示",
                 Key = Key.D1,
                 Modifiers = ModifierKeys.Control,
-                CanExecute = () => _vm.HasImage,
-                DisabledReason = NoImageReason,
+                CanExecute = MainViewAvailable,
+                DisabledReason = MainViewReason,
                 Execute = () => SelectDisplayMode(0),
             },
             new()
@@ -358,8 +359,8 @@ public partial class MainWindow
                 Title = "Bayerカラー",
                 Key = Key.D2,
                 Modifiers = ModifierKeys.Control,
-                CanExecute = () => _vm.HasImage,
-                DisabledReason = NoImageReason,
+                CanExecute = MainViewAvailable,
+                DisabledReason = MainViewReason,
                 Execute = () => SelectDisplayMode(1),
             },
             new()
@@ -369,8 +370,8 @@ public partial class MainWindow
                 Title = "カラー現像",
                 Key = Key.D3,
                 Modifiers = ModifierKeys.Control,
-                CanExecute = () => _vm.HasImage,
-                DisabledReason = NoImageReason,
+                CanExecute = MainViewAvailable,
+                DisabledReason = MainViewReason,
                 Execute = () => SelectDisplayMode(2),
             },
             new()
@@ -380,8 +381,8 @@ public partial class MainWindow
                 Title = "チャネル分割 (R/Gr/Gb/B)",
                 Key = Key.D4,
                 Modifiers = ModifierKeys.Control,
-                CanExecute = () => _vm.HasImage,
-                DisabledReason = NoImageReason,
+                CanExecute = MainViewAvailable,
+                DisabledReason = MainViewReason,
                 Execute = () => SelectDisplayMode(3),
             },
             new()
@@ -391,8 +392,8 @@ public partial class MainWindow
                 Title = "HDR分割表示 (長/短)",
                 Key = Key.D5,
                 Modifiers = ModifierKeys.Control,
-                CanExecute = () => _vm.HasImage,
-                DisabledReason = NoImageReason,
+                CanExecute = MainViewAvailable,
+                DisabledReason = MainViewReason,
                 Execute = () => SelectDisplayMode(4),
             },
             new()
@@ -402,8 +403,8 @@ public partial class MainWindow
                 Title = "HDR合成表示",
                 Key = Key.D6,
                 Modifiers = ModifierKeys.Control,
-                CanExecute = () => _vm.HasImage,
-                DisabledReason = NoImageReason,
+                CanExecute = MainViewAvailable,
+                DisabledReason = MainViewReason,
                 Execute = () => SelectDisplayMode(5),
             },
 
@@ -415,8 +416,8 @@ public partial class MainWindow
                 Title = "自動コントラスト (0.35%クリップ)",
                 Key = Key.A,
                 Modifiers = ModifierKeys.Control,
-                CanExecute = () => _vm.HasImage,
-                DisabledReason = NoImageReason,
+                CanExecute = MainViewAvailable,
+                DisabledReason = MainViewReason,
                 Execute = () => OnAutoContrastClick(this, empty),
             },
             new()
@@ -426,8 +427,8 @@ public partial class MainWindow
                 Title = "表示調整をリセット",
                 Key = Key.R,
                 Modifiers = ModifierKeys.Control | ModifierKeys.Shift,
-                CanExecute = () => _vm.HasImage,
-                DisabledReason = NoImageReason,
+                CanExecute = MainViewAvailable,
+                DisabledReason = MainViewReason,
                 Execute = () => OnResetDisplayClick(this, empty),
             },
             new()
@@ -437,8 +438,8 @@ public partial class MainWindow
                 Title = "AWB (グレーワールド)",
                 Key = Key.W,
                 Modifiers = ModifierKeys.Control,
-                CanExecute = () => _vm.HasImage,
-                DisabledReason = NoImageReason,
+                CanExecute = MainViewAvailable,
+                DisabledReason = MainViewReason,
                 Execute = () => OnGrayWorldClick(this, empty),
             },
             new()
@@ -448,8 +449,8 @@ public partial class MainWindow
                 Title = "ガンマを上げる (+0.1)",
                 Key = Key.OemPeriod,
                 Modifiers = ModifierKeys.Shift,
-                CanExecute = () => _vm.HasImage,
-                DisabledReason = NoImageReason,
+                CanExecute = MainViewAvailable,
+                DisabledReason = MainViewReason,
                 Execute = () => _vm.Gamma = Math.Min(3.0, Math.Round(_vm.Gamma + 0.1, 2)),
             },
             new()
@@ -459,8 +460,8 @@ public partial class MainWindow
                 Title = "ガンマを下げる (-0.1)",
                 Key = Key.OemComma,
                 Modifiers = ModifierKeys.Shift,
-                CanExecute = () => _vm.HasImage,
-                DisabledReason = NoImageReason,
+                CanExecute = MainViewAvailable,
+                DisabledReason = MainViewReason,
                 Execute = () => _vm.Gamma = Math.Max(0.2, Math.Round(_vm.Gamma - 0.1, 2)),
             },
             new()
@@ -469,8 +470,8 @@ public partial class MainWindow
                 Category = "調整",
                 Title = "ゲインを上げる (+6dB = 1段)",
                 Key = Key.OemCloseBrackets,
-                CanExecute = () => _vm.HasImage,
-                DisabledReason = NoImageReason,
+                CanExecute = MainViewAvailable,
+                DisabledReason = MainViewReason,
                 Execute = () => _vm.GainDb = Math.Min(_vm.MaxGainDb, _vm.GainDb + 6),
             },
             new()
@@ -479,8 +480,8 @@ public partial class MainWindow
                 Category = "調整",
                 Title = "ゲインを下げる (-6dB = 1段)",
                 Key = Key.OemOpenBrackets,
-                CanExecute = () => _vm.HasImage,
-                DisabledReason = NoImageReason,
+                CanExecute = MainViewAvailable,
+                DisabledReason = MainViewReason,
                 Execute = () => _vm.GainDb = Math.Max(_vm.MinGainDb, _vm.GainDb - 6),
             },
 
@@ -491,8 +492,8 @@ public partial class MainWindow
                 Category = "操作モード",
                 Title = "ROI選択モード切替",
                 Key = Key.R,
-                CanExecute = () => _vm.HasImage,
-                DisabledReason = NoImageReason,
+                CanExecute = MainViewAvailable,
+                DisabledReason = MainViewReason,
                 Execute = () => Toggle(RoiToggle),
             },
             new()
@@ -501,8 +502,8 @@ public partial class MainWindow
                 Category = "操作モード",
                 Title = "ラインプロファイルモード切替",
                 Key = Key.P,
-                CanExecute = () => _vm.HasImage,
-                DisabledReason = NoImageReason,
+                CanExecute = MainViewAvailable,
+                DisabledReason = MainViewReason,
                 Execute = () => Toggle(ProfileToggle),
             },
             new()
@@ -511,8 +512,8 @@ public partial class MainWindow
                 Category = "操作モード",
                 Title = "WBスポイトモード切替",
                 Key = Key.I,
-                CanExecute = () => _vm.HasImage,
-                DisabledReason = NoImageReason,
+                CanExecute = MainViewAvailable,
+                DisabledReason = MainViewReason,
                 Execute = () => Toggle(WbPickToggle),
             },
             new()
@@ -522,7 +523,7 @@ public partial class MainWindow
                 Title = "ROIを解除",
                 Key = Key.G,
                 Modifiers = ModifierKeys.Control,
-                CanExecute = () => _vm.HasRoi,
+                CanExecute = () => _vm.HasRoi && !_compareMode,
                 DisabledReason = NoRoiReason,
                 Execute = () => Viewport.ClearRoi(),
             },
@@ -533,8 +534,8 @@ public partial class MainWindow
                 Title = "中央に ROI を設定 (画像の1/4)",
                 Key = Key.G,
                 Modifiers = ModifierKeys.Control | ModifierKeys.Shift,
-                CanExecute = () => _vm.HasImage,
-                DisabledReason = NoImageReason,
+                CanExecute = MainViewAvailable,
+                DisabledReason = MainViewReason,
                 Execute = SetCenterRoi,
             },
 
@@ -545,7 +546,7 @@ public partial class MainWindow
                 Category = "シーケンス",
                 Title = "次のフレーム",
                 Key = Key.Next,
-                CanExecute = () => _vm.HasSequence,
+                CanExecute = () => _vm.HasSequence && !_compareMode,
                 DisabledReason = NoSequenceReason,
                 Execute = () => OnSeqNextClick(this, empty),
             },
@@ -555,7 +556,7 @@ public partial class MainWindow
                 Category = "シーケンス",
                 Title = "前のフレーム",
                 Key = Key.Prior,
-                CanExecute = () => _vm.HasSequence,
+                CanExecute = () => _vm.HasSequence && !_compareMode,
                 DisabledReason = NoSequenceReason,
                 Execute = () => OnSeqPrevClick(this, empty),
             },
@@ -565,7 +566,7 @@ public partial class MainWindow
                 Category = "シーケンス",
                 Title = "先頭フレーム",
                 Key = Key.Home,
-                CanExecute = () => _vm.HasSequence,
+                CanExecute = () => _vm.HasSequence && !_compareMode,
                 DisabledReason = NoSequenceReason,
                 Execute = () => OnSeqFirstClick(this, empty),
             },
@@ -575,7 +576,7 @@ public partial class MainWindow
                 Category = "シーケンス",
                 Title = "最終フレーム",
                 Key = Key.End,
-                CanExecute = () => _vm.HasSequence,
+                CanExecute = () => _vm.HasSequence && !_compareMode,
                 DisabledReason = NoSequenceReason,
                 Execute = () => OnSeqLastClick(this, empty),
             },
@@ -585,7 +586,7 @@ public partial class MainWindow
                 Category = "シーケンス",
                 Title = "再生 / 停止",
                 Key = Key.Space,
-                CanExecute = () => _vm.HasSequence,
+                CanExecute = () => _vm.HasSequence && !_compareMode,
                 DisabledReason = NoSequenceReason,
                 Execute = () => Toggle(PlayToggle),
             },
@@ -597,8 +598,8 @@ public partial class MainWindow
                 Category = "解析",
                 Title = "ヒストグラムを更新",
                 Key = Key.F5,
-                CanExecute = () => _vm.HasImage,
-                DisabledReason = NoImageReason,
+                CanExecute = MainViewAvailable,
+                DisabledReason = MainViewReason,
                 Execute = () => OnHistogramRefreshClick(this, empty),
             },
             new()
@@ -627,8 +628,8 @@ public partial class MainWindow
                 Id = "hist-copy",
                 Category = "解析",
                 Title = "ヒストグラムをクリップボードへコピー",
-                CanExecute = () => _vm.HasImage,
-                DisabledReason = NoImageReason,
+                CanExecute = MainViewAvailable,
+                DisabledReason = MainViewReason,
                 Execute = () => OnHistogramCopyClick(this, empty),
             },
             new()
@@ -636,8 +637,8 @@ public partial class MainWindow
                 Id = "hist-csv",
                 Category = "解析",
                 Title = "ヒストグラムをCSV保存…",
-                CanExecute = () => _vm.HasImage,
-                DisabledReason = NoImageReason,
+                CanExecute = MainViewAvailable,
+                DisabledReason = MainViewReason,
                 Execute = () => OnHistogramSaveCsvClick(this, empty),
             },
             new()
@@ -647,8 +648,8 @@ public partial class MainWindow
                 Title = "欠陥画素検出…",
                 Key = Key.D,
                 Modifiers = ModifierKeys.Control,
-                CanExecute = () => _vm.HasImage,
-                DisabledReason = NoImageReason,
+                CanExecute = MainViewAvailable,
+                DisabledReason = MainViewReason,
                 Execute = () => OnDefectDetectClick(this, empty),
             },
             new()
@@ -658,8 +659,8 @@ public partial class MainWindow
                 Title = "ノイズ / ダイナミックレンジ測定…",
                 Key = Key.M,
                 Modifiers = ModifierKeys.Control,
-                CanExecute = () => _vm.HasImage,
-                DisabledReason = NoImageReason,
+                CanExecute = MainViewAvailable,
+                DisabledReason = MainViewReason,
                 Execute = () => OnNoiseMeasureClick(this, empty),
             },
             new()
@@ -669,8 +670,8 @@ public partial class MainWindow
                 Title = "画像演算 (ダーク減算/フラット補正)…",
                 Key = Key.K,
                 Modifiers = ModifierKeys.Control,
-                CanExecute = () => _vm.HasImage,
-                DisabledReason = NoImageReason,
+                CanExecute = MainViewAvailable,
+                DisabledReason = MainViewReason,
                 Execute = () => OnImageCalculatorClick(this, empty),
             },
 
@@ -682,8 +683,8 @@ public partial class MainWindow
                 Description = "平均 / 加算。モノクロ・Bayer CFA・RGBに対応",
 
                 // 実行中かどうかは実行時に判定し、何が実行中かをダイアログで示す(AppCommand.CanExecute の方針)
-                CanExecute = () => _vm.HasImage && !_compareMode,
-                DisabledReason = ProcessingDisabledReason,
+                CanExecute = MainViewAvailable,
+                DisabledReason = MainViewReason,
                 Execute = () => OnBinningClick(this, empty),
             },
             new()
@@ -692,8 +693,8 @@ public partial class MainWindow
                 Category = "処理",
                 Title = "画像フィルタ (平滑化 / シャープ / エッジ)…",
                 Description = "平均・ガウシアン・メディアン・アンシャープ・Sobel・最小値・最大値",
-                CanExecute = () => _vm.HasImage && !_compareMode,
-                DisabledReason = ProcessingDisabledReason,
+                CanExecute = MainViewAvailable,
+                DisabledReason = MainViewReason,
                 Execute = () => OnFilterClick(this, empty),
             },
 
@@ -705,8 +706,8 @@ public partial class MainWindow
                 Title = "表示をクリップボードへコピー",
                 Key = Key.C,
                 Modifiers = ModifierKeys.Control | ModifierKeys.Shift,
-                CanExecute = () => _vm.HasImage,
-                DisabledReason = NoImageReason,
+                CanExecute = MainViewAvailable,
+                DisabledReason = MainViewReason,
                 Execute = () => OnCopyViewClick(this, empty),
             },
             new()
@@ -716,8 +717,8 @@ public partial class MainWindow
                 Title = "カーソル位置の画素値をコピー",
                 Key = Key.C,
                 Modifiers = ModifierKeys.Control,
-                CanExecute = () => _vm.HasImage,
-                DisabledReason = NoImageReason,
+                CanExecute = MainViewAvailable,
+                DisabledReason = MainViewReason,
                 Execute = () => OnCopyPixelValueClick(this, empty),
             },
             new()
@@ -725,8 +726,8 @@ public partial class MainWindow
                 Id = "copy-pixel-pos",
                 Category = "クリップボード",
                 Title = "カーソル座標をコピー",
-                CanExecute = () => _vm.HasImage,
-                DisabledReason = NoImageReason,
+                CanExecute = MainViewAvailable,
+                DisabledReason = MainViewReason,
                 Execute = () => OnCopyPixelPosClick(this, empty),
             },
         };
