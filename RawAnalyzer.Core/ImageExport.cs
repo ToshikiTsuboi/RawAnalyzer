@@ -265,6 +265,11 @@ public static class ImageExport
                 ColorPipeline.DemosaicBilinear(
                     mosaic, columns, bandHeight, 0, top, pattern, rgb16, cancellationToken);
 
+                // デモザイクは取り消されると例外を出さずに途中で戻る(ViewportRenderer と同じく呼び出し側で確かめる)。
+                // 確かめずに進むと、処理されなかった行の rgb16(確保直後の0や前のバンド・区画の値)をLUT変換して、
+                // 最後のバンドでは壊れた画像のまま正常に戻る(一括書き出しが正式名で保存して「完了」になる)
+                cancellationToken.ThrowIfCancellationRequested();
+
                 DevelopLuts luts = segmentLuts[s];
                 Parallel.For(0, rows, r =>
                 {
@@ -286,6 +291,8 @@ public static class ImageExport
 
             progress?.Report((double)(bandY + rows) / height);
         }
+
+        cancellationToken.ThrowIfCancellationRequested();
     }
 
     /// <summary>区画ごとのLUTを検証し、並列処理から読む配列へ写す。</summary>

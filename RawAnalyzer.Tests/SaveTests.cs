@@ -365,6 +365,69 @@ public class SaveTests
         Assert.Equal(expected, ImageExport.DevelopRgb24(image, 0, BayerPattern.Grbg, luts));
     }
 
+    [Theory]
+    [InlineData(1)] // 一括書き出し・保存の現像(画像全体を1区画)
+    [InlineData(2)] // HDR分割ビューの段ごとの現像(区画ごとにデモザイク)
+    public void ImageExport_DevelopRgb24_CanceledDuringLastBand_ThrowsInsteadOfReturningStaleRows(int segments)
+    {
+        // 回帰テスト: デモザイクは取り消されると例外を出さずに途中で戻る(呼び出し側で確かめる約束)が、
+        // 現像は各バンドの先頭でしか確かめていなかった。最後のバンド(1バンドの画像では全体)のデモザイク中や
+        // 区画の間に取り消すと、処理されなかった行を確保直後の0や前の区画の値のままLUT変換して正常に戻り、
+        // 一括書き出しが壊れた画像を正式名で保存して「完了」と表示していた。
+        // 1バンド(256行以下)の幅の広い画像で、参照の所要時間の半ばに取り消す。正常に戻ってよいのは
+        // 取り消しが処理の終わった後に届いたときだけで、そのときは全行が正しい
+        const int width = 24000;
+        const int height = 200;
+        var format = new RawFormat { Width = width, Height = height, BitDepth = 16, Bayer = BayerPattern.Rggb };
+        var pixels = new ushort[width * height];
+        for (int i = 0; i < pixels.Length; i++)
+        {
+            pixels[i] = (ushort)((((long)i * 7919) + 13) % 65536 | 1);
+        }
+
+        using RawImage image = RawImage.FromPixels(format, pixels);
+        var luts = DevelopLuts.Create(new DevelopParameters(Gamma: 1.0));
+        DevelopLuts[] segmentLuts = Enumerable.Repeat(luts, segments).ToArray();
+        byte[] Develop(CancellationToken ct) => ImageExport.DevelopRgb24(
+            image, 0, BayerPattern.Rggb, segmentLuts, width / segments, null, ct);
+
+        Develop(default); // JIT などの初回の遅れを除く
+        var reference = System.Diagnostics.Stopwatch.StartNew();
+        byte[] expected = Develop(default);
+        long halfway = reference.ElapsedTicks / 2;
+
+        for (int attempt = 0; attempt < 3; attempt++)
+        {
+            using var cts = new CancellationTokenSource();
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            var canceler = new Thread(() =>
+            {
+                while (clock.ElapsedTicks < halfway)
+                {
+                    Thread.SpinWait(20);
+                }
+
+                cts.Cancel();
+            });
+            canceler.Start();
+            try
+            {
+                byte[] developed = Develop(cts.Token);
+                Assert.True(
+                    developed.AsSpan().SequenceEqual(expected),
+                    "取り消し後に正常に戻った現像結果が、取り消さないときと違う(処理されなかった行が残っている)");
+            }
+            catch (OperationCanceledException)
+            {
+                // 期待どおり取り消しとして扱われた
+            }
+            finally
+            {
+                canceler.Join();
+            }
+        }
+    }
+
     /// <summary>テスト用: コールバックを同期実行するIProgress。</summary>
     private sealed class SynchronousProgress : IProgress<double>
     {
