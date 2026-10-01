@@ -157,6 +157,26 @@ public partial class NumericSliderRow : UserControl
 
     private string Format => "F" + Decimals.ToString(CultureInfo.InvariantCulture);
 
+    /// <summary>
+    /// 操作で決まった値を表示桁へ丸めて値域に収める。
+    /// </summary>
+    /// <remarks>
+    /// スライダーのドラッグは 137.6 のような端数を生む。入力欄は表示桁へ四捨五入して "138" と
+    /// 見せる一方、黒/白レベルの換算(DisplayLevels.ToPoints)は切り捨てるので、端数が残ると
+    /// 表示と実際に使われるコード値が1コードずれる。値を表示どおりにしておく。
+    /// </remarks>
+    private double Quantize(double value)
+    {
+        double rounded = Math.Round(value, Math.Clamp(Decimals, 0, 15), MidpointRounding.AwayFromZero);
+        return Math.Clamp(rounded, Minimum, Maximum);
+    }
+
+    /// <summary>表示中の値から1ステップ動かす(ホイール・↑↓キー)。</summary>
+    private void StepBy(int direction)
+    {
+        Value = Quantize(Quantize(Value) + direction * Step);
+    }
+
     private static void OnLabelChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
     {
         ((NumericSliderRow)d).LabelText.Text = (string)e.NewValue;
@@ -218,13 +238,18 @@ public partial class NumericSliderRow : UserControl
             return;
         }
 
-        Value = e.NewValue;
+        Value = Quantize(e.NewValue);
+
+        // 同じ表示値の中での移動では Value が変わらず Refresh が走らないので、つまみを表示値へ戻す
+        if (ValueSlider.Value != Value)
+        {
+            Refresh();
+        }
     }
 
     private void OnSliderWheel(object sender, MouseWheelEventArgs e)
     {
-        double next = Value + (e.Delta > 0 ? Step : -Step);
-        Value = Math.Clamp(next, Minimum, Maximum);
+        StepBy(e.Delta > 0 ? 1 : -1);
         e.Handled = true;
     }
 
@@ -245,8 +270,7 @@ public partial class NumericSliderRow : UserControl
         }
         else if (e.Key is Key.Up or Key.Down)
         {
-            Value = Math.Clamp(
-                Value + (e.Key == Key.Up ? Step : -Step), Minimum, Maximum);
+            StepBy(e.Key == Key.Up ? 1 : -1);
             e.Handled = true;
         }
     }
@@ -261,8 +285,8 @@ public partial class NumericSliderRow : UserControl
 
     private void OnValueBoxLostFocus(object sender, RoutedEventArgs e)
     {
-        // 編集していないのにCommitすると表示桁へ丸められ、
-        // 黒レベル(Decimals=0)では 137.6 → 138 と黒点が1code動く
+        // 編集していないのにCommitすると、バインド元が入れた表示桁より細かい値
+        // (線形ゲインから換算した dB など)が表示桁へ丸められて動く
         if (_textEdited)
         {
             CommitText();
@@ -277,7 +301,7 @@ public partial class NumericSliderRow : UserControl
                 ValueBox.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out double parsed)
             && double.IsFinite(parsed))
         {
-            Value = Math.Clamp(parsed, Minimum, Maximum);
+            Value = Quantize(parsed);
         }
 
         // 範囲外・不正入力は現在値へ戻す
