@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using RawAnalyzer.App.Services;
 using Xunit;
 
@@ -68,5 +69,28 @@ public class FileNameFilterTests
         Assert.Equal("*.raw", parsed.Text);
         Assert.False(parsed.IsRegex);
         Assert.True(FileNameFilter.Parse("/a/").IsRegex);
+    }
+
+    /// <summary>
+    /// 破滅的なバックトラックを起こす正規表現は、最初の時間切れで条件を不正とし、残りのファイルは照合しない。
+    /// 以前は1件ごとに時間切れ(100ms)まで回ったので、長い名前のファイルが多いフォルダでは
+    /// ファイル数×100ms の間 UI スレッドが止まった。
+    /// </summary>
+    [Fact]
+    public void IsMatch_RegexTimeout_MarksFilterInvalidAndStopsMatching()
+    {
+        FileNameFilter parsed = FileNameFilter.Parse(@"/^(\w+)+$/");
+        Assert.Null(parsed.Error);
+        string[] names = Enumerable.Range(0, 20)
+            .Select(i => $"capture_20260930_{i:D6}_long_exposure_frame.raw")
+            .ToArray();
+
+        var stopwatch = Stopwatch.StartNew();
+        Assert.All(names, name => Assert.True(parsed.IsMatch(name))); // 不正な条件はすべて一致(従来どおり)
+        stopwatch.Stop();
+
+        Assert.NotNull(parsed.Error);
+        Assert.False(parsed.IsEmpty);
+        Assert.True(stopwatch.ElapsedMilliseconds < 1000, $"{stopwatch.ElapsedMilliseconds} ms"); // 以前は 2 秒以上
     }
 }

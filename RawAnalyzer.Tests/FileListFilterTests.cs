@@ -89,4 +89,30 @@ public class FileListFilterTests
         Assert.Equal(new[] { "a.raw", "b.raw" }, vm.FilteredFiles.Select(f => f.Name));
         Assert.Equal("2 / 3 件", vm.FileFilterSummary);
     }
+
+    [Fact]
+    public void FileFilterText_RegexTimeout_ShowsAllAndFlagsError()
+    {
+        // 照合の途中で時間切れになった条件は、不正な正規表現と同じくすべて表示して入力欄に理由を示す
+        // (以前は時間切れの1件を表示して次のファイルでもまた時間切れまで回った)
+        MainViewModel vm = CreateWithFiles(Enumerable.Range(0, 30)
+            .Select(i => $"capture_20260930_{i:D6}_long_exposure_frame.raw")
+            .ToArray());
+        var hasErrorNotified = new List<bool>();
+        vm.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(MainViewModel.FileFilterHasError))
+            {
+                hasErrorNotified.Add(vm.FileFilterHasError);
+            }
+        };
+
+        vm.FileFilterText = @"/^(\w+)+$/";
+
+        Assert.True(vm.FileFilterHasError);
+        Assert.NotNull(vm.FileFilterError);
+        Assert.True(hasErrorNotified[^1]); // 入力欄の強調表示に届く
+        Assert.Equal(30, vm.FilteredFiles.Count);
+        Assert.Equal("30 / 30 件", vm.FileFilterSummary);
+    }
 }

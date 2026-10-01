@@ -222,9 +222,19 @@ public sealed class MainViewModel : ObservableObject
 
     private void ApplyFileFilter()
     {
+        bool hadError = _fileFilter.Error is not null;
         FileEntry[] filtered = _fileFilter.IsEmpty
             ? Files.ToArray()
             : Files.Where(f => f.IsDirectory || _fileFilter.IsMatch(f.Name)).ToArray();
+        if (!hadError && _fileFilter.Error is not null)
+        {
+            // 照合の途中で正規表現が時間切れになり、条件が不正になった。不正な正規表現と同じく
+            // (時間切れより前に照合したファイルも含めて)すべて表示し、入力欄に理由を示す
+            filtered = Files.ToArray();
+            OnPropertyChanged(nameof(FileFilterError));
+            OnPropertyChanged(nameof(FileFilterHasError));
+        }
+
         FilteredFiles = filtered;
         FileFilterSummary = _fileFilter.IsEmpty
             ? $"{Files.Count} 件"

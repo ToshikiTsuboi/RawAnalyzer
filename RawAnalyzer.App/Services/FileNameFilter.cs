@@ -21,9 +21,13 @@ namespace RawAnalyzer.App.Services;
 internal sealed class FileNameFilter
 {
     // ファイル名は短いので通常は一瞬で終わる。破滅的なバックトラックを起こす
-    // パターンを入力されても UI スレッドを長く止めないための上限
+    // パターンを入力されても UI スレッドを長く止めないための上限(1回の照合ごと。最初の時間切れで照合をやめる)
     private static readonly TimeSpan RegexTimeout = TimeSpan.FromMilliseconds(100);
     private static readonly char[] WildcardChars = { '*', '?' };
+
+    /// <summary>照合が時間切れになって条件を不正としたときの説明。</summary>
+    internal const string RegexTimeoutError =
+        "正規表現の照合に時間が掛かりすぎるため、絞り込みを止めました(パターンを単純にしてください)";
 
     private readonly Func<string, bool>[] _terms;
     private readonly Regex? _regex;
@@ -45,8 +49,10 @@ internal sealed class FileNameFilter
     /// <summary>正規表現として解釈されたか。</summary>
     public bool IsRegex => _regex is not null;
 
-    /// <summary>入力が不正な場合の説明。正常なら null。</summary>
-    public string? Error { get; }
+    /// <summary>
+    /// 入力が不正な場合の説明。正常なら null。正規表現の照合が時間切れになると、その時点で不正になる。
+    /// </summary>
+    public string? Error { get; private set; }
 
     /// <summary>条件が空(すべて表示)か。不正な入力は空ではない。</summary>
     public bool IsEmpty => _terms.Length == 0 && _regex is null && Error is null;
@@ -115,6 +121,11 @@ internal sealed class FileNameFilter
     private static bool IsSeparator(char c) => char.IsWhiteSpace(c) || c is ';' or ',' or '；' or '，';
 
     /// <summary>ファイル名(パスを含まない)が条件に一致するか。不正な条件はすべて一致とみなす。</summary>
+    /// <remarks>
+    /// 正規表現の照合が時間切れになったら、その条件を不正として(<see cref="Error"/>)以降は照合しない。
+    /// 時間切れは1回の照合ごとなので、以前のように時間切れの1件だけを表示して次のファイルへ進むと、
+    /// 長い名前のファイルが多いフォルダではファイル数×上限の間 UI スレッドが止まった。
+    /// </remarks>
     /// <param name="fileName">判定するファイル名。</param>
     /// <returns>表示すべきなら true。</returns>
     public bool IsMatch(string fileName)
@@ -132,6 +143,7 @@ internal sealed class FileNameFilter
             }
             catch (RegexMatchTimeoutException)
             {
+                Error = RegexTimeoutError;
                 return true;
             }
         }
