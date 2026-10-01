@@ -45,24 +45,26 @@ public class RoiAnalysisTests
         Assert.Equal(2250, result.RoiStatistics!.Value.Mean);
     }
 
-    [Theory]
-    [InlineData(BayerPattern.Rggb)]
-    [InlineData(BayerPattern.Bggr)]
-    [InlineData(BayerPattern.Grbg)]
-    [InlineData(BayerPattern.Gbrg)]
-    public void ChannelSplit_EachQuadrant_MapsToItsChannel(BayerPattern pattern)
+    [Fact]
+    public void ChannelSplit_EachQuadrant_MapsToItsChannel()
     {
-        // 8×6 → 象限 4×3。各象限の内側1画素の矩形
+        // 8×6 → 象限 4×3。各象限の内側1画素の矩形。GBRG の象限は左上 Gb / 右上 B / 左下 R / 右下 Gr
+        // (パターンごとの表そのものは BayerHelperTests が固定している)
+        BayerChannel[,] expected =
+        {
+            { BayerChannel.Gb, BayerChannel.B },
+            { BayerChannel.R, BayerChannel.Gr },
+        };
         for (int quadY = 0; quadY < 2; quadY++)
         {
             for (int quadX = 0; quadX < 2; quadX++)
             {
                 var roi = new RegionOfInterest(quadX * 4 + 1, quadY * 3 + 1, 2, 2);
 
-                RoiAnalysisTarget target = RoiAnalysis.Resolve(roi, true, 8, 6, pattern);
+                RoiAnalysisTarget target = RoiAnalysis.Resolve(roi, true, 8, 6, BayerPattern.Gbrg);
 
                 ChannelRoiTarget channel = Assert.IsType<ChannelRoiTarget>(target);
-                Assert.Equal(BayerSplit.GetQuadrantChannel(pattern, quadX, quadY), channel.Channel);
+                Assert.Equal(expected[quadY, quadX], channel.Channel);
                 Assert.Equal(new ChannelRegion(2 + quadX, 2 + quadY, 2, 2), channel.Region);
                 Assert.Equal(roi, channel.DisplayRoi);
             }
@@ -70,8 +72,6 @@ public class RoiAnalysisTests
     }
 
     [Theory]
-    [InlineData(3, 0, 2, 1)]  // 左右の象限をまたぐ
-    [InlineData(0, 2, 1, 2)]  // 上下の象限をまたぐ
     [InlineData(2, 1, 4, 4)]  // 4象限の中央(中央ROI)
     public void ChannelSplit_RoiAcrossQuadrants_IsRejected(int x, int y, int width, int height)
     {

@@ -29,24 +29,6 @@ public class DefectCorrectorTests
     }
 
     [Fact]
-    public void Correct_BayerUsesSameChannelNeighbors()
-    {
-        // R=1000, G=8000, B=3000 のRGGBモザイクでR画素に白点
-        const int size = 8;
-        ushort[] codes = ColorPipelineTests.BuildConstantMosaic(
-            size, size, BayerPattern.Rggb, r: 1000, g: 8000, b: 3000);
-        codes[2 * size + 2] = 60000; // (2,2) はR画素
-
-        using RawImage image = TestImages.FromCodes(codes, size, size, bayer: BayerPattern.Rggb);
-        var defects = new[] { new DefectPixel(2, 2, 60000, DefectType.Hot) };
-
-        using RawImage result = DefectCorrector.Correct(image, defects, BayerPattern.Rggb);
-
-        // 隣接G(8000)ではなく同色R(1000)で補間されること
-        Assert.Equal(1000, result.GetPixel(2, 2));
-    }
-
-    [Fact]
     public void Correct_ResultCarriesPatternUsedForCorrection()
     {
         // RGGBとして読み込んだ後、右パネルでBGGRへ変更してから補正する
@@ -63,7 +45,9 @@ public class DefectCorrectorTests
 
         using RawImage result = DefectCorrector.Correct(image, defects, BayerPattern.Bggr);
 
-        Assert.Equal(3000, result.GetPixel(2, 2)); // 同色(B)の近傍で補間
+        // 隣接G(8000)ではなく同色(B)の近傍で補間する。Bayer では同色の近傍(1画素おき)を
+        // 参照するという仕様(R/B で経路は同じ)も、この assert が兼ねている
+        Assert.Equal(3000, result.GetPixel(2, 2));
         Assert.Equal(BayerPattern.Bggr, result.Format.Bayer);
     }
 

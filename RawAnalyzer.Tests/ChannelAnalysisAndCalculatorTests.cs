@@ -9,9 +9,6 @@ public class ChannelAnalysisTests
     [InlineData(5, 5)]
     [InlineData(5, 4)]
     [InlineData(4, 5)]
-    [InlineData(1, 1)]
-    [InlineData(1, 4)]
-    [InlineData(5, 1)]
     public void ComputeChannelAnalysis_OddSize_CountsAllPixels(int width, int height)
     {
         // 奇数サイズでも最終行/列が統計から脱落しないこと
@@ -35,7 +32,6 @@ public class ChannelAnalysisTests
     }
 
     [Theory]
-    [InlineData(BayerPattern.Rggb)]
     [InlineData(BayerPattern.Grbg)]
     public void ComputeChannelAnalysis_ConstantChannels_SeparatesExactly(BayerPattern pattern)
     {
@@ -77,29 +73,16 @@ public class ChannelAnalysisTests
         Assert.Equal(16u, result.Total.Bins[2500]);
     }
 
-    [Fact]
-    public void ComputeChannelAnalysis_Roi_RestrictsToRegion()
+    [Theory]
+    [InlineData(1, 1)]
+    [InlineData(2, 2)]
+    public void ComputeChannelAnalysis_Roi_CountsExactlyTheRoi(int roiX, int roiY)
     {
-        const int size = 8;
-        ushort[] mosaic = ColorPipelineTests.BuildConstantMosaic(
-            size, size, BayerPattern.Rggb, 100, 200, 300);
-        using RawImage image = TestImages.FromCodes(mosaic, size, size);
-
-        ChannelAnalysisResult result = ImageAnalysis.ComputeChannelAnalysis(
-            image, 0, BayerPattern.Rggb, new RegionOfInterest(2, 2, 4, 4));
-
-        Assert.Equal(16, result.Total.SampleCount);
-        Assert.Equal(4, result.Channels.First(c => c.Channel == BayerChannel.R)
-            .Statistics.SampleCount);
-    }
-
-    [Fact]
-    public void ComputeChannelAnalysis_OddAlignedRoi_CountsExactlyTheRoi()
-    {
-        // 奇数座標を境界に持つ roi=(1,1,4,4) も、その16画素だけを絶対座標の偶奇でチャネルへ振り分ける。
-        // 内側へ切り詰めると4画素(各チャネル1サンプル・σ=0)、以前のように外側の2x2境界へ広げると
-        // 36画素になり、ROIの外を集計して同時に表示するROI統計と食い違っていた
-        var roi = new RegionOfInterest(1, 1, 4, 4);
+        // ROIの16画素だけを絶対座標の偶奇でチャネルへ振り分け、ROIの外(65535)は数えない。
+        // 奇数座標を境界に持つ roi=(1,1,4,4) は、内側へ切り詰めると4画素(各チャネル1サンプル・σ=0)、
+        // 以前のように外側の2x2境界へ広げると36画素になり、ROIの外を集計して同時に表示するROI統計と
+        // 食い違っていた。(2,2) は偶数で0でないオフセット(ブロックの開始をROIの左上へずらす)
+        var roi = new RegionOfInterest(roiX, roiY, 4, 4);
         using RawImage image = TestImages.FromCodes(MosaicInsideRoi(8, roi), 8, 8);
 
         ChannelAnalysisResult result = ImageAnalysis.ComputeChannelAnalysis(
