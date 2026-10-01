@@ -663,14 +663,10 @@ public class HdrMergerTests
                 new[] { longFrame, shortFrame },
                 new HdrMergeParameters(ExposureRatio: 16, BlackLevel: black));
 
-            // 長秒が飽和しない範囲(S+black ≤ 65535)ではシーンを厳密復元
+            // 長秒が飽和する明部まで全画素でシーンを厳密復元する。明部は短秒から黒を引いてから露光比を
+            // 掛けた値になる(短秒の黒を引き忘れると S+16000、スケール後に引くと S+15000 になる)
             for (int i = 0; i < scene.Length; i++)
             {
-                if (scene[i] + black > 65535 * 0.8)
-                {
-                    break;
-                }
-
                 Assert.True(Math.Abs(merged.Pixels[i] - scene[i]) <= 0.5,
                     $"i={i}: merged={merged.Pixels[i]} scene={scene[i]}");
             }
