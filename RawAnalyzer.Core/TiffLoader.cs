@@ -401,6 +401,9 @@ public static unsafe class TiffLoader
     /// <param name="progress">進捗(0〜1)。</param>
     /// <returns>復号したらtrue。</returns>
     /// <exception cref="InvalidDataException">ファイルが壊れている場合。</exception>
+    /// <exception cref="IOException">
+    /// 読み出しに失敗した場合(ネットワーク上のファイルの切断、消えたファイルなど)。
+    /// </exception>
     public static bool TryDecodeUncompressed(
         string path, int pageIndex, out RawImage? image, out SampleScaling? scaling,
         out string reason, CancellationToken cancellationToken = default,
@@ -438,7 +441,7 @@ public static unsafe class TiffLoader
 
                 decoded = DecodePage(data, header, page, cancellationToken, progress, out decodedScaling);
                 return true;
-            }, rethrowInvalidData: true);
+            }, decoding: true);
         }
         catch
         {
@@ -474,6 +477,9 @@ public static unsafe class TiffLoader
     /// <param name="progress">進捗(0〜1)。</param>
     /// <returns>復号したらtrue。</returns>
     /// <exception cref="InvalidDataException">ファイルが壊れている場合。</exception>
+    /// <exception cref="IOException">
+    /// 読み出しに失敗した場合(ネットワーク上のファイルの切断、消えたファイルなど)。
+    /// </exception>
     public static bool TryDecodeUncompressedRgb(
         string path, int pageIndex, out ColorImage? image, out SampleScaling? scaling,
         out string reason, CancellationToken cancellationToken = default,
@@ -507,7 +513,7 @@ public static unsafe class TiffLoader
             decoded = DecodeRgbPage(data, header, page, cancellationToken, progress, out SampleScaling result);
             decodedScaling = result;
             return true;
-        }, rethrowInvalidData: true);
+        }, decoding: true);
 
         image = decoded;
         scaling = decodedScaling;
@@ -548,6 +554,12 @@ public static unsafe class TiffLoader
     /// </summary>
     internal static readonly AsyncLocal<bool> ForceStreamAccess = new();
 
+    /// <summary>
+    /// テスト用: マップせずに読む経路で、ファイルから読み出す直前に(読む位置, バイト数)で呼ぶ。例外を投げると
+    /// その読み出しの失敗(ネットワーク上のファイルの切断など。実際の切断はテストで起こせない)として扱われる。
+    /// </summary>
+    internal static readonly AsyncLocal<Action<long, int>?> BeforeStreamRead = new();
+
     /// <summary>ファイルをマップせずにストリームから読むか(ネットワーク上のファイル)。</summary>
     /// <param name="path">TIFFファイルのパス。</param>
     /// <returns>マップせずに読むならtrue。</returns>
@@ -556,8 +568,26 @@ public static unsafe class TiffLoader
         return ForceStreamAccess.Value || RawLoader.IsNetworkPath(path);
     }
 
+    /// <summary>
+    /// 読み出しの途中の例外を、理由付きの失敗(false)にせず呼び出し側へ投げ直すか。
+    /// </summary>
+    /// <remarks>
+    /// 復号(<paramref name="decoding"/>)では、壊れたデータ(<see cref="InvalidDataException"/>)と読み出しの失敗
+    /// (<see cref="IOException"/>・<see cref="UnauthorizedAccessException"/>。ネットワーク上のファイルの切断、
+    /// 消えたファイルなど)を投げ直す。false を返すと呼び出し側は WIC へ回り、「BigTIFFのページ…は未対応です」の
+    /// ような読み出しの失敗と関係のない理由で失敗する。ヘッダを調べるだけのときは従来どおり理由にする
+    /// (呼び出し側は WIC に任せ、WIC 自身の読み出しが同じ I/O のエラーで失敗する)。
+    /// </remarks>
+    /// <param name="exception">読み出しの途中の例外。</param>
+    /// <param name="decoding">画素を復号しているか(ヘッダを調べるだけなら false)。</param>
+    /// <returns>投げ直すならtrue。</returns>
+    internal static bool RethrowsReadException(Exception exception, bool decoding)
+    {
+        return decoding && exception is InvalidDataException or IOException or UnauthorizedAccessException;
+    }
+
     private static bool WithMappedFile(
-        string path, ref string reason, Func<TiffBytes, bool> action, bool rethrowInvalidData = false)
+        string path, ref string reason, Func<TiffBytes, bool> action, bool decoding = false)
     {
         long fileLength;
         PageTableKey key;
@@ -566,6 +596,12 @@ public static unsafe class TiffLoader
             var info = new FileInfo(path);
             if (!info.Exists)
             {
+                // FileInfo.Exists は接続できないネットワーク上のパスでも例外でなく false を返す
+                if (decoding)
+                {
+                    throw new FileNotFoundException("ファイルがありません。", path);
+                }
+
                 reason = "ファイルがありません。";
                 return false;
             }
@@ -573,7 +609,8 @@ public static unsafe class TiffLoader
             fileLength = info.Length;
             key = new PageTableKey(info.FullName, fileLength, info.LastWriteTimeUtc);
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        catch (Exception ex) when (
+            ex is IOException or UnauthorizedAccessException && !RethrowsReadException(ex, decoding))
         {
             reason = ex.Message;
             return false;
@@ -591,7 +628,7 @@ public static unsafe class TiffLoader
             {
                 // ネットワーク上のファイルはマップしない(RawLoader と同じ理由)。NAS の切断・SMB の再接続で
                 // ページインが EXCEPTION_IN_PAGE_ERROR になると .NET では捕捉できずプロセスごと落ちる。
-                // ストリームから読めば IOException(理由付きの失敗)で済む
+                // ストリームから読めば捕捉できる IOException で済む(復号中は呼び出し側へ投げ直す)
                 using var stream = new FileStream(
                     path, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 0, FileOptions.RandomAccess);
                 return action(new TiffBytes(new StreamWindow(stream, fileLength)) { CacheKey = key });
@@ -616,13 +653,10 @@ public static unsafe class TiffLoader
                 accessor.SafeMemoryMappedViewHandle.ReleasePointer();
             }
         }
-        catch (InvalidDataException) when (rethrowInvalidData)
-        {
-            throw;
-        }
         catch (Exception ex) when (
             ex is IOException or UnauthorizedAccessException or InvalidDataException
-                or ArgumentException or NotSupportedException)
+                or ArgumentException or NotSupportedException
+            && !RethrowsReadException(ex, decoding))
         {
             reason = ex.Message;
             return false;
@@ -2136,6 +2170,7 @@ public static unsafe class TiffLoader
             }
 
             _start = -1;
+            BeforeStreamRead.Value?.Invoke(offset, count);
             stream.Position = offset;
             stream.ReadExactly(_buffer, 0, count);
             _start = offset;
