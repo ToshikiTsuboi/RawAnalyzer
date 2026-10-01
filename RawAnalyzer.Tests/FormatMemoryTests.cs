@@ -1,3 +1,4 @@
+using System.Reflection;
 using RawAnalyzer.App.Services;
 using RawAnalyzer.Core;
 using Xunit;
@@ -54,7 +55,7 @@ public class FormatMemoryTests : IDisposable
 
         memory.RememberLoaded(Path, Size, Fmt(BayerPattern.Rggb), autoOpen: true);
 
-        FormatHistory reloaded = Create().History;
+        IReadOnlyFormatHistory reloaded = Create().History;
         FormatHistoryEntry entry = Assert.Single(reloaded.Entries);
         Assert.Equal((Size, ".raw", T0, true), (entry.FileSize, entry.Extension, entry.LastUsedUtc, entry.AutoOpen));
         Assert.Equal(Fmt(BayerPattern.Rggb), entry.Format);
@@ -63,7 +64,7 @@ public class FormatMemoryTests : IDisposable
         // 次の記録でも保存し直す(オフで確定したものは記憶するが自動では開かない)
         _now = T0.AddMinutes(1);
         memory.RememberLoaded(Path, Size, Fmt(BayerPattern.Bggr), autoOpen: false);
-        FormatHistory again = Create().History;
+        IReadOnlyFormatHistory again = Create().History;
         Assert.Equal(2, again.Entries.Count);
         Assert.Equal(Fmt(BayerPattern.Rggb), again.FindAutoOpenFormat(Size, ".raw"));
     }
@@ -136,7 +137,7 @@ public class FormatMemoryTests : IDisposable
         Assert.Equal(2, memory.Forget(Size, ".raw"));
         Assert.Equal(0, memory.Forget(Size, ".raw"));
 
-        FormatHistory reloaded = Create().History;
+        IReadOnlyFormatHistory reloaded = Create().History;
         Assert.Empty(reloaded.Find(Size, ".raw"));
         Assert.Single(reloaded.Find(Size, ".bin"));
     }
@@ -174,7 +175,7 @@ public class FormatMemoryTests : IDisposable
         _now = T0.AddMinutes(2);
         b.RememberLoaded(@"D:\cap\other.raw", OtherSize, OtherFmt(), autoOpen: true);
 
-        FormatHistory next = Create().History;
+        IReadOnlyFormatHistory next = Create().History;
         Assert.Equal(Fmt(BayerPattern.Gbrg), Assert.Single(next.Find(Size, ".raw")).Format);
         Assert.Equal(Fmt(BayerPattern.Gbrg), next.FindAutoOpenFormat(Size, ".raw"));
         Assert.Single(next.Find(OtherSize, ".raw"));
@@ -196,7 +197,7 @@ public class FormatMemoryTests : IDisposable
         _now = T0.AddMinutes(1);
         b.RememberLoaded(@"D:\cap\other.raw", OtherSize, OtherFmt(), autoOpen: true);
 
-        FormatHistory next = Create().History;
+        IReadOnlyFormatHistory next = Create().History;
         Assert.Empty(next.Find(Size, ".raw"));
         Assert.Single(next.Find(OtherSize, ".raw"));
     }
@@ -213,10 +214,24 @@ public class FormatMemoryTests : IDisposable
         _now = T0.AddMinutes(2);
         Assert.True(b.Correct(@"D:\cap\shot_0003.raw", Size, Fmt(BayerPattern.Rggb), Fmt(BayerPattern.Bggr)));
 
-        FormatHistory next = Create().History;
+        IReadOnlyFormatHistory next = Create().History;
         Assert.Equal(Fmt(BayerPattern.Bggr), Assert.Single(next.Find(Size, ".raw")).Format);
         Assert.Single(next.Find(OtherSize, ".raw"));
         Assert.Equal(2, a.History.Entries.Count);
+    }
+
+    [Fact]
+    public void History_IsReadOnly_SoChangesGoThroughTheMethodsThatSave()
+    {
+        // 残課題 2026-10-02 M2。History が書き換えられる FormatHistory をそのまま返していたので、直接記録できるのに
+        // 保存されず(次の起動・他のインスタンスに残らない)、他のインスタンスの保存を読み直すと消えた。
+        // 読み取り専用で見せ、書き換えは保存まで行う RememberLoaded・Correct・Forget だけにする
+        Type type = typeof(FormatMemory)
+            .GetProperty(nameof(FormatMemory.History), BindingFlags.Instance | BindingFlags.NonPublic)!.PropertyType;
+
+        Assert.False(typeof(FormatHistory).IsAssignableFrom(type));
+        Assert.DoesNotContain(type.GetMethods(), m => m.Name is nameof(FormatHistory.Record)
+            or nameof(FormatHistory.Replace) or nameof(FormatHistory.Remove));
     }
 
     [Fact]
@@ -247,7 +262,7 @@ public class FormatMemoryTests : IDisposable
         _now = T0.AddMinutes(1);
         memory.RememberLoaded(@"D:\cap\other.raw", OtherSize, OtherFmt(), autoOpen: true);
 
-        FormatHistory saved = Create().History;
+        IReadOnlyFormatHistory saved = Create().History;
         Assert.Single(saved.Find(Size, ".raw"));
         Assert.Single(saved.Find(OtherSize, ".raw"));
         Assert.Single(_warnings);

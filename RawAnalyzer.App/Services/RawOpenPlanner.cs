@@ -54,7 +54,7 @@ internal static class RawOpenPlanner
     /// <param name="chooseFormat">フォーマットを指定し直して開くか(記憶を使わず必ずダイアログを出す)。</param>
     /// <returns>判断の結果。</returns>
     internal static RawOpenPlan Plan(
-        string path, long fileSize, RawFormat? pathMemory, FormatHistory history,
+        string path, long fileSize, RawFormat? pathMemory, IReadOnlyFormatHistory history,
         RawFormat? displayedFormat, RawFormat? requestedInitial = null, bool chooseFormat = false)
     {
         string extension = FormatHistory.ExtensionOf(path);

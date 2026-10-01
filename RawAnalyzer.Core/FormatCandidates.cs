@@ -83,7 +83,7 @@ public static class FormatCandidates
     /// <param name="maxCount">候補の件数の上限。</param>
     /// <returns>候補(先頭ほど有力)。</returns>
     public static IReadOnlyList<FormatCandidate> Build(
-        long fileSize, string extension, string fileName, FormatHistory history,
+        long fileSize, string extension, string fileName, IReadOnlyFormatHistory history,
         RawFormat? displayedFormat, int maxCount = DefaultMaxCount)
     {
         ArgumentNullException.ThrowIfNull(history);

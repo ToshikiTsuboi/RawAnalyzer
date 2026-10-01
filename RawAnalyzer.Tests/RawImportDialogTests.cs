@@ -84,7 +84,7 @@ public class RawImportDialogTests : IDisposable
             {
                 Packing = BitPacking.Msb, Endianness = Endianness.Big,
             };
-            memory.History.Record(FileSize, ".raw", remembered, autoOpen: true, T0);
+            memory.RememberLoaded(path, FileSize, remembered, autoOpen: true);
             RawFormat displayed = Fmt(480, 640, bitDepth: 16);
 
             RawImportDialog dialog = CreateDialog(path, memory, displayed: displayed);
@@ -306,7 +306,7 @@ public class RawImportDialogTests : IDisposable
             string path = CreateFile("a.raw", FileSize);
             FormatMemory memory = CreateMemory();
             RawFormat off = Fmt(640, 480, bayer: BayerPattern.Bggr);
-            memory.History.Record(FileSize, ".raw", off, autoOpen: false, T0);
+            memory.RememberLoaded(path, FileSize, off, autoOpen: false);
 
             // 初期値(候補の先頭)が自動適用オフの記憶なら、オフから始める
             RawImportDialog fromMemory = CreateDialog(path, memory);

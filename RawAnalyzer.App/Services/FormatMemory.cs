@@ -51,8 +51,12 @@ internal sealed class FormatMemory
         }
     }
 
-    /// <summary>記憶の本体。別のインスタンスが保存していれば読み直してから返す。</summary>
-    internal FormatHistory History
+    /// <summary>
+    /// 記憶(読み取り専用)。別のインスタンスが保存していれば読み直してから返す。書き換えは保存まで行う
+    /// <see cref="RememberLoaded"/>・<see cref="Correct"/>・<see cref="Forget"/> で行う(手元の記憶を直接書き換えると
+    /// 保存されず、読み直したときに消える)。
+    /// </summary>
+    internal IReadOnlyFormatHistory History
     {
         get
         {

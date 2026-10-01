@@ -26,6 +26,40 @@ public sealed record FormatHistoryEntry
 }
 
 /// <summary>
+/// サイズ別フォーマット記憶(<see cref="FormatHistory"/>)の読み取り専用の見え方。
+/// </summary>
+/// <remarks>
+/// 保存までを受け持つ側(アプリの記憶)が、書き換えると保存されない記憶をそのまま見せないために使う。
+/// </remarks>
+public interface IReadOnlyFormatHistory
+{
+    /// <summary>すべての記憶(最終使用が新しい順)。</summary>
+    IReadOnlyList<FormatHistoryEntry> Entries { get; }
+
+    /// <summary>キーが一致する記憶を返す(最終使用が新しい順)。</summary>
+    /// <param name="fileSize">ファイルサイズ(バイト)。</param>
+    /// <param name="extension">拡張子(正規化していなくてよい)。</param>
+    /// <returns>一致した記憶。なければ空。</returns>
+    IReadOnlyList<FormatHistoryEntry> Find(long fileSize, string extension);
+
+    /// <summary>キーとフォーマットが一致する記憶を返す。</summary>
+    /// <param name="fileSize">ファイルサイズ(バイト)。</param>
+    /// <param name="extension">拡張子(正規化していなくてよい)。</param>
+    /// <param name="format">フォーマット。</param>
+    /// <returns>一致した記憶。なければnull。</returns>
+    FormatHistoryEntry? Find(long fileSize, string extension, RawFormat format);
+
+    /// <summary>
+    /// ダイアログを出さずに開くフォーマットを返す。キーの記憶のうち自動適用がオンのものが
+    /// ちょうど1つのときだけそのフォーマットを返す(0件・2件以上なら null)。
+    /// </summary>
+    /// <param name="fileSize">ファイルサイズ(バイト)。</param>
+    /// <param name="extension">拡張子(正規化していなくてよい)。</param>
+    /// <returns>自動で開くフォーマット。決められなければ null。</returns>
+    RawFormat? FindAutoOpenFormat(long fileSize, string extension);
+}
+
+/// <summary>
 /// ファイルサイズと拡張子をキーにした Raw フォーマットの記憶。
 /// 別のファイルを開くときに、同じサイズのファイルを開いたときのフォーマットから推定するために使う。
 /// </summary>
@@ -42,7 +76,7 @@ public sealed record FormatHistoryEntry
 /// </para>
 /// <para>UI スレッドから使う前提で、スレッドセーフではない。</para>
 /// </remarks>
-public sealed class FormatHistory
+public sealed class FormatHistory : IReadOnlyFormatHistory
 {
     /// <summary>記憶する件数の上限(全キー合計)。</summary>
     public const int MaxEntries = 200;
