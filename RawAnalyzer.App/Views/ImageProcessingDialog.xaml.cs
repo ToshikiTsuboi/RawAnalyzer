@@ -155,10 +155,31 @@ public partial class ImageProcessingDialog : Window
         {
             PreviewText.Text = "設定を確認してください。";
             PolicyText.Text = "";
-            ErrorText.Text = ex.Message;
+            ErrorText.Text = UserMessage(ex);
             RunButton.IsEnabled = false;
             return false;
         }
+    }
+
+    /// <summary>例外の説明を利用者向けの文にする。</summary>
+    /// <remarks>
+    /// 引数名を持つ <see cref="ArgumentException"/> の Message には「 (Parameter 'Sigma')」のような開発用の
+    /// 引数名が付く(範囲外の σ・強度で「σは0.1〜10の有限値です。 (Parameter 'Sigma')」と出ていた)。
+    /// 付け足される文は実行環境の言語で決まるので、同じ引数名の空の例外の Message を作って末尾から外す。
+    /// </remarks>
+    private static string UserMessage(Exception ex)
+    {
+        string message = ex.Message;
+        if (ex is ArgumentException { ParamName: { Length: > 0 } name })
+        {
+            string suffix = new ArgumentException("", name).Message;
+            if (suffix.Length > 0 && message.EndsWith(suffix, StringComparison.Ordinal))
+            {
+                message = message[..^suffix.Length];
+            }
+        }
+
+        return message;
     }
 
     private void OnRunClick(object sender, RoutedEventArgs e)

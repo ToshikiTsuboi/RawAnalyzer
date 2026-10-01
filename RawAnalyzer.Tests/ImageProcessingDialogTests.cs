@@ -87,6 +87,25 @@ public class ImageProcessingDialogTests
         });
     }
 
+    [Theory]
+    [InlineData("SigmaBox", "20", "σは0.1〜10の有限値です。")]
+    [InlineData("AmountBox", "6", "強度は0〜5の有限値です。")]
+    public Task Dialog_OutOfRangeMessage_HasNoDeveloperParameterName(string box, string text, string expected)
+    {
+        // 範囲外の σ・強度の説明は ArgumentOutOfRangeException の Message をそのまま出していたので、
+        // 「σは0.1〜10の有限値です。 (Parameter 'Sigma')」と開発用の英語の引数名が付いていた
+        return WpfTestHost.Run(() =>
+        {
+            var dialog = new ImageProcessingDialog("test.raw", 19, 11, BayerPattern.Rggb, false, true);
+            ((ComboBox)dialog.FindName("OperationCombo")).SelectedIndex = 4;
+            ((TextBox)dialog.FindName(box)).Text = text;
+
+            Assert.False(((Button)dialog.FindName("RunButton")).IsEnabled);
+            Assert.Equal(expected, ((TextBlock)dialog.FindName("ErrorText")).Text);
+            dialog.Close();
+        });
+    }
+
     private static void CaptureIfRequested(Window window, string name)
     {
         string? directory = Environment.GetEnvironmentVariable("RAWANALYZER_UI_SNAPSHOTS");
