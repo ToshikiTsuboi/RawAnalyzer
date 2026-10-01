@@ -148,6 +148,9 @@ public partial class MainWindow : Window
     // OpenPath の世代。await から戻った時点で世代が進んでいたら結果を捨てる
     private int _openGeneration;
 
+    // ファイルを開く要求(OpenPath)の数。フォーマット指定ダイアログを出す前に数える(世代とは別)
+    private int _openRequests;
+
     private SequenceMode _sequenceMode;
     private List<string> _sequenceFiles = new();
     private int _sequenceIndex;
@@ -278,9 +281,28 @@ public partial class MainWindow : Window
             return;
         }
 
-        // 連番判定はファイル一覧を見るので、一覧が揃ってから開く
-        await LoadFolderAsync(Path.GetDirectoryName(path)!, selectPath: path);
-        OpenPath(path);
+        await LoadFolderAndOpenAsync(path);
+    }
+
+    /// <summary>
+    /// ファイルのフォルダの一覧を読み込んでから、そのファイルを開く(「開く」・最近使ったファイル・ドロップ・起動引数)。
+    /// </summary>
+    /// <remarks>
+    /// 連番判定はファイル一覧を見るので、一覧が揃ってから開く。一覧の列挙を待つ間に別のフォルダの読み込みや
+    /// 別のファイルを開く操作が始まったら、後から来た方を優先してこのファイルは開かない。以前は遅れて終わった
+    /// 列挙の後にも開いたので、後から開いた画像を古いファイルで置き換え(一覧は後から開いたフォルダのまま)、
+    /// 新規サイズの raw なら別の画像を見ている途中に突然フォーマット指定ダイアログを出していた。
+    /// </remarks>
+    /// <param name="path">開くファイル。</param>
+    /// <returns>開く処理を始める(または開かずに終える)までのタスク。</returns>
+    private async Task LoadFolderAndOpenAsync(string path)
+    {
+        int openRequests = _openRequests;
+        bool latest = await LoadFolderAsync(Path.GetDirectoryName(path)!, selectPath: path);
+        if (latest && openRequests == _openRequests)
+        {
+            OpenPath(path);
+        }
     }
 
     /// <summary>表示中の画像(HDR派生ビューがあればそちら)。</summary>
@@ -406,9 +428,7 @@ public partial class MainWindow : Window
         var dialog = new OpenFileDialog { Filter = OpenImageFilter };
         if (dialog.ShowDialog(this) == true)
         {
-            // 連番判定はファイル一覧を見るので、一覧が揃ってから開く
-            await LoadFolderAsync(Path.GetDirectoryName(dialog.FileName)!, dialog.FileName);
-            OpenPath(dialog.FileName);
+            await LoadFolderAndOpenAsync(dialog.FileName);
         }
     }
 
@@ -440,8 +460,11 @@ public partial class MainWindow : Window
     /// </remarks>
     /// <param name="folder">対象フォルダ。</param>
     /// <param name="selectPath">読み込み後に選択するファイル。</param>
-    /// <returns>読み込み完了を表すタスク。</returns>
-    private async Task LoadFolderAsync(string folder, string? selectPath)
+    /// <returns>
+    /// この読み込みが最新のまま終わったら true(一覧を差し替えた、または列挙に失敗して知らせた)。
+    /// 列挙の間に別のフォルダの読み込みが始まって結果を捨てたら false。
+    /// </returns>
+    private async Task<bool> LoadFolderAsync(string folder, string? selectPath)
     {
         folder = Path.GetFullPath(folder);
 
@@ -455,18 +478,19 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            if (generation == _folderGeneration)
+            if (generation != _folderGeneration)
             {
-                MessageBox.Show(this, $"フォルダを読み込めません: {ex.Message}", "RawAnalyzer",
-                    MessageBoxButton.OK, MessageBoxImage.Warning);
+                return false;
             }
 
-            return;
+            MessageBox.Show(this, $"フォルダを読み込めません: {ex.Message}", "RawAnalyzer",
+                MessageBoxButton.OK, MessageBoxImage.Warning);
+            return true;
         }
 
         if (generation != _folderGeneration)
         {
-            return; // 列挙中に別のフォルダが開かれた
+            return false; // 列挙中に別のフォルダが開かれた
         }
 
         _currentFolder = folder;
@@ -486,6 +510,8 @@ public partial class MainWindow : Window
             _vm.SelectedFile = _vm.FilteredFiles.FirstOrDefault(
                 f => string.Equals(f.FullPath, selectPath, StringComparison.OrdinalIgnoreCase));
         }
+
+        return true;
     }
 
     /// <summary>
@@ -596,6 +622,9 @@ public partial class MainWindow : Window
     private async void OpenPathCore(
         string path, bool chooseFormat, RawFormat? initialFormat, RawFormat? correctFrom)
     {
+        // フォルダの一覧を待ってから開く要求(ドロップなど)は、待つ間にこの要求が来たら開かない
+        _openRequests++;
+
         // 読み込み中に再生タイマーや保留中の連番送りが画像を差し替えないようにする
         using BusyScope busy = EnterLoadBusy();
 
@@ -1724,7 +1753,15 @@ public partial class MainWindow : Window
                 // 実在はメニューを作り直したときにしか確かめないので、その後に消えた・接続が切れたファイルの項目も
                 // 残っている。開く前に UI スレッドを止めずに確かめ、無ければ一度だけ知らせてメニューから外す
                 // (確かめずに開くと、フォルダを読み込めない警告に続けて、実在しない raw にフォーマット指定ダイアログを出していた)
-                if (!await Task.Run(() => File.Exists(captured)))
+                int openRequests = _openRequests;
+                int folderGeneration = _folderGeneration;
+                bool exists = await Task.Run(() => File.Exists(captured));
+                if (openRequests != _openRequests || folderGeneration != _folderGeneration)
+                {
+                    return; // 確かめている間に別のファイル・フォルダが開かれた(後から来た方を優先する)
+                }
+
+                if (!exists)
                 {
                     MessageBox.Show(this,
                         $"ファイルが見つかりません(移動・削除されたか、ネットワークに接続できません)。\n{captured}",
@@ -1733,9 +1770,7 @@ public partial class MainWindow : Window
                     return;
                 }
 
-                // 連番判定はファイル一覧を見るので、一覧が揃ってから開く
-                await LoadFolderAsync(Path.GetDirectoryName(captured)!, captured);
-                OpenPath(captured);
+                await LoadFolderAndOpenAsync(captured);
             };
             RecentMenu.Items.Add(item);
         }
@@ -5460,9 +5495,7 @@ public partial class MainWindow : Window
         }
         else if (File.Exists(path))
         {
-            // 連番判定はファイル一覧を見るので、一覧が揃ってから開く
-            await LoadFolderAsync(Path.GetDirectoryName(path)!, path);
-            OpenPath(path);
+            await LoadFolderAndOpenAsync(path);
         }
     }
 }
