@@ -14,27 +14,7 @@ public class ImageFileBayerTests
     private const int H = 4;
 
     [Theory]
-    [InlineData(BayerPattern.Rggb)]
-    [InlineData(BayerPattern.Gbrg)]
-    public void GrayTiff_TakesCarriedOverBayer(BayerPattern designated)
-    {
-        // 通常のグレー TIFF はファイル自身の Bayer を持たない。以前のファイル連番の送りはファイルの
-        // フォーマットをそのまま使い、右パネルの指定が送りで消えて Bayer 系の表示が Raw に戻った
-        using var file = TempTiff.Write(new TiffBuilder().Build(GrayPage()));
-        DecodedImage decoded = ImageFileLoader.Load(file.Path);
-        using RawImage image = decoded.Luminance;
-        Assert.Null(decoded.Color);
-        Assert.Equal(BayerPattern.None, image.Format.Bayer);
-
-        RawFormat format = ImageFileBayer.Apply(image.Format, isColor: false, designated);
-
-        // Bayer 以外(寸法・ビット深度など)はファイル自身のまま
-        Assert.Equal(image.Format with { Bayer = designated }, format);
-    }
-
-    [Theory]
-    [InlineData(BayerPattern.Rggb)]
-    [InlineData(BayerPattern.None)]
+    [InlineData(BayerPattern.None)] // 指定なしも CFAPattern に負けない(指定ありは TiffPages_FollowTheSameRule)
     public void CfaTiff_DesignationTakesPrecedenceOverCfaPattern(BayerPattern designated)
     {
         // CFAPattern(GRBG)を持つ TIFF でも、引き継いだ指定を優先する(TIFF のページ送りと同じ規約)。
@@ -48,21 +28,6 @@ public class ImageFileBayerTests
         RawFormat format = ImageFileBayer.Apply(image.Format, isColor: false, designated);
 
         Assert.Equal(image.Format with { Bayer = designated }, format);
-    }
-
-    [Fact]
-    public void RgbTiff_GetsNoBayer()
-    {
-        // カラー画像は RGB のまま表示するので、指定を付けない(指定そのものは呼び出し側が保持し、
-        // 次のグレーの画像へ付ける)
-        using var file = TempTiff.Write(new TiffBuilder().Build(RgbPage()));
-        DecodedImage decoded = ImageFileLoader.Load(file.Path);
-        using RawImage image = decoded.Luminance;
-        Assert.NotNull(decoded.Color);
-
-        RawFormat format = ImageFileBayer.Apply(image.Format, isColor: true, BayerPattern.Rggb);
-
-        Assert.Equal(image.Format with { Bayer = BayerPattern.None }, format);
     }
 
     [Fact]

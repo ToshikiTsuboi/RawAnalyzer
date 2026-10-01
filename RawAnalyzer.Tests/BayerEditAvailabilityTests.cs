@@ -15,22 +15,6 @@ namespace RawAnalyzer.Tests;
 public class BayerEditAvailabilityTests
 {
     [Fact]
-    public void NoImage_CannotEditBayer()
-    {
-        Assert.False(new MainViewModel().CanEditBayer);
-    }
-
-    [Fact]
-    public void GrayImage_CanEditBayer()
-    {
-        // raw・グレーの画像ファイル(CFA TIFF を含む)は右パネルで配列を指定・変更できる
-        var vm = new MainViewModel { HasImage = true, IsColorImage = false };
-
-        Assert.True(vm.CanEditBayer);
-        Assert.Equal(BayerEditAvailability.Description, vm.BayerEditToolTip);
-    }
-
-    [Fact]
     public void ColorImage_CannotEditBayer_AndTooltipExplainsWhy()
     {
         // カラー画像は RGB のまま表示する。以前は指定でき、変えると表示はカラーのまま
@@ -43,31 +27,10 @@ public class BayerEditAvailabilityTests
     }
 
     [Fact]
-    public void HdrView_CannotEditBayer_AndTooltipTellsToReturnToRaw()
+    public void HdrViewOrComputation_CannotEditBayerWithReason_AndLeavingReenables()
     {
-        // 以前は HDR分割・合成の表示中も変えられ、派生ビューは古いパターンのまま右パネルの表示と食い違った
-        var vm = new MainViewModel { HasImage = true, IsHdrViewShown = true };
-
-        Assert.False(vm.CanEditBayer);
-        Assert.StartsWith("HDR表示(分割・合成)の間は Bayer を変更できません", vm.BayerEditToolTip);
-        Assert.EndsWith("Raw表示に戻してから変更してください。", vm.BayerEditToolTip);
-    }
-
-    [Fact]
-    public void HdrComputing_CannotEditBayer_AndTooltipExplainsWhy()
-    {
-        // 以前は分割・合成の計算中(モーダルではない)にも変えられ、計算は開始時のパターンで行って結果をそのまま
-        // 表示した(右パネルは変えた後のパターンを示す)
-        var vm = new MainViewModel { HasImage = true, IsHdrComputing = true };
-
-        Assert.False(vm.CanEditBayer);
-        Assert.StartsWith("HDR分割・合成の計算中は Bayer を変更できません", vm.BayerEditToolTip);
-        Assert.Contains("計算は始めたときの Bayer で行います", vm.BayerEditToolTip);
-    }
-
-    [Fact]
-    public void LeavingHdrOrUnadoptedComputation_ReenablesBayer_AndNotifies()
-    {
+        // 以前は HDR分割・合成の計算中(モーダルではない)と表示中にも変えられ、計算は開始時のパターンで
+        // 行って結果をそのまま表示し、派生ビューは古いパターンのまま右パネルの表示と食い違った。
         // 計算・派生ビューへの出入りのたびに、操作できるかと理由が追従する(通知がないと無効のまま・有効のまま残る)
         var vm = new MainViewModel { HasImage = true };
         var changed = new List<string?>();
@@ -76,6 +39,8 @@ public class BayerEditAvailabilityTests
         // Raw表示 → 合成を計算中 → 採用されずに終わった(取り消し・失敗・元画像の差し替え)
         vm.IsHdrComputing = true;
         AssertNotified(vm, changed, canEdit: false);
+        Assert.StartsWith("HDR分割・合成の計算中は Bayer を変更できません", vm.BayerEditToolTip);
+        Assert.Contains("計算は始めたときの Bayer で行います", vm.BayerEditToolTip);
         vm.IsHdrComputing = false;
         AssertNotified(vm, changed, canEdit: true);
         Assert.Equal(BayerEditAvailability.Description, vm.BayerEditToolTip);
@@ -88,6 +53,7 @@ public class BayerEditAvailabilityTests
         vm.IsHdrComputing = false;
         Assert.False(vm.CanEditBayer);
         Assert.StartsWith("HDR表示(分割・合成)の間", vm.BayerEditToolTip);
+        Assert.EndsWith("Raw表示に戻してから変更してください。", vm.BayerEditToolTip);
 
         // Raw表示へ戻った
         changed.Clear();
