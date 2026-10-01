@@ -1156,9 +1156,11 @@ public partial class MainWindow : Window
     /// <returns>集計対象。</returns>
     private RoiAnalysisTarget ResolveRoiTarget(RawImage image, RegionOfInterest? displayRoi)
     {
+        // HDR分割ビューでは段(露光)をまたぐROIを断る(合成ビュー・通常表示は段がない)
         return RoiAnalysis.Resolve(
             displayRoi, Viewport.IsChannelSplitLayout, image.Width, image.Height,
-            ActiveFormat?.Bayer ?? BayerPattern.None);
+            ActiveFormat?.Bayer ?? BayerPattern.None,
+            _derivedImage is not null && _hdrFloatImage is null ? _hdrSegmentWidth : 0);
     }
 
     /// <summary>ROIが選ばれていて、表示中の画素へ対応づけて解析できるか。</summary>

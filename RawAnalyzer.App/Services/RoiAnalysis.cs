@@ -41,7 +41,7 @@ internal sealed record RoiHistogram(
 /// ROIは表示座標で選ばれる。チャネル分割表示では表示座標がR/Gr/Gb/Bを2x2に並べた
 /// タイル画像の座標なので、そのまま元画像の矩形として解析すると、表示されている画素とは
 /// 別の(他チャネルを含む)画素を集計してしまう。1つの象限内のROIはそのチャネルの格子へ写像し、
-/// 対応づけられないROI(象限をまたぐ等)は解析せずに断る。
+/// 対応づけられないROI(象限をまたぐ等)は解析せずに断る。HDR分割ビューで露光の段をまたぐROIも断る。
 /// </remarks>
 internal static class RoiAnalysis
 {
@@ -53,10 +53,14 @@ internal static class RoiAnalysis
     /// <param name="imageWidth">元画像の幅。</param>
     /// <param name="imageHeight">元画像の高さ。</param>
     /// <param name="pattern">Bayerパターン(チャネル名の決定に使う)。</param>
+    /// <param name="splitSegmentWidth">
+    /// HDR分割ビューの段の幅(各露光の段を左右に並べた画像)。分割ビューでなければ0。段をまたぐROIは断る
+    /// (長秒と短秒の画素を1つの母集団として集計すると、露光差が平均・σ・射影に乗る)。
+    /// </param>
     /// <returns>集計対象。</returns>
     internal static RoiAnalysisTarget Resolve(
         RegionOfInterest? displayRoi, bool channelSplitLayout,
-        int imageWidth, int imageHeight, BayerPattern pattern)
+        int imageWidth, int imageHeight, BayerPattern pattern, int splitSegmentWidth = 0)
     {
         if (displayRoi is not { } roi)
         {
@@ -66,9 +70,14 @@ internal static class RoiAnalysis
         if (!channelSplitLayout)
         {
             RegionOfInterest clamped = roi.Clamp(imageWidth, imageHeight);
-            return clamped.PixelCount > 0
-                ? new SourceRoiTarget(clamped)
-                : new UnsupportedRoiTarget("ROIが画像の範囲外です");
+            if (clamped.PixelCount == 0)
+            {
+                return new UnsupportedRoiTarget("ROIが画像の範囲外です");
+            }
+
+            return SpansSegments(clamped.X, clamped.X + clamped.Width - 1L, splitSegmentWidth)
+                ? new UnsupportedRoiTarget(AcrossSegmentsReason)
+                : new SourceRoiTarget(clamped);
         }
 
         // タイル表示は奇数寸法の端の行・列を並べない(表示されていない画素は集計しない)
@@ -87,8 +96,29 @@ internal static class RoiAnalysis
                 "チャネル分割表示では1つの象限の中で選択してください");
         }
 
+        // 象限の中のROIでも、元画像(分割ビューの並置画像)では1列おきの列にまたがる
+        if (SpansSegments(region.X, region.X + (2L * (region.Width - 1)), splitSegmentWidth))
+        {
+            return new UnsupportedRoiTarget(AcrossSegmentsReason);
+        }
+
         return new ChannelRoiTarget(
             region, BayerHelper.GetChannel(pattern, region.X, region.Y), shown);
+    }
+
+    private const string AcrossSegmentsReason =
+        "ROIがHDR分割ビューの段(露光)をまたいでいるため解析できません" +
+        "(長秒と短秒の画素を1つの集合として集計すると、露光差が平均・σ・射影に乗ります)。\n" +
+        "1つの段の中で選択してください";
+
+    /// <summary>元画像の列 first〜last が、HDR分割ビューの2つ以上の段にまたがるか。</summary>
+    /// <param name="first">最初の列。</param>
+    /// <param name="last">最後の列。</param>
+    /// <param name="splitSegmentWidth">段の幅(分割ビューでなければ0)。</param>
+    /// <returns>またがるならtrue。</returns>
+    private static bool SpansSegments(long first, long last, int splitSegmentWidth)
+    {
+        return splitSegmentWidth > 0 && first / splitSegmentWidth != last / splitSegmentWidth;
     }
 
     /// <summary>対象が解析できるROIか(ROIなし・対応づけ不能はfalse)。</summary>

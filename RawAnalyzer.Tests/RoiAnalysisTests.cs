@@ -253,6 +253,55 @@ public class RoiAnalysisTests
         Assert.True(double.IsNaN(measurement.SigmaTemporal));
     }
 
+    [Theory]
+    [InlineData(6, 4, false)]   // 長秒(x 0〜7)と短秒(x 8〜15)をまたぐ
+    [InlineData(0, 16, false)]  // 全幅
+    [InlineData(0, 8, true)]    // 長秒の段ちょうど
+    [InlineData(8, 4, true)]    // 短秒の段の中
+    public void HdrSplitView_RoiAcrossSegments_IsRefusedWithReason(int x, int width, bool analyzable)
+    {
+        // 残課題 2026-10-02 A4。HDR分割ビュー(段の幅8を左右に2段並べた16×4)で、手動のROIが長秒と短秒の段を
+        // またいでも、1つの母集団としてヒストグラム・ROI統計・射影を出していた(露光差が σ・平均に乗る)。
+        // 段をまたぐROIは理由を示して断る(ノイズ測定は段内のROIを必須にしている。ROIなしの画像全体は従来どおり)
+        RoiAnalysisTarget target = RoiAnalysis.Resolve(
+            new RegionOfInterest(x, 0, width, 2), channelSplitLayout: false, 16, 4, BayerPattern.Rggb,
+            splitSegmentWidth: 8);
+
+        if (analyzable)
+        {
+            Assert.Equal(new SourceRoiTarget(new RegionOfInterest(x, 0, width, 2)), target);
+        }
+        else
+        {
+            Assert.Contains("段", Assert.IsType<UnsupportedRoiTarget>(target).Reason);
+        }
+
+        Assert.IsType<WholeImageTarget>(RoiAnalysis.Resolve(
+            null, channelSplitLayout: false, 16, 4, BayerPattern.Rggb, splitSegmentWidth: 8));
+    }
+
+    [Theory]
+    [InlineData(0, 8, false)]  // R の象限の全幅 = 元画像の x 0〜14(両方の段)
+    [InlineData(0, 4, true)]   // 元画像の x 0〜6(長秒の段)
+    [InlineData(4, 4, true)]   // 元画像の x 8〜14(短秒の段)
+    [InlineData(3, 2, false)]  // 元画像の x 6〜8(段をまたぐ)
+    public void HdrSplitView_ChannelSplitRoi_IsCheckedInSourceColumns(int x, int width, bool analyzable)
+    {
+        // 分割ビューをチャネル分割で表示したときは、象限の中のROIでも元画像(並置画像)の列で段を確かめる
+        RoiAnalysisTarget target = RoiAnalysis.Resolve(
+            new RegionOfInterest(x, 0, width, 2), channelSplitLayout: true, 16, 4, BayerPattern.Rggb,
+            splitSegmentWidth: 8);
+
+        if (analyzable)
+        {
+            Assert.IsType<ChannelRoiTarget>(target);
+        }
+        else
+        {
+            Assert.Contains("段", Assert.IsType<UnsupportedRoiTarget>(target).Reason);
+        }
+    }
+
     [Fact]
     public void UnsupportedTarget_AnalysisThrowsInsteadOfFallingBack()
     {
