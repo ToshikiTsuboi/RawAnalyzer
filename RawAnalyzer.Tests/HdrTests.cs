@@ -696,6 +696,40 @@ public class HdrMergerTests
     }
 
     [Fact]
+    public void Merge_KeepsValuesBelowBlackLevelNegative_QuantizedImageClampsToZero()
+    {
+        // 黒付近のノイズは黒レベルの上下に分布する。以前は線形化で黒レベル未満を0に切り詰めていたので、
+        // 遮光部の平均が上振れしσが小さく出て、「無損失」のはずの float raw(Pixels)も負側を失っていた。
+        // Pixels は負値のまま残す(長秒が飽和に遠い暗部なので合成値は長秒の線形値そのもの)。
+        // 16bitへの量子化画像は負値を表せないので0になる(付随テキストに明記する)
+        const int black = 4096;
+        const int width = 4;
+        const int height = 2;
+        ushort[] longCodes =
+        [
+            black - 100, black + 100, black - 30, black + 30,
+            black + 30, black - 30, black + 100, black - 100,
+        ];
+        ushort[] shortCodes = Enumerable.Repeat((ushort)black, width * height).ToArray();
+        using RawImage longFrame = TestImages.FromCodes(longCodes, width, height);
+        using RawImage shortFrame = TestImages.FromCodes(shortCodes, width, height);
+
+        HdrImage merged = HdrMerger.Merge(
+            new[] { longFrame, shortFrame },
+            new HdrMergeParameters(ExposureRatio: 16, BlackLevel: black));
+
+        Assert.Equal(-100f, merged.Pixels[0]);
+        Assert.Equal(100f, merged.Pixels[1]);
+        Assert.Equal(-30f, merged.Pixels[2]);
+        Assert.Equal(0.0, merged.Pixels.Average(), 6);
+
+        using RawImage quantized = merged.ToRawImage16();
+        Assert.Equal(0, quantized.GetPixel(0, 0));
+        Assert.Equal(0, quantized.GetPixel(2, 0));
+        Assert.True(quantized.GetPixel(1, 0) > 0);
+    }
+
+    [Fact]
     public void ToRawImage16_ScalesFullScaleTo65535()
     {
         // S = i*8192、短秒 = S/16(整数厳密)。合成域のフルスケールは 16×65535 なので

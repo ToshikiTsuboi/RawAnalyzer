@@ -63,6 +63,27 @@ public class HdrViewSidecarTests
     }
 
     [Fact]
+    public void Merge_NotesBelowBlackClampedInQuantizedImage_KeptNegativeInFloatRaw()
+    {
+        // 合成値は黒点を減算済みで、黒点未満は負になる。float raw は負値のまま残すが、16bitの派生画像は
+        // 負値を表せないので0に切り詰める(暗部の統計が偏る)。どちらの値を保存したかを書く
+        var frameFormat = new RawFormat { Width = 2, Height = 2, BitDepth = 12 };
+        using RawImage longFrame = TestImages.FromCodes([60, 70, 60, 70], frameFormat);
+        using RawImage shortFrame = TestImages.FromCodes([64, 64, 64, 64], frameFormat);
+        HdrImage merged = HdrMerger.Merge([longFrame, shortFrame], new HdrMergeParameters(16, 64 << 4));
+        using RawImage quantized = merged.ToRawImage16();
+        var source = frameFormat with { FrameCount = 2, Hdr = HdrMode.FrameSequential, HdrStages = 2 };
+
+        string sixteenBit = HdrViewSidecar.DescribeMerge(
+            quantized.Format, merged, source, sourceFrame: 0, floatRawOutput: false);
+        string floatRaw = HdrViewSidecar.DescribeMerge(
+            quantized.Format, merged, source, sourceFrame: 0, floatRawOutput: true);
+
+        Assert.Contains("(合成域のフルスケールを65535へ量子化・黒点未満は0に切り詰め)", sixteenBit);
+        Assert.Contains("・黒点減算済み・黒点未満は負値のまま)", floatRaw);
+    }
+
+    [Fact]
     public void Split_RecordsDerivedView_FrameSequentialHasNoSourceFrame()
     {
         // 分割ビューから保存した画像は各段(長秒→短秒)を左から並置したもの。フレーム連結はフレームそのものが

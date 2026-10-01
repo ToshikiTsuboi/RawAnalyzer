@@ -49,7 +49,10 @@ internal static class HdrViewSidecar
         return sb.ToString();
     }
 
-    /// <summary>HDR合成の派生ビュー(黒レベルを減算して合成し、16bitへ量子化した画像)の来歴。</summary>
+    /// <summary>
+    /// HDR合成の派生ビュー(黒レベルを減算して合成し、16bitへ量子化した画像)の来歴。
+    /// 合成値は黒点未満が負になる。float raw は負値のまま、16bitの派生画像は0に切り詰めた値なので、そのことも書く。
+    /// </summary>
     /// <param name="derived">派生画像(16bit量子化画像)のフォーマット。</param>
     /// <param name="merged">合成結果(合成に使ったパラメータを持つ)。</param>
     /// <param name="source">元画像のフォーマット(HDR方式を含む)。</param>
@@ -73,12 +76,13 @@ internal static class HdrViewSidecar
         if (floatRawOutput)
         {
             sb.Append("  保存した値: 量子化前の合成値 (float32・").Append(merged.Width).Append('×')
-                .Append(merged.Height).Append("・Bayer ").Append(merged.Bayer).AppendLine("・黒点減算済み)");
+                .Append(merged.Height).Append("・Bayer ").Append(merged.Bayer)
+                .AppendLine("・黒点減算済み・黒点未満は負値のまま)");
             return sb.ToString();
         }
 
         sb.Append("  派生画像: ").Append(DescribeImage(derived))
-            .AppendLine(" (合成域のフルスケールを65535へ量子化)");
+            .AppendLine(" (合成域のフルスケールを65535へ量子化・黒点未満は0に切り詰め)");
         sb.Append("  量子化の1LSB: ").Append(merged.QuantizationStep.ToString("F1", Invariant))
             .Append(merged.LostBits >= 0.5
                 ? $" (元素材比 約{merged.LostBits.ToString("F0", Invariant)}bit損失)"

@@ -52,7 +52,10 @@ public sealed class HdrImage
     /// <summary>高さ(画素数)。</summary>
     public int Height { get; }
 
-    /// <summary>画素値(線形、黒レベル減算済み)。</summary>
+    /// <summary>
+    /// 画素値(線形、黒レベル減算済み)。黒レベル未満の画素は負値のまま残す
+    /// (遮光部・暗部のノイズ分布の負側を保ち、平均やσを偏らせない)。
+    /// </summary>
     public float[] Pixels { get; }
 
     /// <summary>合成域のフルスケール値((65535-black)×露光比^(段数-1))。</summary>
@@ -91,8 +94,9 @@ public sealed class HdrImage
     /// </summary>
     /// <remarks>
     /// 合成域が16bitに収まらない構成では情報が落ちる。落ちる量は
-    /// <see cref="LostBits"/> で確認できる。無損失のデータが必要な場合は
-    /// <see cref="Pixels"/>(float)または float raw 保存を使うこと。
+    /// <see cref="LostBits"/> で確認できる。16bitは負値を表せないので、黒レベル未満の画素
+    /// (<see cref="Pixels"/> の負値)は0に切り詰める(暗部の平均は上振れし、σは小さく出る)。
+    /// 無損失のデータが必要な場合は <see cref="Pixels"/>(float)または float raw 保存を使うこと。
     /// </remarks>
     /// <returns>量子化された画像(16bit、Bayer付きフォーマット)。</returns>
     public RawImage ToRawImage16()
@@ -263,9 +267,11 @@ public static class HdrMerger
 
                 frame.CopyRegion(0, 0, y, width, 1, row);
                 int offset = y * width;
+                // 黒レベル未満は負値のまま残す。0へ切り詰めると黒付近のノイズ分布の負側が失われ、
+                // 暗部の平均が上振れしσが小さく出る(float raw も同じ値になる)。ブレンドの判定は負値でも成り立つ
                 for (int x = 0; x < width; x++)
                 {
-                    linear[offset + x] = Math.Max(0f, row[x] - black);
+                    linear[offset + x] = row[x] - black;
                 }
 
                 return row;
