@@ -280,10 +280,16 @@ public partial class RawImportDialog : Window
 
         long expected = format.HeaderOffset + format.FrameSizeInBytes * format.FrameCount;
         double expectedMb = expected / (1024.0 * 1024.0);
-        double actualMb = _fileSize / (1024.0 * 1024.0);
         string expr = $"{format.Width}×{format.Height}×{format.BytesPerPixel}byte"
             + (format.FrameCount > 1 ? $"×{format.FrameCount}fr" : "");
-        if (expected == _fileSize)
+        if (_fileSize < 0)
+        {
+            // サイズを取得できないときは照合できない(-1 を MB にして「-0.00 MB」と出さない)
+            SizeNoteText.Text = $"⚠ ファイルサイズを取得できません(推定サイズ {expr} = {expected:N0} バイト)";
+            SizeNoteText.Foreground = WarnBrush;
+            OpenButton.IsEnabled = false;
+        }
+        else if (expected == _fileSize)
         {
             SizeNoteText.Text = $"✓ 推定サイズ {expr} = {expectedMb:F2} MB — ファイルサイズと一致";
             SizeNoteText.Foreground = OkBrush;
@@ -291,8 +297,15 @@ public partial class RawImportDialog : Window
         }
         else
         {
+            // ヘッダの付け忘れなどの数百バイトのずれは MB の小数2桁では両辺が同じ値に丸まるので、
+            // バイト数と差で示す。1フレーム未満の余りならヘッダ・末尾の余りの可能性を添える
+            long difference = _fileSize - expected;
+            string detail = difference > 0
+                ? $"ファイルが {difference:N0} バイト多い" +
+                  (difference < format.FrameSizeInBytes ? "。ヘッダ・末尾の余りの可能性" : "")
+                : $"ファイルが {-difference:N0} バイト足りません";
             SizeNoteText.Text =
-                $"⚠ 推定サイズ {expr} = {expectedMb:F2} MB ≠ ファイル {actualMb:F2} MB";
+                $"⚠ 推定サイズ {expr} = {expected:N0} バイト ≠ ファイル {_fileSize:N0} バイト({detail})";
             SizeNoteText.Foreground = WarnBrush;
             // 末尾に余剰データがあるだけなら開ける
             OpenButton.IsEnabled = expected <= _fileSize;

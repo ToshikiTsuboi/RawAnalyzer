@@ -133,6 +133,57 @@ public class RawImportDialogTests : IDisposable
     }
 
     [Fact]
+    public Task SizeMismatch_ShowsByteDifferenceAndHeaderHint()
+    {
+        // 全体レビュー 2026-10-01 B91。不一致の表示は MB の小数2桁だけで、先頭に 512B のヘッダがある
+        // 1920×1080 16bit(4,147,712B)をヘッダ 0 のまま入れると「3.96 MB ≠ ファイル 3.96 MB」と出て、
+        // ずれの大きさ(ヘッダの付け忘れ)が分からなかった。両方のバイト数と差を示し、1フレーム未満の
+        // 余りならヘッダ・末尾の余りの可能性を添える
+        string path = CreateFile("with_header.raw", (1920L * 1080 * 2) + 512);
+        return WpfTestHost.Run(() =>
+        {
+            RawImportDialog dialog = CreateDialog(path, null, initial: Fmt(1920, 1080, bitDepth: 16));
+            var note = Find<TextBlock>(dialog, "SizeNoteText");
+
+            Assert.StartsWith("⚠", note.Text);
+            Assert.Contains((1920L * 1080 * 2).ToString("N0"), note.Text);
+            Assert.Contains(((1920L * 1080 * 2) + 512).ToString("N0"), note.Text);
+            Assert.Contains("512", note.Text);
+            Assert.Contains("ヘッダ", note.Text);
+            Assert.DoesNotContain("3.96 MB ≠", note.Text);
+
+            // 末尾に余りがあるだけなら従来どおり開ける
+            Assert.True(Find<Button>(dialog, "OpenButton").IsEnabled);
+
+            // ファイルが足りないときは足りないバイト数を示し、開けない
+            Find<TextBox>(dialog, "WidthBox").Text = "1922";
+            Assert.StartsWith("⚠", note.Text);
+            Assert.Contains("足りません", note.Text);
+            Assert.Contains((((1922L - 1920) * 1080 * 2) - 512).ToString("N0"), note.Text);
+            Assert.False(Find<Button>(dialog, "OpenButton").IsEnabled);
+            dialog.Close();
+        });
+    }
+
+    [Fact]
+    public Task UnknownFileSize_SaysTheSizeCannotBeRead()
+    {
+        // ファイルサイズを取得できない(-1)ときに「ファイル -0.00 MB」と出て、取得できないことが伝わらなかった
+        string path = Path.Combine(_directory, "missing.raw");
+        return WpfTestHost.Run(() =>
+        {
+            RawImportDialog dialog = CreateDialog(path, null, initial: Fmt(640, 480));
+            string note = Find<TextBlock>(dialog, "SizeNoteText").Text;
+
+            Assert.StartsWith("⚠", note);
+            Assert.Contains("ファイルサイズを取得できません", note);
+            Assert.DoesNotContain("-0.00", note);
+            Assert.False(Find<Button>(dialog, "OpenButton").IsEnabled);
+            dialog.Close();
+        });
+    }
+
+    [Fact]
     public Task CandidateList_WithoutCandidates_IsDisabled()
     {
         return WpfTestHost.Run(() =>
