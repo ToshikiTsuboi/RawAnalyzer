@@ -2485,6 +2485,7 @@ public partial class MainWindow : Window
         // (ビニング・フィルタの結果の 16bit 形式で読むと下詰めNbitの参照が正規化されない)
         long expectedSize = ReferenceImage.ExpectedRawSize(
             ReferenceImage.RawReadFormat(_currentFormat, _openedRawFormat));
+
         // 対象名には演算するフレーム・TIFFページも示す(ビニング・フィルタと同じ。演算は表示中の1フレームだけ)
         var dialog = new ImageCalculatorDialog(
             NoiseSourceName() + (_tiffStack is null ? CalculationFrameNote(_currentImage, Viewport.Frame) : ""),
@@ -5046,14 +5047,24 @@ public partial class MainWindow : Window
             : 0;
     }
 
-    /// <summary>raw参照ファイルに期待するバイト数(1フレーム分)。不明なら0。</summary>
+    /// <summary>
+    /// raw参照ファイルに期待するバイト数(ヘッダ+読むフレーム。HDR分割ビューのフレーム連結は全段)。不明なら0。
+    /// </summary>
     private long ExpectedReferenceSize()
     {
         // HDR派生ビューでも2枚目の raw は元の raw ファイルの形式で読む(分割ビューは読んでから同じく分割する。
         // 合成ビューは断る)。並置画像の形式で求めると、行交互・フレーム連結では元のファイルとたまたま一致した
         if (_derivedImage is not null && _currentFormat is not null)
         {
-            return HdrSplitComposite.ReferenceReadFormat(_currentFormat).RequiredBytes();
+            try
+            {
+                return HdrSplitComposite.ReferenceReadFormat(_currentFormat).RequiredBytes();
+            }
+            catch (Exception ex) when (ex is InvalidOperationException or ArgumentException)
+            {
+                // 格納レイアウトを決められない(派生ビューは分割できたので通常は起きない)。サイズは照合しない
+                return 0;
+            }
         }
 
         // raw の2枚目はファイルを読んだ形式で読む(処理結果の形式ではない。処理結果では2枚目の raw を断る)
@@ -5219,8 +5230,9 @@ public partial class MainWindow : Window
             return;
         }
 
-        // HDR素材(派生ビューの表示中、HDR方式を指定した raw の Raw 表示)は補正しない。行交互では同色近傍に
-        // 露光の違う行が混ざり、結果は HDR 方式を失う。ビニング・フィルタと同じく分割して開くよう案内する
+        // HDR素材(派生ビューの表示中、HDR方式を指定した raw の Raw 表示)とカラー画像は補正しない。行交互では
+        // 同色近傍に露光の違う行が混ざり、結果は HDR 方式を失う(ビニング・フィルタと同じく分割して開くよう案内する)。
+        // カラー画像は輝度で補正するので、結果がグレーになりカラーを失う
         if (DefectCorrectionAvailability.Refusal(
                 _currentFormat, _derivedImage is not null, _colorImage is not null) is { } refusal)
         {
