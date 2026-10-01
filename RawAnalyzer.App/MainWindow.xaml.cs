@@ -2463,10 +2463,12 @@ public partial class MainWindow : Window
         }
 
         using BusyScope busy = EnterBusy();
-        if (_derivedImage is not null)
+
+        // 比較表示中・HDR表示中・カラー画像は断る(見えていない画像を差し替える、カラーを黙って失う)
+        if (ImageCalculationAvailability.Refusal(_compareMode, _derivedImage is not null, _colorImage is not null)
+            is { } refusal)
         {
-            MessageBox.Show(this, "HDR表示中は画像演算できません。Raw表示に戻してから実行してください。",
-                "画像演算", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBox.Show(this, refusal, "画像演算", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
 
@@ -4930,7 +4932,8 @@ public partial class MainWindow : Window
         // 一覧・移動・コピー・CSV は使えるようにし、断られるだけの補正ボタンは有効にせず理由を示す
         _defectWindow.ShowResult(result, maxCode,
             correctionUnavailableReason: _currentFormat is null ? null
-                : DefectCorrectionAvailability.Refusal(_currentFormat, _derivedImage is not null));
+                : DefectCorrectionAvailability.Refusal(
+                    _currentFormat, _derivedImage is not null, _colorImage is not null));
         _defectSource = source;
         Viewport.SetDefectMarkers(result.Defects);
     }
@@ -5175,7 +5178,8 @@ public partial class MainWindow : Window
 
         // HDR素材(派生ビューの表示中、HDR方式を指定した raw の Raw 表示)は補正しない。行交互では同色近傍に
         // 露光の違う行が混ざり、結果は HDR 方式を失う。ビニング・フィルタと同じく分割して開くよう案内する
-        if (DefectCorrectionAvailability.Refusal(_currentFormat, _derivedImage is not null) is { } refusal)
+        if (DefectCorrectionAvailability.Refusal(
+                _currentFormat, _derivedImage is not null, _colorImage is not null) is { } refusal)
         {
             MessageBox.Show(this, refusal,
                 "欠陥画素補正", MessageBoxButton.OK, MessageBoxImage.Information);

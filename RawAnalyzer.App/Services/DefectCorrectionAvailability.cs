@@ -22,12 +22,28 @@ internal static class DefectCorrectionAvailability
         "HDR素材は欠陥補正できません(補正の近傍に露光の違う行・段が混ざり、補正結果からHDRのレイアウトも失われます)。\n" +
         "HDR素材は先に露光ごとに分割し、単独の画像として開いてから補正してください。";
 
+    /// <summary>カラー画像を補正しない理由。</summary>
+    /// <remarks>
+    /// 検出・補正は輝度の画像で行う。補正結果はカラーを持たないので、差し替えると RGB の画像が輝度だけの
+    /// グレーの画像になり、そのまま保存するとグレーの画像が出力される(ビニング・フィルタは RGB の成分ごとに
+    /// 処理してカラーを保つ)。一覧の移動・コピー・CSV 保存は使える。
+    /// </remarks>
+    internal const string ColorRefusal =
+        "カラー画像(RGB)は欠陥補正できません(検出・補正は輝度で行うため、補正するとカラーが失われ、" +
+        "輝度だけのグレーの画像に置き換わります)。一覧の移動・コピー・CSV保存は使えます。";
+
     /// <summary>補正できない理由を返す。</summary>
     /// <param name="currentFormat">表示中の元画像のフォーマット(右パネルでの変更を含む)。</param>
     /// <param name="derivedViewShown">HDR分割・合成の派生ビューを表示しているか。</param>
+    /// <param name="colorImage">表示中の画像がカラー(RGB)か。</param>
     /// <returns>補正できない理由。補正できるならnull。</returns>
-    internal static string? Refusal(RawFormat currentFormat, bool derivedViewShown)
+    internal static string? Refusal(RawFormat currentFormat, bool derivedViewShown, bool colorImage)
     {
-        return derivedViewShown || currentFormat.Hdr != HdrMode.None ? HdrRefusal : null;
+        if (derivedViewShown || currentFormat.Hdr != HdrMode.None)
+        {
+            return HdrRefusal;
+        }
+
+        return colorImage ? ColorRefusal : null;
     }
 }
