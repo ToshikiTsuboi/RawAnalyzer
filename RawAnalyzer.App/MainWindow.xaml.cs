@@ -2842,7 +2842,7 @@ public partial class MainWindow : Window
         BatchChoice choice = dialog.Result;
         // バッチも1フレーム単位で現像するため、判定はフレーム画素数で行う。開始前は表示中の画像で判定し、
         // 寸法の異なるページ・連番のファイルは書き出しの実行中に1枚ごとに判定して中止する(BatchFrameRenderer)
-        if (choice.Format != BatchFormat.Tiff16
+        if (!BatchTiffOutput.IsTiff(choice.Format)
             && (long)format.Width * format.Height > RawLoader.DefaultInMemoryPixelThreshold)
         {
             MessageBox.Show(this, "1億画素を超える画像の現像バッチはサポートされていません(TIFF16は可)。",
@@ -2932,7 +2932,7 @@ public partial class MainWindow : Window
                             // PNG/JPEG・動画は1枚ごとに1億画素を超えないか確かめ、超えたらどのファイルの何枚目かと
                             // TIFF16 なら書き出せることを示して中止する(焼き込みでも確かめるが、動画では寸法違いの
                             // 理由より先に示す)。TIFF16 は従来どおり上限なし
-                            if (choice.Format != BatchFormat.Tiff16)
+                            if (!BatchTiffOutput.IsTiff(choice.Format))
                             {
                                 renderer.EnsureWithinPixelLimit(entry);
                             }
@@ -2963,11 +2963,11 @@ public partial class MainWindow : Window
                                 bool jpeg = choice.Format == BatchFormat.Jpeg8;
                                 string outputPath = OutputPaths.BatchImagePath(
                                     choice.OutputFolder, file, entry.Index, entry.Count, entry.IsTiffPage,
-                                    choice.Format == BatchFormat.Tiff16 ? ".tif" : jpeg ? ".jpg" : ".png");
+                                    BatchTiffOutput.IsTiff(choice.Format) ? ".tif" : jpeg ? ".jpg" : ".png");
                                 sourceGuard.EnsureNotSource(outputPath);
-                                if (choice.Format == BatchFormat.Tiff16)
+                                if (BatchTiffOutput.IsTiff(choice.Format))
                                 {
-                                    TiffWriter.SaveGray16(image, entry.Frame, outputPath, null, ct);
+                                    BatchTiffOutput.Save(choice.Format, image, entry.Frame, outputPath, ct);
                                 }
                                 else
                                 {
@@ -3013,7 +3013,8 @@ public partial class MainWindow : Window
         {
             _vm.ImageInfoText = video
                 ? $"動画書き出し完了: {Path.GetFileName(videoPath)}"
-                : $"バッチ書き出し完了: {targets.Count}件 → {choice.OutputFolder}";
+                : $"バッチ書き出し完了: {targets.Count}件 → {choice.OutputFolder}"
+                    + (BatchTiffOutput.CompletionNote(choice.Format) is { } note ? $" · {note}" : "");
         }
     }
 

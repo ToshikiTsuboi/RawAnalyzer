@@ -18,6 +18,9 @@ public enum BatchFormat
     /// <summary>TIFF 16bitグレー(無処理。画素値は内部表現の16bitフルスケールで、Nbit の raw は code&lt;&lt;(16−N))。</summary>
     Tiff16,
 
+    /// <summary>TIFF 16bitグレー(無処理。画素値は raw の code のまま下詰め、BitsPerSample は16)。</summary>
+    Tiff16Code,
+
     /// <summary>MJPEG AVI動画(現像/LUT焼き込み)。</summary>
     AviMjpeg,
 
@@ -124,6 +127,13 @@ public partial class BatchExportDialog : Window
 {
     private const int DefaultFps = 15;
 
+    /// <summary>出力形式の選択肢(FormatCombo の並び)。</summary>
+    private static readonly BatchFormat[] FormatChoices =
+    {
+        BatchFormat.Png8, BatchFormat.Jpeg8, BatchFormat.Tiff16, BatchFormat.Tiff16Code,
+        BatchFormat.AviMjpeg, BatchFormat.Mp4H264,
+    };
+
     private readonly int _frameWidth;
     private readonly int _frameHeight;
     private readonly string _sourceFolder;
@@ -174,11 +184,17 @@ public partial class BatchExportDialog : Window
     /// <summary>「実行」で確定された選択。</summary>
     public BatchChoice? Result { get; private set; }
 
+    /// <summary>選んでいる出力形式。</summary>
+    internal BatchFormat SelectedFormat =>
+        (uint)FormatCombo.SelectedIndex < (uint)FormatChoices.Length
+            ? FormatChoices[FormatCombo.SelectedIndex]
+            : BatchFormat.Png8;
+
     private void OnFormatChanged(object sender, RoutedEventArgs e)
     {
         if (FpsPanel is not null)
         {
-            FpsPanel.Visibility = FormatCombo.SelectedIndex is 3 or 4
+            FpsPanel.Visibility = SelectedFormat is BatchFormat.AviMjpeg or BatchFormat.Mp4H264
                 ? Visibility.Visible
                 : Visibility.Collapsed;
             UpdateQualityNote();
@@ -186,8 +202,8 @@ public partial class BatchExportDialog : Window
 
         if (DisplayLutCheck is not null)
         {
-            // TIFF16は無処理(16bitフルスケールの内部値そのまま)の出力なので表示調整の選択自体がない
-            DisplayLutCheck.Visibility = FormatCombo.SelectedIndex == 2
+            // TIFFは無処理(16bitフルスケールの内部値、または raw の code のまま)の出力なので表示調整の選択自体がない
+            DisplayLutCheck.Visibility = BatchTiffOutput.IsTiff(SelectedFormat)
                 ? Visibility.Collapsed
                 : Visibility.Visible;
         }
@@ -215,7 +231,7 @@ public partial class BatchExportDialog : Window
         }
 
         VideoQuality quality = SelectedQuality;
-        if (FormatCombo.SelectedIndex == 4)
+        if (SelectedFormat == BatchFormat.Mp4H264)
         {
             double bpp = VideoQualitySettings.BitsPerPixel(quality);
             string estimate = _frameWidth > 0 && _frameHeight > 0
@@ -268,16 +284,8 @@ public partial class BatchExportDialog : Window
             return;
         }
 
-        BatchFormat format = FormatCombo.SelectedIndex switch
-        {
-            1 => BatchFormat.Jpeg8,
-            2 => BatchFormat.Tiff16,
-            3 => BatchFormat.AviMjpeg,
-            4 => BatchFormat.Mp4H264,
-            _ => BatchFormat.Png8,
-        };
         Result = new BatchChoice(
-            format,
+            SelectedFormat,
             FpsInput.ParseInteger(FpsCombo.Text, DefaultFps),
             folder,
             DisplayLutCheck.IsChecked == true,

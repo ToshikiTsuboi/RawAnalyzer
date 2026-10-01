@@ -51,6 +51,45 @@ public static class TiffWriter
     }
 
     /// <summary>
+    /// 画像の1フレームを16bitグレースケールTIFFとして、画素値を raw の code のまま保存する。
+    /// </summary>
+    /// <remarks>
+    /// 内部表現(16bitフルスケール。Nbit の code は code×2^(16−N))を 16−N ビット右へずらし、下詰めの code
+    /// (12bit なら 0〜4095)にして書く。BitsPerSample は16のままで、値だけを code にする
+    /// (外部ツールで code のまま統計を取るため)。ほかの構成は <see cref="SaveGray16"/> と同じ。
+    /// </remarks>
+    /// <param name="image">保存する画像。</param>
+    /// <param name="frame">フレーム番号。</param>
+    /// <param name="path">出力先パス。</param>
+    /// <param name="progress">進捗通知(0〜1)。</param>
+    /// <param name="cancellationToken">キャンセルトークン。キャンセル時は既存ファイルを残したまま中断する。</param>
+    /// <param name="rowsPerStripOverride">ストリップあたりの行数の明示指定(既定は約1MB単位)。</param>
+    /// <exception cref="NotSupportedException">データが4GBを超えTIFFの32bitオフセットで表現できない場合。</exception>
+    /// <exception cref="OperationCanceledException">キャンセルされた場合。</exception>
+    public static void SaveGray16Codes(
+        RawImage image,
+        int frame,
+        string path,
+        IProgress<double>? progress = null,
+        CancellationToken cancellationToken = default,
+        int? rowsPerStripOverride = null)
+    {
+        int width = image.Width;
+        int shift = 16 - image.Format.BitDepth;
+        Save(
+            path, Layout.Create(width, image.Height, samplesPerPixel: 1, rowsPerStripOverride),
+            (y, samples) =>
+            {
+                image.CopyRegion(frame, 0, y, width, 1, samples);
+                for (int i = 0; i < samples.Length; i++)
+                {
+                    samples[i] = (ushort)(samples[i] >> shift);
+                }
+            },
+            progress, cancellationToken, "raw形式を使用してください。");
+    }
+
+    /// <summary>
     /// カラー画像を16bit RGB(RGB48、チャンキー)の非圧縮TIFFとして保存する。
     /// 画素値は内部表現(16bitフルスケール)をそのまま書き出す(8bitから読み込んだ画像も読込時の16bit値のまま)。
     /// WICのTIFFエンコーダへRGB48で渡した場合と同じ画素値になり、全画素のバッファを確保せずに行単位で書く。

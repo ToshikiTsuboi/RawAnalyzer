@@ -205,6 +205,51 @@ public class SaveTests
         }
     }
 
+    [Theory]
+    [InlineData(8)]
+    [InlineData(12)]
+    [InlineData(16)]
+    public void TiffWriter_SaveGray16Codes_ReloadsRawCodesAsSixteenBit(int bitDepth)
+    {
+        // 一括書き出しの「raw code のまま」(残課題 2026-10-02 K4)。内部表現(code×2^(16−N))ではなく code を
+        // 下詰めで書き、BitsPerSample は16のまま。読み戻すと16bitの画像で、値は code そのまま
+        // (12bit の最大 4095 は 4095 で、65520 ではない)。指定したフレームを書くことも確かめる
+        const int width = 6;
+        const int height = 4;
+        const int frames = 2;
+        int max = (1 << bitDepth) - 1;
+        var codes = new ushort[width * height * frames];
+        for (int i = 0; i < codes.Length; i++)
+        {
+            codes[i] = (ushort)((i * 37 + 1) % (max + 1));
+        }
+
+        codes[width * height] = (ushort)max;
+        var format = new RawFormat { Width = width, Height = height, BitDepth = bitDepth, FrameCount = frames };
+        using RawImage image = TestImages.FromCodes(codes, format);
+        string path = TempPath(".tif");
+        try
+        {
+            TiffWriter.SaveGray16Codes(image, 1, path);
+
+            Assert.True(TiffLoader.TryReadSampleInfo(path, out TiffSampleInfo? info));
+            Assert.Equal((16, 1), (info!.BitsPerSample, info.SamplesPerPixel));
+            using RawImage reloaded = ImageFileLoader.Load(path).Luminance;
+            Assert.Equal(16, reloaded.Format.BitDepth);
+            for (int y = 0; y < height; y++)
+            {
+                for (int x = 0; x < width; x++)
+                {
+                    Assert.Equal(codes[width * height + y * width + x], reloaded.GetPixel(x, y));
+                }
+            }
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
     [Fact]
     public void TiffWriter_SaveRgb48_MultipleStrips_ReloadsSameRgb()
     {

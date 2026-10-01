@@ -23,6 +23,8 @@
             <ComboBoxItem Content="JPEG (8bit・現像/LUT焼き込み)" />
             <ComboBoxItem Content="TIFF (16bit グレー・無処理・16bitフルスケール)"
                           ToolTip="画素値は内部表現(16bitフルスケール)のまま書きます。Nbit の raw は code×2^(16−N)(12bit の code 100 は 1600)で、raw の code そのままではありません" />
+            <ComboBoxItem Content="TIFF (16bit グレー・無処理・raw code のまま)"
+                          ToolTip="画素値を raw の code のまま(下詰め)書きます。BitsPerSample は 16 のままで、12bit の code 100 は 100 です(外部ツールで code のまま統計を取る用途)。8bit の画像は 0〜255、値域を換算した 32bit・実数などは換算後の 16bit 値です" />
             <ComboBoxItem Content="AVI動画 (MJPEG・現像/LUT焼き込み)" />
             <ComboBoxItem Content="MP4動画 (H.264・現像/LUT焼き込み)" />
         </ComboBox>
