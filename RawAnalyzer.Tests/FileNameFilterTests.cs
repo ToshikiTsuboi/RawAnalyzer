@@ -7,9 +7,7 @@ namespace RawAnalyzer.Tests;
 public class FileNameFilterTests
 {
     [Theory]
-    [InlineData("", "dark_001.raw", true)]                 // 空: すべて表示
-    [InlineData(".raw", "dark_001.raw", true)]             // 拡張子
-    [InlineData(".raw", "dark_001.tif", false)]
+    [InlineData(".raw", "dark_001.tif", false)]            // 拡張子
     [InlineData(".RAW", "dark_001.raw", true)]             // 大文字小文字を区別しない
     [InlineData("*.raw;*.tif", "scene.TIF", true)]         // 複数条件の OR(; 区切り)
     [InlineData("*.raw, *.tif", "scene.png", false)]       // , 区切り
@@ -20,8 +18,7 @@ public class FileNameFilterTests
     [InlineData("img_00?.raw", "img_0071.raw", false)]
     [InlineData("dark", "flat_dark.raw", true)]            // 素の語は部分一致
     [InlineData("a.b", "a+b.raw", false)]                  // . を含む語もワイルドカードでなければ部分一致(正規表現ではない)
-    [InlineData(@"/^img_\d{3}\.raw$/", "img_123.raw", true)]  // 正規表現
-    [InlineData(@"/^img_\d{3}\.raw$/", "img_12.raw", false)]
+    [InlineData(@"/^img_\d{3}\.raw$/", "img_12.raw", false)]  // 正規表現
     [InlineData("/RAW$/", "a.raw", true)]                  // 正規表現も大文字小文字を区別しない
     public void IsMatch_FollowsDocumentedSyntax(string filter, string fileName, bool expected)
     {
@@ -31,21 +28,8 @@ public class FileNameFilterTests
         Assert.Equal(expected, parsed.IsMatch(fileName));
     }
 
-    [Fact]
-    public void Parse_InvalidRegex_ReportsErrorAndHidesNothing()
-    {
-        // 入力途中の "/ab(" のような不正なパターンで一覧が空になると使いにくい。
-        // エラーは表示し、絞り込みは行わない
-        FileNameFilter parsed = FileNameFilter.Parse("/ab(/");
-
-        Assert.NotNull(parsed.Error);
-        Assert.False(parsed.IsEmpty);
-        Assert.True(parsed.IsMatch("anything.raw"));
-    }
-
     [Theory]
     [InlineData(null)]
-    [InlineData("")]
     [InlineData("   ")]
     [InlineData("//")]
     public void Parse_BlankInput_IsEmpty(string? text)

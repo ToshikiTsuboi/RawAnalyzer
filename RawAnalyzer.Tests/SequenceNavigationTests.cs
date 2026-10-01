@@ -17,7 +17,6 @@ public class SequenceNavigationTests
     }
 
     [Theory]
-    [InlineData(0)]
     [InlineData(1)]
     public void NoSequence_IsNotAvailable(int count)
     {

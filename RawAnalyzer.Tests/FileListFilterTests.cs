@@ -54,6 +54,7 @@ public class FileListFilterTests
         Assert.True(vm.FileFilterHasError);
         Assert.NotNull(vm.FileFilterError);
         Assert.Equal(2, vm.FilteredFiles.Count);
+        Assert.Equal("2 / 2 件", vm.FileFilterSummary); // 空の条件とは区別して件数を出し、すべて残す
 
         vm.FileFilterText = "/a/";
         Assert.False(vm.FileFilterHasError);
