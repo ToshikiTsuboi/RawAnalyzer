@@ -13,6 +13,7 @@ namespace RawAnalyzer.App.Services;
 /// <item><description><c>/pattern/</c>: 正規表現をファイル名(パスを含まない)に適用する。
 /// 発展的な用途向けで、不正なパターンは <see cref="Error"/> に説明を入れ、絞り込みは行わない。</description></item>
 /// <item><description>それ以外: 空白・<c>;</c>・<c>,</c> で区切った語のいずれかに一致すれば表示(OR)。
+/// IME をオンのまま区切ったときの全角スペース・全角の <c>；</c>・<c>，</c> も区切りとみなす。
 /// <c>*</c> か <c>?</c> を含む語はワイルドカード(ファイル名全体に一致)、
 /// <c>.</c> で始まる語は拡張子の一致、その他の語は部分一致。</description></item>
 /// </list>
@@ -22,7 +23,6 @@ internal sealed class FileNameFilter
     // ファイル名は短いので通常は一瞬で終わる。破滅的なバックトラックを起こす
     // パターンを入力されても UI スレッドを長く止めないための上限
     private static readonly TimeSpan RegexTimeout = TimeSpan.FromMilliseconds(100);
-    private static readonly char[] Separators = { ' ', '\t', ';', ',' };
     private static readonly char[] WildcardChars = { '*', '?' };
 
     private readonly Func<string, bool>[] _terms;
@@ -83,16 +83,36 @@ internal sealed class FileNameFilter
             }
         }
 
-        string[] tokens = trimmed.Split(
-            Separators, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        var terms = new Func<string, bool>[tokens.Length];
-        for (int i = 0; i < tokens.Length; i++)
-        {
-            terms[i] = BuildTerm(tokens[i]);
-        }
-
+        Func<string, bool>[] terms = SplitTerms(trimmed).Select(BuildTerm).ToArray();
         return new FileNameFilter(trimmed, terms, null, null);
     }
+
+    /// <summary>入力を語に分ける。続いた区切りは1つとみなす。</summary>
+    /// <remarks>
+    /// 日本語のファイル名の語を並べるときは IME がオンのままなので、スペースは全角(U+3000)になる。
+    /// 以前は半角スペース・タブ・<c>;</c>・<c>,</c> だけで区切り、「暗室　フラット」を1語の部分一致として探して
+    /// 何にも一致しなかった。空白はすべて(全角スペースを含む)、<c>;</c>・<c>,</c> は全角の形も区切りとする。
+    /// </remarks>
+    private static IEnumerable<string> SplitTerms(string text)
+    {
+        int start = 0;
+        for (int i = 0; i <= text.Length; i++)
+        {
+            if (i < text.Length && !IsSeparator(text[i]))
+            {
+                continue;
+            }
+
+            if (i > start)
+            {
+                yield return text[start..i];
+            }
+
+            start = i + 1;
+        }
+    }
+
+    private static bool IsSeparator(char c) => char.IsWhiteSpace(c) || c is ';' or ',' or '；' or '，';
 
     /// <summary>ファイル名(パスを含まない)が条件に一致するか。不正な条件はすべて一致とみなす。</summary>
     /// <param name="fileName">判定するファイル名。</param>

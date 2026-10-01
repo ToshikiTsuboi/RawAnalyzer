@@ -28,6 +28,25 @@ public class FileNameFilterTests
         Assert.Equal(expected, parsed.IsMatch(fileName));
     }
 
+    /// <summary>
+    /// IME をオンのまま区切った複数条件(全角スペース・全角の ；，)も、いずれかに一致すれば表示する。
+    /// 以前は語の間の全角スペースで区切らず、「暗室　フラット」を1語の部分一致として探して何にも一致しなかった。
+    /// </summary>
+    [Theory]
+    [InlineData("暗室　フラット", "暗室_001.raw", true)]
+    [InlineData("暗室　フラット", "フラット_001.raw", true)]
+    [InlineData("暗室　フラット", "白_001.raw", false)]
+    [InlineData("暗室；フラット", "フラット_001.raw", true)]
+    [InlineData("暗室，フラット", "フラット_001.raw", true)]
+    [InlineData("暗室　　.tif", "scan.tif", true)] // 続いた区切りは1つとみなす
+    public void IsMatch_SplitsOnFullWidthSeparators(string filter, string fileName, bool expected)
+    {
+        FileNameFilter parsed = FileNameFilter.Parse(filter);
+
+        Assert.Null(parsed.Error);
+        Assert.Equal(expected, parsed.IsMatch(fileName));
+    }
+
     [Theory]
     [InlineData(null)]
     [InlineData("   ")]
