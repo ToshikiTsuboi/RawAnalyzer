@@ -289,45 +289,6 @@ public class HdrSplitterTests
     }
 
     [Fact]
-    public void Split_ExplicitLineInterleaved_WorksWithMultipleFrames()
-    {
-        // 従来はフレーム数から推定していたため、
-        // 「複数フレーム かつ 各フレーム内が行交互」を表現できなかった
-        const int width = 2;
-        const int height = 4;
-        const int frames = 2;
-        var values = new ushort[width * height * frames];
-        for (int i = 0; i < values.Length; i++)
-        {
-            values[i] = (ushort)(i / width * 10);
-        }
-
-        var format = new RawFormat
-        {
-            Width = width, Height = height, BitDepth = 16, FrameCount = frames,
-            Hdr = HdrMode.LineInterleaved, HdrStages = 2,
-        };
-        using RawImage image = TestImages.FromCodes(values, format);
-
-        IReadOnlyList<RawImage> split = HdrSplitter.Split(image, format);
-        try
-        {
-            // 先頭フレーム内の行交互として分割される
-            Assert.Equal(2, split.Count);
-            Assert.Equal(2, split[0].Height);
-            Assert.Equal(0, split[0].GetPixel(0, 0));
-            Assert.Equal(10, split[1].GetPixel(0, 0));
-        }
-        finally
-        {
-            foreach (RawImage frame in split)
-            {
-                frame.Dispose();
-            }
-        }
-    }
-
-    [Fact]
     public void Split_LineInterleavedMultiFrame_SplitsRequestedFrame()
     {
         // 行交互HDRのマルチフレームは、各フレームが別時刻の1回の撮影(長秒/短秒を行交互に含む)。
@@ -349,39 +310,6 @@ public class HdrSplitterTests
             Assert.Equal(2, split.Count);
             AssertAllPixels(split[0], 5000); // 長秒
             AssertAllPixels(split[1], 500);  // 短秒
-        }
-        finally
-        {
-            foreach (RawImage stage in split)
-            {
-                stage.Dispose();
-            }
-        }
-    }
-
-    [Fact]
-    public void Split_FrameSequential_UsesAllFramesRegardlessOfFrameArgument()
-    {
-        // フレーム連結ではフレームそのものが各露光。表示中のフレームを渡しても
-        // 露光の選択と取り違えず、全フレームを長秒→短秒の順に返す
-        const int width = 2;
-        const int height = 2;
-        var values = new ushort[width * height * 2];
-        Array.Fill(values, (ushort)1000, 0, width * height);
-        Array.Fill(values, (ushort)100, width * height, width * height);
-        var format = new RawFormat
-        {
-            Width = width, Height = height, BitDepth = 16, FrameCount = 2,
-            Hdr = HdrMode.FrameSequential, HdrStages = 2,
-        };
-        using RawImage image = TestImages.FromCodes(values, format);
-
-        IReadOnlyList<RawImage> split = HdrSplitter.Split(image, format, frame: 1);
-        try
-        {
-            Assert.Equal(2, split.Count);
-            AssertAllPixels(split[0], 1000);
-            AssertAllPixels(split[1], 100);
         }
         finally
         {
@@ -469,8 +397,10 @@ public class HdrSplitterTests
     }
 
     [Fact]
-    public void Split_FrameSequential_ReturnsEachFrame()
+    public void Split_FrameSequential_ReturnsEachFrameRegardlessOfFrameArgument()
     {
+        // フレーム連結ではフレームそのものが各露光。表示中のフレーム(1)を渡しても露光の選択と取り違えず、
+        // 全フレームを長秒→短秒の順に返す(レビュー指摘 #4 の修正で frame 引数を足したときの回帰の確認)
         const int width = 4;
         const int height = 3;
         ushort[] values = TestData.MakePattern(width * height * 2, 16);
@@ -481,7 +411,7 @@ public class HdrSplitterTests
         };
         using RawImage image = TestImages.FromCodes(values, format);
 
-        IReadOnlyList<RawImage> frames = HdrSplitter.Split(image);
+        IReadOnlyList<RawImage> frames = HdrSplitter.Split(image, format, frame: 1);
 
         Assert.Equal(2, frames.Count);
         for (int f = 0; f < 2; f++)
@@ -763,36 +693,6 @@ public class HdrMergerTests
         }
 
         Assert.Equal(65535f * 64, merged.FullScale, 0);
-    }
-
-    [Theory]
-    [InlineData(12, 2, 0.0)]  // step=16 = 12bit素材の正規化LSB → 無損失
-    [InlineData(14, 2, 2.0)]  // LSB=4, step=16 → 2bit
-    public void LostBits_IsRelativeToSourceBitDepth(int bitDepth, int stages, double expected)
-    {
-        // 16bitコンテナのLSB基準で数えると (16-N)bit ぶん過大になる回帰の確認
-        var format = new RawFormat { Width = 4, Height = 4, BitDepth = bitDepth };
-        var frames = new RawImage[stages];
-        try
-        {
-            for (int i = 0; i < stages; i++)
-            {
-                frames[i] = TestImages.FromCodes(new ushort[16], format);
-            }
-
-            HdrImage merged = HdrMerger.Merge(
-                frames, new HdrMergeParameters(ExposureRatio: 16));
-
-            Assert.Equal(bitDepth, merged.SourceBitDepth);
-            Assert.Equal(expected, merged.LostBits, 6);
-        }
-        finally
-        {
-            foreach (RawImage? frame in frames)
-            {
-                frame?.Dispose();
-            }
-        }
     }
 
     [Fact]

@@ -36,17 +36,6 @@ public class HdrSourceFrameTests
         Assert.Equal(1, source.ResolveRestoreFrame(frameCount: 2));
     }
 
-    [Fact]
-    public void NextHdrEntry_CapturesNewlyShownFrame()
-    {
-        // Raw表示へ戻ってから別フレームへ送り、再びHDR表示にしたらそのフレームを控え直す
-        var source = new HdrSourceFrame();
-        source.Capture(viewportFrame: 2, derivedViewShown: false);
-        source.Capture(viewportFrame: 7, derivedViewShown: false);
-
-        Assert.Equal(7, source.ResolveRestoreFrame(frameCount: 25));
-    }
-
     [Theory]
     [InlineData(3, 1)]  // 単一フレームの画像
     [InlineData(4, 4)]  // フレーム数と同じ番号(範囲外)

@@ -46,11 +46,8 @@ public class DisplayLevelsTests
     }
 
     [Theory]
-    [InlineData(8)]
-    [InlineData(10)]
-    [InlineData(12)]
-    [InlineData(14)]
-    [InlineData(16)]
+    [InlineData(8)]  // shift ≥ 1(白点の下位ビットを埋める)。10/12/14bit は shift の定数が違うだけ
+    [InlineData(16)] // shift 0
     public void CodesRoundTripAtSameBitDepth(int bitDepth)
     {
         int max = DisplayLevels.MaxCode(bitDepth);

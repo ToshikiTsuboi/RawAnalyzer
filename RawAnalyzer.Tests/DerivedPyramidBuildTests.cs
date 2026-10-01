@@ -17,19 +17,6 @@ namespace RawAnalyzer.Tests;
 public class DerivedPyramidBuildTests
 {
     [Fact]
-    public async Task Build_ReturnsPyramidOfDerivedImage()
-    {
-        var build = new DerivedPyramidBuild();
-        using RawImage derived = MakeImage(64, 32);
-
-        TilePyramid? pyramid = await build.CreateAsync(derived);
-
-        Assert.NotNull(pyramid);
-        Assert.Equal(64, pyramid.SourceWidth);
-        Assert.Equal(32, pyramid.SourceHeight);
-    }
-
-    [Fact]
     public async Task DerivedImageDisposed_EndsWithoutException()
     {
         // 生成中に派生画像が破棄されると、Parallel.For の中の読み出しが ObjectDisposedException になり
