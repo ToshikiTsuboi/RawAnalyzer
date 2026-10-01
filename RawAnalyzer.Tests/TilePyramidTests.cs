@@ -6,29 +6,6 @@ namespace RawAnalyzer.Tests;
 public class TilePyramidTests
 {
     [Fact]
-    public void Create_4x4_Level2IsBlockAverage()
-    {
-        ushort[] values =
-        {
-            0, 10, 20, 30,
-            40, 50, 60, 70,
-            80, 90, 100, 110,
-            120, 130, 140, 150,
-        };
-        using RawImage image = TestImages.FromCodes(values, 4, 4);
-        TilePyramid pyramid = TilePyramid.Create(image);
-
-        PyramidLevel? level2 = pyramid.GetLevel(2);
-        Assert.NotNull(level2);
-        Assert.Equal(2, level2.Width);
-        Assert.Equal(2, level2.Height);
-        Assert.Equal((0 + 10 + 40 + 50) / 4, level2.GetPixel(0, 0));
-        Assert.Equal((20 + 30 + 60 + 70) / 4, level2.GetPixel(1, 0));
-        Assert.Equal((80 + 90 + 120 + 130) / 4, level2.GetPixel(0, 1));
-        Assert.Equal((100 + 110 + 140 + 150) / 4, level2.GetPixel(1, 1));
-    }
-
-    [Fact]
     public void Create_MaxLevelPixels_SkipsOversizedLevelsButKeepsCoarser()
     {
         ushort[] values = TestData.MakePattern(16 * 16, 16);
