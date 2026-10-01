@@ -247,7 +247,7 @@ public static unsafe class TiffLoader
                 return false;
             }
 
-            List<PageRef> pages = ReadPageTable(data, header, cancellationToken);
+            IReadOnlyList<PageRef> pages = ReadPageTable(data, header, cancellationToken);
             if ((uint)pageIndex >= (uint)pages.Count)
             {
                 throw new ArgumentOutOfRangeException(nameof(pageIndex), "TIFFのページ範囲外です。");
@@ -323,7 +323,7 @@ public static unsafe class TiffLoader
                 return false;
             }
 
-            List<PageRef> pages = ReadPageTable(data, header, cancellationToken);
+            IReadOnlyList<PageRef> pages = ReadPageTable(data, header, cancellationToken);
             if ((uint)pageIndex >= (uint)pages.Count)
             {
                 why = $"ページ{pageIndex}はありません(全{pages.Count}ページ)。";
@@ -419,7 +419,7 @@ public static unsafe class TiffLoader
                     return false;
                 }
 
-                List<PageRef> pages = ReadPageTable(data, header, cancellationToken);
+                IReadOnlyList<PageRef> pages = ReadPageTable(data, header, cancellationToken);
                 if ((uint)pageIndex >= (uint)pages.Count)
                 {
                     throw new ArgumentOutOfRangeException(nameof(pageIndex), "TIFFのページ範囲外です。");
@@ -487,7 +487,7 @@ public static unsafe class TiffLoader
                 return false;
             }
 
-            List<PageRef> pages = ReadPageTable(data, header, cancellationToken);
+            IReadOnlyList<PageRef> pages = ReadPageTable(data, header, cancellationToken);
             if ((uint)pageIndex >= (uint)pages.Count)
             {
                 throw new ArgumentOutOfRangeException(nameof(pageIndex), "TIFFのページ範囲外です。");
@@ -555,6 +555,7 @@ public static unsafe class TiffLoader
         string path, ref string reason, Func<TiffBytes, bool> action, bool rethrowInvalidData = false)
     {
         long fileLength;
+        PageTableKey key;
         try
         {
             var info = new FileInfo(path);
@@ -565,6 +566,7 @@ public static unsafe class TiffLoader
             }
 
             fileLength = info.Length;
+            key = new PageTableKey(info.FullName, fileLength, info.LastWriteTimeUtc);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -587,7 +589,7 @@ public static unsafe class TiffLoader
                 // ストリームから読めば IOException(理由付きの失敗)で済む
                 using var stream = new FileStream(
                     path, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 0, FileOptions.RandomAccess);
-                return action(new TiffBytes(new StreamWindow(stream, fileLength)));
+                return action(new TiffBytes(new StreamWindow(stream, fileLength)) { CacheKey = key });
             }
 
             // ヘッダとIFDの位置はファイル末尾のこともあるため全体をマップする。
@@ -602,7 +604,7 @@ public static unsafe class TiffLoader
             {
                 // 2GB超のTIFFはIFDやストリップ配列がファイル後方に置かれることがある。
                 // Spanのint長へ切り詰めず longオフセットのままアクセスする
-                return action(new TiffBytes(pointer + accessor.PointerOffset, fileLength));
+                return action(new TiffBytes(pointer + accessor.PointerOffset, fileLength) { CacheKey = key });
             }
             finally
             {
@@ -920,6 +922,58 @@ public static unsafe class TiffLoader
     /// </summary>
     private readonly record struct PageRef(long IfdOffset, int WicFrame, long VirtualIndex, bool Virtual);
 
+    /// <summary>ページ表を使い回すファイルの版。パス・長さ・更新日時が同じなら同じページ表とみなす。</summary>
+    private readonly record struct PageTableKey(string Path, long Length, DateTime LastWriteUtc);
+
+    /// <summary>ページ表を覚えておくファイルの数(表示中のスタック・比較ペイン・一括書き出し)。</summary>
+    private const int PageTableCacheSize = 4;
+
+    private static readonly object PageTableCacheGate = new();
+
+    /// <summary>最近使ったページ表(先頭が最新)。ページ表は作った後は変更しない。</summary>
+    private static readonly List<(PageTableKey Key, PageRef[] Pages)> PageTableCache = new();
+
+    /// <summary>
+    /// ページ表を返す。同じファイルの同じ版のページ表を覚えていればそれを使い、なければ作って覚える。
+    /// </summary>
+    /// <remarks>
+    /// ページを1枚読むたびに(TryReadSampleInfo・TryProbePixelLayout・自前復号でそれぞれ)IFDチェーン全体を
+    /// 解析すると、多ページTIFFの再生・一括書き出しが O(N²) になる。ファイルが書き換わって長さか
+    /// 更新日時が変われば作り直すので、ページ数の変化は従来どおり検出できる。
+    /// </remarks>
+    private static IReadOnlyList<PageRef> ReadPageTable(TiffBytes data, TiffHeader header, CancellationToken ct)
+    {
+        if (data.CacheKey is not { } key)
+        {
+            return BuildPageTable(data, header, ct);
+        }
+
+        lock (PageTableCacheGate)
+        {
+            int index = PageTableCache.FindIndex(entry => entry.Key == key);
+            if (index >= 0)
+            {
+                (PageTableKey Key, PageRef[] Pages) found = PageTableCache[index];
+                PageTableCache.RemoveAt(index);
+                PageTableCache.Insert(0, found);
+                return found.Pages;
+            }
+        }
+
+        PageRef[] pages = BuildPageTable(data, header, ct).ToArray();
+        lock (PageTableCacheGate)
+        {
+            PageTableCache.RemoveAll(entry => entry.Key == key);
+            PageTableCache.Insert(0, (key, pages));
+            if (PageTableCache.Count > PageTableCacheSize)
+            {
+                PageTableCache.RemoveAt(PageTableCache.Count - 1);
+            }
+        }
+
+        return pages;
+    }
+
     /// <summary>
     /// ページ表を作る。主チェーンの各IFDと、その全解像度SubIFD(DNGの本体はここにある)を
     /// ページにし、縮小画像(NewSubfileType bit0)は除く。
@@ -930,7 +984,7 @@ public static unsafe class TiffLoader
     /// 連続していることを確かめたうえでN個の仮想ページに展開する
     /// (ImageJが4GB超のスタックを書くときの形式)。
     /// </remarks>
-    private static List<PageRef> ReadPageTable(TiffBytes data, TiffHeader header, CancellationToken ct)
+    private static List<PageRef> BuildPageTable(TiffBytes data, TiffHeader header, CancellationToken ct)
     {
         List<long> chain = ReadChain(data, header, ct);
         var pages = new List<PageRef>();
@@ -1963,6 +2017,9 @@ public static unsafe class TiffLoader
         }
 
         public long Length { get; }
+
+        /// <summary>ページ表を使い回すためのファイルの版(メモリ上のバイト列ではnull)。</summary>
+        public PageTableKey? CacheKey { get; init; }
 
         public byte this[long offset] => Slice(offset, 1)[0];
 
