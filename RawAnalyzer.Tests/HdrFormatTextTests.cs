@@ -54,6 +54,21 @@ public class HdrFormatTextTests
     }
 
     [Fact]
+    public void Panel_DefaultLineBlockFollowsBayer()
+    {
+        // ライン単位が未指定なら Bayer で決まる(なし=1・あり=2)。右パネルで Bayer を変えたら要約も出し直す
+        var format = new RawFormat
+        {
+            Width = 8, Height = 8, BitDepth = 12, Hdr = HdrMode.LineInterleaved, HdrStages = 2, ExposureRatio = 16,
+        };
+
+        Assert.Equal("行交互 2段 (露光比 16) / 1行単位", HdrFormatText.DescribePanel(format));
+        Assert.Equal(
+            "行交互 2段 (露光比 16) / 2行単位",
+            HdrFormatText.DescribePanel(format with { Bayer = BayerPattern.Gbrg }));
+    }
+
+    [Fact]
     public void Panel_ExplicitFrameSequential_OmitsLineBlock()
     {
         var format = new RawFormat

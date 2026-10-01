@@ -5238,6 +5238,10 @@ public partial class MainWindow : Window
 
         RawFormat previous = _currentFormat;
         _currentFormat = format;
+
+        // HDR行交互のライン単位は未指定なら Bayer で決まる(なし=1・あり=2)。分割・合成は変えた後のパターンで行うので、
+        // フォーマット欄のHDR要約も出し直す(出し直さないと、使わない方のライン単位を示したままになる)
+        _vm.FmtHdrText = HdrFormatText.DescribePanel(_currentFormat);
         if (_derivedImage is null && _currentImage is not null)
         {
             Viewport.UpdateFormat(_currentFormat);
