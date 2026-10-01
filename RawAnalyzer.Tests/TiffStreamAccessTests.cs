@@ -42,6 +42,7 @@ public class TiffStreamAccessTests
         using var file = TempTiff.Write(bytes);
 
         string mapped = Snapshot(file.Path, pageIndex);
+        Assert.Contains(kind == "stripOutOfFile" ? "error " : "image ", mapped);
         TiffLoader.ForceStreamAccess.Value = true;
         string streamed;
         try
