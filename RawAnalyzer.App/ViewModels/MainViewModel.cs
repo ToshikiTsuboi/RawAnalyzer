@@ -289,9 +289,26 @@ public sealed class MainViewModel : ObservableObject
                 OnPropertyChanged(nameof(CanUseMainView));
                 OnPropertyChanged(nameof(CanChangeFormat));
                 OnPropertyChanged(nameof(ChangeFormatToolTip));
+                OnPropertyChanged(nameof(CanUseAdjustPanel));
+                OnPropertyChanged(nameof(AdjustPanelDisabledReason));
+                OnPropertyChanged(nameof(CanEditBayer));
+                OnPropertyChanged(nameof(BayerEditToolTip));
             }
         }
     }
+
+    /// <summary>右の調整パネルを操作できるか(比較モードでないとき)。</summary>
+    /// <remarks>
+    /// 調整パネル(表示調整のスライダー・ボタン、ヒストグラムの切替・コピー、ホワイトバランス、カラーマトリクス、
+    /// フォーマット)は通常表示を対象にするので、比較モード中はパネルの中身ごと無効にし、上端に
+    /// <see cref="AdjustPanelDisabledReason"/> を示す(<see cref="CanUseMainView"/> と同じく、比較画面に隠れた
+    /// 通常表示に効かせない)。比較モードでなければ、個々の項目の条件(画像の有無など)は従来どおり。
+    /// </remarks>
+    public bool CanUseAdjustPanel => !_isCompareMode;
+
+    /// <summary>調整パネルを使えない理由(パネルの上端に示す)。使えるときは null。</summary>
+    public string? AdjustPanelDisabledReason =>
+        _isCompareMode ? CommandDisabledReasons.AdjustPanelInCompareMode : null;
 
     /// <summary>
     /// 通常表示(メインの画像・ビューポート)を操作できるか。画像を開いていて、比較モードでないとき。
@@ -784,7 +801,8 @@ public sealed class MainViewModel : ObservableObject
     /// ファイル連番の送り・表示モードの選択と同じ規約)。カラー画像で指定できると、表示はカラーのまま
     /// チャネル別統計などが輝度へ Bayer を当ててしまう。指定そのものはカラー画像を挟んでも保持され、
     /// 次のグレーの画像に付く。HDR分割・合成の派生ビューの表示中と計算中も、派生ビューが計算を始めたときの
-    /// Bayer のまま右パネルと食い違うので操作させない(<see cref="BayerEditAvailability"/>)。
+    /// Bayer のまま右パネルと食い違うので操作させない(<see cref="BayerEditAvailability"/>)。比較モード中は、
+    /// 比較画面に隠れた通常表示の画像のパターン(と同じファイル・同じサイズの記憶)を変えてしまうので操作させない。
     /// </remarks>
     public bool CanEditBayer => BayerEditRefusal == BayerEditAvailability.Refusal.None;
 
@@ -794,7 +812,8 @@ public sealed class MainViewModel : ObservableObject
     public string BayerEditToolTip => BayerEditAvailability.ToolTip(BayerEditRefusal);
 
     private BayerEditAvailability.Refusal BayerEditRefusal =>
-        BayerEditAvailability.Check(_hasImage, _isColorImage, _isHdrViewShown, _isHdrComputing);
+        BayerEditAvailability.Check(
+            _isCompareMode, _hasImage, _isColorImage, _isHdrViewShown, _isHdrComputing);
 
     /// <summary>左パネル(ファイル)を表示するか。</summary>
     public bool LeftPanelVisible

@@ -55,6 +55,61 @@ public class CompareModeCommandTests
         Assert.Contains(nameof(MainViewModel.ChangeFormatToolTip), changed);
     }
 
+    [Fact]
+    public void AdjustPanel_IsUnavailableWhileComparing_WithTheReason()
+    {
+        // 右の調整パネル(表示調整のスライダー・ボタン、ヒストグラムの切替・コピー、ホワイトバランス、カラーマトリクス、
+        // フォーマット)は通常表示を対象にする。以前は比較モード中も操作でき、比較画面に隠れた通常表示に効いた。
+        // 比較モードでなければ、画像がなくても従来どおり操作できる(比較モードの間だけ無効にして理由を示す)
+        var vm = new MainViewModel();
+        Assert.True(vm.CanUseAdjustPanel);
+        Assert.Null(vm.AdjustPanelDisabledReason);
+
+        var changed = new List<string>();
+        vm.PropertyChanged += (_, e) => changed.Add(e.PropertyName ?? "");
+        vm.IsCompareMode = true;
+        Assert.False(vm.CanUseAdjustPanel);
+        Assert.Equal(CommandDisabledReasons.AdjustPanelInCompareMode, vm.AdjustPanelDisabledReason);
+        Assert.StartsWith("比較モード中は調整パネルを使えません", vm.AdjustPanelDisabledReason);
+        Assert.Contains(nameof(MainViewModel.CanUseAdjustPanel), changed);
+        Assert.Contains(nameof(MainViewModel.AdjustPanelDisabledReason), changed);
+
+        changed.Clear();
+        vm.IsCompareMode = false;
+        Assert.True(vm.CanUseAdjustPanel);
+        Assert.Null(vm.AdjustPanelDisabledReason);
+        Assert.Contains(nameof(MainViewModel.CanUseAdjustPanel), changed);
+        Assert.Contains(nameof(MainViewModel.AdjustPanelDisabledReason), changed);
+    }
+
+    [Fact]
+    public void BayerEdit_IsRefusedWhileComparing_WithTheReason()
+    {
+        // 右パネルの Bayer の選択は隠れた通常表示の画像のパターンを変え、同じファイル・同じサイズの記憶にも残る。
+        // 以前は比較モード中も選べ、ツールチップは「変更できます」のままだった。比較モードは画像の有無より先に示す
+        var vm = new MainViewModel { HasImage = true };
+        Assert.True(vm.CanEditBayer);
+
+        var changed = new List<string>();
+        vm.PropertyChanged += (_, e) => changed.Add(e.PropertyName ?? "");
+        vm.IsCompareMode = true;
+
+        Assert.False(vm.CanEditBayer);
+        Assert.Equal(CommandDisabledReasons.CompareMode, vm.BayerEditToolTip);
+        Assert.Contains(nameof(MainViewModel.CanEditBayer), changed);
+        Assert.Contains(nameof(MainViewModel.BayerEditToolTip), changed);
+
+        vm.HasImage = false;
+        Assert.Equal(CommandDisabledReasons.CompareMode, vm.BayerEditToolTip);
+
+        changed.Clear();
+        vm.HasImage = true;
+        vm.IsCompareMode = false;
+        Assert.True(vm.CanEditBayer);
+        Assert.Equal(BayerEditAvailability.Description, vm.BayerEditToolTip);
+        Assert.Contains(nameof(MainViewModel.CanEditBayer), changed);
+    }
+
     [Theory]
     [InlineData(true, CommandDisabledReasons.CompareMode)] // 比較モードは画像の有無より先に示す
     [InlineData(false, CommandDisabledReasons.NoImage)]

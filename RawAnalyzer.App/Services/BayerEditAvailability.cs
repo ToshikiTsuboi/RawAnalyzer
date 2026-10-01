@@ -29,6 +29,9 @@ internal static class BayerEditAvailability
         /// <summary>画像を開いていない。</summary>
         NoImage,
 
+        /// <summary>比較モード中(選択は比較画面に隠れた通常表示の画像に効く)。</summary>
+        CompareMode,
+
         /// <summary>デコード済みのカラー画像を表示している(Bayer を適用しない)。</summary>
         ColorImage,
 
@@ -46,14 +49,22 @@ internal static class BayerEditAvailability
     /// <remarks>
     /// HDR分割ビューの表示中に合成を計算しているときは、計算中の理由を示す(計算が採用されずに終わっても、
     /// 分割ビューのままなので派生ビューの理由で無効のまま)。カラー画像では HDR 表示を使わない。
+    /// 比較モード中は、画像の有無より先に比較モードの理由を示す(<see cref="CommandDisabledReasons.ForMainView"/> と同じ)。
     /// </remarks>
+    /// <param name="compareMode">比較モード中か。</param>
     /// <param name="hasImage">画像を開いているか。</param>
     /// <param name="isColorImage">デコード済みのカラー画像を表示しているか。</param>
     /// <param name="hdrViewShown">HDR分割・合成の派生ビューを表示しているか。</param>
     /// <param name="hdrComputing">HDR分割・合成の計算中か。</param>
     /// <returns>操作できない理由。操作できれば <see cref="Refusal.None"/>。</returns>
-    internal static Refusal Check(bool hasImage, bool isColorImage, bool hdrViewShown, bool hdrComputing)
+    internal static Refusal Check(
+        bool compareMode, bool hasImage, bool isColorImage, bool hdrViewShown, bool hdrComputing)
     {
+        if (compareMode)
+        {
+            return Refusal.CompareMode;
+        }
+
         if (!hasImage)
         {
             return Refusal.NoImage;
@@ -77,6 +88,7 @@ internal static class BayerEditAvailability
     /// <returns>操作できないときはその理由と戻し方、操作できるとき・画像を開いていないときは項目の説明。</returns>
     internal static string ToolTip(Refusal refusal) => refusal switch
     {
+        Refusal.CompareMode => CommandDisabledReasons.CompareMode,
         Refusal.ColorImage => "カラー画像(RGB)には Bayer を適用せず、カラーのまま表示します。",
         Refusal.HdrComputing =>
             "HDR分割・合成の計算中は Bayer を変更できません(計算は始めたときの Bayer で行います)。\n" +

@@ -527,8 +527,16 @@
                                        VerticalAlignment="Center" />
                         </DockPanel>
                     </Border>
+                    <!-- 比較モード中は中身ごと無効にし(比較画面に隠れた通常表示に効かせない)、理由を上端に示す -->
+                    <Border DockPanel.Dock="Top" Background="{StaticResource AccentSoftBrush}"
+                            BorderBrush="{StaticResource BorderBrushDark}" BorderThickness="0,0,0,1"
+                            Padding="10,6"
+                            Visibility="{Binding IsCompareMode, Converter={StaticResource BoolToVis}}">
+                        <TextBlock Text="{Binding AdjustPanelDisabledReason}" FontSize="11"
+                                   TextWrapping="Wrap" Foreground="{StaticResource AccentBrush}" />
+                    </Border>
                     <ScrollViewer VerticalScrollBarVisibility="Auto">
-                        <StackPanel>
+                        <StackPanel IsEnabled="{Binding CanUseAdjustPanel}">
                         <!-- 表示調整 -->
                         <Border BorderBrush="{StaticResource BorderBrushDark}"
                                 BorderThickness="0,0,0,1" Padding="12,10">
