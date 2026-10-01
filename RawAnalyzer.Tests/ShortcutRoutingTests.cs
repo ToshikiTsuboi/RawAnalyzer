@@ -126,14 +126,68 @@ public class ShortcutRoutingTests
         Assert.Null(ShortcutRouting.Resolve(new[] { plain }, Key.D1, ModifierKeys.Control, ShortcutFocus.Other));
     }
 
+    [Fact]
+    public void AlternateGestures_RunTheSameCommand()
+    {
+        // ズームインは一覧に「+」と出るが、「+」は Shift+;(JIS)・Shift+=(US)で打つので、以前は Shift 付きで
+        // 一致せず効かなかった。テンキーの +/- にも割り当てがなかった
+        var zoomIn = new AppCommand
+        {
+            Id = "zoom-in",
+            Category = "表示",
+            Title = "ズームイン",
+            Key = Key.OemPlus,
+            AlternateGestures = new ShortcutKey[] { new(Key.OemPlus, ModifierKeys.Shift), new(Key.Add, ModifierKeys.None) },
+            Execute = () => { },
+        };
+        var zoomOut = new AppCommand
+        {
+            Id = "zoom-out",
+            Category = "表示",
+            Title = "ズームアウト",
+            Key = Key.OemMinus,
+            AlternateGestures = new ShortcutKey[] { new(Key.Subtract, ModifierKeys.None) },
+            Execute = () => { },
+        };
+        AppCommand[] commands = { zoomIn, zoomOut };
+
+        Assert.Same(zoomIn, ShortcutRouting.Resolve(commands, Key.OemPlus, ModifierKeys.None, ShortcutFocus.Other));
+        Assert.Same(zoomIn, ShortcutRouting.Resolve(commands, Key.OemPlus, ModifierKeys.Shift, ShortcutFocus.Other));
+        Assert.Same(zoomIn, ShortcutRouting.Resolve(commands, Key.Add, ModifierKeys.None, ShortcutFocus.Other));
+        Assert.Same(zoomOut, ShortcutRouting.Resolve(commands, Key.Subtract, ModifierKeys.None, ShortcutFocus.Other));
+        Assert.Null(ShortcutRouting.Resolve(commands, Key.OemPlus, ModifierKeys.Control, ShortcutFocus.Other));
+
+        // 入力欄では「+」の入力を奪わない(別のキーも1文字キーと同じ扱い)
+        Assert.Null(ShortcutRouting.Resolve(commands, Key.OemPlus, ModifierKeys.Shift, ShortcutFocus.TextEntry));
+        Assert.Null(ShortcutRouting.Resolve(commands, Key.Add, ModifierKeys.None, ShortcutFocus.TextEntry));
+
+        // 表記は主のキーだけ
+        Assert.Equal("+", zoomIn.GestureText);
+    }
+
+    [Fact]
+    public void VerifyNoDuplicateGestures_ChecksAlternateGesturesToo()
+    {
+        AppCommand zoomIn = Command("zoom-in", Key.OemPlus, alternates: new ShortcutKey(Key.Add, ModifierKeys.None));
+        ShortcutRouting.VerifyNoDuplicateGestures(new[] { zoomIn, Command("zoom-out", Key.OemMinus) });
+
+        // 別のキーが他のコマンドの割り当てと重なっても、起動時に気付けるようにする
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            ShortcutRouting.VerifyNoDuplicateGestures(new[] { zoomIn, Command("other", Key.Add) }));
+        Assert.Contains("zoom-in", error.Message);
+        Assert.Contains("other", error.Message);
+    }
+
     private static AppCommand Command(
-        string id, Key key, ModifierKeys modifiers = ModifierKeys.None, Func<bool>? canExecute = null) => new()
+        string id, Key key, ModifierKeys modifiers = ModifierKeys.None, Func<bool>? canExecute = null,
+        params ShortcutKey[] alternates) => new()
     {
         Id = id,
         Category = "test",
         Title = id,
         Key = key,
         Modifiers = modifiers,
+        AlternateGestures = alternates,
         CanExecute = canExecute,
         Execute = () => { },
     };

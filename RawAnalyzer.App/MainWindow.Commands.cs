@@ -260,7 +260,15 @@ public partial class MainWindow
                 Id = "zoom-in",
                 Category = "表示",
                 Title = "ズームイン",
+                Description = "+ のキーは Shift の有無を問わず効きます。テンキーの + でも操作できます",
                 Key = Key.OemPlus,
+
+                // 一覧の「+」は Shift+;(JIS)・Shift+=(US)で打つので Shift 付きも受け付ける。テンキーの + も同じ
+                AlternateGestures = new ShortcutKey[]
+                {
+                    new(Key.OemPlus, ModifierKeys.Shift),
+                    new(Key.Add, ModifierKeys.None),
+                },
                 CanExecute = MainViewAvailable,
                 DisabledReason = MainViewReason,
                 Execute = Viewport.ZoomIn,
@@ -270,7 +278,9 @@ public partial class MainWindow
                 Id = "zoom-out",
                 Category = "表示",
                 Title = "ズームアウト",
+                Description = "テンキーの - でも操作できます",
                 Key = Key.OemMinus,
+                AlternateGestures = new ShortcutKey[] { new(Key.Subtract, ModifierKeys.None) },
                 CanExecute = MainViewAvailable,
                 DisabledReason = MainViewReason,
                 Execute = Viewport.ZoomOut,
@@ -732,7 +742,7 @@ public partial class MainWindow
             },
         };
 
-        VerifyNoDuplicateGestures(list);
+        ShortcutRouting.VerifyNoDuplicateGestures(list);
         return list;
     }
 
@@ -760,27 +770,5 @@ public partial class MainWindow
         Viewport.SetRoi(new Core.RegionOfInterest(
             (image.Width - width) / 2, (image.Height - height) / 2, width, height));
         RoiToggle.IsChecked = true;
-    }
-
-    /// <summary>ショートカットの重複を検出する(定義ミスは起動時に気付けるようにする)。</summary>
-    private static void VerifyNoDuplicateGestures(IReadOnlyList<AppCommand> commands)
-    {
-        var seen = new Dictionary<(Key, ModifierKeys), string>();
-        foreach (AppCommand command in commands)
-        {
-            if (!command.HasGesture)
-            {
-                continue;
-            }
-
-            var gesture = (command.Key, command.Modifiers);
-            if (seen.TryGetValue(gesture, out string? other))
-            {
-                throw new InvalidOperationException(
-                    $"ショートカット {command.GestureText} が {other} と {command.Id} で重複しています。");
-            }
-
-            seen[gesture] = command.Id;
-        }
     }
 }

@@ -30,6 +30,11 @@ internal sealed class AppCommand
     /// <summary>修飾キー。</summary>
     public ModifierKeys Modifiers { get; init; } = ModifierKeys.None;
 
+    /// <summary>
+    /// 同じコマンドを実行する別のキー(一覧・パレットの表記は <see cref="Key"/> と <see cref="Modifiers"/> だけ)。
+    /// </summary>
+    public IReadOnlyList<ShortcutKey> AlternateGestures { get; init; } = Array.Empty<ShortcutKey>();
+
     /// <summary>実行可能かどうか(省略時は常に実行可能)。</summary>
     /// <remarks>
     /// 前提となる状態(画像・比較モードでないこと・送れるフレーム・ROI)の有無だけを判定する。
@@ -66,6 +71,18 @@ internal sealed class AppCommand
 
     /// <summary>「Ctrl+Shift+P」形式のショートカット表記。</summary>
     public string GestureText => HasGesture ? FormatGesture(Key, Modifiers) : "";
+
+    /// <summary>割り当てたキー(主のキーと <see cref="AlternateGestures"/>)。</summary>
+    public IEnumerable<ShortcutKey> Gestures => HasGesture
+        ? AlternateGestures.Prepend(new ShortcutKey(Key, Modifiers))
+        : AlternateGestures;
+
+    /// <summary>キーがこのコマンドに割り当てたもの(別のキーを含む)か。修飾キーは完全一致で比べる。</summary>
+    /// <param name="key">キー。</param>
+    /// <param name="modifiers">修飾キー。</param>
+    /// <returns>割り当てたキーなら true。</returns>
+    public bool Matches(Key key, ModifierKeys modifiers) =>
+        key != Key.None && Gestures.Contains(new ShortcutKey(key, modifiers));
 
     /// <summary>実行可能か判定する。</summary>
     /// <returns>実行可能ならtrue。</returns>
@@ -127,3 +144,8 @@ internal sealed class AppCommand
         _ => key.ToString(),
     };
 }
+
+/// <summary>ショートカットのキーと修飾キーの組。</summary>
+/// <param name="Key">キー。</param>
+/// <param name="Modifiers">修飾キー。</param>
+internal readonly record struct ShortcutKey(Key Key, ModifierKeys Modifiers);

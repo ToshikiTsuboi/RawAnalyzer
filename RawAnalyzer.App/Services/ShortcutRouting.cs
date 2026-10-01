@@ -67,7 +67,7 @@ internal static class ShortcutRouting
 
         foreach (AppCommand command in commands)
         {
-            if (!command.HasGesture || command.Key != key || command.Modifiers != modifiers)
+            if (!command.Matches(key, modifiers))
             {
                 continue;
             }
@@ -81,6 +81,29 @@ internal static class ShortcutRouting
         }
 
         return null;
+    }
+
+    /// <summary>ショートカットの重複を検出する(定義ミスは起動時に気付けるようにする)。</summary>
+    /// <param name="commands">コマンド表。</param>
+    /// <exception cref="InvalidOperationException">同じキーが複数のコマンドに割り当てられている。</exception>
+    internal static void VerifyNoDuplicateGestures(IEnumerable<AppCommand> commands)
+    {
+        var seen = new Dictionary<ShortcutKey, string>();
+        foreach (AppCommand command in commands)
+        {
+            // 別のキー(AlternateGestures)も他のコマンドの割り当てと重ならないこと
+            foreach (ShortcutKey gesture in command.Gestures)
+            {
+                if (seen.TryGetValue(gesture, out string? other) && other != command.Id)
+                {
+                    throw new InvalidOperationException(
+                        $"ショートカット {AppCommand.FormatGesture(gesture.Key, gesture.Modifiers)} が " +
+                        $"{other} と {command.Id} で重複しています。");
+                }
+
+                seen[gesture] = command.Id;
+            }
+        }
     }
 
     /// <summary>テキスト編集の標準ショートカット(入力中はコマンドに横取りさせない)。</summary>
