@@ -321,7 +321,9 @@ public partial class MainWindow : Window
         _session.LeftPanelVisible = _vm.LeftPanelVisible;
         _session.RightPanelVisible = _vm.RightPanelVisible;
         _session.FileFilter = _vm.FileFilterText;
-        _session.WindowMaximized = WindowState == WindowState.Maximized;
+        // フルスクリーン中は(フルスクリーンのための最大化ではなく)フルスクリーンに入る前の状態を保存する
+        _session.WindowMaximized = FullscreenWindowState.IsMaximizedToSave(
+            WindowState, _vm.IsFullscreen, _preFullscreenState);
         if (WindowState == WindowState.Normal)
         {
             _session.WindowLeft = Left;
