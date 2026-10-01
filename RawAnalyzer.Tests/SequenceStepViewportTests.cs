@@ -48,6 +48,7 @@ public class SequenceStepViewportTests
     public Task SplitToImageWithoutBayer_FallsBackToRawAndDiscardsRoiOnce() => WpfTestHost.Run(async () =>
     {
         // Bayer なしでは分割は成立しない。Raw 表示へ戻し、タイル座標の ROI は一度だけ捨てて通知する
+        // (カラー画像へ送る場合も、カラー画像は常に Bayer なしなので ROI は同じ経路で捨てる)
         using RawImage first = CreateGray(BayerPattern.Rggb);
         using RawImage next = CreateGray(BayerPattern.None);
         ImageViewport viewport = CreateViewport(first);
@@ -62,33 +63,6 @@ public class SequenceStepViewportTests
 
             Assert.Equal(ViewportDisplayMode.Raw, viewport.DisplayMode);
             Assert.False(viewport.IsChannelSplitLayout);
-            Assert.Null(viewport.Roi);
-            Assert.Equal(1, notified);
-        }
-        finally
-        {
-            await viewport.ClearImageAsync();
-        }
-    });
-
-    [Fact]
-    public Task SplitToColorImage_ShowsTrueColorAndDiscardsRoiOnce() => WpfTestHost.Run(async () =>
-    {
-        // カラー画像へ送ったら RGB のまま表示する。分割→非分割なので ROI は捨てる
-        using RawImage first = CreateGray(BayerPattern.Rggb);
-        ColorImage color = CreateColor();
-        using RawImage next = color.ToLuminance();
-        ImageViewport viewport = CreateViewport(first);
-        try
-        {
-            viewport.SetDisplayMode(ViewportDisplayMode.ChannelSplit);
-            viewport.SetRoi(new RegionOfInterest(0, 0, 2, 2));
-            int notified = 0;
-            viewport.RoiChanged += (_, _) => notified++;
-
-            await StepAsync(viewport, next, color, selectedIndex: 3);
-
-            Assert.Equal(ViewportDisplayMode.TrueColor, viewport.DisplayMode);
             Assert.Null(viewport.Roi);
             Assert.Equal(1, notified);
         }

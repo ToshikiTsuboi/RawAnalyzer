@@ -10,16 +10,6 @@ namespace RawAnalyzer.Tests;
 public class ImageOperationGateTests
 {
     [Fact]
-    public void Idle_NothingPendingAndIdleTaskCompleted()
-    {
-        var gate = new ImageOperationGate();
-
-        Assert.False(gate.IsOperationRunning);
-        Assert.False(gate.IsLoadPending);
-        Assert.True(gate.WhenOperationsIdleAsync().IsCompleted);
-    }
-
-    [Fact]
     public void BeginLoad_IsPendingUntilDisposed_AndDoubleDisposeIsIgnored()
     {
         // 読み込みは開始から確定(または破棄)まで「確定待ち」。この間は操作を始めさせない

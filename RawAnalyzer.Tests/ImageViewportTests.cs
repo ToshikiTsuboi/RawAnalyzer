@@ -319,9 +319,7 @@ public class ImageViewportTests
     });
 
     [Theory]
-    [InlineData(0.5, 2, 11)]
-    [InlineData(0.25, 4, 11)]
-    [InlineData(0.125, 8, 12)]
+    [InlineData(0.125, 8, 12)] // 継ぎ目の算術は ChannelSplitRenderTests。ここは配線とチャネル幅1のレベルの端
     public Task ChannelSplit_ZoomedOut_QuadrantBoundaryMatchesActualSize(
         double zoom, int factor, int center) => WpfTestHost.Run(async () =>
     {
