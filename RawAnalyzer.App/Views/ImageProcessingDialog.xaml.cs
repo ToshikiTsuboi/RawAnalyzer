@@ -1,5 +1,5 @@
-using System.Globalization;
 using System.Windows;
+using RawAnalyzer.App.Services;
 using RawAnalyzer.Core;
 
 namespace RawAnalyzer.App.Views;
@@ -106,8 +106,8 @@ public partial class ImageProcessingDialog : Window
 
     private static double ParseNumber(string text, string name)
     {
-        if (!double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out double value)
-            || !double.IsFinite(value))
+        // 他の数値入力欄と同じく、IME がオンのまま打った全角の数字・記号も読む
+        if (!NumericInput.TryParseFinite(text, out double value))
         {
             throw new FormatException($"{name}は有限の数値で指定してください。");
         }

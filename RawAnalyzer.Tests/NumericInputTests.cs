@@ -52,6 +52,39 @@ public class NumericInputTests
         Assert.False(NumericInput.TryParseFinite(text, out _));
     }
 
+    [Theory]
+    [InlineData("６４０", 640)]
+    [InlineData("１，９２０", 1920)]
+    [InlineData("ー２", -2)]
+    [InlineData(" 12 ", 12)]
+    public void TryParseInteger_AcceptsFullWidthAndThousandsSeparators(string text, long expected)
+    {
+        Assert.True(NumericInput.TryParseInteger(text, out long value));
+        Assert.Equal(expected, value);
+        Assert.True(NumericInput.TryParseInteger(text, out int narrow));
+        Assert.Equal(expected, narrow);
+    }
+
+    [Theory]
+    [InlineData("1.5")]   // 整数でない
+    [InlineData("1,5")]   // 3桁区切りでないカンマ
+    [InlineData("1e3")]
+    [InlineData("abc")]
+    [InlineData("")]
+    public void TryParseInteger_RejectsNonIntegers(string text)
+    {
+        Assert.False(NumericInput.TryParseInteger(text, out long _));
+        Assert.False(NumericInput.TryParseInteger(text, out int _));
+    }
+
+    [Fact]
+    public void TryParseInteger_Int32RejectsOutOfRange()
+    {
+        Assert.False(NumericInput.TryParseInteger("3,000,000,000", out int _));
+        Assert.True(NumericInput.TryParseInteger("3,000,000,000", out long wide));
+        Assert.Equal(3_000_000_000L, wide);
+    }
+
     [Fact]
     public void TryParseFinite_AcceptsNegativeMatrixCoefficients()
     {

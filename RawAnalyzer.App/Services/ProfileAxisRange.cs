@@ -30,10 +30,11 @@ internal readonly record struct ProfileAxisRange(double Minimum, double Maximum)
         return true;
     }
 
+    // 表示の言語の書き方(de-DE の "1,5" など)で読めなければ、他の数値入力欄と同じく NumericInput で読む
+    // (IME がオンのまま打った全角の数字・記号と3桁区切りも受け付ける)
     private static bool TryNumber(string text, CultureInfo culture, out double number) =>
-        (double.TryParse(text, NumberStyles.Float, culture, out number)
-            || double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out number))
-        && double.IsFinite(number);
+        (double.TryParse(text, NumberStyles.Float, culture, out number) && double.IsFinite(number))
+        || NumericInput.TryParseFinite(text, out number);
 
     internal bool Contains(double value) => double.IsFinite(value) && value >= Minimum && value <= Maximum;
 

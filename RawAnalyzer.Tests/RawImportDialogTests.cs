@@ -166,6 +166,33 @@ public class RawImportDialogTests : IDisposable
     }
 
     [Fact]
+    public Task FullWidthNumbers_AreReadLikeOtherNumericFields()
+    {
+        // IME がオンのまま打った全角の数字・3桁区切りも、露光比などの数値入力欄と同じく読む
+        // (以前は幅・高さ・ヘッダ・フレーム数・ライン単位・行オフセットだけ「不正です」になった)
+        string path = CreateFile("full_width.raw", FileSize + 1024);
+        return WpfTestHost.Run(() =>
+        {
+            RawImportDialog dialog = CreateDialog(path, null, initial: Fmt(320, 240));
+            var note = Find<TextBlock>(dialog, "SizeNoteText");
+            Find<TextBox>(dialog, "WidthBox").Text = "６４０";
+            Find<TextBox>(dialog, "HeightBox").Text = "４８０";
+            Find<TextBox>(dialog, "HeaderOffsetBox").Text = "１，０２４";
+            Find<TextBox>(dialog, "FrameCountBox").Text = "１";
+            Find<TextBox>(dialog, "HdrLineBlockBox").Text = "２";
+            Find<TextBox>(dialog, "HdrRowOffsetBox").Text = "ー１";
+
+            Assert.StartsWith("✓", note.Text);
+            Assert.True(Find<Button>(dialog, "OpenButton").IsEnabled);
+
+            // 整数でない値は従来どおり断る
+            Find<TextBox>(dialog, "WidthBox").Text = "６４０．５";
+            Assert.StartsWith("✕", note.Text);
+            dialog.Close();
+        });
+    }
+
+    [Fact]
     public Task EditingAfterPreset_ReturnsPresetListToGuideRowSoReselectingRestoresIt()
     {
         // 全体レビュー 2026-10-01 B92。プリセットを選んだあと幅を書き換えても一覧はそのプリセット名のまま残り、

@@ -197,25 +197,25 @@ public partial class RawImportDialog : Window
     private RawFormat? TryBuildFormat(out string error)
     {
         error = "";
-        if (!int.TryParse(WidthBox.Text, out int width) || width <= 0)
+        if (!NumericInput.TryParseInteger(WidthBox.Text, out int width) || width <= 0)
         {
             error = "幅が不正です";
             return null;
         }
 
-        if (!int.TryParse(HeightBox.Text, out int height) || height <= 0)
+        if (!NumericInput.TryParseInteger(HeightBox.Text, out int height) || height <= 0)
         {
             error = "高さが不正です";
             return null;
         }
 
-        if (!long.TryParse(HeaderOffsetBox.Text, out long headerOffset) || headerOffset < 0)
+        if (!NumericInput.TryParseInteger(HeaderOffsetBox.Text, out long headerOffset) || headerOffset < 0)
         {
             error = "ヘッダオフセットが不正です";
             return null;
         }
 
-        if (!int.TryParse(FrameCountBox.Text, out int frameCount) || frameCount <= 0)
+        if (!NumericInput.TryParseInteger(FrameCountBox.Text, out int frameCount) || frameCount <= 0)
         {
             error = "フレーム数が不正です";
             return null;
@@ -227,13 +227,13 @@ public partial class RawImportDialog : Window
             return null;
         }
 
-        if (!int.TryParse(HdrLineBlockBox.Text, out int lineBlock) || lineBlock < 0)
+        if (!NumericInput.TryParseInteger(HdrLineBlockBox.Text, out int lineBlock) || lineBlock < 0)
         {
             error = "ライン単位が不正です(0以上)";
             return null;
         }
 
-        if (!int.TryParse(HdrRowOffsetBox.Text, out int rowOffset))
+        if (!NumericInput.TryParseInteger(HdrRowOffsetBox.Text, out int rowOffset))
         {
             error = "行オフセットが不正です";
             return null;
@@ -513,8 +513,7 @@ public partial class RawImportDialog : Window
 
         // 現在の値の次の候補へ巡回(再クリックで次候補)
         int current = candidates.ToList().FindIndex(
-            c => c.Width.ToString(CultureInfo.InvariantCulture) == WidthBox.Text
-                && c.Height.ToString(CultureInfo.InvariantCulture) == HeightBox.Text);
+            c => c.Width == format.Width && c.Height == format.Height);
         DimensionCandidate next = candidates[(current + 1) % candidates.Count];
         WidthBox.Text = next.Width.ToString(CultureInfo.InvariantCulture);
         HeightBox.Text = next.Height.ToString(CultureInfo.InvariantCulture);

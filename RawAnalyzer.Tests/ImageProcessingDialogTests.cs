@@ -70,6 +70,23 @@ public class ImageProcessingDialogTests
         });
     }
 
+    [Fact]
+    public Task Dialog_ReadsFullWidthNumbers()
+    {
+        // IME がオンのまま打った全角の σ・強度も、他の数値入力欄と同じく読む(以前は不正として実行できなかった)
+        return WpfTestHost.Run(() =>
+        {
+            var dialog = new ImageProcessingDialog("test.raw", 19, 11, BayerPattern.Rggb, false, true);
+            ((ComboBox)dialog.FindName("OperationCombo")).SelectedIndex = 4;
+            ((TextBox)dialog.FindName("SigmaBox")).Text = "１．３";
+            ((TextBox)dialog.FindName("AmountBox")).Text = "１。５";
+
+            Assert.True(((Button)dialog.FindName("RunButton")).IsEnabled);
+            Assert.Equal(new(ImageFilterKind.UnsharpMask, 1, 1.3, 1.5), dialog.ReadChoice().Filter);
+            dialog.Close();
+        });
+    }
+
     private static void CaptureIfRequested(Window window, string name)
     {
         string? directory = Environment.GetEnvironmentVariable("RAWANALYZER_UI_SNAPSHOTS");

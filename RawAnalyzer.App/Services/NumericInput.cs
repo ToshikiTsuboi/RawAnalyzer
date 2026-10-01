@@ -61,4 +61,22 @@ internal static partial class NumericInput
     {
         return TryParseFinite(text, out value) && value > 0;
     }
+
+    /// <summary>整数として解釈する(全角の数字・符号と3桁区切りも受け付ける。小数・指数表記は断る)。</summary>
+    /// <param name="text">入力文字列。</param>
+    /// <param name="value">解釈できた値。</param>
+    /// <returns>long の範囲の整数ならtrue。</returns>
+    internal static bool TryParseInteger(string? text, out long value)
+    {
+        return long.TryParse(Normalize(text), NumberStyles.Integer, CultureInfo.InvariantCulture, out value);
+    }
+
+    /// <summary>整数として解釈する(全角の数字・符号と3桁区切りも受け付ける。小数・指数表記は断る)。</summary>
+    /// <param name="text">入力文字列。</param>
+    /// <param name="value">解釈できた値。</param>
+    /// <returns>int の範囲の整数ならtrue。</returns>
+    internal static bool TryParseInteger(string? text, out int value)
+    {
+        return int.TryParse(Normalize(text), NumberStyles.Integer, CultureInfo.InvariantCulture, out value);
+    }
 }

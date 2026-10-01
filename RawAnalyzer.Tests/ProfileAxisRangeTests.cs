@@ -62,6 +62,16 @@ public class ProfileAxisRangeTests
         Assert.Equal(new ProfileAxisRange(-1.25, 2.5), range);
     }
 
+    [Theory]
+    [InlineData("－１．２５", "２．５", -1.25, 2.5)] // IME がオンのまま打った全角(以前は読めずに断った)
+    [InlineData("ー1。25", "2.5", -1.25, 2.5)]    // かな入力の「ー」「。」
+    [InlineData("1,000", "４，０９５", 1000, 4095)] // 3桁区切り
+    public void Manual_AcceptsFullWidthAndGroupedInput(string minimum, string maximum, double min, double max)
+    {
+        Assert.True(ProfileAxisRange.TryParse(minimum, maximum, CultureInfo.GetCultureInfo("ja-JP"), out ProfileAxisRange range));
+        Assert.Equal(new ProfileAxisRange(min, max), range);
+    }
+
     [Fact]
     public void Mapping_SubtractsAxisMinimum()
     {
