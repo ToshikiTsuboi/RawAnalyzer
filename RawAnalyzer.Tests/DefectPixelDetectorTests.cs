@@ -92,17 +92,24 @@ public class DefectPixelDetectorTests
         Assert.False(result.Truncated);
     }
 
-    [Fact]
-    public void Detect_HotOnly_IgnoresDeadPixels()
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public void Detect_OneTypeOnly_IgnoresTheOtherType(bool detectHot, bool detectDead)
     {
-        ushort[] codes = MakeFlatWithDefects(16, 16, 1000, (3, 3, 4000), (8, 8, 10));
-        using RawImage image = TestImages.FromCodes(codes, 16, 16, bitDepth: 12);
+        // Detect_HotAndDeadPixels_FindsBoth と同じ素材(両方を探せば白点・黒点が1つずつ見つかる)で、
+        // 片方だけを探すと、もう片方は見つけず、白点を黒点(またはその逆)として数えもしない
+        ushort[] codes = MakeFlatWithDefects(32, 32, 1000, (5, 7, 4000), (20, 15, 10));
+        using RawImage image = TestImages.FromCodes(codes, 32, 32, bitDepth: 12);
 
         DefectDetectionResult result = DefectPixelDetector.Detect(
-            image, detectHot: true, detectDead: false);
+            image, detectHot: detectHot, detectDead: detectDead);
 
-        Assert.Single(result.Defects);
-        Assert.Equal(DefectType.Hot, result.Defects[0].Type);
+        DefectPixel expected = detectHot
+            ? new DefectPixel(5, 7, 4000, DefectType.Hot)
+            : new DefectPixel(20, 15, 10, DefectType.Dead);
+        Assert.Equal(expected, Assert.Single(result.Defects));
+        Assert.Equal((detectHot ? 1 : 0, detectDead ? 1 : 0), (result.HotCount, result.DeadCount));
     }
 
     [Fact]
