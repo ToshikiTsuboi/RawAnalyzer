@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Data;
+using RawAnalyzer.App.Controls;
 using RawAnalyzer.App.ViewModels;
 using Xunit;
 
@@ -60,10 +61,34 @@ public class FileFilterComboTests
         Assert.Equal(new[] { "dark_001.raw" }, vm.FilteredFiles.Select(f => f.Name));
     });
 
+    [Fact]
+    public Task InvalidCondition_ShowsRedBorderAndReasonLikeNumericFields() => WpfTestHost.Run(() =>
+    {
+        // 不正な条件は、数値入力欄と同じ InputFeedback で赤枠にし、ツールチップを理由に差し替える
+        var vm = new MainViewModel();
+        vm.ReplaceFiles(new[] { Entry("a.tif"), Entry("b.raw") });
+        ComboBox combo = CreateFilterCombo(vm);
+        FieldFeedback.AssertValid(combo);
+        Assert.Equal(HelpToolTip, combo.ToolTip);
+
+        combo.Text = "/a(/";
+        Assert.Equal(vm.FileFilterError, FieldFeedback.AssertInvalid(combo));
+        Assert.StartsWith("正規表現が不正です", vm.FileFilterError);
+
+        combo.Text = "/a/";
+        FieldFeedback.AssertValid(combo);
+        Assert.Equal(HelpToolTip, combo.ToolTip);
+    });
+
+    private const string HelpToolTip = "拡張子・ワイルドカード・正規表現で一覧を絞り込みます (Ctrl+F)";
+
     /// <summary>MainWindow.xaml の FileFilterCombo と同じ設定・バインドの ComboBox を作り、配置する。</summary>
     private static ComboBox CreateFilterCombo(MainViewModel vm)
     {
-        var combo = new ComboBox { IsEditable = true, IsTextSearchEnabled = false, DataContext = vm };
+        var combo = new ComboBox
+        {
+            IsEditable = true, IsTextSearchEnabled = false, DataContext = vm, ToolTip = HelpToolTip,
+        };
         combo.SetBinding(
             ItemsControl.ItemsSourceProperty, new Binding(nameof(MainViewModel.FileExtensionPatterns)));
         combo.SetBinding(
@@ -72,6 +97,7 @@ public class FileFilterComboTests
             {
                 UpdateSourceTrigger = UpdateSourceTrigger.PropertyChanged,
             });
+        combo.SetBinding(InputFeedback.ErrorProperty, new Binding(nameof(MainViewModel.FileFilterError)));
         combo.Measure(new Size(200, 30));
         combo.Arrange(new Rect(0, 0, 200, 30));
         combo.UpdateLayout();

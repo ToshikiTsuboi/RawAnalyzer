@@ -1,5 +1,6 @@
 ﻿<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:controls="clr-namespace:RawAnalyzer.App.Controls">
 
     <!-- ===== カラーパレット ===== -->
     <SolidColorBrush x:Key="WindowBackgroundBrush" Color="#FF252528" />
@@ -18,6 +19,8 @@
     <SolidColorBrush x:Key="CanvasBrush" Color="#FF161618" />
     <SolidColorBrush x:Key="ScrollThumbBrush" Color="#FF4A4A50" />
     <SolidColorBrush x:Key="ScrollThumbHoverBrush" Color="#FF5F5F66" />
+    <!-- 入力欄の「不正」の枠(controls:InputFeedback.Error に理由を入れた欄) -->
+    <SolidColorBrush x:Key="ErrorBrush" Color="#FFD9605B" />
 
     <!-- ===== フォーカス表示 =====
          既定の点線矩形はダーク背景で見えないため x:Null にしていたが、
@@ -157,6 +160,11 @@
                         <Trigger Property="IsEnabled" Value="False">
                             <Setter Property="Opacity" Value="0.4" />
                         </Trigger>
+                        <!-- 不正な入力は、打っている間(フォーカス中)も赤枠のままにする(後ろのトリガーが勝つ) -->
+                        <Trigger Property="controls:InputFeedback.HasError" Value="True">
+                            <Setter TargetName="Bd" Property="BorderBrush"
+                                    Value="{StaticResource ErrorBrush}" />
+                        </Trigger>
                     </ControlTemplate.Triggers>
                 </ControlTemplate>
             </Setter.Value>
@@ -285,6 +293,11 @@
                                     Value="Visible" />
                             <Setter TargetName="ContentSite" Property="Visibility"
                                     Value="Collapsed" />
+                        </Trigger>
+                        <!-- 不正な入力(編集可能コンボの手入力)は、ドロップダウン中も赤枠のままにする -->
+                        <Trigger Property="controls:InputFeedback.HasError" Value="True">
+                            <Setter TargetName="Bd" Property="BorderBrush"
+                                    Value="{StaticResource ErrorBrush}" />
                         </Trigger>
                     </ControlTemplate.Triggers>
                 </ControlTemplate>

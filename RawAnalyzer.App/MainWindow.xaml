@@ -338,25 +338,16 @@
                                        VerticalAlignment="Center" Margin="6,0,2,0"
                                        ToolTip="表示中 / フォルダ内のファイル数" />
                             <Grid>
+                                <!-- 不正な条件(正規表現の誤り・時間切れ)は、数値入力欄と同じく
+                                     InputFeedback.Error で赤枠にし、ツールチップを理由に差し替える -->
                                 <ComboBox x:Name="FileFilterCombo" IsEditable="True"
                                           IsTextSearchEnabled="False" FontSize="11"
                                           ItemsSource="{Binding FileExtensionPatterns}"
                                           Text="{Binding FileFilterText, UpdateSourceTrigger=PropertyChanged}"
                                           PreviewKeyDown="OnFileFilterKeyDown"
-                                          AutomationProperties.Name="ファイル一覧の絞り込み">
-                                    <ComboBox.Style>
-                                        <Style TargetType="ComboBox" BasedOn="{StaticResource {x:Type ComboBox}}">
-                                            <Setter Property="ToolTip"
-                                                    Value="拡張子・ワイルドカード・正規表現で一覧を絞り込みます (Ctrl+F)&#x0a;例: *.raw   .tif .tiff   dark*   img_00?.raw&#x0a;空白・; ・, で区切ると、いずれかに一致するものを表示&#x0a;/.../ で囲むと正規表現 (例: /^img_\d{3}\.raw$/)&#x0a;大文字小文字は区別しません。Esc で消去、Enter で一覧へ" />
-                                            <Style.Triggers>
-                                                <DataTrigger Binding="{Binding FileFilterHasError}" Value="True">
-                                                    <Setter Property="BorderBrush" Value="#FFD9605B" />
-                                                    <Setter Property="ToolTip" Value="{Binding FileFilterError}" />
-                                                </DataTrigger>
-                                            </Style.Triggers>
-                                        </Style>
-                                    </ComboBox.Style>
-                                </ComboBox>
+                                          AutomationProperties.Name="ファイル一覧の絞り込み"
+                                          controls:InputFeedback.Error="{Binding FileFilterError}"
+                                          ToolTip="拡張子・ワイルドカード・正規表現で一覧を絞り込みます (Ctrl+F)&#x0a;例: *.raw   .tif .tiff   dark*   img_00?.raw&#x0a;空白・; ・, で区切ると、いずれかに一致するものを表示&#x0a;/.../ で囲むと正規表現 (例: /^img_\d{3}\.raw$/)&#x0a;大文字小文字は区別しません。Esc で消去、Enter で一覧へ" />
                                 <TextBlock IsHitTestVisible="False" Margin="8,0,24,0"
                                            VerticalAlignment="Center" FontSize="11"
                                            Foreground="{StaticResource TextFaint}"

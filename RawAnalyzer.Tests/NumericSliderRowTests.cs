@@ -126,6 +126,60 @@ public class NumericSliderRowTests
         Assert.Equal(6.0206, row.Value, 10);
     });
 
+    [Fact]
+    public Task ValueBox_UnreadableInput_ShowsReasonForRevertingToPreviousValue() => WpfTestHost.Run(() =>
+    {
+        // 読めない入力は元の値へ戻す。以前は黙って戻すだけで、打った値が使われなかったことも理由も見えなかった。
+        // ファイル一覧の絞り込み欄と同じく、赤枠とツールチップの理由で知らせる(打っている間から)
+        var row = NewRow(decimals: 0, step: 1, maximum: 4095);
+        row.Value = 100;
+        object help = row.ValueBox.ToolTip;
+        FieldFeedback.AssertValid(row.ValueBox);
+
+        row.ValueBox.Text = "abc";
+        Assert.Contains("数値として読めません", FieldFeedback.AssertInvalid(row.ValueBox));
+
+        Assert.True(PressKey(row.ValueBox, Key.Enter));
+        Assert.Equal(100, row.Value, 10);
+        Assert.Equal("100", row.ValueBox.Text);
+        string reason = FieldFeedback.AssertInvalid(row.ValueBox); // 戻した後も、戻したことを示し続ける
+        Assert.Contains("「abc」", reason);
+        Assert.Contains("元の値 100 に戻しました", reason);
+
+        row.ValueBox.Text = "128"; // 打ち直せば消え、元の説明のツールチップへ戻る
+        FieldFeedback.AssertValid(row.ValueBox);
+        Assert.Equal(help, row.ValueBox.ToolTip);
+
+        row.ValueBox.Text = "";
+        Assert.Contains("空", FieldFeedback.AssertInvalid(row.ValueBox));
+        Assert.True(PressKey(row.ValueBox, Key.Escape)); // Esc で打ちかけを捨てれば消える
+        Assert.Equal("100", row.ValueBox.Text);
+        FieldFeedback.AssertValid(row.ValueBox);
+    });
+
+    [Fact]
+    public Task ValueBox_OutOfRangeInput_ShowsThatItWasClamped() => WpfTestHost.Run(() =>
+    {
+        // 範囲外の値は範囲へ収める。以前は黙って収めていた
+        var row = NewRow(decimals: 0, step: 1, maximum: 4095);
+        row.Value = 100;
+
+        row.ValueBox.Text = "5000";
+        Assert.Contains("範囲 0 〜 4095 の外", FieldFeedback.AssertInvalid(row.ValueBox));
+
+        Assert.True(PressKey(row.ValueBox, Key.Enter));
+        Assert.Equal(4095, row.Value, 10);
+        Assert.Contains("4095 にしました", FieldFeedback.AssertInvalid(row.ValueBox));
+
+        row.Value = 200; // 値が改めて決まれば(スライダー・ホイール・バインド元)消える
+        FieldFeedback.AssertValid(row.ValueBox);
+
+        row.ValueBox.Text = "300"; // 範囲内の入力は知らせない
+        FieldFeedback.AssertValid(row.ValueBox);
+        Assert.True(PressKey(row.ValueBox, Key.Enter));
+        FieldFeedback.AssertValid(row.ValueBox);
+    });
+
     private static NumericSliderRow NewRow(int decimals, double step, double maximum) => new()
     {
         Minimum = 0,

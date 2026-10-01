@@ -225,6 +225,10 @@ public partial class NumericSliderRow : UserControl
         MinText.Text = Minimum.ToString("0.###", CultureInfo.InvariantCulture);
         MaxText.Text = Maximum.ToString("0.###", CultureInfo.InvariantCulture);
 
+        // 欄を値で書き直したので、前の入力の不正の知らせ(赤枠・理由)も消す。説明のツールチップより先に消す
+        // (消すと理由に差し替える前のツールチップへ戻るので、そのあと最新の説明で上書きする)
+        InputFeedback.SetError(ValueBox, null);
+
         // 換算値は目盛行に入れるとパネルが狭いとき数値と重なるため、ツールチップへ出す
         string note = Note.Length > 0 ? Note + "\n" : "";
         LabelText.ToolTip =
@@ -272,6 +276,7 @@ public partial class NumericSliderRow : UserControl
             ValueBox.Text = Value.ToString(Format, CultureInfo.InvariantCulture);
             _updating = false;
             _textEdited = false;
+            InputFeedback.SetError(ValueBox, null);
             e.Handled = true;
         }
     }
@@ -297,8 +302,39 @@ public partial class NumericSliderRow : UserControl
         if (!_updating)
         {
             _textEdited = true;
+
+            // 確定を待たずに、確定すると打ったとおりにならないこと(元の値へ戻す・範囲へ収める)を知らせる
+            InputFeedback.SetError(ValueBox, DescribePendingText(ValueBox.Text));
         }
     }
+
+    /// <summary>打ちかけの値を確定すると打ったとおりにならないときの説明。そのまま使えるなら null。</summary>
+    private string? DescribePendingText(string text)
+    {
+        if (!NumericInput.TryParseFinite(text, out double parsed))
+        {
+            string current = Value.ToString(Format, CultureInfo.InvariantCulture);
+            return string.IsNullOrWhiteSpace(text)
+                ? $"値が空です。確定すると元の値 {current} に戻します"
+                : $"数値として読めません。確定すると元の値 {current} に戻します";
+        }
+
+        return IsOutOfRange(parsed)
+            ? $"範囲 {RangeText} の外です。確定すると {Quantize(parsed).ToString(Format, CultureInfo.InvariantCulture)} にします"
+            : null;
+    }
+
+    /// <summary>表示桁へ丸めた値が値域の外か(値域へ収めると打った値と変わるか)。</summary>
+    private bool IsOutOfRange(double value)
+    {
+        double rounded = Math.Round(value, Math.Clamp(Decimals, 0, 15), MidpointRounding.AwayFromZero);
+        return rounded < Minimum || rounded > Maximum;
+    }
+
+    /// <summary>値域の表示(説明のツールチップと同じ書き方)。</summary>
+    private string RangeText =>
+        $"{Minimum.ToString("0.###", CultureInfo.InvariantCulture)} 〜 {Maximum.ToString("0.###", CultureInfo.InvariantCulture)}"
+        + (Unit.Length > 0 ? $" {Unit}" : "");
 
     private void OnValueBoxLostFocus(object sender, RoutedEventArgs e)
     {
@@ -366,16 +402,32 @@ public partial class NumericSliderRow : UserControl
         // 解釈は NumericInput に揃える(有限値だけを通し、IME の全角数字や3桁区切りも受け付ける)。
         // TryParse 単独では "NaN" / "Infinity" も通り、Math.Clamp(NaN,..) は NaN のままなので
         // そのまま Value に入るとスライダーとLUTが壊れる
-        if (NumericInput.TryParseFinite(ValueBox.Text, out double parsed))
+        string text = ValueBox.Text;
+        string? notice = null;
+        if (NumericInput.TryParseFinite(text, out double parsed))
         {
             Value = Quantize(parsed);
+            if (IsOutOfRange(parsed))
+            {
+                notice = $"{text.Trim()} は範囲 {RangeText} の外のため、"
+                    + $"{Value.ToString(Format, CultureInfo.InvariantCulture)} にしました";
+            }
+        }
+        else
+        {
+            string current = Value.ToString(Format, CultureInfo.InvariantCulture);
+            notice = string.IsNullOrWhiteSpace(text)
+                ? $"値が空のため、元の値 {current} に戻しました"
+                : $"「{text.Trim()}」は数値として読めないため、元の値 {current} に戻しました";
         }
 
-        // 範囲外・不正入力は現在値へ戻す
+        // 範囲外は範囲へ収め、不正入力は現在値へ戻す。以前は黙って戻すだけで、打った値が使われなかったことが
+        // 見えなかった。ファイル一覧の絞り込み欄と同じく赤枠とツールチップの理由で示し、打ち直すか値が決まり直すまで残す
         _updating = true;
         ValueBox.Text = Value.ToString(Format, CultureInfo.InvariantCulture);
         _updating = false;
         _textEdited = false;
+        InputFeedback.SetError(ValueBox, notice);
     }
 
     private void OnLabelClick(object sender, MouseButtonEventArgs e)
