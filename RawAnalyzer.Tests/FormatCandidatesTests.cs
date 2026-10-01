@@ -105,7 +105,7 @@ public class FormatCandidatesTests
         RawFormat lineInterleaved = Fmt(640, 480) with { Hdr = HdrMode.LineInterleaved };
         RawFormat frameSequential = Fmt(640, 480) with
         {
-            Hdr = HdrMode.FrameSequential, FrameCount = 2, ExposureRatio = 4,
+            Hdr = HdrMode.FrameSequential, FrameCount = 2, ExposureRatio = 4, HdrLineBlock = 2, HdrRowOffset = 1,
         };
         RawFormat auto = Fmt(640, 480) with { Hdr = HdrMode.Auto, FrameCount = 2 };
         RawFormat threeStage = Fmt(640, 480) with
@@ -132,11 +132,9 @@ public class FormatCandidatesTests
         List<RawFormat> heightVariants = candidates
             .Where(c => c.Source == FormatCandidateSource.MemoryHeight)
             .Select(c => c.Format).ToList();
-        // (露光比などの HDR の設定も既定へ戻す)
-        Assert.Contains(Fmt(640, 1440), heightVariants);
-        Assert.Contains(lineInterleaved with { Height = 1440 }, heightVariants);
-        Assert.All(heightVariants, f => Assert.Equal(1, f.FrameCount));
-        Assert.DoesNotContain(heightVariants, f => f.Hdr is HdrMode.FrameSequential or HdrMode.Auto);
+        // (段数・露光比・ライン単位・行オフセットの HDR の設定も既定へ戻すので、3つの記憶は同じ1つの候補になる。
+        // 戻し忘れると HDR なしで露光比4などの余分な候補が増える)
+        Assert.Equal(new[] { Fmt(640, 1440), lineInterleaved with { Height = 1440 } }, heightVariants);
     }
 
     [Fact]
@@ -211,15 +209,22 @@ public class FormatCandidatesTests
     {
         const long size = 1000 * 600 * 2;
 
-        IReadOnlyList<FormatCandidate> candidates = FormatCandidates.Build(
-            size, ".raw", "a_500X600_b_1000 × 600.raw", new FormatHistory(), null);
+        // 8bit の記憶があると、ファイル名の表記には 8bit → 既定値(12bit)の順で組み合わせを当てる
+        // (幅 999 の記憶はこのサイズのフレーム数・高さ違い・解像度表の候補にならない)
+        FormatHistory history = History((999 * 10, ".raw", Fmt(999, 10, bitDepth: 8)));
 
-        // 先に出てきた表記から。500×600 は 2 フレームでちょうど合う
+        IReadOnlyList<FormatCandidate> candidates = FormatCandidates.Build(
+            size, ".raw", "a_500X600_b_1000 × 600.raw", history, null);
+
+        // 先に出てきた表記から。500×600 はどちらも複数フレームでちょうど合う(8bit は 4、12bit は 2)。
+        // 1000×600 は組み合わせの順(8bit が先)によらず、1フレームで合う 12bit を 2フレームで合う 8bit より先に出す
         Assert.Equal(
             new[]
             {
+                new FormatCandidate(Fmt(500, 600, bitDepth: 8) with { FrameCount = 4 }, FormatCandidateSource.FileName),
                 new FormatCandidate(Fmt(500, 600) with { FrameCount = 2 }, FormatCandidateSource.FileName),
                 new FormatCandidate(Fmt(1000, 600), FormatCandidateSource.FileName),
+                new FormatCandidate(Fmt(1000, 600, bitDepth: 8) with { FrameCount = 2 }, FormatCandidateSource.FileName),
             },
             candidates);
     }
@@ -230,6 +235,7 @@ public class FormatCandidatesTests
     [InlineData("dup_640x480_640x480.raw", "640x480")]
     [InlineData("big_12345x67890.raw", "12345x67890")]
     [InlineData("123456x100.raw", "")]
+    [InlineData("100x123456.raw", "")]   // 後ろも数字に続かないこと(100x12345 を拾わない)
     [InlineData("1x2_3x4.raw", "")]
     [InlineData("00x480.raw", "")]
     [InlineData(@"C:\cap\1920x1080\frame.raw", "")]
