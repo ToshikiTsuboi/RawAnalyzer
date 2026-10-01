@@ -325,12 +325,26 @@ public sealed class ImageViewport : FrameworkElement
 
     /// <summary>
     /// 表示倍率が変わったら(別の倍率のモニタへ移した・表示スケールを変えた)、新しいデバイス解像度で描き直す。
+    /// 等倍・整数倍の拡大はデバイス基準のズームを保つ(<see cref="DeviceScaling.ZoomAfterScaleChange"/>)。
     /// </summary>
     private void OnDeviceScaleChanged(double oldScale, double newScale)
     {
         if (oldScale == newScale)
         {
             return;
+        }
+
+        double zoom = Math.Clamp(
+            DeviceScaling.ZoomAfterScaleChange(_zoom, oldScale, newScale), MinZoom, MaxZoom);
+        if (_image is not null && zoom != _zoom)
+        {
+            // 表示中心は保つ
+            double centerX = _originX + ActualWidth / (2 * _zoom);
+            double centerY = _originY + ActualHeight / (2 * _zoom);
+            _zoom = zoom;
+            _originX = centerX - ActualWidth / (2 * _zoom);
+            _originY = centerY - ActualHeight / (2 * _zoom);
+            ClampOrigin();
         }
 
         // raw 値オーバーレイの文字は倍率(PixelsPerDip)に合わせて作り直す
@@ -805,10 +819,13 @@ public sealed class ImageViewport : FrameworkElement
         ZoomAt(new Point(ActualWidth / 2, ActualHeight / 2), _zoom / ZoomStep);
     }
 
-    /// <summary>等倍(1画素=1px)表示にする。</summary>
+    /// <summary>
+    /// 等倍(元画像の 1 画素 = 画面の 1 デバイス画素)表示にする。ズームは DIP 基準なので 1/表示倍率 になる
+    /// (表示倍率 100% 以外で 1 画素 = 1 DIP にすると、最近傍の非整数倍の拡大で偽の周期的な縞が出る)。
+    /// </summary>
     public void ActualSize()
     {
-        ZoomAt(new Point(ActualWidth / 2, ActualHeight / 2), 1.0);
+        ZoomAt(new Point(ActualWidth / 2, ActualHeight / 2), DeviceScaling.ActualSizeZoom(DeviceScale));
     }
 
     /// <summary>画像全体が収まるようにズーム・位置をリセットする。</summary>

@@ -63,15 +63,22 @@ public static class DeviceScaling
     public static double ActualSizeZoom(double scale) => FromDeviceZoom(1, scale);
 
     /// <summary>
-    /// 表示倍率が変わったとき(別の倍率のモニタへ移したとき)に、デバイス基準のズームを保つ DIP 基準のズーム。
-    /// 等倍は等倍のまま、倍率の表示も変わらない。
+    /// 表示倍率が変わったとき(別の倍率のモニタへ移した・表示スケールを変えたとき)の DIP 基準のズーム。
     /// </summary>
+    /// <remarks>
+    /// 等倍・整数倍の拡大(デバイス基準で 1, 2, 3, …倍)はデバイス基準のズームを保ち、元画像の 1 画素を
+    /// 同じ数のデバイス画素に写し続ける(DIP 基準のまま保つと非整数倍になり、最近傍の縞が出る)。
+    /// それ以外(全体表示や縮小表示など)は DIP 基準のズームを保ち、画面に占める大きさを変えない。
+    /// </remarks>
     /// <param name="zoom">変わる前の DIP 基準のズーム。</param>
     /// <param name="oldScale">変わる前の表示倍率。</param>
     /// <param name="newScale">変わった後の表示倍率。</param>
     /// <returns>変わった後の DIP 基準のズーム。</returns>
-    public static double ZoomKeepingDeviceZoom(double zoom, double oldScale, double newScale) =>
-        zoom * Normalize(oldScale) / Normalize(newScale);
+    public static double ZoomAfterScaleChange(double zoom, double oldScale, double newScale)
+    {
+        double device = ToDeviceZoom(zoom, oldScale);
+        return device >= 1 && device == Math.Floor(device) ? FromDeviceZoom(device, newScale) : zoom;
+    }
 
     /// <summary>raw 値オーバーレイを描くズームか(元画像 1 画素が 32 デバイス画素以上)。</summary>
     /// <param name="zoom">DIP 基準のズーム。</param>
@@ -101,8 +108,8 @@ public static class DeviceScaling
     /// 品質パスはデバイス基準のズームで選ぶ(デバイス 1 画素にレベルの 1〜2 画素。全体表示もモニタの解像度で
     /// 細かく描く)。読む画素数はデバイス画素数(倍率の 2 乗)に比例して増えるので、操作中の速報は
     /// DIP 基準のズームで選んだレベルから 1 段粗いレベルにし、読み出し量を倍率 1 のときと同じに保つ。
-    /// ただし等倍以上(縮小率 1)では読み出し画素数が元々少なく利点がないうえ、平均がブロックとして
-    /// 見えるため落とさない。
+    /// ただしデバイス基準で等倍以上(品質パスの縮小率が 1)では読み出し画素数が元々少なく利点がないうえ、
+    /// 平均がブロックとして見えるため落とさない(高DPIの等倍で操作中だけ粗いレベルに替わらないように)。
     /// </remarks>
     /// <param name="selectFactor">ズームに見合う縮小率を返す関数(<c>TilePyramid.SelectFactor</c> など)。</param>
     /// <param name="hasLevel">その縮小率のレベルがあるか。</param>
@@ -113,9 +120,10 @@ public static class DeviceScaling
     public static int SelectRenderFactor(
         Func<double, int> selectFactor, Func<int, bool> hasLevel, double zoom, double scale, bool fast)
     {
-        if (!fast)
+        int quality = selectFactor(ToDeviceZoom(zoom, scale));
+        if (!fast || quality <= 1)
         {
-            return selectFactor(ToDeviceZoom(zoom, scale));
+            return quality;
         }
 
         int factor = selectFactor(zoom);

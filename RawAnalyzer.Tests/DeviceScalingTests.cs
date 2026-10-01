@@ -103,7 +103,8 @@ public class DeviceScalingTests
     [InlineData(1.5, 0.05, 8, 32)]
     [InlineData(2.0, 0.05, 8, 32)]
     [InlineData(2.0, 0.6, 1, 1)] // デバイス基準で等倍以上は縮小レベルを使わず、操作中も落とさない
-    [InlineData(2.0, 0.4, 1, 4)] // 速報は従来どおり DIP 基準のレベル(2)から1段粗い
+    [InlineData(2.0, 0.5, 1, 1)] // 200% の等倍。操作中も元画像のまま(以前の速報なら DIP 基準の 2 から 1 段粗い 4)
+    [InlineData(2.0, 0.2, 2, 8)] // 速報は従来どおり DIP 基準のレベル(4)から1段粗い
     public void SelectRenderFactor_QualityMatchesDevicePixels_FastReadsLikeBefore(
         double scale, double zoom, int quality, int fast)
     {
@@ -137,9 +138,10 @@ public class DeviceScalingTests
                 quality * 2 * devicePerImagePixel > 1 || pyramid.GetLevel(quality * 2) is null,
                 $"zoom={zoom}");
 
-            // 速報は品質パスより細かいレベルを読まず、倍率によらず従来と同じレベル
+            // 速報は品質パスより細かいレベルを読まない。デバイス基準で等倍以上なら元画像のまま、
+            // それ以外は倍率によらず従来(倍率 1)と同じレベル
             Assert.True(fast >= quality, $"zoom={zoom}");
-            Assert.Equal(Select(pyramid, zoom, 1.0, fast: true), fast);
+            Assert.Equal(quality == 1 ? 1 : Select(pyramid, zoom, 1.0, fast: true), fast);
         }
     }
 
@@ -183,14 +185,22 @@ public class DeviceScalingTests
     [InlineData(1.0, 1.5)]
     [InlineData(1.5, 1.0)]
     [InlineData(1.25, 2.0)]
-    public void DpiChange_KeepsDeviceZoom(double oldScale, double newScale)
+    [InlineData(1.27, 1.5)]
+    public void DpiChange_KeepsActualSizeAndIntegerMagnification(double oldScale, double newScale)
     {
-        // 表示倍率が変わっても(別の倍率のモニタへ移したとき)等倍は等倍のまま、倍率の表示も変えない
-        foreach (double device in new[] { 1.0, 3.0, 0.25 })
+        // 表示倍率が変わっても(別の倍率のモニタへ移したとき)、等倍・整数倍の拡大は元画像の 1 画素を
+        // 同じ数のデバイス画素に写し続ける(DIP 基準のまま保つと非整数倍になり縞が出る)
+        foreach (double device in new[] { 1.0, 2.0, 3.0, 32.0 })
         {
             double before = DeviceScaling.FromDeviceZoom(device, oldScale);
-            double after = DeviceScaling.ZoomKeepingDeviceZoom(before, oldScale, newScale);
-            Assert.Equal(device, DeviceScaling.ToDeviceZoom(after, newScale), 12);
+            double after = DeviceScaling.ZoomAfterScaleChange(before, oldScale, newScale);
+            Assert.Equal(device, DeviceScaling.ToDeviceZoom(after, newScale));
+        }
+
+        // それ以外(全体表示・縮小表示など)は画面に占める大きさ(DIP 基準のズーム)を保つ
+        foreach (double zoom in new[] { 0.25, 0.37, 1.1 / oldScale, 2.8125 })
+        {
+            Assert.Equal(zoom, DeviceScaling.ZoomAfterScaleChange(zoom, oldScale, newScale));
         }
     }
 
