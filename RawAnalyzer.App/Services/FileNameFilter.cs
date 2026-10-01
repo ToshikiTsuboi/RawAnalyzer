@@ -20,8 +20,8 @@ namespace RawAnalyzer.App.Services;
 /// </remarks>
 internal sealed class FileNameFilter
 {
-    // ファイル名は短いので通常は一瞬で終わる。破滅的なバックトラックを起こす
-    // パターンを入力されても UI スレッドを長く止めないための上限(1回の照合ごと。最初の時間切れで照合をやめる)
+    // ファイル名は短いので通常は一瞬で終わる。バックトラックで照合するパターン(後方参照・先読み・後読みを含むもの)で
+    // 破滅的なバックトラックを起こしても UI スレッドを長く止めないための上限(1回の照合ごと。最初の時間切れで照合をやめる)
     private static readonly TimeSpan RegexTimeout = TimeSpan.FromMilliseconds(100);
     private static readonly char[] WildcardChars = { '*', '?' };
 
@@ -78,9 +78,7 @@ internal sealed class FileNameFilter
 
             try
             {
-                var regex = new Regex(
-                    pattern, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, RegexTimeout);
-                return new FileNameFilter(trimmed, Array.Empty<Func<string, bool>>(), regex, null);
+                return new FileNameFilter(trimmed, Array.Empty<Func<string, bool>>(), CreateRegex(pattern), null);
             }
             catch (ArgumentException ex)
             {
@@ -91,6 +89,29 @@ internal sealed class FileNameFilter
 
         Func<string, bool>[] terms = SplitTerms(trimmed).Select(BuildTerm).ToArray();
         return new FileNameFilter(trimmed, terms, null, null);
+    }
+
+    /// <summary>正規表現を作る。名前の長さに比例する時間で照合できるパターンはその方式で作る。</summary>
+    /// <remarks>
+    /// バックトラックの照合は1回ごとに上限で打ち切っても、上限未満の照合が件数ぶん積み上がる
+    /// (入れ子の量指定子 <c>^(\w+)+$</c> は 22 文字の名前で1件約 20ms、200 件で約 4 秒 UI スレッドが止まった)。
+    /// <see cref="RegexOptions.NonBacktracking"/> は照合時間が名前の長さに比例するので、まずこれで作る。
+    /// 後方参照・先読み・後読み(ほかにアトミックグループ・<c>\G</c>・条件式・バランシンググループ)はこの方式では
+    /// 扱えず、状態が大きくなりすぎるパターンとともに <see cref="NotSupportedException"/> になるので、
+    /// 従来どおりバックトラック(時間切れ付き)で作る。一致するかどうかの判定はどちらの方式でも同じ。
+    /// 構文の誤りはどちらでも先に <see cref="ArgumentException"/> になる。
+    /// </remarks>
+    private static Regex CreateRegex(string pattern)
+    {
+        const RegexOptions options = RegexOptions.IgnoreCase | RegexOptions.CultureInvariant;
+        try
+        {
+            return new Regex(pattern, options | RegexOptions.NonBacktracking, RegexTimeout);
+        }
+        catch (NotSupportedException)
+        {
+            return new Regex(pattern, options, RegexTimeout);
+        }
     }
 
     /// <summary>入力を語に分ける。続いた区切りは1つとみなす。</summary>

@@ -80,7 +80,8 @@ public class FileNameFilterTests
     [Fact]
     public void IsMatch_RegexTimeout_MarksFilterInvalidAndStopsMatching()
     {
-        FileNameFilter parsed = FileNameFilter.Parse(@"/^(\w+)+$/");
+        // 先読みを含むパターンは線形時間の照合を使えず、バックトラックで照合するので時間切れがありうる
+        FileNameFilter parsed = FileNameFilter.Parse(@"/^(?=(\w+)+$)/");
         Assert.Null(parsed.Error);
         string[] names = Enumerable.Range(0, 20)
             .Select(i => $"capture_20260930_{i:D6}_long_exposure_frame.raw")
@@ -93,5 +94,52 @@ public class FileNameFilterTests
         Assert.NotNull(parsed.Error);
         Assert.False(parsed.IsEmpty);
         Assert.True(stopwatch.ElapsedMilliseconds < 1000, $"{stopwatch.ElapsedMilliseconds} ms"); // 以前は 2 秒以上
+    }
+
+    /// <summary>
+    /// 入れ子の量指定子のように、バックトラックでは名前の長さに対して指数的に時間の掛かるパターンも、
+    /// 後方参照・先読み・後読みを含まなければ名前の長さに比例する時間で照合し、正しく絞り込む。
+    /// 以前はバックトラックで照合したので、1 件ごとには上限(100ms)未満の短い名前でも件数ぶん積み上がって
+    /// UI スレッドが止まり(22 文字の名前で 1 件約 20ms、200 件で約 4 秒)、長い名前では時間切れで絞り込みをやめていた。
+    /// </summary>
+    [Theory]
+    [InlineData(22)]
+    [InlineData(250)]
+    public void IsMatch_NestedQuantifierPattern_TakesTimeProportionalToNameLength(int nameLength)
+    {
+        FileNameFilter parsed = FileNameFilter.Parse(@"/^(\w+)+$/");
+        string digits = "D" + (nameLength - 8).ToString(System.Globalization.CultureInfo.InvariantCulture);
+        string[] names = Enumerable.Range(0, 200)
+            .Select(i => $"img_{i.ToString(digits, System.Globalization.CultureInfo.InvariantCulture)}.raw")
+            .ToArray();
+        Assert.All(names, name => Assert.Equal(nameLength, name.Length));
+
+        var stopwatch = Stopwatch.StartNew();
+        bool[] matched = names.Select(parsed.IsMatch).ToArray();
+        stopwatch.Stop();
+
+        Assert.Null(parsed.Error);
+        Assert.All(matched, Assert.False); // "." は \w ではないので一致しない(時間切れで全件表示に倒さない)
+        Assert.True(parsed.IsMatch(new string('a', nameLength)));
+        Assert.True(stopwatch.ElapsedMilliseconds < 1000, $"{stopwatch.ElapsedMilliseconds} ms");
+    }
+
+    /// <summary>
+    /// 後方参照・先読み・後読みは線形時間の照合では扱えないので、従来どおりバックトラック(時間切れ付き)で絞り込む。
+    /// </summary>
+    [Theory]
+    [InlineData(@"/(\d)\1/", "img_0011.raw", true)]     // 後方参照
+    [InlineData(@"/(\d)\1/", "img_0123.raw", false)]
+    [InlineData(@"/^(?!dark)/", "dark_001.raw", false)] // 否定先読み
+    [InlineData(@"/^(?!dark)/", "flat_001.raw", true)]
+    [InlineData(@"/(?<=_)0/", "img_012.raw", true)]     // 後読み
+    [InlineData(@"/(?<=_)0/", "img0_12.raw", false)]
+    public void IsMatch_BacktrackingOnlyConstructs_StillFilter(string filter, string fileName, bool expected)
+    {
+        FileNameFilter parsed = FileNameFilter.Parse(filter);
+
+        Assert.True(parsed.IsRegex);
+        Assert.Equal(expected, parsed.IsMatch(fileName));
+        Assert.Null(parsed.Error);
     }
 }

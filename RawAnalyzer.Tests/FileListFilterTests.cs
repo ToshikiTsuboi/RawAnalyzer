@@ -107,7 +107,7 @@ public class FileListFilterTests
             }
         };
 
-        vm.FileFilterText = @"/^(\w+)+$/";
+        vm.FileFilterText = @"/^(?=(\w+)+$)/"; // 先読みを含むのでバックトラックで照合する(時間切れがありうる)
 
         Assert.True(vm.FileFilterHasError);
         Assert.NotNull(vm.FileFilterError);
