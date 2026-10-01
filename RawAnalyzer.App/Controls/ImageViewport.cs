@@ -87,6 +87,10 @@ public sealed class ImageViewport : FrameworkElement
     private ColorImage? _colorImage;
     private IReadOnlyList<DefectPixel>? _defectMarkers;
 
+    // 欠陥マーカーの描画結果。表示範囲とマーカーが変わるまで使い回す(DrawDefectMarkers)
+    private Drawing? _defectDrawing;
+    private DefectDrawingKey _defectDrawingKey;
+
     private bool _profileMarkerVisible;
     private int _profileX;
     private int _profileY;
@@ -628,6 +632,7 @@ public sealed class ImageViewport : FrameworkElement
     public void SetDefectMarkers(IReadOnlyList<DefectPixel>? defects)
     {
         _defectMarkers = defects;
+        _defectDrawing = null;
         InvalidateVisual();
     }
 
@@ -918,29 +923,90 @@ public sealed class ImageViewport : FrameworkElement
             return;
         }
 
-        double radius = Math.Max(5, _zoom * 0.7);
-        foreach (DefectPixel defect in _defectMarkers)
+        // マーカーは最大10万個あり、全件の走査と記録は1回で数十〜数百msかかる。OnRender は ROI のドラッグ・
+        // 画素カーソル・ゴーストカーソルの移動でも走るので、表示範囲とマーカーが変わるまで記録を使い回す
+        var key = new DefectDrawingKey(
+            _defectMarkers, IsChannelSplitLayout, _image.Width, _image.Height,
+            _zoom, _originX, _originY, ActualWidth, ActualHeight);
+        if (_defectDrawing is null || _defectDrawingKey != key)
         {
-            // 欠陥は元画像の座標。チャネル分割表示ではその画素が並ぶ象限上に描き、
-            // どの象限にも並ばない画素(奇数寸法の端)は描かない
-            if (!TryMapSourceToDisplay(defect.X, defect.Y, out int x, out int y))
-            {
-                continue;
-            }
-
-            double cx = (x + 0.5 - _originX) * _zoom;
-            double cy = (y + 0.5 - _originY) * _zoom;
-            if (cx < -radius || cy < -radius
-                || cx > ActualWidth + radius || cy > ActualHeight + radius)
-            {
-                continue;
-            }
-
-            dc.DrawEllipse(
-                null,
-                defect.Type == DefectType.Hot ? HotMarkerPen : DeadMarkerPen,
-                new Point(cx, cy), radius, radius);
+            _defectDrawing = BuildDefectMarkers(_defectMarkers);
+            _defectDrawingKey = key;
         }
+
+        dc.DrawDrawing(_defectDrawing);
+    }
+
+    /// <summary>欠陥マーカーの記録がどの表示のものか(画像は寸法だけ持ち、参照は残さない)。</summary>
+    private readonly record struct DefectDrawingKey(
+        IReadOnlyList<DefectPixel> Markers,
+        bool ChannelSplit,
+        int ImageWidth,
+        int ImageHeight,
+        double Zoom,
+        double OriginX,
+        double OriginY,
+        double Width,
+        double Height);
+
+    /// <summary>
+    /// 見えている欠陥マーカーを、白点・黒点それぞれ1つの図形にまとめて記録する
+    /// (1個ずつ円を記録すると、10万個で1回数百msかかる)。
+    /// </summary>
+    private Drawing BuildDefectMarkers(IReadOnlyList<DefectPixel> defects)
+    {
+        double radius = Math.Max(5, _zoom * 0.7);
+        var hot = new StreamGeometry();
+        var dead = new StreamGeometry();
+        using (StreamGeometryContext hotContext = hot.Open())
+        using (StreamGeometryContext deadContext = dead.Open())
+        {
+            foreach (DefectPixel defect in defects)
+            {
+                // 欠陥は元画像の座標。チャネル分割表示ではその画素が並ぶ象限上に描き、
+                // どの象限にも並ばない画素(奇数寸法の端)は描かない
+                if (!TryMapSourceToDisplay(defect.X, defect.Y, out int x, out int y))
+                {
+                    continue;
+                }
+
+                double cx = (x + 0.5 - _originX) * _zoom;
+                double cy = (y + 0.5 - _originY) * _zoom;
+                if (cx < -radius || cy < -radius
+                    || cx > ActualWidth + radius || cy > ActualHeight + radius)
+                {
+                    continue;
+                }
+
+                AddCircle(defect.Type == DefectType.Hot ? hotContext : deadContext, cx, cy, radius);
+            }
+        }
+
+        var group = new DrawingGroup();
+        foreach ((StreamGeometry geometry, Pen pen) in new[] { (hot, HotMarkerPen), (dead, DeadMarkerPen) })
+        {
+            if (!geometry.IsEmpty())
+            {
+                geometry.Freeze();
+                group.Children.Add(new GeometryDrawing(null, pen, geometry));
+            }
+        }
+
+        group.Freeze();
+        return group;
+    }
+
+    /// <summary>中心 (cx, cy)・半径 radius の円を、半円2つの閉じた図として加える。</summary>
+    private static void AddCircle(StreamGeometryContext context, double cx, double cy, double radius)
+    {
+        var size = new Size(radius, radius);
+        context.BeginFigure(new Point(cx + radius, cy), isFilled: false, isClosed: true);
+        context.ArcTo(
+            new Point(cx - radius, cy), size, 0, isLargeArc: false, SweepDirection.Clockwise,
+            isStroked: true, isSmoothJoin: false);
+        context.ArcTo(
+            new Point(cx + radius, cy), size, 0, isLargeArc: false, SweepDirection.Clockwise,
+            isStroked: true, isSmoothJoin: false);
     }
 
     private static readonly Pen RoiPen = CreateRoiPen();

@@ -160,7 +160,8 @@ public class ImageViewportTests
 
             Assert.Equal(
                 new[] { ScreenCenter(viewport, 4 + 1, 4 + 2), ScreenCenter(viewport, 3, 1) },
-                MarkerCenters(viewport));
+                MarkerCenters(viewport),
+                SamePosition);
 
             // 元画像座標で表示するモードでは元の座標のまま
             viewport.SetDisplayMode(ViewportDisplayMode.Raw);
@@ -168,7 +169,8 @@ public class ImageViewportTests
 
             Assert.Equal(
                 new[] { ScreenCenter(viewport, 3, 5), ScreenCenter(viewport, 6, 2) },
-                MarkerCenters(viewport));
+                MarkerCenters(viewport),
+                SamePosition);
         }
         finally
         {
@@ -195,7 +197,64 @@ public class ImageViewportTests
             });
             viewport.UpdateLayout();
 
-            Assert.Equal(new[] { ScreenCenter(viewport, 4 + 2, 3 + 1) }, MarkerCenters(viewport));
+            Assert.Equal(new[] { ScreenCenter(viewport, 4 + 2, 3 + 1) }, MarkerCenters(viewport), SamePosition);
+        }
+        finally
+        {
+            await viewport.ClearImageAsync();
+            image.Dispose();
+        }
+    });
+
+    [Fact]
+    public Task DefectMarkers_AreRecordedPerTypeOnceAndReusedUntilTheViewChanges() =>
+        WpfTestHost.Run(async () =>
+    {
+        // 欠陥マーカーは最大10万個ある。以前は OnRender のたびに全件を走査して1個ずつ円を記録していたため
+        // (10万個で1回数百ms)、ROI のドラッグ・画素カーソル・比較のゴーストカーソルを動かすたびに UI が止まった。
+        // 種類ごとに1つの図形へまとめて記録し、表示範囲とマーカーが変わるまで使い回す
+        (ImageViewport viewport, RawImage image) = CreateBayerViewport(BayerPattern.None, 64, 64);
+        try
+        {
+            var defects = new List<DefectPixel>();
+            for (int y = 0; y < 64; y++)
+            {
+                for (int x = 0; x < 64; x++)
+                {
+                    defects.Add(new DefectPixel(x, y, 0, (x + y) % 2 == 0 ? DefectType.Hot : DefectType.Dead));
+                }
+            }
+
+            viewport.SetDefectMarkers(defects);
+            viewport.UpdateLayout();
+            GeometryDrawing[] recorded = MarkerDrawings(viewport);
+            Assert.Equal(2, recorded.Length); // 白点・黒点それぞれ1回の描画
+            Assert.Equal(
+                defects.Where(d => d.Type == DefectType.Hot)
+                    .Concat(defects.Where(d => d.Type == DefectType.Dead))
+                    .Select(d => ScreenCenter(viewport, d.X, d.Y)),
+                MarkerCenters(viewport),
+                SamePosition); // 全体表示なので全部描く
+
+            // 表示範囲の変わらない再描画では記録し直さない
+            viewport.SetRoi(new RegionOfInterest(1, 1, 8, 8));
+            viewport.SetGhostCursor(3, 3);
+            viewport.UpdateLayout();
+            Assert.Equal(recorded, MarkerDrawings(viewport), ReferenceEqualityComparer.Instance);
+
+            // 表示範囲が変わったら、その表示で描き直す
+            var presented = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            viewport.ViewportStateChanged += (_, e) =>
+            {
+                if (e.Zoom == 8)
+                {
+                    presented.TrySetResult();
+                }
+            };
+            viewport.CenterOn(10, 20, 8);
+            await presented.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            viewport.UpdateLayout();
+            Assert.Contains(ScreenCenter(viewport, 10, 20), MarkerCenters(viewport), SamePosition);
         }
         finally
         {
@@ -710,12 +769,37 @@ public class ImageViewportTests
             (y + 0.5 - viewport.OriginY) * viewport.Zoom);
     }
 
-    /// <summary>描画された欠陥マーカー(円)の中心。</summary>
+    /// <summary>
+    /// 描画された欠陥マーカー(円)の中心(描いた順)。マーカーは種類ごとに1つの図形へまとめて描くので、
+    /// 図形の中の円(図)ごとに数える。外接矩形は単精度で求まるので <see cref="SamePosition"/> で比べる。
+    /// </summary>
     private static Point[] MarkerCenters(ImageViewport viewport)
     {
-        return CollectGeometries<EllipseGeometry>(VisualTreeHelper.GetDrawing(viewport))
-            .Select(ellipse => ellipse.Center)
+        return MarkerDrawings(viewport)
+            .SelectMany(drawing => PathGeometry.CreateFromGeometry(drawing.Geometry).Figures)
+            .Select(figure => new PathGeometry(new[] { figure }).Bounds)
+            .Select(bounds => new Point(bounds.X + bounds.Width / 2, bounds.Y + bounds.Height / 2))
             .ToArray();
+    }
+
+    /// <summary>欠陥マーカー(白点=赤・黒点=青の線)の描画。</summary>
+    private static GeometryDrawing[] MarkerDrawings(ImageViewport viewport)
+    {
+        Color[] markerColors = { Color.FromRgb(0xE6, 0x50, 0x3C), Color.FromRgb(0x3C, 0x78, 0xE6) };
+        return CollectDrawings<GeometryDrawing>(VisualTreeHelper.GetDrawing(viewport))
+            .Where(drawing => drawing.Pen?.Brush is SolidColorBrush brush && markerColors.Contains(brush.Color))
+            .ToArray();
+    }
+
+    /// <summary>図形から読み戻した画面座標の比較(1/1000画面px未満の差は同じ位置とみなす)。</summary>
+    private static readonly IEqualityComparer<Point> SamePosition = new PointTolerance(1e-3);
+
+    private sealed class PointTolerance(double tolerance) : IEqualityComparer<Point>
+    {
+        public bool Equals(Point x, Point y) =>
+            Math.Abs(x.X - y.X) < tolerance && Math.Abs(x.Y - y.Y) < tolerance;
+
+        public int GetHashCode(Point obj) => 0; // 近いものを同じとみなすので、ハッシュでは区別しない
     }
 
     private static List<T> CollectGeometries<T>(Drawing? drawing)
