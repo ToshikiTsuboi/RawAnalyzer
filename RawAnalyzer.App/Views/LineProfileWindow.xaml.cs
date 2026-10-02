@@ -1,13 +1,5 @@
-using System.Globalization;
-using System.IO;
 using System.Text;
 using System.Windows;
-using System.Windows.Controls;
-using System.Windows.Input;
-using System.Windows.Media;
-using System.Windows.Shapes;
-using Microsoft.Win32;
-using RawAnalyzer.App.Controls;
 using RawAnalyzer.App.Services;
 using RawAnalyzer.Core;
 
@@ -17,6 +9,9 @@ namespace RawAnalyzer.App.Views;
 /// 指定画素を通る水平/垂直ラインのraw値折れ線と、その統計を表示するウィンドウ。
 /// ROI選択時はROI内を直交方向に平均した射影プロファイルも表示できる。
 /// </summary>
+/// <remarks>
+/// グラフ(統計・縦軸・拡大・移動・コピー/CSV)は射影の窓と共有する <see cref="ProfilePlotView"/>。
+/// </remarks>
 public partial class LineProfileWindow : Window
 {
     private double[] _rowProfile = Array.Empty<double>();
@@ -29,115 +24,44 @@ public partial class LineProfileWindow : Window
     // 座標。表には元画像の座標も並べる)。それ以外はnull
     private ChannelRegion? _projectionSourceRegion;
 
-    // 統計のキャッシュ(算出元の配列参照が変わったときだけ再計算する)
-    private double[]? _statsSource;
-    private ProfileStatistics _stats;
-
     private int _pointX;
     private int _pointY;
 
     // 基準点が表示中の画像の範囲外のとき、その画像の寸法(断面を出しているときは null)
     private (int Width, int Height)? _outsideImage;
     private int _maxCode = 65535;
-    private ProfileAxisRange _axisRange = ProfileAxisRange.Full(65535);
-    private ProfileAxisRange? _manualRange;
     private bool _ready;
-    private bool _updatingScaleControls;
 
     /// <summary>ウィンドウを生成する。</summary>
     public LineProfileWindow()
     {
         InitializeComponent();
+        Plot.TableBuilder = BuildTableCore;
+        Plot.CsvFileName = () => UseProjection
+            ? "projection.csv"
+            : IsHorizontal ? $"profile_y{_pointY}.csv" : $"profile_x{_pointX}.csv";
         _ready = true;
-        Redraw();
-        Closed += (_, _) =>
-        {
-            EndPan();
-            YScalePopup.IsOpen = false;
-        };
+        Update();
+        Closed += (_, _) => Plot.EndInteraction();
     }
 
-    internal ProfileAxisRange AxisRange => _axisRange;
+    internal ProfileAxisRange AxisRange => Plot.AxisRange;
 
-    private bool ManualScale => YScaleCombo.SelectedIndex == 2;
+    internal ProfileAxisRange HorizontalRange => Plot.HorizontalRange;
 
-    private void OnYScaleChanged(object sender, SelectionChangedEventArgs e)
-    {
-        if (!_ready || _updatingScaleControls) return;
-        // 初回の手動切替は現在の表示範囲を固定。その後は最後に適用した値を復元する。
-        if (ManualScale) _manualRange ??= _axisRange;
-        YMinimumBox.IsEnabled = ManualScale;
-        YMaximumBox.IsEnabled = ManualScale;
-        Redraw();
-        UpdateScaleInputs();
-    }
+    internal void ZoomAt(Point position, int wheelDelta, bool zoomHorizontal = true, bool zoomVertical = true) =>
+        Plot.ZoomAt(position, wheelDelta, zoomHorizontal, zoomVertical);
 
-    private void UpdateScaleInputs()
-    {
-        _updatingScaleControls = true;
-        // 自動表示は読みやすく、手動入力へ移すときは丸めず値を引き継ぐ。
-        string format = ManualScale ? "G17" : "G8";
-        YMinimumBox.Text = _axisRange.Minimum.ToString(format, CultureInfo.CurrentCulture);
-        YMaximumBox.Text = _axisRange.Maximum.ToString(format, CultureInfo.CurrentCulture);
-        YMinimumBox.IsEnabled = ManualScale;
-        YMaximumBox.IsEnabled = ManualScale;
-        _updatingScaleControls = false;
-        ValidateScaleInputs();
-    }
+    internal void PanFrom(ProfileAxisRange horizontal, ProfileAxisRange vertical, Vector movement) =>
+        Plot.PanFrom(horizontal, vertical, movement);
 
-    private bool ValidateScaleInputs()
-    {
-        bool valid = ProfileAxisRange.TryParse(YMinimumBox.Text, YMaximumBox.Text,
-            CultureInfo.CurrentCulture, out _);
-        ApplyYScaleButton.IsEnabled = ManualScale && valid;
-        YScaleErrorText.Visibility = ManualScale && !valid ? Visibility.Visible : Visibility.Collapsed;
-        MarkInvalidScaleInputs();
-        return valid;
-    }
+    internal void ResetView() => Plot.ResetView();
 
-    /// <summary>
-    /// 手動の縦軸の欄のうち悪いほうを、ファイル一覧の絞り込み欄と同じく赤枠とツールチップの理由で示す。
-    /// </summary>
-    /// <remarks>
-    /// 以前は欄の下の説明だけで、どちらの欄が悪いのかは欄の見た目で分からなかった。読めない欄はその欄に、
-    /// 「最小 ＜ 最大」になっていないときは最大の欄に出す。手動でないときは欄を使わない(無効)ので知らせない。
-    /// </remarks>
-    private void MarkInvalidScaleInputs()
-    {
-        const string NotNumber = "有限の数値で指定してください。現在の表示範囲は変更していません。";
-        bool minValid = ProfileAxisRange.TryParseLimit(YMinimumBox.Text, CultureInfo.CurrentCulture, out double min);
-        bool maxValid = ProfileAxisRange.TryParseLimit(YMaximumBox.Text, CultureInfo.CurrentCulture, out double max);
-        string? maxError = !maxValid ? NotNumber
-            : !minValid ? null
-            : !(min < max) ? "最小値より大きい値を指定してください。現在の表示範囲は変更していません。"
-            : !double.IsFinite(max - min) ? "最小と最大の差が大きすぎます。現在の表示範囲は変更していません。"
-            : null;
-        InputFeedback.SetError(YMinimumBox, ManualScale && !minValid ? NotNumber : null);
-        InputFeedback.SetError(YMaximumBox, ManualScale ? maxError : null);
-    }
+    internal void PrepareYScaleEditor() => Plot.PrepareYScaleEditor();
 
-    private void OnYLimitsTextChanged(object sender, TextChangedEventArgs e)
-    {
-        if (_ready && !_updatingScaleControls) ValidateScaleInputs();
-    }
+    internal string? BuildTable(char separator) => Plot.BuildTable(separator);
 
-    private void OnYLimitsKeyDown(object sender, KeyEventArgs e)
-    {
-        if (e.Key != Key.Enter) return;
-        ApplyManualScale();
-        e.Handled = true;
-    }
-
-    private void OnApplyYScaleClick(object sender, RoutedEventArgs e) => ApplyManualScale();
-
-    private void ApplyManualScale()
-    {
-        if (!ManualScale || !ValidateScaleInputs()
-            || !ProfileAxisRange.TryParse(YMinimumBox.Text, YMaximumBox.Text,
-                CultureInfo.CurrentCulture, out ProfileAxisRange range)) return;
-        _manualRange = range;
-        Redraw();
-    }
+    internal string? BuildStatisticsTable() => Plot.BuildStatisticsTable();
 
     /// <summary>水平/垂直・射影の切替時に発火する(true=水平)。</summary>
     public event Action<bool>? DirectionChanged;
@@ -212,10 +136,6 @@ public partial class LineProfileWindow : Window
         (int Width, int Height)? outsideImage,
         ChannelRegion? projectionSourceRegion)
     {
-        int previousCount = CurrentData.Length;
-        int previousOffset = CoordinateOffset;
-        EndPan();
-
         // 射影の選択を外すと方向の切替として通知され、MainWindow が基準点へマーカーを置き直す。
         // 通知より前に範囲内・外と基準点を新しい値にしておく(範囲外の点にマーカーを出さない)
         _outsideImage = outsideImage;
@@ -236,8 +156,7 @@ public partial class LineProfileWindow : Window
             ProjectionCheck.IsChecked = false;
         }
 
-        if (previousCount != CurrentData.Length || previousOffset != CoordinateOffset) _horizontalRange = null;
-        Redraw();
+        Update();
     }
 
     private bool UseProjection => ProjectionCheck?.IsChecked == true
@@ -254,87 +173,50 @@ public partial class LineProfileWindow : Window
         _ => _columnProfile,
     };
 
-    /// <summary>
-    /// 現在データの統計。中央値の算出でソート用配列を確保するため、
-    /// データが変わったときだけ計算してキャッシュする
-    /// (リサイズのたびに N=46341 で 371KB の LOH 割り当てが発生していた)。
-    /// </summary>
-    private ProfileStatistics CurrentStatistics
-    {
-        get
-        {
-            double[] data = CurrentData;
-            if (!ReferenceEquals(data, _statsSource))
-            {
-                _statsSource = data;
-                _stats = ImageAnalysis.ComputeProfileStatistics(data);
-            }
-
-            return _stats;
-        }
-    }
+    private int CoordinateOffset => UseProjection && _roi is { } roi ? IsHorizontal ? roi.X : roi.Y : 0;
 
     private void OnDirectionChanged(object sender, RoutedEventArgs e)
     {
-        EndPan();
-        _horizontalRange = null;
-        Redraw();
+        if (!_ready) return;
+        Plot.ResetHorizontalRange();
+        Update();
         DirectionChanged?.Invoke(IsHorizontal);
     }
 
-    private void OnCanvasSizeChanged(object sender, SizeChangedEventArgs e)
+    /// <summary>選んでいる方向・射影のデータをグラフへ渡し、見出しを出し直す。</summary>
+    private void Update()
     {
-        Redraw();
-    }
-
-    private void Redraw()
-    {
-        if (!_ready || PlotCanvas is null)
+        if (!_ready)
         {
             return;
         }
 
-        PlotCanvas.Children.Clear();
         bool horizontal = IsHorizontal;
         bool projection = UseProjection;
-        double[] data = CurrentData;
-        double width = PlotCanvas.ActualWidth;
-        double height = PlotCanvas.ActualHeight;
 
-        ProfileStatistics stats = CurrentStatistics;
-        _axisRange = YScaleCombo.SelectedIndex switch
+        // チャネル分割表示の射影は ROI を描いた分割表示(タイル)の座標で出す。元画像の列・行と読み違えないよう示す
+        bool splitView = UseSplitViewCoordinates;
+        Plot.SetAxisLabels(
+            $"{(horizontal ? "水平" : "垂直")}{(projection ? " ROI平均射影" : "プロファイル")}" +
+            $" — {(horizontal ? "x" : "y")}座標 [px・{(splitView ? "チャネル分割表示の座標" : "画像座標")}]",
+            splitView
+                ? "チャネル分割表示(R/Gr/Gb/B の2×2並置)上で ROI を描いた座標。元画像の列・行ではありません。" +
+                  "ホイールで横軸だけ拡大・縮小できます。"
+                : "元画像上の画素座標。ホイールで横軸だけ拡大・縮小できます。");
+        if (_outsideImage is { } outside)
         {
-            1 => ProfileAxisRange.Auto(stats, _maxCode),
-            2 => _manualRange ?? ProfileAxisRange.Full(_maxCode),
-            _ => ProfileAxisRange.Full(_maxCode),
-        };
-        MaxLabel.Text = _axisRange.Maximum.ToString("G8", CultureInfo.CurrentCulture);
-        MinLabel.Text = _axisRange.Minimum.ToString("G8", CultureInfo.CurrentCulture);
-        if (MaxLabel.Text == MinLabel.Text)
-        {
-            MaxLabel.Text = _axisRange.Maximum.ToString("G17", CultureInfo.CurrentCulture);
-            MinLabel.Text = _axisRange.Minimum.ToString("G17", CultureInfo.CurrentCulture);
+            Plot.ShowMessage(
+                $"基準点 (x={_pointX}, y={_pointY}) は表示中の画像 ({outside.Width}×{outside.Height}) の範囲外です。" +
+                "範囲内の画像へ送るか、画像上をクリックし直してください。",
+                _maxCode);
         }
-
-        const string axisHint = "\n右クリックで縦軸スケールを設定";
-        MaxLabel.ToolTip = _axisRange.Maximum.ToString("G17", CultureInfo.CurrentCulture) + axisHint;
-        MinLabel.ToolTip = _axisRange.Minimum.ToString("G17", CultureInfo.CurrentCulture) + axisHint;
-        double middle = _axisRange.Minimum + (_axisRange.Maximum - _axisRange.Minimum) / 2;
-        MiddleLabel.Text = middle.ToString("G8", CultureInfo.CurrentCulture);
-        MiddleLabel.ToolTip = middle.ToString("G17", CultureInfo.CurrentCulture) + axisHint;
-        if (_ready && !ManualScale) UpdateScaleInputs();
-
-        // 断面は整数の raw code なので最小・最大・P-P は整数で出す。射影は直交方向の平均(実数)で 1 code 未満の
-        // 列ムラを見るための値なので、整数に丸めず平均・σ と同じ小数2桁で出す
-        string extremeFormat = projection ? "F2" : "F0";
-        StatsText.Text = _outsideImage is { } outside
-            ? $"基準点 (x={_pointX}, y={_pointY}) は表示中の画像 ({outside.Width}×{outside.Height}) の範囲外です。" +
-              "範囲内の画像へ送るか、画像上をクリックし直してください。"
-            : stats.Count == 0
-            ? "—"
-            : $"N={stats.Count}   平均 {stats.Mean:F2}   最小 {stats.Min.ToString(extremeFormat)}   " +
-              $"最大 {stats.Max.ToString(extremeFormat)}   中央値 {stats.Median:F1}   σ {stats.Sigma:F2}   " +
-              $"P-P {(stats.Max - stats.Min).ToString(extremeFormat)}";
+        else
+        {
+            // 断面は整数の raw code、射影は直交方向の平均(実数)。クリック位置マーカーは単一ライン表示時のみ
+            Plot.SetData(new ProfilePlotData(
+                CurrentData, _maxCode, CoordinateOffset, IntegerValues: !projection,
+                MarkerIndex: projection ? null : horizontal ? _pointX : _pointY));
+        }
 
         string origin = _outsideImage is not null
             ? $"範囲外 (x={_pointX}, y={_pointY})"
@@ -349,80 +231,11 @@ public partial class LineProfileWindow : Window
             : horizontal
                 ? $"ラインプロファイル — 行 y={_pointY}"
                 : $"ラインプロファイル — 列 x={_pointX}";
-
-        DrawHorizontalAxis(width, height);
-        if (data.Length == 0 || width < 4 || height < 4)
-        {
-            return;
-        }
-
-        // 平均・±σのガイド線
-        AddGuideLine(stats.Mean, height, width, Color.FromArgb(0x70, 0x7E, 0xCB, 0x72));
-        AddGuideLine(stats.Mean + stats.Sigma, height, width,
-            Color.FromArgb(0x40, 0x9A, 0x9A, 0x95));
-        AddGuideLine(stats.Mean - stats.Sigma, height, width,
-            Color.FromArgb(0x40, 0x9A, 0x9A, 0x95));
-
-        // 拡大中は表示区間と隣接点だけを読む。間引きでも鋭いピークは残す。
-        IReadOnlyList<Point> points = ProfilePlotNavigation.SampleVisible(data, HorizontalRange, width);
-
-        PlotCanvas.Children.Add(new System.Windows.Shapes.Path
-        {
-            Data = _axisRange.BuildGeometry(points, height),
-            Stroke = new SolidColorBrush(Color.FromRgb(0x5B, 0x9D, 0xD9)),
-            StrokeThickness = 1,
-        });
-
-        if (data.Length == 1 && _axisRange.Contains(data[0]))
-        {
-            var dot = new Ellipse { Width = 4, Height = 4, Fill = new SolidColorBrush(Color.FromRgb(0x5B, 0x9D, 0xD9)) };
-            Canvas.SetLeft(dot, ProfilePlotNavigation.ToCanvasX(0, HorizontalRange, width) - 2);
-            Canvas.SetTop(dot, _axisRange.ToCanvasY(data[0], height) - 2);
-            PlotCanvas.Children.Add(dot);
-        }
-
-        // クリック位置マーカー(単一ライン表示時のみ)
-        if (!projection)
-        {
-            int index = horizontal ? _pointX : _pointY;
-            if (index >= 0 && index < data.Length && HorizontalRange.Contains(index))
-            {
-                double markerX = ProfilePlotNavigation.ToCanvasX(index, HorizontalRange, width);
-                PlotCanvas.Children.Add(new Line
-                {
-                    X1 = markerX,
-                    X2 = markerX,
-                    Y1 = 0,
-                    Y2 = height,
-                    Stroke = new SolidColorBrush(Color.FromArgb(0x80, 0xD9, 0x9B, 0x5B)),
-                    StrokeThickness = 1,
-                });
-            }
-        }
     }
 
-    private void AddGuideLine(double value, double canvasHeight, double width, Color color)
+    private string? BuildTableCore(char separator)
     {
-        if (!_axisRange.Contains(value))
-        {
-            return;
-        }
-
-        PlotCanvas.Children.Add(new Line
-        {
-            X1 = 0,
-            X2 = width,
-            Y1 = _axisRange.ToCanvasY(value, canvasHeight),
-            Y2 = _axisRange.ToCanvasY(value, canvasHeight),
-            Stroke = new SolidColorBrush(color),
-            StrokeThickness = 1,
-            StrokeDashArray = new DoubleCollection { 4, 4 },
-        });
-    }
-
-    internal string? BuildTable(char separator)
-    {
-        double[] data = CurrentData;
+        double[] data = Plot.Values;
         if (data.Length == 0)
         {
             return null;
@@ -442,78 +255,15 @@ public partial class LineProfileWindow : Window
         sb.Append("value").AppendLine();
         for (int i = 0; i < data.Length; i++)
         {
-            sb.Append((long)i + CoordinateOffset).Append(separator);
+            sb.Append((long)i + Plot.CoordinateOffset).Append(separator);
             if (source is not null)
             {
                 sb.Append(sourceOrigin + (2L * i)).Append(separator);
             }
 
-            sb.Append(FormatValue(data[i])).AppendLine();
+            sb.Append(ProfilePlotView.FormatValue(data[i])).AppendLine();
         }
 
         return sb.ToString();
-    }
-
-    /// <summary>
-    /// 表・統計のコピーに出す値。射影(直交方向の平均)は 1 code 未満の列ムラを見る値なので、5 桁の raw code でも
-    /// 小数を落とさない桁数で出す(整数の raw code の断面は従来どおり整数になる)。
-    /// </summary>
-    /// <remarks>
-    /// 以前は有効数字 6 桁(G6)で、14bit・16bit の明るい画像(10000 code 以上)では射影の値が小数 1 桁に丸まり、
-    /// 窓の統計(小数 2 桁)より粗い値がコピー・CSV に出ていた(40000.43 が 40000.4)。
-    /// </remarks>
-    private static string FormatValue(double value) => value.ToString("G9", CultureInfo.InvariantCulture);
-
-    /// <summary>統計のコピー(Excel 貼り付け用の TSV)。データがなければ null。</summary>
-    internal string? BuildStatisticsTable()
-    {
-        // データがない(基準点が範囲外など)ときは、0 を並べた統計を実測値のようにコピーしない
-        // (データのコピー・CSV保存と同じ)
-        if (CurrentData.Length == 0)
-        {
-            return null;
-        }
-
-        ProfileStatistics stats = CurrentStatistics;
-        var sb = new StringBuilder();
-        sb.AppendLine("metric\tvalue");
-        sb.Append("N\t").Append(stats.Count).AppendLine();
-        sb.Append("mean\t").Append(FormatValue(stats.Mean)).AppendLine();
-        sb.Append("min\t").Append(FormatValue(stats.Min)).AppendLine();
-        sb.Append("max\t").Append(FormatValue(stats.Max)).AppendLine();
-        sb.Append("median\t").Append(FormatValue(stats.Median)).AppendLine();
-        sb.Append("sigma\t").Append(FormatValue(stats.Sigma)).AppendLine();
-        return sb.ToString();
-    }
-
-    private void OnCopyDataClick(object sender, RoutedEventArgs e)
-    {
-        ClipboardHelper.TrySetText(BuildTable('\t'));
-    }
-
-    private void OnCopyStatsClick(object sender, RoutedEventArgs e)
-    {
-        if (BuildStatisticsTable() is { } table)
-        {
-            ClipboardHelper.TrySetText(table);
-        }
-    }
-
-    private void OnSaveCsvClick(object sender, RoutedEventArgs e)
-    {
-        string? table = BuildTable(',');
-        if (table is null)
-        {
-            return;
-        }
-
-        string name = UseProjection
-            ? "projection.csv"
-            : IsHorizontal ? $"profile_y{_pointY}.csv" : $"profile_x{_pointX}.csv";
-        var dialog = new SaveFileDialog { Filter = "CSV (*.csv)|*.csv", FileName = name };
-        if (dialog.ShowDialog(this) == true)
-        {
-            ClipboardHelper.WriteTextOrWarn(this, dialog.FileName, table, "プロファイル保存");
-        }
     }
 }

@@ -8,16 +8,15 @@ using RawAnalyzer.App.Services;
 
 namespace RawAnalyzer.App.Views;
 
-public partial class LineProfileWindow
+public partial class ProfilePlotView
 {
     private ProfileAxisRange? _horizontalRange;
     private Point? _panOrigin;
     private ProfileAxisRange _panHorizontal;
     private ProfileAxisRange _panVertical;
 
-    internal ProfileAxisRange HorizontalRange => _horizontalRange ?? ProfilePlotNavigation.FullHorizontal(CurrentData.Length);
-
-    private int CoordinateOffset => UseProjection && _roi is { } roi ? IsHorizontal ? roi.X : roi.Y : 0;
+    /// <summary>表示中の横軸の範囲(データの位置で)。</summary>
+    internal ProfileAxisRange HorizontalRange => _horizontalRange ?? ProfilePlotNavigation.FullHorizontal(_data.Values.Length);
 
     private void OnYAxisContextMenuOpening(object sender, ContextMenuEventArgs e)
     {
@@ -30,6 +29,7 @@ public partial class LineProfileWindow
 
     private void OnYAutoRangeClick(object sender, RoutedEventArgs e) => YScaleCombo.SelectedIndex = 1;
 
+    /// <summary>縦軸の手動設定を、表示中の範囲を引き継いで始める(ポップアップは開かない)。</summary>
     internal void PrepareYScaleEditor()
     {
         EndPan();
@@ -76,15 +76,21 @@ public partial class LineProfileWindow
         e.Handled = true;
     }
 
+    /// <summary>ホイールでの拡大・縮小(位置はグラフの座標)。</summary>
+    /// <param name="position">中心にする位置。</param>
+    /// <param name="wheelDelta">ホイールの回転量。</param>
+    /// <param name="zoomHorizontal">横軸を拡大・縮小するか。</param>
+    /// <param name="zoomVertical">縦軸を拡大・縮小するか。</param>
     internal void ZoomAt(Point position, int wheelDelta, bool zoomHorizontal = true, bool zoomVertical = true)
     {
-        if (CurrentData.Length == 0 || wheelDelta == 0 || PlotCanvas.ActualWidth < 4 || PlotCanvas.ActualHeight < 4) return;
+        int count = _data.Values.Length;
+        if (count == 0 || wheelDelta == 0 || PlotCanvas.ActualWidth < 4 || PlotCanvas.ActualHeight < 4) return;
         EndPan();
         double factor = Math.Pow(1.2, -Math.Clamp(wheelDelta / 120.0, -10, 10));
         ProfileAxisRange? horizontal = null, vertical = null;
         if (zoomHorizontal)
         {
-            ProfileAxisRange full = ProfilePlotNavigation.FullHorizontal(CurrentData.Length);
+            ProfileAxisRange full = ProfilePlotNavigation.FullHorizontal(count);
             horizontal = ProfilePlotNavigation.Zoom(HorizontalRange, position.X / PlotCanvas.ActualWidth,
                 factor, 1, full.Maximum - full.Minimum, full);
         }
@@ -92,13 +98,13 @@ public partial class LineProfileWindow
         if (zoomVertical)
         {
             double span = _axisRange.Maximum - _axisRange.Minimum;
-            // ホイールでの拡大は1 raw code幅まで。手動指定・ROI平均の自動範囲が
+            // ホイールでの拡大は1 raw code幅まで。手動指定・射影の自動範囲が
             // 既に1未満なら、それ以上拡大しないが縮小は通常の倍率で行える。
             if (factor >= 1 || span > 1)
             {
                 vertical = ProfilePlotNavigation.Zoom(_axisRange,
                     1 - (position.Y - 1) / (PlotCanvas.ActualHeight - 2), factor,
-                    Math.Min(span, 1), Math.Max(span, _maxCode * 16.0));
+                    Math.Min(span, 1), Math.Max(span, _data.MaxCode * 16.0));
             }
         }
 
@@ -126,7 +132,7 @@ public partial class LineProfileWindow
         {
             ResetView();
         }
-        else if (CurrentData.Length > 0)
+        else if (_data.Values.Length > 0)
         {
             _panOrigin = e.GetPosition(PlotCanvas);
             _panHorizontal = HorizontalRange;
@@ -152,10 +158,15 @@ public partial class LineProfileWindow
         e.Handled = true;
     }
 
+    /// <summary>ドラッグでの移動(始めたときの範囲から、動かした量だけ)。</summary>
+    /// <param name="horizontal">始めたときの横軸の範囲。</param>
+    /// <param name="vertical">始めたときの縦軸の範囲。</param>
+    /// <param name="movement">動かした量(グラフの座標)。</param>
     internal void PanFrom(ProfileAxisRange horizontal, ProfileAxisRange vertical, Vector movement)
     {
-        if (CurrentData.Length == 0 || PlotCanvas.ActualWidth < 4 || PlotCanvas.ActualHeight < 4) return;
-        ProfileAxisRange full = ProfilePlotNavigation.FullHorizontal(CurrentData.Length);
+        int count = _data.Values.Length;
+        if (count == 0 || PlotCanvas.ActualWidth < 4 || PlotCanvas.ActualHeight < 4) return;
+        ProfileAxisRange full = ProfilePlotNavigation.FullHorizontal(count);
         ApplyNavigation(
             ProfilePlotNavigation.Pan(horizontal, -movement.X / PlotCanvas.ActualWidth, full),
             ProfilePlotNavigation.Pan(vertical, movement.Y / (PlotCanvas.ActualHeight - 2)));
@@ -177,6 +188,7 @@ public partial class LineProfileWindow
         if (PlotCanvas.IsMouseCaptured) PlotCanvas.ReleaseMouseCapture();
     }
 
+    /// <summary>両軸を全体表示へ戻す(縦軸は全範囲)。</summary>
     internal void ResetView()
     {
         EndPan();
@@ -190,20 +202,14 @@ public partial class LineProfileWindow
     private void DrawHorizontalAxis(double width, double height)
     {
         XAxisCanvas.Children.Clear();
-        // チャネル分割表示の射影は ROI を描いた分割表示(タイル)の座標で出す。元画像の列・行と読み違えないよう示す
-        bool splitView = UseSplitViewCoordinates;
-        XAxisTitle.Text = $"{(IsHorizontal ? "水平" : "垂直")}{(UseProjection ? " ROI平均射影" : "プロファイル")}" +
-            $" — {(IsHorizontal ? "x" : "y")}座標 [px・{(splitView ? "チャネル分割表示の座標" : "画像座標")}]";
-        XAxisCanvas.ToolTip = splitView
-            ? "チャネル分割表示(R/Gr/Gb/B の2×2並置)上で ROI を描いた座標。元画像の列・行ではありません。" +
-              "ホイールで横軸だけ拡大・縮小できます。"
-            : "元画像上の画素座標。ホイールで横軸だけ拡大・縮小できます。";
-        if (CurrentData.Length == 0 || width < 4) return;
+        int count = _data.Values.Length;
+        if (count == 0 || width < 4) return;
+        long offset = _data.CoordinateOffset;
         ProfileAxisRange horizontal = HorizontalRange;
-        var coordinates = new ProfileAxisRange(horizontal.Minimum + CoordinateOffset, horizontal.Maximum + CoordinateOffset);
+        var coordinates = new ProfileAxisRange(horizontal.Minimum + offset, horizontal.Maximum + offset);
         foreach (double coordinate in ProfilePlotNavigation.Ticks(coordinates, width))
         {
-            double x = ProfilePlotNavigation.ToCanvasX(coordinate - CoordinateOffset, horizontal, width);
+            double x = ProfilePlotNavigation.ToCanvasX(coordinate - offset, horizontal, width);
             XAxisCanvas.Children.Add(new Line
             {
                 X1 = x,

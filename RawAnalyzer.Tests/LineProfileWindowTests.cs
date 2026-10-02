@@ -3,7 +3,6 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Media;
-using System.Windows.Media.Imaging;
 using System.Windows.Shapes;
 using RawAnalyzer.App.Services;
 using RawAnalyzer.App.Views;
@@ -25,22 +24,22 @@ public class LineProfileWindowTests
         var window = NewWindow();
         try
         {
-            var mode = (ComboBox)window.FindName("YScaleCombo");
-            var min = (TextBox)window.FindName("YMinimumBox");
-            var max = (TextBox)window.FindName("YMaximumBox");
-            var apply = (Button)window.FindName("ApplyYScaleButton");
-            var error = (TextBlock)window.FindName("YScaleErrorText");
+            var mode = ProfileWindowParts.Find<ComboBox>(window, "YScaleCombo");
+            var min = ProfileWindowParts.Find<TextBox>(window, "YMinimumBox");
+            var max = ProfileWindowParts.Find<TextBox>(window, "YMaximumBox");
+            var apply = ProfileWindowParts.Find<Button>(window, "ApplyYScaleButton");
+            var error = ProfileWindowParts.Find<TextBlock>(window, "YScaleErrorText");
             Assert.Equal(new ProfileAxisRange(0, 4095), window.AxisRange);
             Assert.False(min.IsEnabled);
-            string statistics = ((TextBlock)window.FindName("StatsText")).Text;
-            CaptureIfRequested(window, "profile-full");
+            string statistics = (ProfileWindowParts.Find<TextBlock>(window, "StatsText")).Text;
+            ProfileWindowParts.CaptureIfRequested(window, "profile-full");
 
             // 縦軸の右クリックメニューはコンボボックスと同じモード切替
-            ((MenuItem)window.FindName("YAutoRangeMenu")).RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+            (ProfileWindowParts.Find<MenuItem>(window, "YAutoRangeMenu")).RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
             Assert.Equal(1, mode.SelectedIndex);
             Assert.InRange(window.AxisRange.Minimum, 994, 995);
             Assert.InRange(window.AxisRange.Maximum, 1005, 1006);
-            CaptureIfRequested(window, "profile-auto");
+            ProfileWindowParts.CaptureIfRequested(window, "profile-auto");
 
             mode.SelectedIndex = 2;
             Assert.True(min.IsEnabled);
@@ -60,10 +59,10 @@ public class LineProfileWindowTests
             Assert.Equal(frozen, window.AxisRange); // 入力だけでは未反映
             apply.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             Assert.Equal(new ProfileAxisRange(998.5, 1001.5), window.AxisRange);
-            Assert.Equal(statistics, ((TextBlock)window.FindName("StatsText")).Text);
-            CaptureIfRequested(window, "profile-manual");
+            Assert.Equal(statistics, (ProfileWindowParts.Find<TextBlock>(window, "StatsText")).Text);
+            ProfileWindowParts.CaptureIfRequested(window, "profile-manual");
 
-            var canvas = (Canvas)window.FindName("PlotCanvas");
+            var canvas = ProfileWindowParts.Find<Canvas>(window, "PlotCanvas");
             var plot = Assert.Single(canvas.Children.OfType<System.Windows.Shapes.Path>());
             Assert.InRange(plot.Data.Bounds.Top, 0, canvas.ActualHeight);
             Assert.InRange(plot.Data.Bounds.Bottom, 0, canvas.ActualHeight);
@@ -86,7 +85,7 @@ public class LineProfileWindowTests
             Assert.Equal(auto, window.AxisRange);
             Assert.Equal(2, mode.SelectedIndex);
             Assert.Equal(auto.Minimum.ToString("G17", CultureInfo.CurrentCulture), min.Text);
-            CaptureElementIfRequested((FrameworkElement)((Popup)window.FindName("YScalePopup")).Child,
+            ProfileWindowParts.CaptureElementIfRequested((FrameworkElement)(ProfileWindowParts.Find<Popup>(window, "YScalePopup")).Child,
                 "profile-axis-editor", 330, 280);
         }
         finally
@@ -104,9 +103,9 @@ public class LineProfileWindowTests
         var window = NewWindow();
         try
         {
-            var mode = (ComboBox)window.FindName("YScaleCombo");
-            var min = (TextBox)window.FindName("YMinimumBox");
-            var max = (TextBox)window.FindName("YMaximumBox");
+            var mode = ProfileWindowParts.Find<ComboBox>(window, "YScaleCombo");
+            var min = ProfileWindowParts.Find<TextBox>(window, "YMinimumBox");
+            var max = ProfileWindowParts.Find<TextBox>(window, "YMaximumBox");
             mode.SelectedIndex = 2;
             object maxHelp = max.ToolTip;
             FieldFeedback.AssertValid(min);
@@ -142,15 +141,15 @@ public class LineProfileWindowTests
         var window = NewWindow();
         try
         {
-            var mode = (ComboBox)window.FindName("YScaleCombo");
+            var mode = ProfileWindowParts.Find<ComboBox>(window, "YScaleCombo");
             mode.SelectedIndex = 2;
-            ((TextBox)window.FindName("YMinimumBox")).Text = "-10.25";
-            ((TextBox)window.FindName("YMaximumBox")).Text = "1010.5";
-            ((Button)window.FindName("ApplyYScaleButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            (ProfileWindowParts.Find<TextBox>(window, "YMinimumBox")).Text = "-10.25";
+            (ProfileWindowParts.Find<TextBox>(window, "YMaximumBox")).Text = "1010.5";
+            (ProfileWindowParts.Find<Button>(window, "ApplyYScaleButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             var expected = new ProfileAxisRange(-10.25, 1010.5);
-            ((RadioButton)window.FindName("VerticalRadio")).IsChecked = true;
+            (ProfileWindowParts.Find<RadioButton>(window, "VerticalRadio")).IsChecked = true;
             Assert.Equal(expected, window.AxisRange);
-            ((CheckBox)window.FindName("ProjectionCheck")).IsChecked = true;
+            (ProfileWindowParts.Find<CheckBox>(window, "ProjectionCheck")).IsChecked = true;
             Assert.Equal(expected, window.AxisRange);
             window.SetProfiles(new double[] { 1, 2 }, new double[] { 10, 20 }, Array.Empty<double>(),
                 Array.Empty<double>(), null, 0, 0, 255);
@@ -163,7 +162,7 @@ public class LineProfileWindowTests
             window.SetProfiles(Array.Empty<double>(), Array.Empty<double>(), Array.Empty<double>(),
                 Array.Empty<double>(), null, 0, 0, 1023);
             Assert.Equal(new ProfileAxisRange(0, 1023), window.AxisRange);
-            Assert.Equal("1023", ((TextBlock)window.FindName("MaxLabel")).Text);
+            Assert.Equal("1023", (ProfileWindowParts.Find<TextBlock>(window, "MaxLabel")).Text);
             window.SetProfiles(new double[] { 25 }, new double[] { 25 }, Array.Empty<double>(),
                 Array.Empty<double>(), null, 0, 0, 1023);
             Assert.Equal(new ProfileAxisRange(24.5, 25.5), window.AxisRange);
@@ -180,10 +179,10 @@ public class LineProfileWindowTests
         var window = NewWindow();
         try
         {
-            ((ComboBox)window.FindName("YScaleCombo")).SelectedIndex = 1;
+            (ProfileWindowParts.Find<ComboBox>(window, "YScaleCombo")).SelectedIndex = 1;
             string? data = window.BuildTable(',');
-            string stats = ((TextBlock)window.FindName("StatsText")).Text;
-            var canvas = (Canvas)window.FindName("PlotCanvas");
+            string stats = (ProfileWindowParts.Find<TextBlock>(window, "StatsText")).Text;
+            var canvas = ProfileWindowParts.Find<Canvas>(window, "PlotCanvas");
             var cursor = new Point(canvas.ActualWidth * 0.3, 1 + (canvas.ActualHeight - 2) * 0.7);
             ProfileAxisRange x = window.HorizontalRange;
             ProfileAxisRange y = window.AxisRange;
@@ -194,8 +193,8 @@ public class LineProfileWindowTests
             Assert.Equal(y.Minimum + (y.Maximum - y.Minimum) * 0.3,
                 window.AxisRange.Minimum + (window.AxisRange.Maximum - window.AxisRange.Minimum) * 0.3, 8);
             Assert.Equal(data, window.BuildTable(','));
-            Assert.Equal(stats, ((TextBlock)window.FindName("StatsText")).Text);
-            CaptureIfRequested(window, "profile-zoomed");
+            Assert.Equal(stats, (ProfileWindowParts.Find<TextBlock>(window, "StatsText")).Text);
+            ProfileWindowParts.CaptureIfRequested(window, "profile-zoomed");
             window.ResetView();
             Assert.Equal(new ProfileAxisRange(0, 1999), window.HorizontalRange);
             Assert.Equal(new ProfileAxisRange(0, 4095), window.AxisRange);
@@ -212,12 +211,12 @@ public class LineProfileWindowTests
         var window = NewWindow();
         try
         {
-            var canvas = (Canvas)window.FindName("PlotCanvas");
+            var canvas = ProfileWindowParts.Find<Canvas>(window, "PlotCanvas");
             var center = new Point(canvas.ActualWidth / 2, canvas.ActualHeight / 2);
             ProfileAxisRange originalY = window.AxisRange;
             window.ZoomAt(center, 120, zoomHorizontal: true, zoomVertical: false);
             Assert.Equal(originalY, window.AxisRange);
-            Assert.Equal(0, ((ComboBox)window.FindName("YScaleCombo")).SelectedIndex);
+            Assert.Equal(0, (ProfileWindowParts.Find<ComboBox>(window, "YScaleCombo")).SelectedIndex);
             ProfileAxisRange originalX = window.HorizontalRange;
             window.ZoomAt(center, 120, zoomHorizontal: false, zoomVertical: true);
             Assert.Equal(originalX, window.HorizontalRange);
@@ -244,7 +243,7 @@ public class LineProfileWindowTests
         {
             window.SetProfiles(new double[] { 0, maxCode }, new double[] { 0, maxCode },
                 Array.Empty<double>(), Array.Empty<double>(), null, 0, 0, maxCode);
-            var canvas = (Canvas)window.FindName("PlotCanvas");
+            var canvas = ProfileWindowParts.Find<Canvas>(window, "PlotCanvas");
             var position = new Point(canvas.ActualWidth / 2, 1 + (1 - anchor) * (canvas.ActualHeight - 2));
             for (int i = 0; i < 30; i++) window.ZoomAt(position, 1200, false, true);
             ProfileAxisRange zoomed = window.AxisRange;
@@ -267,13 +266,13 @@ public class LineProfileWindowTests
         var window = NewWindow();
         try
         {
-            ((CheckBox)window.FindName("ProjectionCheck")).IsChecked = true;
-            var mode = (ComboBox)window.FindName("YScaleCombo");
+            (ProfileWindowParts.Find<CheckBox>(window, "ProjectionCheck")).IsChecked = true;
+            var mode = ProfileWindowParts.Find<ComboBox>(window, "YScaleCombo");
             mode.SelectedIndex = 1;
             ProfileAxisRange original = window.AxisRange;
             double span = original.Maximum - original.Minimum;
             Assert.InRange(span, 0.001, 0.01);
-            var canvas = (Canvas)window.FindName("PlotCanvas");
+            var canvas = ProfileWindowParts.Find<Canvas>(window, "PlotCanvas");
             var center = new Point(canvas.ActualWidth / 2, canvas.ActualHeight / 2);
             for (int i = 0; i < 20; i++) window.ZoomAt(center, 1200, false, true);
             Assert.Equal(original, window.AxisRange);
@@ -293,22 +292,22 @@ public class LineProfileWindowTests
         var window = NewWindow();
         try
         {
-            var title = (TextBlock)window.FindName("XAxisTitle");
+            var title = ProfileWindowParts.Find<TextBlock>(window, "XAxisTitle");
             Assert.Contains("水平プロファイル", title.Text);
             Assert.Contains("x座標", title.Text);
-            ((RadioButton)window.FindName("VerticalRadio")).IsChecked = true;
+            (ProfileWindowParts.Find<RadioButton>(window, "VerticalRadio")).IsChecked = true;
             Assert.Contains("垂直プロファイル", title.Text);
             Assert.Contains("y座標", title.Text);
             window.SetProfiles(new double[] { 1, 2, 3 }, new double[] { 4, 5, 6 },
                 new double[] { 10, 20, 30 }, new double[] { 40, 50, 60 },
                 new RegionOfInterest(100, 200, 3, 3), 0, 0, 255);
-            ((CheckBox)window.FindName("ProjectionCheck")).IsChecked = true;
-            var axis = (Canvas)window.FindName("XAxisCanvas");
+            (ProfileWindowParts.Find<CheckBox>(window, "ProjectionCheck")).IsChecked = true;
+            var axis = ProfileWindowParts.Find<Canvas>(window, "XAxisCanvas");
             Assert.Contains("垂直 ROI平均射影", title.Text);
             Assert.Equal(new[] { "200", "201", "202" }, axis.Children.OfType<TextBlock>().Select(t => t.Text));
             Assert.StartsWith("y,value" + Environment.NewLine + "200,40", window.BuildTable(','));
-            CaptureIfRequested(window, "profile-vertical-projection");
-            ((RadioButton)window.FindName("HorizontalRadio")).IsChecked = true;
+            ProfileWindowParts.CaptureIfRequested(window, "profile-vertical-projection");
+            (ProfileWindowParts.Find<RadioButton>(window, "HorizontalRadio")).IsChecked = true;
             Assert.Contains("水平 ROI平均射影", title.Text);
             Assert.Equal(new[] { "100", "101", "102" }, axis.Children.OfType<TextBlock>().Select(t => t.Text));
             Assert.StartsWith("x,value" + Environment.NewLine + "100,10", window.BuildTable(','));
@@ -329,9 +328,9 @@ public class LineProfileWindowTests
         var window = NewWindow();
         try
         {
-            var title = (TextBlock)window.FindName("XAxisTitle");
-            var axis = (Canvas)window.FindName("XAxisCanvas");
-            var projection = (CheckBox)window.FindName("ProjectionCheck");
+            var title = ProfileWindowParts.Find<TextBlock>(window, "XAxisTitle");
+            var axis = ProfileWindowParts.Find<Canvas>(window, "XAxisCanvas");
+            var projection = ProfileWindowParts.Find<CheckBox>(window, "ProjectionCheck");
             window.SetProfiles(new double[] { 1, 2, 3 }, new double[] { 4, 5, 6 },
                 new double[] { 10, 20, 30 }, new double[] { 40, 50, 60 },
                 new RegionOfInterest(2100, 100, 3, 3), 0, 0, 4095,
@@ -343,7 +342,7 @@ public class LineProfileWindowTests
             Assert.Contains("分割表示", (string)axis.ToolTip);
             Assert.DoesNotContain("元画像上の画素座標", (string)axis.ToolTip);
             Assert.StartsWith("x_display,", window.BuildTable(','));
-            ((RadioButton)window.FindName("VerticalRadio")).IsChecked = true;
+            (ProfileWindowParts.Find<RadioButton>(window, "VerticalRadio")).IsChecked = true;
             Assert.StartsWith("y_display,", window.BuildTable(','));
 
             // 断面(行・列プロファイル)は分割表示でも元画像の列・行なので、従来どおり画像座標
@@ -371,13 +370,13 @@ public class LineProfileWindowTests
                 new double[] { 10, 20, 30 }, new double[] { 40, 50, 60 },
                 new RegionOfInterest(2100, 100, 3, 3), 0, 0, 4095,
                 projectionSourceRegion: new ChannelRegion(201, 200, 3, 3));
-            ((CheckBox)window.FindName("ProjectionCheck")).IsChecked = true;
+            (ProfileWindowParts.Find<CheckBox>(window, "ProjectionCheck")).IsChecked = true;
 
             string nl = Environment.NewLine;
             Assert.Equal(
                 $"x_display,x_source,value{nl}2100,201,10{nl}2101,203,20{nl}2102,205,30{nl}",
                 window.BuildTable(','));
-            ((RadioButton)window.FindName("VerticalRadio")).IsChecked = true;
+            (ProfileWindowParts.Find<RadioButton>(window, "VerticalRadio")).IsChecked = true;
             Assert.Equal(
                 $"y_display\ty_source\tvalue{nl}100\t200\t40{nl}101\t202\t50{nl}102\t204\t60{nl}",
                 window.BuildTable('\t'));
@@ -399,17 +398,17 @@ public class LineProfileWindowTests
         var window = NewWindow();
         try
         {
-            var stats = (TextBlock)window.FindName("StatsText");
+            var stats = ProfileWindowParts.Find<TextBlock>(window, "StatsText");
             double[] projection = { 1000.40, 1000.55, 1000.60 };
             window.SetProfiles(new double[] { 1000, 1001, 1003 }, new double[] { 1, 2, 3 },
                 projection, projection, new RegionOfInterest(0, 0, 3, 1000), 0, 0, 4095);
-            ((CheckBox)window.FindName("ProjectionCheck")).IsChecked = true;
+            (ProfileWindowParts.Find<CheckBox>(window, "ProjectionCheck")).IsChecked = true;
 
             Assert.Contains("最小 1000.40", stats.Text);
             Assert.Contains("最大 1000.60", stats.Text);
             Assert.Contains("P-P 0.20", stats.Text);
 
-            ((CheckBox)window.FindName("ProjectionCheck")).IsChecked = false;
+            (ProfileWindowParts.Find<CheckBox>(window, "ProjectionCheck")).IsChecked = false;
             Assert.Contains("最小 1000 ", stats.Text);
             Assert.Contains("最大 1003 ", stats.Text);
             Assert.EndsWith("P-P 3", stats.Text);
@@ -433,7 +432,7 @@ public class LineProfileWindowTests
             double[] projection = { 40000.43, 40000.57, 40001.25 };
             window.SetProfiles(new double[] { 40000, 40001, 40003 }, new double[] { 1, 2, 3 },
                 projection, projection, new RegionOfInterest(10, 20, 3, 1000), 0, 0, 65535);
-            ((CheckBox)window.FindName("ProjectionCheck")).IsChecked = true;
+            (ProfileWindowParts.Find<CheckBox>(window, "ProjectionCheck")).IsChecked = true;
 
             string nl = Environment.NewLine;
             Assert.Equal($"x,value{nl}10,40000.43{nl}11,40000.57{nl}12,40001.25{nl}", window.BuildTable(','));
@@ -441,7 +440,7 @@ public class LineProfileWindowTests
             Assert.Contains($"mean\t40000.75{nl}", statistics);
             Assert.Contains($"min\t40000.43{nl}", statistics);
 
-            ((CheckBox)window.FindName("ProjectionCheck")).IsChecked = false;
+            (ProfileWindowParts.Find<CheckBox>(window, "ProjectionCheck")).IsChecked = false;
             Assert.Equal($"x,value{nl}0,40000{nl}1,40001{nl}2,40003{nl}", window.BuildTable(','));
         }
         finally
@@ -456,10 +455,10 @@ public class LineProfileWindowTests
         var window = NewWindow();
         try
         {
-            var canvas = (Canvas)window.FindName("PlotCanvas");
+            var canvas = ProfileWindowParts.Find<Canvas>(window, "PlotCanvas");
             window.ZoomAt(new Point(canvas.ActualWidth / 2, canvas.ActualHeight / 2), 240);
             ProfileAxisRange zoomedY = window.AxisRange;
-            ((RadioButton)window.FindName("VerticalRadio")).IsChecked = true;
+            (ProfileWindowParts.Find<RadioButton>(window, "VerticalRadio")).IsChecked = true;
             Assert.Equal(new ProfileAxisRange(0, 3), window.HorizontalRange);
             Assert.Equal(zoomedY, window.AxisRange);
             window.ZoomAt(new Point(canvas.ActualWidth / 2, canvas.ActualHeight / 2), 120, true, false);
@@ -487,21 +486,21 @@ public class LineProfileWindowTests
         var window = NewWindow();
         try
         {
-            ((RadioButton)window.FindName("VerticalRadio")).IsChecked = true;
-            var projection = (CheckBox)window.FindName("ProjectionCheck");
+            (ProfileWindowParts.Find<RadioButton>(window, "VerticalRadio")).IsChecked = true;
+            var projection = ProfileWindowParts.Find<CheckBox>(window, "ProjectionCheck");
             projection.IsChecked = true;
-            var mode = (ComboBox)window.FindName("YScaleCombo");
+            var mode = ProfileWindowParts.Find<ComboBox>(window, "YScaleCombo");
             mode.SelectedIndex = 2;
-            ((TextBox)window.FindName("YMinimumBox")).Text = "100";
-            ((TextBox)window.FindName("YMaximumBox")).Text = "300";
-            ((Button)window.FindName("ApplyYScaleButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            (ProfileWindowParts.Find<TextBox>(window, "YMinimumBox")).Text = "100";
+            (ProfileWindowParts.Find<TextBox>(window, "YMaximumBox")).Text = "300";
+            (ProfileWindowParts.Find<Button>(window, "ApplyYScaleButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
 
             window.ShowOutsideImage(1000, 2, 640, 480, 1023);
 
             Assert.Null(window.BuildTable(','));
-            var canvas = (Canvas)window.FindName("PlotCanvas");
+            var canvas = ProfileWindowParts.Find<Canvas>(window, "PlotCanvas");
             Assert.Empty(canvas.Children.OfType<System.Windows.Shapes.Path>());
-            string stats = ((TextBlock)window.FindName("StatsText")).Text;
+            string stats = (ProfileWindowParts.Find<TextBlock>(window, "StatsText")).Text;
             Assert.Contains("範囲外", stats);
             Assert.Contains("640×480", stats);
             Assert.Contains("範囲外", window.Title);
@@ -510,14 +509,14 @@ public class LineProfileWindowTests
             Assert.True(window.IsOutsideImage);
             Assert.Equal((1000, 2), window.CurrentPoint);
             Assert.False(window.IsHorizontal);
-            CaptureIfRequested(window, "profile-outside");
+            ProfileWindowParts.CaptureIfRequested(window, "profile-outside");
 
             window.SetProfiles(new double[] { 1, 2 }, new double[] { 7, 8, 9 },
                 Array.Empty<double>(), Array.Empty<double>(), null, 1000, 2, 1023);
             Assert.False(window.IsOutsideImage);
             Assert.False(window.IsHorizontal);
             Assert.StartsWith("y,value" + Environment.NewLine + "0,7", window.BuildTable(','));
-            Assert.DoesNotContain("範囲外", ((TextBlock)window.FindName("StatsText")).Text);
+            Assert.DoesNotContain("範囲外", (ProfileWindowParts.Find<TextBlock>(window, "StatsText")).Text);
             Assert.Equal(new ProfileAxisRange(100, 300), window.AxisRange);
         }
         finally
@@ -525,21 +524,6 @@ public class LineProfileWindowTests
             window.Close();
         }
     });
-
-    private static void CaptureElementIfRequested(FrameworkElement element, string name, int width, int height)
-    {
-        string? directory = Environment.GetEnvironmentVariable("RAWANALYZER_UI_SNAPSHOTS");
-        if (string.IsNullOrEmpty(directory)) return;
-        element.Measure(new Size(width, height));
-        element.Arrange(new Rect(0, 0, width, height));
-        element.UpdateLayout();
-        var bitmap = new RenderTargetBitmap(width, height, 96, 96, PixelFormats.Pbgra32);
-        bitmap.Render(element);
-        var encoder = new PngBitmapEncoder();
-        encoder.Frames.Add(BitmapFrame.Create(bitmap));
-        using var output = File.Create(System.IO.Path.Combine(directory, name + ".png"));
-        encoder.Save(output);
-    }
 
     private static LineProfileWindow NewWindow()
     {
@@ -549,28 +533,7 @@ public class LineProfileWindowTests
         double[] projection = new double[] { 1000.001, 1000.002, 1000.003 };
         window.SetProfiles(row, column, projection, projection,
             new RegionOfInterest(0, 0, 3, 3), 1000, 2, 4095);
-        var content = (FrameworkElement)window.Content;
-        content.Measure(new Size(800, 440));
-        content.Arrange(new Rect(0, 0, 800, 440));
-        content.UpdateLayout();
+        ProfileWindowParts.Layout(window);
         return window;
-    }
-
-    private static void CaptureIfRequested(Window window, string name)
-    {
-        string? directory = Environment.GetEnvironmentVariable("RAWANALYZER_UI_SNAPSHOTS");
-        if (string.IsNullOrEmpty(directory)) return;
-        var content = (FrameworkElement)window.Content;
-        content.UpdateLayout();
-        var bitmap = new RenderTargetBitmap(800, 440, 96, 96, PixelFormats.Pbgra32);
-        var background = new DrawingVisual();
-        using (DrawingContext dc = background.RenderOpen())
-            dc.DrawRectangle(window.Background, null, new Rect(0, 0, 800, 440));
-        bitmap.Render(background);
-        bitmap.Render(content);
-        var encoder = new PngBitmapEncoder();
-        encoder.Frames.Add(BitmapFrame.Create(bitmap));
-        using var output = File.Create(System.IO.Path.Combine(directory, name + ".png"));
-        encoder.Save(output);
     }
 }

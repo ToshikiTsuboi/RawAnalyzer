@@ -10,12 +10,16 @@ internal readonly record struct ProfileAxisRange(double Minimum, double Maximum)
 {
     internal static ProfileAxisRange Full(int maxCode) => new(0, Math.Max(1, maxCode));
 
-    internal static ProfileAxisRange Auto(ProfileStatistics stats, int maxCode)
+    internal static ProfileAxisRange Auto(ProfileStatistics stats, int maxCode) =>
+        stats.Count == 0 ? Full(maxCode) : Auto(stats.Min, stats.Max, maxCode);
+
+    /// <summary>データの最小〜最大に合わせた縦軸(射影の最大・最小の線も入れるときに使う)。</summary>
+    internal static ProfileAxisRange Auto(double minimum, double maximum, int maxCode)
     {
         ProfileAxisRange full = Full(maxCode);
-        if (stats.Count == 0 || !double.IsFinite(stats.Min) || !double.IsFinite(stats.Max)) return full;
-        double low = Math.Clamp(stats.Min, full.Minimum, full.Maximum);
-        double high = Math.Clamp(stats.Max, low, full.Maximum);
+        if (!double.IsFinite(minimum) || !double.IsFinite(maximum)) return full;
+        double low = Math.Clamp(minimum, full.Minimum, full.Maximum);
+        double high = Math.Clamp(maximum, low, full.Maximum);
         // 平坦なラインにも幅を確保する。通常はデータ幅の5%を上下の余白にする。
         double padding = high > low ? (high - low) * 0.05 : 0.5;
         return new ProfileAxisRange(Math.Max(0, low - padding), Math.Min(full.Maximum, high + padding));
