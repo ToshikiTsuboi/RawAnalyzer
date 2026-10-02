@@ -108,6 +108,7 @@ public partial class MainWindow : Window
     {
         ReplaceAnalysisCts(null);
         ReplaceProfileCts(null);
+        CancelProjectionJob();
     }
     private HistogramResult? _histogram;
     private IReadOnlyList<ChannelHistogram>? _channelHistograms;
@@ -249,6 +250,14 @@ public partial class MainWindow : Window
         Viewport.RoiChanged += OnViewportRoiChanged;
         Viewport.ProfilePointClicked += OnProfilePointClicked;
         Viewport.WhiteBalancePicked += OnWhiteBalancePicked;
+
+        // チャネル分割表示の出入りでは、ROI がなくても射影の対象(画像全体・象限の案内)が変わる
+        Viewport.ChannelSplitLayoutChanged += (_, _) => RefreshProjections();
+        HorizontalProjectionToggle.ToolTip = ProjectionText.ToolbarToolTip(ProjectionDirection.Horizontal);
+        VerticalProjectionToggle.ToolTip = ProjectionText.ToolbarToolTip(ProjectionDirection.Vertical);
+        HorizontalProjectionMenu.ToolTip = ProjectionText.Explanation(ProjectionDirection.Horizontal);
+        VerticalProjectionMenu.ToolTip = ProjectionText.Explanation(ProjectionDirection.Vertical);
+
         // ショートカットはコマンド表(MainWindow.Commands.cs)から一括で捌く。
         // Escだけはビューポートの画素カーソル解除を優先するため個別に扱う(バブルの KeyDown で、
         // フォーカス中のコントロールが使わなかったときだけフルスクリーンを解除する)
@@ -312,6 +321,7 @@ public partial class MainWindow : Window
             ReplaceLoadCts(null);
             CancelAnalysis();
             _profileWindow?.Close();
+            _projections?.Shutdown();
             await CompareArea.CloseAllAsync();
             await Viewport.ClearImageAsync();
             _mainBayerPyramid?.Dispose();
@@ -965,6 +975,7 @@ public partial class MainWindow : Window
         // 開いているラインプロファイル窓は、ヒストグラムと同じく開いた画像で計算し直す(同じ基準点・方向)。
         // 以前は前の画像の断面を出し続けていた(マーカーだけが消える)
         RefreshLineProfile();
+        RefreshProjections();
 
         // 差し替えを終えたので、以降の操作は新しい画像を対象に始めてよい
         // (ピラミッド生成は差し替え後の画像を検証してから取り付ける。二重の Dispose は無視される)
@@ -1219,8 +1230,7 @@ public partial class MainWindow : Window
         // HDR分割ビューでは段(露光)をまたぐROIを断る(合成ビュー・通常表示は段がない)
         return RoiAnalysis.Resolve(
             displayRoi, Viewport.IsChannelSplitLayout, image.Width, image.Height,
-            ActiveFormat?.Bayer ?? BayerPattern.None,
-            _derivedImage is not null && _hdrFloatImage is null ? _hdrSegmentWidth : 0);
+            ActiveFormat?.Bayer ?? BayerPattern.None, HdrSplitSegmentWidth);
     }
 
     /// <summary>ROIが選ばれていて、表示中の画素へ対応づけて解析できるか。</summary>
@@ -1373,6 +1383,9 @@ public partial class MainWindow : Window
     {
         // 象限をまたぐなど解析できないROIでは「ROI内のみ」を選ばせない
         _noiseWindow?.SetRoiAvailability(HasAnalyzableRoi);
+
+        // 射影の窓は ROI があれば ROI、なければ画像全体で計算し直す
+        RefreshProjections();
         if (Viewport.Roi is { PixelCount: > 0 } roi)
         {
             RefreshHistogram(roi);
@@ -2804,6 +2817,7 @@ public partial class MainWindow : Window
         // 開いているラインプロファイル窓は閉じずに、ヒストグラムと同じく処理結果で計算し直す
         // (同じ基準点・方向。ビニングで縮んで範囲外になったら、範囲外であることを示す)
         RefreshLineProfile();
+        RefreshProjections();
         _mainPyramid = null;
         await BuildPyramidAsync(processed, _loadCts?.Token ?? CancellationToken.None);
         if (display.ComboIndex != 0 && ReferenceEquals(processed, _currentImage))
@@ -3674,6 +3688,7 @@ public partial class MainWindow : Window
         // 開いているラインプロファイル窓も、ヒストグラムと同じく派生ビューの画像で計算し直す
         // (同じ基準点・方向。派生ビューの寸法で範囲外なら範囲外であることを示す)
         RefreshLineProfile();
+        RefreshProjections();
         _ = BuildDerivedPyramidAsync(derived);
         return true;
     }
@@ -3779,6 +3794,7 @@ public partial class MainWindow : Window
 
         // 派生ビューで出していたラインプロファイルも、元画像(HDR表示の元にしたフレーム)で計算し直す
         RefreshLineProfile();
+        RefreshProjections();
 
         // 派生ビューの出入り・分割⇔合成の切替で世代を進めると(CancelDerivedBayerPyramidBuild)、同じトークンで
         // 走っていた元画像の縮小ピラミッドの生成(フレーム送りの後に始めたものなど)も取り消される。表示し直した
@@ -4598,6 +4614,7 @@ public partial class MainWindow : Window
         // ラインプロファイル窓も、送った先の画像・フレームで同じ基準点・方向と送った後のROIで計算し直す
         // (送りで取り消した計算は結果を出さないので、開いたままだと送る前の断面が残る)
         RefreshLineProfile();
+        RefreshProjections();
     }
 
     private void OnPlayToggleChanged(object sender, RoutedEventArgs e)
@@ -5664,6 +5681,9 @@ public partial class MainWindow : Window
         // チャネル別統計はパターンに依存するため作り直す。
         // 放置すると RGGB→BGGR で R と B を入れ替えた値を表示したままになる
         RefreshHistogram(Viewport.Roi is { PixelCount: > 0 } roi ? roi : null);
+
+        // 射影の窓の対象の説明(チャネル名)も、Bayer なしとの切り替えでは対象(チャネル分割表示)も変わる
+        RefreshProjections();
     }
 
     // ---- 右クリックメニュー ----

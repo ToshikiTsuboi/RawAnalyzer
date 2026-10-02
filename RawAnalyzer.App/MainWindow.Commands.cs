@@ -621,6 +621,30 @@ public partial class MainWindow
             // ---- 解析 ----
             new()
             {
+                Id = "projection-horizontal",
+                Category = "解析",
+                Title = "水平射影 (列ごとの平均) の窓を開く / 閉じる",
+                Description = "各列を縦に平均して x 座標に並べる(EMVA 1288 の horizontal profile。" +
+                    "平均する方向で呼ぶ流儀では垂直射影)。ROI があれば ROI、なければ画像全体",
+                Key = Key.H,
+                CanExecute = MainViewAvailable,
+                DisabledReason = MainViewReason,
+                Execute = () => Toggle(HorizontalProjectionToggle),
+            },
+            new()
+            {
+                Id = "projection-vertical",
+                Category = "解析",
+                Title = "垂直射影 (行ごとの平均) の窓を開く / 閉じる",
+                Description = "各行を横に平均して y 座標に並べる(EMVA 1288 の vertical profile。" +
+                    "平均する方向で呼ぶ流儀では水平射影)。ROI があれば ROI、なければ画像全体",
+                Key = Key.V,
+                CanExecute = MainViewAvailable,
+                DisabledReason = MainViewReason,
+                Execute = () => Toggle(VerticalProjectionToggle),
+            },
+            new()
+            {
                 Id = "hist-refresh",
                 Category = "解析",
                 Title = "ヒストグラムを更新",

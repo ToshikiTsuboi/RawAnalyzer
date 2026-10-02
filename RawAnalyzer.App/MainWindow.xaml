@@ -140,6 +140,12 @@
                 <MenuItem Header="ラインプロファイルモード" IsCheckable="True"
                           IsChecked="{Binding IsChecked, ElementName=ProfileToggle, Mode=TwoWay}"
                           IsEnabled="{Binding CanUseMainView}" />
+                <MenuItem x:Name="HorizontalProjectionMenu" Header="水平射影 (列ごとの平均)" IsCheckable="True"
+                          IsChecked="{Binding IsChecked, ElementName=HorizontalProjectionToggle, Mode=TwoWay}"
+                          IsEnabled="{Binding CanUseMainView}" ToolTipService.ShowDuration="60000" />
+                <MenuItem x:Name="VerticalProjectionMenu" Header="垂直射影 (行ごとの平均)" IsCheckable="True"
+                          IsChecked="{Binding IsChecked, ElementName=VerticalProjectionToggle, Mode=TwoWay}"
+                          IsEnabled="{Binding CanUseMainView}" ToolTipService.ShowDuration="60000" />
                 <MenuItem Header="WBスポイトモード" IsCheckable="True"
                           IsChecked="{Binding IsChecked, ElementName=WbPickToggle, Mode=TwoWay}"
                           IsEnabled="{Binding CanUseMainView}" />
@@ -210,6 +216,16 @@
                 <ToggleButton x:Name="ProfileToggle" Content="ラインプロファイル"
                               Style="{StaticResource ToolToggle}" IsEnabled="{Binding CanUseMainView}"
                               Checked="OnProfileToggleChanged" Unchecked="OnProfileToggleChanged" />
+                <!-- 射影の窓(EMVA 1288 方式の向き)。押すとすぐ計算して窓を開き、もう一度押すと閉じる。
+                     ツールチップ(向きと流儀の説明)はコードで設定する(ProjectionText) -->
+                <ToggleButton x:Name="HorizontalProjectionToggle" Content="水平射影"
+                              Style="{StaticResource ToolToggle}" IsEnabled="{Binding CanUseMainView}"
+                              ToolTipService.ShowOnDisabled="True" ToolTipService.ShowDuration="60000"
+                              Checked="OnProjectionToggleChanged" Unchecked="OnProjectionToggleChanged" />
+                <ToggleButton x:Name="VerticalProjectionToggle" Content="垂直射影"
+                              Style="{StaticResource ToolToggle}" IsEnabled="{Binding CanUseMainView}"
+                              ToolTipService.ShowOnDisabled="True" ToolTipService.ShowDuration="60000"
+                              Checked="OnProjectionToggleChanged" Unchecked="OnProjectionToggleChanged" />
                 <ToggleButton x:Name="RoiToggle" Content="ROI"
                               Style="{StaticResource ToolToggle}" IsEnabled="{Binding CanUseMainView}"
                               Checked="OnRoiToggleChanged" Unchecked="OnRoiToggleChanged" />

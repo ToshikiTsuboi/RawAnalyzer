@@ -203,6 +203,12 @@ public sealed class ImageViewport : FrameworkElement
     /// <summary>ROIが確定・解除されたときに発火する。</summary>
     public event EventHandler? RoiChanged;
 
+    /// <summary>
+    /// チャネル分割とそれ以外の表示が切り替わったときに発火する(表示座標の意味が変わるので ROI を捨てた後)。
+    /// ROI がなくても発火する(射影の窓は画像全体と象限の案内を切り替える)。
+    /// </summary>
+    public event EventHandler? ChannelSplitLayoutChanged;
+
     /// <summary>ラインプロファイルモードで画素がクリックされたときに発火する。</summary>
     public event EventHandler<CursorPixelEventArgs>? ProfilePointClicked;
 
@@ -689,6 +695,7 @@ public sealed class ImageViewport : FrameworkElement
         if (wasChannelSplit != IsChannelSplitLayout)
         {
             ClearRoi();
+            ChannelSplitLayoutChanged?.Invoke(this, EventArgs.Empty);
         }
     }
 
