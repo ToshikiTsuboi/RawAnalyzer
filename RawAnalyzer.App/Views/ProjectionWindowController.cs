@@ -28,12 +28,17 @@ internal sealed class ProjectionWindowController
     private readonly Func<RawImage, int, bool> _isCurrent;
     private readonly Func<ProjectionDirection, ProjectionWindow?, ProjectionWindow> _createWindow;
     private readonly Action<ProjectionWindow> _showWindow;
+    private readonly ComputePass _compute;
 
     private ProjectionWindow? _horizontal;
     private ProjectionWindow? _vertical;
 
     // 窓が出している結果・断る理由の求め方(再生中の知らせ・まだ出していなければなし)
     private readonly Dictionary<ProjectionDirection, ProjectionRequest> _shown = new();
+
+    // 窓が計算を待っている求め方(走っている計算の結果を出す窓)。断る理由・再生中の知らせに替えた・窓を閉じた向きは
+    // 外す(走っている計算がほかの窓のために続いても、その結果で上書きしない)
+    private readonly Dictionary<ProjectionDirection, ProjectionRequest> _pending = new();
 
     // 走っている計算(なければ null)と、その完了(テストで待つ)
     private ProjectionJob? _job;
@@ -48,13 +53,15 @@ internal sealed class ProjectionWindowController
     /// <param name="isCurrent">画像・フレームがいまも表示中か(計算中に送った・差し替えたら結果を出さない)。</param>
     /// <param name="createWindow">窓を作る(もう一方の窓が開いていればそれを渡す。並べて開くため)。</param>
     /// <param name="showWindow">作った窓を表示する。</param>
+    /// <param name="compute">1回の走査で射影を求める(UI スレッドの外で呼ぶ。省略時は <see cref="ProjectionTargets.Compute"/>)。</param>
     internal ProjectionWindowController(
         Dispatcher dispatcher,
         Func<ProjectionDirection, ProjectionRequest?> buildRequest,
         Func<bool> isPlaying,
         Func<RawImage, int, bool> isCurrent,
         Func<ProjectionDirection, ProjectionWindow?, ProjectionWindow> createWindow,
-        Action<ProjectionWindow> showWindow)
+        Action<ProjectionWindow> showWindow,
+        ComputePass? compute = null)
     {
         _dispatcher = dispatcher;
         _buildRequest = buildRequest;
@@ -62,7 +69,17 @@ internal sealed class ProjectionWindowController
         _isCurrent = isCurrent;
         _createWindow = createWindow;
         _showWindow = showWindow;
+        _compute = compute ?? ((pass, token, progress) =>
+            ProjectionTargets.Compute(pass.Image, pass.Frame, pass.Target, pass.Axes, token, progress));
     }
+
+    /// <summary>1回の走査で射影を求める処理。</summary>
+    /// <param name="pass">走査。</param>
+    /// <param name="cancellationToken">キャンセルトークン。</param>
+    /// <param name="progress">進み具合(0〜1)。</param>
+    /// <returns>射影。</returns>
+    internal delegate ProjectionResult ComputePass(
+        ProjectionPass pass, CancellationToken cancellationToken, IProgress<double> progress);
 
     /// <summary>窓が閉じられた(✕ で閉じたときにツールバーのトグルを戻すため)。</summary>
     internal event Action<ProjectionDirection>? WindowClosed;
@@ -176,6 +193,7 @@ internal sealed class ProjectionWindowController
         }
 
         _shown.Remove(direction);
+        _pending.Remove(direction);
         WindowClosed?.Invoke(direction);
 
         // この窓のための計算だけが走っていれば取り消す
@@ -199,27 +217,17 @@ internal sealed class ProjectionWindowController
             }
 
             states.Add(new ProjectionWindowState(
-                direction, next, _shown.GetValueOrDefault(direction),
-                _job?.Requests.FirstOrDefault(request => request.Direction == direction)));
+                direction, next, _shown.GetValueOrDefault(direction), _pending.GetValueOrDefault(direction)));
         }
 
         ProjectionRefreshPlan plan = ProjectionRefreshPlan.Decide(states, _isPlaying());
-
-        // 新しく計算するとき、続ける窓のない計算(求め方が変わった・窓を閉じた)は取り消す。置き換えた計算は
-        // 終わっても計算し直しを求めない(この判断で求め方を決め直している)
-        bool cancel = plan.CancelRunningJob || plan.Compute.Count > 0
-            || (_job is { } job && !job.Requests.Any(request => WindowFor(request.Direction) is not null));
-        if (cancel && _job is { } running)
-        {
-            _job = null;
-            running.Cts.Cancel();
-        }
 
         foreach (ProjectionDirection direction in plan.ShowPlayback)
         {
             ProjectionRequest next = states.First(state => state.Direction == direction).Next;
             WindowFor(direction)?.ShowMessage(next.Header, ProjectionTargets.Playback, next.MaxCode);
             _shown.Remove(direction);
+            _pending.Remove(direction);
         }
 
         foreach (ProjectionRequest refused in plan.ShowRefusal)
@@ -227,12 +235,46 @@ internal sealed class ProjectionWindowController
             WindowFor(refused.Direction)?.ShowMessage(
                 refused.Header, refused.RefusalReason ?? "射影を取れません。", refused.MaxCode);
             _shown[refused.Direction] = refused;
+            _pending.Remove(refused.Direction);
+        }
+
+        // 求め方が変わった計算(どの窓も結果を待っていない)と、新しく計算するときの走っている計算は取り消す。
+        // 置き換えた計算は終わっても計算し直しを求めない(この判断で求め方を決め直している)
+        foreach (ProjectionDirection direction in _pending.Keys.ToList())
+        {
+            if (!states.Any(state => state.Direction == direction && state.Next.Equals(_pending[direction])))
+            {
+                _pending.Remove(direction);
+            }
+        }
+
+        bool cancel = plan.CancelRunningJob || plan.Compute.Count > 0 || _pending.Count == 0;
+        if (cancel && _job is { } running)
+        {
+            _job = null;
+            _pending.Clear();
+            running.Cts.Cancel();
+        }
+
+        // 計算をやめた窓(結果を待っていない)は、計算中の表示をやめて出していた結果のままにする
+        // (計算中に送って戻した・取り消したなど、いまの表示の求め方が出していた結果と同じに戻ったとき)
+        foreach (ProjectionWindowState state in states)
+        {
+            if (!_pending.ContainsKey(state.Direction) && !plan.Compute.Any(r => r.Direction == state.Direction))
+            {
+                WindowFor(state.Direction)?.CancelBusy();
+            }
         }
 
         if (plan.Compute.Count > 0)
         {
             var started = new ProjectionJob(plan.Compute);
             _job = started;
+            foreach (ProjectionRequest request in plan.Compute)
+            {
+                _pending[request.Direction] = request;
+            }
+
             _jobTask = RunJobAsync(started);
         }
     }
@@ -270,9 +312,7 @@ internal sealed class ProjectionWindowController
                     var computed = new ProjectionResult[passes.Count];
                     for (int i = 0; i < passes.Count; i++)
                     {
-                        ProjectionPass pass = passes[i];
-                        computed[i] = ProjectionTargets.Compute(
-                            pass.Image, pass.Frame, pass.Target, pass.Axes, token, new PassProgress(progress, i));
+                        computed[i] = _compute(passes[i], token, new PassProgress(progress, i));
                     }
 
                     return computed;
@@ -285,6 +325,7 @@ internal sealed class ProjectionWindowController
             if (ReferenceEquals(_job, job))
             {
                 _job = null;
+                _pending.Clear();
                 Refresh();
             }
 
@@ -296,12 +337,14 @@ internal sealed class ProjectionWindowController
             if (ReferenceEquals(_job, job))
             {
                 _job = null;
-                foreach (ProjectionRequest request in job.Requests)
+                foreach (ProjectionRequest request in job.Requests.Where(IsPending))
                 {
                     WindowFor(request.Direction)?.ShowMessage(
                         request.Header, $"射影を計算できませんでした: {ex.Message}", request.MaxCode);
                     _shown[request.Direction] = request;
                 }
+
+                _pending.Clear();
             }
 
             return;
@@ -318,12 +361,15 @@ internal sealed class ProjectionWindowController
         // (フレーム送りは画像がそのままなので、画像の照合だけでは前のフレームの値を表示してしまう)
         if (job.Requests.Any(request => !_isCurrent(request.Image, request.Frame)))
         {
+            _pending.Clear();
             Refresh();
             return;
         }
 
-        foreach (ProjectionRequest request in job.Requests)
+        // 結果を待っている窓だけに出す(計算中に断る理由・再生中の知らせへ替えた窓は上書きしない)
+        foreach (ProjectionRequest request in job.Requests.Where(IsPending).ToList())
         {
+            _pending.Remove(request.Direction);
             if (WindowFor(request.Direction) is not { } window)
             {
                 continue;
@@ -344,6 +390,9 @@ internal sealed class ProjectionWindowController
             _shown[request.Direction] = request;
         }
     }
+
+    private bool IsPending(ProjectionRequest request) =>
+        _pending.TryGetValue(request.Direction, out ProjectionRequest? pending) && pending.Equals(request);
 
     /// <summary>走っている射影の計算(取り消しと、何を求めているか)。</summary>
     private sealed class ProjectionJob(IReadOnlyList<ProjectionRequest> requests)

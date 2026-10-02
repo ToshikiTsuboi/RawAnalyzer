@@ -26,6 +26,9 @@ public partial class ProjectionWindow : Window
     private ProjectionAxis _axis;
     private int _busyPercent = -1;
 
+    // 出している結果・知らせの対象の説明(計算をやめて前の結果へ戻すときに見出しも戻す)
+    private string _shownHeader = "";
+
     /// <summary>向きを指定して窓を生成する。</summary>
     /// <param name="direction">向き。</param>
     internal ProjectionWindow(ProjectionDirection direction)
@@ -94,6 +97,16 @@ public partial class ProjectionWindow : Window
         Plot.UpdateBusyMessage($"計算中… {percent}%(対象の全画素を読んでいます)");
     }
 
+    /// <summary>
+    /// 計算中の表示をやめ、前の結果(と見出し)のまま出し直す(計算をやめ、出していた結果がいまの表示のものに戻ったとき)。
+    /// </summary>
+    internal void CancelBusy()
+    {
+        if (!IsBusy) return;
+        SetHeader(_shownHeader, _profile.Length > 0 ? _profile.SamplesPerPosition : null);
+        Plot.CancelBusy();
+    }
+
     /// <summary>結果を出す。</summary>
     /// <param name="header">対象の説明(「対象: ROI (x, y, w×h)」など)。</param>
     /// <param name="profile">射影。</param>
@@ -103,6 +116,7 @@ public partial class ProjectionWindow : Window
     {
         _profile = profile;
         _axis = axis;
+        _shownHeader = header;
         SetHeader(header, profile.SamplesPerPosition);
         Plot.SetAxisLabels(
             ProjectionText.AxisTitle(Direction, axis.IsSplitDisplay), ProjectionText.AxisToolTip(axis.IsSplitDisplay));
@@ -123,6 +137,7 @@ public partial class ProjectionWindow : Window
     {
         _profile = ProjectionProfile.Empty();
         _axis = default;
+        _shownHeader = header;
         SetHeader(header, samples: null);
         Plot.SetAxisLabels(ProjectionText.AxisTitle(Direction, false), ProjectionText.AxisToolTip(false));
         Plot.ShowMessage(message, maxCode);

@@ -142,6 +142,74 @@ public class ProjectionWindowControllerTests
     });
 
     [Fact]
+    public Task CanceledAfterMovingBack_EndsBusyAndKeepsTheShownResult() => WpfTestHost.Run(async () =>
+    {
+        // フレームを送って計算中に元のフレームへ戻した(送りで計算を取り消した)ら、出していた結果がいまの表示の
+        // ものなので計算し直さず、計算中の表示をやめてその結果のまま出す(計算中のまま残さない)
+        using var view = new FakeView();
+        ProjectionWindowController controller = view.Controller();
+        try
+        {
+            controller.Open(H);
+            await controller.WhenIdleAsync();
+            ProjectionWindow window = controller.WindowFor(H)!;
+            string? shown = window.BuildTable(',');
+            string header = Find<TextBlock>(window, "TargetText").Text;
+
+            view.Gate = new SemaphoreSlim(0);
+            view.Frame = 1;
+            controller.Refresh();
+            await WaitUntil(() => controller.IsComputing);
+            Assert.True(window.IsBusy);
+            Assert.Contains("フレーム 2/2", Find<TextBlock>(window, "TargetText").Text);
+
+            view.Frame = 0;
+            controller.CancelRunning();
+            await controller.WhenIdleAsync();
+
+            Assert.False(window.IsBusy);
+            Assert.Equal(shown, window.BuildTable(','));
+            Assert.Equal(header, Find<TextBlock>(window, "TargetText").Text);
+        }
+        finally
+        {
+            controller.Shutdown();
+        }
+    });
+
+    [Fact]
+    public Task RefusedWhileTheOtherKeepsComputing_IsNotOverwrittenByTheResult() => WpfTestHost.Run(async () =>
+    {
+        // 水平・垂直を1回の走査で計算している途中で、垂直だけ断る対象になった(HDR 分割ビューの画像全体の垂直射影)。
+        // 水平のための計算は続けるが、終わった結果で垂直の窓の理由を上書きしない
+        using var view = new FakeView { Gate = new SemaphoreSlim(0) };
+        ProjectionWindowController controller = view.Controller();
+        try
+        {
+            controller.Open(H);
+            controller.Open(V);
+            await WaitUntil(() => controller.IsComputing);
+
+            view.SegmentWidth = 2;
+            controller.Refresh();
+            await WaitUntil(() => Find<TextBlock>(controller.WindowFor(V)!, "StatsText").Text
+                == ProjectionTargets.HdrSplitWholeImageVertical);
+            Assert.True(controller.IsComputing); // 水平のための計算は続ける
+            view.Gate.Release(10);
+            await controller.WhenIdleAsync();
+
+            Assert.NotNull(controller.WindowFor(H)!.BuildTable(','));
+            Assert.Null(controller.WindowFor(V)!.BuildTable(','));
+            Assert.Equal(ProjectionTargets.HdrSplitWholeImageVertical,
+                Find<TextBlock>(controller.WindowFor(V)!, "StatsText").Text);
+        }
+        finally
+        {
+            controller.Shutdown();
+        }
+    });
+
+    [Fact]
     public Task Playing_ShowsItRecomputesOnStop() => WpfTestHost.Run(async () =>
     {
         using var view = new FakeView { Playing = true };
@@ -272,6 +340,17 @@ public class ProjectionWindowControllerTests
         Assert.Null(controller.WindowFor(H));
     });
 
+    /// <summary>条件が成り立つまで UI スレッドを回して待つ(計算の開始などを待つ)。</summary>
+    private static async Task WaitUntil(Func<bool> condition)
+    {
+        DateTime limit = DateTime.UtcNow.AddSeconds(10);
+        while (!condition())
+        {
+            Assert.True(DateTime.UtcNow < limit, "待っている状態になりませんでした");
+            await Task.Delay(5);
+        }
+    }
+
     private static string Table(string axis, params (long Position, double Mean, double Min, double Max)[] rows)
     {
         string nl = Environment.NewLine;
@@ -305,6 +384,9 @@ public class ProjectionWindowControllerTests
 
         internal bool MoveFrameDuringFirstComputation { get; set; }
 
+        /// <summary>設定すると、計算はこれを1つ取るまで待つ(取り消されたら止まる。計算中の状態を作るため)。</summary>
+        internal SemaphoreSlim? Gate { get; set; }
+
         internal Dictionary<ProjectionDirection, ProjectionWindow?> OtherWindowWhenCreated { get; } = new();
 
         internal ProjectionWindowController Controller() => new(
@@ -317,7 +399,12 @@ public class ProjectionWindowControllerTests
                 OtherWindowWhenCreated[direction] = other;
                 return new ProjectionWindow(direction) { BusyDelay = TimeSpan.Zero };
             },
-            Layout);
+            Layout,
+            (pass, token, progress) =>
+            {
+                Gate?.Wait(token);
+                return ProjectionTargets.Compute(pass.Image, pass.Frame, pass.Target, pass.Axes, token, progress);
+            });
 
         public void Dispose() => Image.Dispose();
 

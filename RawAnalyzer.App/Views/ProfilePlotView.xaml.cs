@@ -203,6 +203,14 @@ public partial class ProfilePlotView : UserControl
         }
     }
 
+    /// <summary>計算中の表示をやめ、残していたデータをそのまま出し直す(計算をやめて前の結果のままでよいとき)。</summary>
+    internal void CancelBusy()
+    {
+        if (!IsBusy) return;
+        EndBusy();
+        Redraw();
+    }
+
     private void EndBusy()
     {
         _busyMessage = null;
