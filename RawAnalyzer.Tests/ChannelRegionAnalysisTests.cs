@@ -126,29 +126,35 @@ public class ChannelRegionAnalysisTests
     }
 
     [Fact]
-    public void ComputeProjections_MatchesPixelsPickedOneByOne()
+    public void Projections_MatchPixelsPickedOneByOne()
     {
+        // 射影(ProjectionAnalysis)の格子版。各位置の平均・最小・最大は、格子の画素を1つずつ拾って求めた値と一致する
         using RawImage image = RandomImage(12, 10, bitDepth: 14, seed: 2);
         var region = new ChannelRegion(3, 1, 4, 5);
 
-        (double[] horizontal, double[] vertical) =
-            ChannelRegionAnalysis.ComputeProjections(image, 0, region);
+        ProjectionResult result = ProjectionAnalysis.Compute(image, 0, region, ProjectionAxes.Both);
+        ProjectionProfile horizontal = result.Horizontal!;
+        ProjectionProfile vertical = result.Vertical!;
 
         int shift = 16 - 14;
         Assert.Equal(region.Width, horizontal.Length);
         Assert.Equal(region.Height, vertical.Length);
         for (int i = 0; i < region.Width; i++)
         {
-            double expected = Enumerable.Range(0, region.Height)
-                .Average(j => image.GetPixel(region.X + 2 * i, region.Y + 2 * j) >> shift);
-            Assert.Equal(expected, horizontal[i], 9);
+            int[] column = Enumerable.Range(0, region.Height)
+                .Select(j => image.GetPixel(region.X + 2 * i, region.Y + 2 * j) >> shift).ToArray();
+            Assert.Equal(column.Average(), horizontal.Mean[i], 9);
+            Assert.Equal(column.Min(), horizontal.Min[i]);
+            Assert.Equal(column.Max(), horizontal.Max[i]);
         }
 
         for (int j = 0; j < region.Height; j++)
         {
-            double expected = Enumerable.Range(0, region.Width)
-                .Average(i => image.GetPixel(region.X + 2 * i, region.Y + 2 * j) >> shift);
-            Assert.Equal(expected, vertical[j], 9);
+            int[] row = Enumerable.Range(0, region.Width)
+                .Select(i => image.GetPixel(region.X + 2 * i, region.Y + 2 * j) >> shift).ToArray();
+            Assert.Equal(row.Average(), vertical.Mean[j], 9);
+            Assert.Equal(row.Min(), vertical.Min[j]);
+            Assert.Equal(row.Max(), vertical.Max[j]);
         }
     }
 
@@ -178,7 +184,7 @@ public class ChannelRegionAnalysisTests
         Assert.Throws<ArgumentOutOfRangeException>(() =>
             ChannelRegionAnalysis.ComputeHistogram(image, 0, region));
         Assert.Throws<ArgumentOutOfRangeException>(() =>
-            ChannelRegionAnalysis.ComputeProjections(image, 0, region));
+            ProjectionAnalysis.Compute(image, 0, region, ProjectionAxes.Both));
         Assert.Throws<ArgumentOutOfRangeException>(() =>
             ChannelRegionAnalysis.MeasureSingle(image, 0, region));
     }
@@ -190,23 +196,11 @@ public class ChannelRegionAnalysisTests
         var region = new ChannelRegion(2, 2, 0, 3);
 
         HistogramResult histogram = ChannelRegionAnalysis.ComputeHistogram(image, 0, region);
-        (double[] horizontal, double[] vertical) =
-            ChannelRegionAnalysis.ComputeProjections(image, 0, region);
+        ProjectionResult projections = ProjectionAnalysis.Compute(image, 0, region, ProjectionAxes.Both);
 
         Assert.Equal(0, histogram.SampleCount);
-        Assert.Empty(horizontal);
-        Assert.Empty(vertical);
-    }
-
-    [Fact]
-    public void ComputeProjections_Canceled_Throws()
-    {
-        using RawImage image = RandomImage(8, 8, bitDepth: 12, seed: 11);
-        using var cts = new CancellationTokenSource();
-        cts.Cancel();
-
-        Assert.Throws<OperationCanceledException>(() => ChannelRegionAnalysis.ComputeProjections(
-            image, 0, new ChannelRegion(0, 0, 4, 4), cts.Token));
+        Assert.Equal(0, projections.Horizontal!.Length);
+        Assert.Equal(0, projections.Vertical!.Length);
     }
 
     /// <summary>タイル矩形の各表示画素が元画像のどの画素か(MapTiledToSource)を集める。</summary>

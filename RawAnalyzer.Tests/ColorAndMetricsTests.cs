@@ -167,26 +167,6 @@ public class ColorImageTests
 
 public class ProfileAndMetricsTests
 {
-    /// <summary>
-    /// 番兵値(4095)で埋めた画像の ROI 内側だけに roiValues[row, col] を置く。
-    /// ROI が1画素でもはみ出せば番兵値が平均に混ざって落ちる。
-    /// </summary>
-    private static RawImage MakeWithRoiValues(
-        int width, int height, RegionOfInterest roi, ushort[,] roiValues)
-    {
-        var codes = new ushort[width * height];
-        Array.Fill(codes, (ushort)4095);
-        for (int row = 0; row < roi.Height; row++)
-        {
-            for (int col = 0; col < roi.Width; col++)
-            {
-                codes[(roi.Y + row) * width + roi.X + col] = roiValues[row, col];
-            }
-        }
-
-        return TestImages.FromCodes(codes, width, height, bitDepth: 12);
-    }
-
     [Fact]
     public void ComputeProfileStatistics_KnownValues()
     {
@@ -216,36 +196,6 @@ public class ProfileAndMetricsTests
         ProfileStatistics stats = ImageAnalysis.ComputeProfileStatistics(Array.Empty<double>());
         Assert.Equal(0, stats.Count);
         Assert.Equal(0, stats.Mean);
-    }
-
-    [Fact]
-    public void ComputeProjections_AveragesEachColumnAndRowWithinRoi()
-    {
-        // 8x5 の ROI(2,1,4,3) に
-        //   y=1:  90 190 290 390  → 平均 240
-        //   y=2: 100 200 300 400  → 平均 250
-        //   y=3: 110 210 310 410  → 平均 260
-        // を置く。列ごとの行方向平均は 100 / 200 / 300 / 400、行ごとの列方向平均は 240 / 250 / 260
-        var roi = new RegionOfInterest(2, 1, 4, 3);
-        ushort[,] roiValues =
-        {
-            { 90, 190, 290, 390 },
-            { 100, 200, 300, 400 },
-            { 110, 210, 310, 410 },
-        };
-        using RawImage image = MakeWithRoiValues(8, 5, roi, roiValues);
-
-        (double[] horizontal, double[] vertical) = ImageAnalysis.ComputeProjections(image, 0, roi);
-
-        Assert.Equal(4, horizontal.Length);
-        Assert.Equal(3, vertical.Length);
-        Assert.Equal(100, horizontal[0], 10);
-        Assert.Equal(200, horizontal[1], 10);
-        Assert.Equal(300, horizontal[2], 10);
-        Assert.Equal(400, horizontal[3], 10);
-        Assert.Equal(240, vertical[0], 10);
-        Assert.Equal(250, vertical[1], 10);
-        Assert.Equal(260, vertical[2], 10);
     }
 
     [Fact]

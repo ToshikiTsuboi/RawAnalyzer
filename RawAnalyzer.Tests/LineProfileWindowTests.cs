@@ -136,7 +136,7 @@ public class LineProfileWindowTests
     });
 
     [Fact]
-    public Task ManualScale_PersistsAcrossDirectionProjectionAndDataUpdates() => WpfTestHost.Run(() =>
+    public Task ManualScale_PersistsAcrossDirectionAndDataUpdates() => WpfTestHost.Run(() =>
     {
         var window = NewWindow();
         try
@@ -149,22 +149,17 @@ public class LineProfileWindowTests
             var expected = new ProfileAxisRange(-10.25, 1010.5);
             (ProfileWindowParts.Find<RadioButton>(window, "VerticalRadio")).IsChecked = true;
             Assert.Equal(expected, window.AxisRange);
-            (ProfileWindowParts.Find<CheckBox>(window, "ProjectionCheck")).IsChecked = true;
-            Assert.Equal(expected, window.AxisRange);
-            window.SetProfiles(new double[] { 1, 2 }, new double[] { 10, 20 }, Array.Empty<double>(),
-                Array.Empty<double>(), null, 0, 0, 255);
+            window.SetProfiles(new double[] { 1, 2 }, new double[] { 10, 20 }, 0, 0, 255);
             Assert.Equal(expected, window.AxisRange);
             mode.SelectedIndex = 0;
             Assert.Equal(new ProfileAxisRange(0, 255), window.AxisRange);
 
             // 自動スケールは空データでは全範囲、1点では±0.5に落ち、再描画で例外にならない
             mode.SelectedIndex = 1;
-            window.SetProfiles(Array.Empty<double>(), Array.Empty<double>(), Array.Empty<double>(),
-                Array.Empty<double>(), null, 0, 0, 1023);
+            window.SetProfiles(Array.Empty<double>(), Array.Empty<double>(), 0, 0, 1023);
             Assert.Equal(new ProfileAxisRange(0, 1023), window.AxisRange);
             Assert.Equal("1023", (ProfileWindowParts.Find<TextBlock>(window, "MaxLabel")).Text);
-            window.SetProfiles(new double[] { 25 }, new double[] { 25 }, Array.Empty<double>(),
-                Array.Empty<double>(), null, 0, 0, 1023);
+            window.SetProfiles(new double[] { 25 }, new double[] { 25 }, 0, 0, 1023);
             Assert.Equal(new ProfileAxisRange(24.5, 25.5), window.AxisRange);
         }
         finally
@@ -241,8 +236,7 @@ public class LineProfileWindowTests
         var window = NewWindow();
         try
         {
-            window.SetProfiles(new double[] { 0, maxCode }, new double[] { 0, maxCode },
-                Array.Empty<double>(), Array.Empty<double>(), null, 0, 0, maxCode);
+            window.SetProfiles(new double[] { 0, maxCode }, new double[] { 0, maxCode }, 0, 0, maxCode);
             var canvas = ProfileWindowParts.Find<Canvas>(window, "PlotCanvas");
             var position = new Point(canvas.ActualWidth / 2, 1 + (1 - anchor) * (canvas.ActualHeight - 2));
             for (int i = 0; i < 30; i++) window.ZoomAt(position, 1200, false, true);
@@ -261,95 +255,24 @@ public class LineProfileWindowTests
     });
 
     [Fact]
-    public Task WheelZoom_PreservesSubCodeAutoRangeButAllowsZoomOut() => WpfTestHost.Run(() =>
+    public Task AxisLabels_IdentifyDirectionInImageCoordinates() => WpfTestHost.Run(() =>
     {
-        var window = NewWindow();
-        try
-        {
-            (ProfileWindowParts.Find<CheckBox>(window, "ProjectionCheck")).IsChecked = true;
-            var mode = ProfileWindowParts.Find<ComboBox>(window, "YScaleCombo");
-            mode.SelectedIndex = 1;
-            ProfileAxisRange original = window.AxisRange;
-            double span = original.Maximum - original.Minimum;
-            Assert.InRange(span, 0.001, 0.01);
-            var canvas = ProfileWindowParts.Find<Canvas>(window, "PlotCanvas");
-            var center = new Point(canvas.ActualWidth / 2, canvas.ActualHeight / 2);
-            for (int i = 0; i < 20; i++) window.ZoomAt(center, 1200, false, true);
-            Assert.Equal(original, window.AxisRange);
-            Assert.Equal(1, mode.SelectedIndex);
-            window.ZoomAt(center, -120, false, true);
-            Assert.Equal(span * 1.2, window.AxisRange.Maximum - window.AxisRange.Minimum, 8);
-        }
-        finally
-        {
-            window.Close();
-        }
-    });
-
-    [Fact]
-    public Task HorizontalLabels_IdentifyDirectionAndUseRoiImageCoordinates() => WpfTestHost.Run(() =>
-    {
-        var window = NewWindow();
-        try
-        {
-            var title = ProfileWindowParts.Find<TextBlock>(window, "XAxisTitle");
-            Assert.Contains("水平プロファイル", title.Text);
-            Assert.Contains("x座標", title.Text);
-            (ProfileWindowParts.Find<RadioButton>(window, "VerticalRadio")).IsChecked = true;
-            Assert.Contains("垂直プロファイル", title.Text);
-            Assert.Contains("y座標", title.Text);
-            window.SetProfiles(new double[] { 1, 2, 3 }, new double[] { 4, 5, 6 },
-                new double[] { 10, 20, 30 }, new double[] { 40, 50, 60 },
-                new RegionOfInterest(100, 200, 3, 3), 0, 0, 255);
-            (ProfileWindowParts.Find<CheckBox>(window, "ProjectionCheck")).IsChecked = true;
-            var axis = ProfileWindowParts.Find<Canvas>(window, "XAxisCanvas");
-            Assert.Contains("垂直 ROI平均射影", title.Text);
-            Assert.Equal(new[] { "200", "201", "202" }, axis.Children.OfType<TextBlock>().Select(t => t.Text));
-            Assert.StartsWith("y,value" + Environment.NewLine + "200,40", window.BuildTable(','));
-            ProfileWindowParts.CaptureIfRequested(window, "profile-vertical-projection");
-            (ProfileWindowParts.Find<RadioButton>(window, "HorizontalRadio")).IsChecked = true;
-            Assert.Contains("水平 ROI平均射影", title.Text);
-            Assert.Equal(new[] { "100", "101", "102" }, axis.Children.OfType<TextBlock>().Select(t => t.Text));
-            Assert.StartsWith("x,value" + Environment.NewLine + "100,10", window.BuildTable(','));
-        }
-        finally
-        {
-            window.Close();
-        }
-    });
-
-    [Fact]
-    public Task SplitViewProjection_LabelsAxisAndTableAsDisplayCoordinates() => WpfTestHost.Run(() =>
-    {
-        // 全体レビュー 2026-10-01 B88。チャネル分割表示の ROI 平均射影は、ROI を描いた分割表示(タイル)の座標で
-        // 横軸・CSV/TSV を出す(MainWindow が ChannelRoiTarget の DisplayRoi を渡す)。それなのに軸の見出し・
-        // ツールチップは「画像座標」「元画像上の画素座標」、CSV の見出しは断面と同じ "x" で、元画像の列と
-        // 読み違えていた。分割表示の射影では表示座標であることを見出し・ツールチップ・CSV の見出しに示す
+        // 断面(行・列プロファイル)はチャネル分割表示でも元画像の列・行なので、横軸は画像座標。ROI の射影は
+        // 射影の窓へ移した(ProjectionWindowTests)
         var window = NewWindow();
         try
         {
             var title = ProfileWindowParts.Find<TextBlock>(window, "XAxisTitle");
             var axis = ProfileWindowParts.Find<Canvas>(window, "XAxisCanvas");
-            var projection = ProfileWindowParts.Find<CheckBox>(window, "ProjectionCheck");
-            window.SetProfiles(new double[] { 1, 2, 3 }, new double[] { 4, 5, 6 },
-                new double[] { 10, 20, 30 }, new double[] { 40, 50, 60 },
-                new RegionOfInterest(2100, 100, 3, 3), 0, 0, 4095,
-                projectionSourceRegion: new ChannelRegion(201, 200, 3, 3));
-            projection.IsChecked = true;
-
-            Assert.Contains("分割表示の座標", title.Text);
-            Assert.DoesNotContain("画像座標", title.Text);
-            Assert.Contains("分割表示", (string)axis.ToolTip);
-            Assert.DoesNotContain("元画像上の画素座標", (string)axis.ToolTip);
-            Assert.StartsWith("x_display,", window.BuildTable(','));
-            (ProfileWindowParts.Find<RadioButton>(window, "VerticalRadio")).IsChecked = true;
-            Assert.StartsWith("y_display,", window.BuildTable(','));
-
-            // 断面(行・列プロファイル)は分割表示でも元画像の列・行なので、従来どおり画像座標
-            projection.IsChecked = false;
-            Assert.Contains("画像座標", title.Text);
+            Assert.Equal("水平プロファイル — x座標 [px・画像座標]", title.Text);
             Assert.Contains("元画像上の画素座標", (string)axis.ToolTip);
-            Assert.StartsWith("y,value" + Environment.NewLine + "0,4", window.BuildTable(','));
+            ProfileWindowParts.Find<RadioButton>(window, "VerticalRadio").IsChecked = true;
+            Assert.Equal("垂直プロファイル — y座標 [px・画像座標]", title.Text);
+            Assert.StartsWith("y,value" + Environment.NewLine + "0,200", window.BuildTable(','));
+            Assert.Equal(new[] { "0", "1", "2", "3" }, axis.Children.OfType<TextBlock>().Select(t => t.Text));
+
+            // ROI の射影を選ぶ欄はもうない(射影は射影の窓で見る)
+            Assert.Null(window.FindName("ProjectionCheck"));
         }
         finally
         {
@@ -358,94 +281,29 @@ public class LineProfileWindowTests
     });
 
     [Fact]
-    public Task SplitViewProjection_TableAlsoHasSourceCoordinates() => WpfTestHost.Run(() =>
+    public Task Statistics_ShowIntegerMinMaxAndPeakToPeak() => WpfTestHost.Run(() =>
     {
-        // 残課題 2026-10-02 A5。チャネル分割表示の射影の CSV/TSV は表示(タイル)の座標 x_display / y_display だけで、
-        // 元画像のどの列・行の平均かを利用者が換算する必要があった。元画像の座標列(1チャネルの格子なので2画素おき)を
-        // 並べる。4000×3000 の分割表示で、右上の象限の (2100, 100) から 3×3 = 元画像の x 201,203,205 / y 200,202,204
-        var window = NewWindow();
-        try
-        {
-            window.SetProfiles(new double[] { 1, 2, 3 }, new double[] { 4, 5, 6 },
-                new double[] { 10, 20, 30 }, new double[] { 40, 50, 60 },
-                new RegionOfInterest(2100, 100, 3, 3), 0, 0, 4095,
-                projectionSourceRegion: new ChannelRegion(201, 200, 3, 3));
-            (ProfileWindowParts.Find<CheckBox>(window, "ProjectionCheck")).IsChecked = true;
-
-            string nl = Environment.NewLine;
-            Assert.Equal(
-                $"x_display,x_source,value{nl}2100,201,10{nl}2101,203,20{nl}2102,205,30{nl}",
-                window.BuildTable(','));
-            (ProfileWindowParts.Find<RadioButton>(window, "VerticalRadio")).IsChecked = true;
-            Assert.Equal(
-                $"y_display\ty_source\tvalue{nl}100\t200\t40{nl}101\t202\t50{nl}102\t204\t60{nl}",
-                window.BuildTable('\t'));
-        }
-        finally
-        {
-            window.Close();
-        }
-    });
-
-    [Fact]
-    public Task ProjectionStatistics_ShowSubCodeMinMaxAndPeakToPeak() => WpfTestHost.Run(() =>
-    {
-        // 全体レビュー 2026-10-01 B89。射影は ROI の直交方向の平均(実数)で、1 code 未満の列ムラを見るための
-        // 値なのに、最小・最大・P-P を F0 に丸めて「最小 1000 最大 1001 P-P 0」のように矛盾した値を出していた。
-        // 射影では平均・σ と同じ小数2桁で出す。整数の raw code の断面は従来どおり整数
+        // 断面は整数の raw code なので、統計の最小・最大・P-P は整数で出す(射影の窓は小数2桁)
         CultureInfo previousCulture = CultureInfo.CurrentCulture;
         CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo("ja-JP");
         var window = NewWindow();
         try
         {
-            var stats = ProfileWindowParts.Find<TextBlock>(window, "StatsText");
-            double[] projection = { 1000.40, 1000.55, 1000.60 };
-            window.SetProfiles(new double[] { 1000, 1001, 1003 }, new double[] { 1, 2, 3 },
-                projection, projection, new RegionOfInterest(0, 0, 3, 1000), 0, 0, 4095);
-            (ProfileWindowParts.Find<CheckBox>(window, "ProjectionCheck")).IsChecked = true;
+            window.SetProfiles(new double[] { 1000, 1001, 1003 }, new double[] { 1, 2, 3 }, 0, 0, 4095);
+            string stats = ProfileWindowParts.Find<TextBlock>(window, "StatsText").Text;
+            Assert.Contains("最小 1000 ", stats);
+            Assert.Contains("最大 1003 ", stats);
+            Assert.EndsWith("P-P 3", stats);
 
-            Assert.Contains("最小 1000.40", stats.Text);
-            Assert.Contains("最大 1000.60", stats.Text);
-            Assert.Contains("P-P 0.20", stats.Text);
-
-            (ProfileWindowParts.Find<CheckBox>(window, "ProjectionCheck")).IsChecked = false;
-            Assert.Contains("最小 1000 ", stats.Text);
-            Assert.Contains("最大 1003 ", stats.Text);
-            Assert.EndsWith("P-P 3", stats.Text);
-        }
-        finally
-        {
-            window.Close();
-            CultureInfo.CurrentCulture = previousCulture;
-        }
-    });
-
-    [Fact]
-    public Task ProjectionTableAndStatisticsCopy_KeepSubCodeDigitsOfFiveDigitCodes() => WpfTestHost.Run(() =>
-    {
-        // 射影は 1 code 未満の列ムラを見る値なのに、表(コピー・CSV/TSV)と統計のコピーは有効数字 6 桁で、
-        // 10000 code 以上(14bit・16bit の明るい画像)では小数 1 桁に丸まり、窓の統計(小数 2 桁)より粗かった
-        // (40000.43 が 40000.4)。小数を落とさない桁数で出す。整数の断面は従来どおり整数
-        var window = NewWindow();
-        try
-        {
-            double[] projection = { 40000.43, 40000.57, 40001.25 };
-            window.SetProfiles(new double[] { 40000, 40001, 40003 }, new double[] { 1, 2, 3 },
-                projection, projection, new RegionOfInterest(10, 20, 3, 1000), 0, 0, 65535);
-            (ProfileWindowParts.Find<CheckBox>(window, "ProjectionCheck")).IsChecked = true;
-
+            // 表(コピー・CSV)は 5 桁の raw code でもそのまま整数
             string nl = Environment.NewLine;
-            Assert.Equal($"x,value{nl}10,40000.43{nl}11,40000.57{nl}12,40001.25{nl}", window.BuildTable(','));
-            string statistics = window.BuildStatisticsTable()!;
-            Assert.Contains($"mean\t40000.75{nl}", statistics);
-            Assert.Contains($"min\t40000.43{nl}", statistics);
-
-            (ProfileWindowParts.Find<CheckBox>(window, "ProjectionCheck")).IsChecked = false;
+            window.SetProfiles(new double[] { 40000, 40001, 40003 }, new double[] { 1, 2, 3 }, 0, 0, 65535);
             Assert.Equal($"x,value{nl}0,40000{nl}1,40001{nl}2,40003{nl}", window.BuildTable(','));
         }
         finally
         {
             window.Close();
+            CultureInfo.CurrentCulture = previousCulture;
         }
     });
 
@@ -463,11 +321,9 @@ public class LineProfileWindowTests
             Assert.Equal(zoomedY, window.AxisRange);
             window.ZoomAt(new Point(canvas.ActualWidth / 2, canvas.ActualHeight / 2), 120, true, false);
             ProfileAxisRange x = window.HorizontalRange;
-            window.SetProfiles(new double[] { 1, 2 }, new double[] { 10, 20, 30, 40 },
-                Array.Empty<double>(), Array.Empty<double>(), null, 1, 1, 255);
+            window.SetProfiles(new double[] { 1, 2 }, new double[] { 10, 20, 30, 40 }, 1, 1, 255);
             Assert.Equal(x, window.HorizontalRange); // 同じ向き・長さの別ラインでは維持
-            window.SetProfiles(new double[] { 1, 2 }, new double[] { 10, 20 },
-                Array.Empty<double>(), Array.Empty<double>(), null, 1, 1, 255);
+            window.SetProfiles(new double[] { 1, 2 }, new double[] { 10, 20 }, 1, 1, 255);
             Assert.Equal(new ProfileAxisRange(0, 1), window.HorizontalRange);
         }
         finally
@@ -480,15 +336,13 @@ public class LineProfileWindowTests
     public Task OutsideImage_ClearsPreviousProfileAndKeepsPointAndDirection() => WpfTestHost.Run(() =>
     {
         // 送り・差し替えの後は同じ基準点で計算し直すが、寸法の違う画像では基準点が範囲外になり得る。
-        // 前の画像の断面・射影・統計を残すと送った先の画像の値と誤読されるので、範囲外であることを示して
+        // 前の画像の断面・統計を残すと送った先の画像の値と誤読されるので、範囲外であることを示して
         // データを空にする(コピー・CSVにも出さない)。基準点・方向・縦軸の設定は保ち、範囲内の画像へ
         // 戻れば同じ点・同じ方向で出し直せるようにする
         var window = NewWindow();
         try
         {
             (ProfileWindowParts.Find<RadioButton>(window, "VerticalRadio")).IsChecked = true;
-            var projection = ProfileWindowParts.Find<CheckBox>(window, "ProjectionCheck");
-            projection.IsChecked = true;
             var mode = ProfileWindowParts.Find<ComboBox>(window, "YScaleCombo");
             mode.SelectedIndex = 2;
             (ProfileWindowParts.Find<TextBox>(window, "YMinimumBox")).Text = "100";
@@ -504,15 +358,12 @@ public class LineProfileWindowTests
             Assert.Contains("範囲外", stats);
             Assert.Contains("640×480", stats);
             Assert.Contains("範囲外", window.Title);
-            Assert.False(projection.IsEnabled);
-            Assert.False(projection.IsChecked);
             Assert.True(window.IsOutsideImage);
             Assert.Equal((1000, 2), window.CurrentPoint);
             Assert.False(window.IsHorizontal);
             ProfileWindowParts.CaptureIfRequested(window, "profile-outside");
 
-            window.SetProfiles(new double[] { 1, 2 }, new double[] { 7, 8, 9 },
-                Array.Empty<double>(), Array.Empty<double>(), null, 1000, 2, 1023);
+            window.SetProfiles(new double[] { 1, 2 }, new double[] { 7, 8, 9 }, 1000, 2, 1023);
             Assert.False(window.IsOutsideImage);
             Assert.False(window.IsHorizontal);
             Assert.StartsWith("y,value" + Environment.NewLine + "0,7", window.BuildTable(','));
@@ -530,9 +381,7 @@ public class LineProfileWindowTests
         var window = new LineProfileWindow();
         double[] row = Enumerable.Range(0, 2000).Select(i => 1000.0 + 5 * Math.Sin(i / 30.0)).ToArray();
         double[] column = new double[] { 200, 220, 240, 220 };
-        double[] projection = new double[] { 1000.001, 1000.002, 1000.003 };
-        window.SetProfiles(row, column, projection, projection,
-            new RegionOfInterest(0, 0, 3, 3), 1000, 2, 4095);
+        window.SetProfiles(row, column, 1000, 2, 4095);
         ProfileWindowParts.Layout(window);
         return window;
     }

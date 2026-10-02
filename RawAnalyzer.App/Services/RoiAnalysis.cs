@@ -207,28 +207,6 @@ internal static class RoiAnalysis
     }
 
     /// <summary>
-    /// ROIの水平・垂直射影を計算する(重い処理。UIスレッド外で呼ぶ)。
-    /// ROIがない、または対応づけできない場合は空を返す。
-    /// </summary>
-    /// <param name="image">対象画像。</param>
-    /// <param name="frame">フレーム番号。</param>
-    /// <param name="target">集計対象。</param>
-    /// <param name="cancellationToken">キャンセルトークン。</param>
-    /// <returns>水平射影と垂直射影。</returns>
-    internal static (double[] Horizontal, double[] Vertical) ComputeProjections(
-        RawImage image, int frame, RoiAnalysisTarget target, CancellationToken cancellationToken)
-    {
-        return target switch
-        {
-            SourceRoiTarget source => ImageAnalysis.ComputeProjections(
-                image, frame, source.Roi, cancellationToken),
-            ChannelRoiTarget channel => ChannelRegionAnalysis.ComputeProjections(
-                image, frame, channel.Region, cancellationToken),
-            _ => (Array.Empty<double>(), Array.Empty<double>()),
-        };
-    }
-
-    /// <summary>
     /// 集計対象のノイズを測定する(重い処理。UIスレッド外で呼ぶ)。
     /// </summary>
     /// <param name="image">対象画像(A)。</param>

@@ -97,6 +97,38 @@ public class ProjectionWindowTests
     });
 
     [Fact]
+    public Task TableAndStatisticsCopy_KeepSubCodeDigitsOfFiveDigitCodes() => WpfTestHost.Run(() =>
+    {
+        // 射影は 1 code 未満の列ムラを見る値なので、14bit・16bit の明るい画像(10000 code 以上)でも表(コピー・CSV/TSV)と
+        // 統計のコピーで小数を落とさない(有効数字 6 桁では 40000.43 が 40000.4 になり、窓の統計より粗かった)
+        var window = NewWindow(ProjectionDirection.Horizontal);
+        try
+        {
+            window.ShowResult("対象: ROI (10, 20, 3×1000)",
+                new ProjectionProfile
+                {
+                    Mean = new[] { 40000.43, 40000.57, 40001.25 },
+                    Min = new double[] { 39990, 39991, 39992 },
+                    Max = new double[] { 40010, 40011, 40012 },
+                    SamplesPerPosition = 1000,
+                },
+                new ProjectionAxis(10, null), 65535);
+
+            string nl = Environment.NewLine;
+            Assert.Equal(
+                $"x,mean,min,max{nl}10,40000.43,39990,40010{nl}11,40000.57,39991,40011{nl}12,40001.25,39992,40012{nl}",
+                window.BuildTable(','));
+            string statistics = window.BuildStatisticsTable()!;
+            Assert.Contains($"mean	40000.75{nl}", statistics);
+            Assert.Contains($"min	40000.43{nl}", statistics);
+        }
+        finally
+        {
+            window.Close();
+        }
+    });
+
+    [Fact]
     public Task SplitView_LabelsAxisAndTableAsDisplayCoordinatesWithSourceColumn() => WpfTestHost.Run(() =>
     {
         // チャネル分割表示の射影は、ROI を描いた分割表示(タイル)の座標で横軸・CSV/TSV を出す。元画像の列と読み違えないよう

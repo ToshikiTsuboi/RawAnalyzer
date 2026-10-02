@@ -13,10 +13,6 @@
             <RadioButton x:Name="VerticalRadio" Content="垂直"
                          Margin="0,0,16,0" VerticalAlignment="Center"
                          Checked="OnDirectionChanged" />
-            <CheckBox x:Name="ProjectionCheck" Content="ROI平均射影" IsEnabled="False"
-                      VerticalAlignment="Center" Margin="0,0,16,0"
-                      ToolTip="ROI内を直交方向に平均した射影プロファイルを表示します"
-                      Checked="OnDirectionChanged" Unchecked="OnDirectionChanged" />
             <TextBlock x:Name="InfoText" FontFamily="Consolas" FontSize="12"
                        Foreground="#FF9A9A95" VerticalAlignment="Center" />
         </WrapPanel>

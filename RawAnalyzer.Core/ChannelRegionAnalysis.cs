@@ -5,9 +5,10 @@ namespace RawAnalyzer.Core;
 /// チャネル分割表示で選んだROIを、表示されている画素だけで集計するために使う。
 /// </summary>
 /// <remarks>
-/// 値はすべてraw code値域で返す。統計・射影・ノイズの定義は矩形版
+/// 値はすべてraw code値域で返す。統計・ノイズの定義は矩形版
 /// (<see cref="ImageAnalysis"/> / <see cref="NoiseAnalysis"/>)と揃えてあり、
-/// 格子の画素だけを並べた画像を矩形版で解析した結果と一致する。
+/// 格子の画素だけを並べた画像を矩形版で解析した結果と一致する。射影は矩形と格子の両方を
+/// <see cref="ProjectionAnalysis"/> が求める。
 /// ノイズは、集計した画素から測定値を求める部分を矩形版と共有している(違うのは画素の走査だけ)。
 /// 格子は1チャネルなので、Bayerのチャネル別プールは不要(σはそのチャネルのσ)。
 /// </remarks>
@@ -97,53 +98,6 @@ public static class ChannelRegionAnalysis
             Statistics = new RegionStatistics(
                 mean, Math.Sqrt(Math.Max(0, variance)), min, max, count),
         };
-    }
-
-    /// <summary>
-    /// 領域の水平射影(格子の各列について縦方向の平均)と垂直射影(各行について横方向の平均)を
-    /// 1回の走査で求める。
-    /// </summary>
-    /// <param name="image">対象画像。</param>
-    /// <param name="frame">フレーム番号。</param>
-    /// <param name="region">対象領域(画像範囲内であること)。</param>
-    /// <param name="cancellationToken">キャンセルトークン。</param>
-    /// <returns>水平射影(領域幅ぶん)と垂直射影(領域高さぶん)のraw code平均。</returns>
-    /// <exception cref="ArgumentOutOfRangeException">領域が画像の範囲外の場合。</exception>
-    public static (double[] Horizontal, double[] Vertical) ComputeProjections(
-        RawImage image, int frame, ChannelRegion region,
-        CancellationToken cancellationToken = default)
-    {
-        ThrowIfOutside(image, region);
-        if (region.PixelCount == 0)
-        {
-            return (Array.Empty<double>(), Array.Empty<double>());
-        }
-
-        int shift = 16 - image.Format.BitDepth;
-        var columnSums = new double[region.Width];
-        var rowMeans = new double[region.Height];
-        var row = new ushort[SourceSpan(region)];
-        for (int j = 0; j < region.Height; j++)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            image.CopyRegion(frame, region.X, region.Y + 2 * j, row.Length, 1, row);
-            double rowSum = 0;
-            for (int i = 0; i < region.Width; i++)
-            {
-                int code = row[2 * i] >> shift;
-                columnSums[i] += code;
-                rowSum += code;
-            }
-
-            rowMeans[j] = rowSum / region.Width;
-        }
-
-        for (int i = 0; i < columnSums.Length; i++)
-        {
-            columnSums[i] /= region.Height;
-        }
-
-        return (columnSums, rowMeans);
     }
 
     /// <summary>

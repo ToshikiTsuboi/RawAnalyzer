@@ -186,36 +186,6 @@ public class RoiAnalysisTests
     }
 
     [Fact]
-    public void ChannelTarget_Projections_UseOnlyDisplayedPixels()
-    {
-        // 値 = y*8+x の 8×4。分割表示の右上象限(Gr)の2×2 → 元画像 x=1,3 / y=0,2
-        ushort[] codes = Enumerable.Range(0, 32).Select(i => (ushort)i).ToArray();
-        using RawImage image = TestImages.FromCodes(codes, 8, 4, 16, BayerPattern.Rggb);
-        RoiAnalysisTarget target = RoiAnalysis.Resolve(
-            new RegionOfInterest(4, 0, 2, 2), true, 8, 4, BayerPattern.Rggb);
-
-        (double[] horizontal, double[] vertical) =
-            RoiAnalysis.ComputeProjections(image, 0, target, CancellationToken.None);
-
-        Assert.Equal(new[] { (1 + 17) / 2.0, (3 + 19) / 2.0 }, horizontal);
-        Assert.Equal(new[] { (1 + 3) / 2.0, (17 + 19) / 2.0 }, vertical);
-    }
-
-    [Fact]
-    public void UnsupportedTarget_ProjectionsAreEmpty()
-    {
-        using RawImage image = Rggb4x4();
-        RoiAnalysisTarget target = RoiAnalysis.Resolve(
-            new RegionOfInterest(1, 1, 2, 2), true, 4, 4, BayerPattern.Rggb);
-
-        (double[] horizontal, double[] vertical) =
-            RoiAnalysis.ComputeProjections(image, 0, target, CancellationToken.None);
-
-        Assert.Empty(horizontal);
-        Assert.Empty(vertical);
-    }
-
-    [Fact]
     public void ChannelTarget_Noise_UsesOnlyThatChannel()
     {
         // Rは2枚とも一定(ノイズ0)、他チャネルは揺らぐ。R象限のROIならσはすべて0。

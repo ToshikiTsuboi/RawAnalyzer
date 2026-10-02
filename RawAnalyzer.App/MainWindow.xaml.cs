@@ -93,7 +93,7 @@ public partial class MainWindow : Window
         previous?.Cancel();
     }
 
-    // プロファイル/射影はヒストグラムとは独立に走るので別のトークンで打ち切る
+    // ラインプロファイルはヒストグラムとは独立に走るので別のトークンで打ち切る(射影の窓は ProjectionWindowController)
     private CancellationTokenSource? _profileCts;
 
     private void ReplaceProfileCts(CancellationTokenSource? next)
@@ -1408,7 +1408,7 @@ public partial class MainWindow : Window
         }
         else if (Viewport.InteractionMode == ViewportInteractionMode.RoiSelect)
         {
-            // モードを抜けてもROI選択自体は保持する(射影プロファイル等で使うため)。
+            // モードを抜けてもROI選択自体は保持する(射影の窓・統計で使うため)。
             // 解除は右クリックメニューの「ROIを解除」から行う
             Viewport.InteractionMode = ViewportInteractionMode.Pan;
         }
@@ -1474,8 +1474,8 @@ public partial class MainWindow : Window
     /// <remarks>
     /// ヒストグラム・ROI統計と同じ扱い。フレーム・ページ・ファイルの送り(再生中は止めたとき。
     /// <see cref="RefreshAfterSequenceMove"/>)と、別ファイルを開く・処理結果での差し替え・HDR表示の出入りの後に
-    /// 呼ぶ。射影は送った後(差し替えた後)のROIで求める。基準点は元画像の座標のまま使い、寸法の違う画像で
-    /// 範囲外になったら前の断面を残さず範囲外であることを示す。窓を閉じていれば何もしない。
+    /// 呼ぶ。基準点は元画像の座標のまま使い、寸法の違う画像で範囲外になったら前の断面を残さず範囲外であることを示す。
+    /// 窓を閉じていれば何もしない(ROI の射影は射影の窓が RefreshProjections で計算し直す)。
     /// </remarks>
     private void RefreshLineProfile()
     {
@@ -1489,7 +1489,7 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// 表示中の画像・フレームで、基準点を通る断面と表示中のROIの射影を計算し、ラインプロファイル窓に出す。
+    /// 表示中の画像・フレームで、基準点を通る断面を計算し、ラインプロファイル窓に出す。
     /// </summary>
     /// <param name="sourceX">基準点の元画像X座標。</param>
     /// <param name="sourceY">基準点の元画像Y座標。</param>
@@ -1506,21 +1506,8 @@ public partial class MainWindow : Window
 
         int frame = Viewport.Frame;
         var analyzed = new AnalysisSource(image, frame);
-        RegionOfInterest? roi = Viewport.Roi is { PixelCount: > 0 } r ? r : null;
 
-        // 射影はROIに表示されている画素だけで取る(チャネル分割では1チャネルの格子)。
-        // 象限をまたぐなど対応づけられないROIの射影は出さない。
-        // 射影の横軸はROIを描いた表示座標で示す
-        RoiAnalysisTarget target = ResolveRoiTarget(image, roi);
-        RegionOfInterest? projectionRoi = target switch
-        {
-            SourceRoiTarget source => source.Roi,
-            ChannelRoiTarget channel => channel.DisplayRoi,
-            _ => null,
-        };
-
-        // 全面ROIの巨大画像では射影に時間がかかる。次のクリックや
-        // 画像切替で確実に打ち切れるようにトークンを渡す
+        // 巨大画像の列の断面は全行を読む。次のクリックや画像切替で確実に打ち切れるようにトークンを渡す
         var cts = new CancellationTokenSource();
         ReplaceProfileCts(cts);
         CancellationToken token = cts.Token;
@@ -1528,7 +1515,7 @@ public partial class MainWindow : Window
         try
         {
             data = await Task.Run(
-                () => LineProfileData.Compute(image, frame, sourceX, sourceY, target, token), token);
+                () => LineProfileData.Compute(image, frame, sourceX, sourceY, token), token);
         }
         catch (Exception)
         {
@@ -1583,9 +1570,7 @@ public partial class MainWindow : Window
         }
         else
         {
-            _profileWindow.SetProfiles(
-                data.Row, data.Column, data.HorizontalProjection, data.VerticalProjection, projectionRoi,
-                sourceX, sourceY, maxCode, projectionSourceRegion: (target as ChannelRoiTarget)?.Region);
+            _profileWindow.SetProfiles(data.Row, data.Column, sourceX, sourceY, maxCode);
 
             // 表示座標(e.X, e.Y)で渡すと、分割⇔非分割の切替後にプロファイルと別の行・列を指す
             Viewport.SetProfileMarker(sourceX, sourceY, _profileWindow.IsHorizontal);

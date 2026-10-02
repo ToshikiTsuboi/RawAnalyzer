@@ -6,17 +6,6 @@ namespace RawAnalyzer.Tests;
 public class ProjectionAndOverflowTests
 {
     [Fact]
-    public void ComputeProjections_Canceled_Throws()
-    {
-        using RawImage image = TestImages.FromCodes(new ushort[64 * 64], 64, 64);
-        using var cts = new CancellationTokenSource();
-        cts.Cancel();
-
-        Assert.Throws<OperationCanceledException>(() => ImageAnalysis.ComputeProjections(
-            image, 0, new RegionOfInterest(0, 0, 64, 64), cts.Token));
-    }
-
-    [Fact]
     public void RequiredBytes_HugeFrameCount_ThrowsInsteadOfOverflowing()
     {
         // 掛け算が桁あふれすると負のサイズになり、ファイル長の検証を素通りする
