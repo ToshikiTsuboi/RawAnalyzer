@@ -5,6 +5,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Shapes;
+using System.Windows.Threading;
 using Microsoft.Win32;
 using RawAnalyzer.App.Controls;
 using RawAnalyzer.App.Services;
@@ -60,7 +61,14 @@ public partial class ProfilePlotView : UserControl
     private ProfileAxisRange? _manualRange;
     private bool _extraSeriesVisible = true;
     private string? _statsMessage;
+
+    // グラフの上に出すメッセージ(ShowMessage のもの)。データを設定したら消す
+    private string? _overlayMessage;
     private string? _busyMessage;
+
+    // 計算中の表示(薄くする・知らせを出す)を始めたか。すぐ終わる計算でちらつかせないよう少し遅らせて始める
+    private bool _busyShown;
+    private DispatcherTimer? _busyTimer;
     private bool _ready;
     private bool _updatingScaleControls;
 
@@ -89,6 +97,9 @@ public partial class ProfilePlotView : UserControl
 
     /// <summary>計算中(前のデータを薄く残し、コピー・CSV はしない)か。</summary>
     internal bool IsBusy => _busyMessage is not null;
+
+    /// <summary>計算中の表示を遅らせる時間(すぐ終わる計算でちらつかせない)。0 ならすぐ出す。</summary>
+    internal TimeSpan BusyDelay { get; set; } = TimeSpan.FromMilliseconds(150);
 
     /// <summary>表示中の縦軸の範囲。</summary>
     internal ProfileAxisRange AxisRange => _axisRange;
@@ -119,7 +130,8 @@ public partial class ProfilePlotView : UserControl
         EndPan();
         _data = data with { MaxCode = Math.Max(1, data.MaxCode) };
         _statsMessage = null;
-        _busyMessage = null;
+        _overlayMessage = null;
+        EndBusy();
         if (previousCount != data.Values.Length || previousOffset != data.CoordinateOffset) _horizontalRange = null;
         Redraw();
     }
@@ -141,18 +153,62 @@ public partial class ProfilePlotView : UserControl
 
     /// <summary>
     /// 計算中を示す。前のデータは薄く残し(横軸の拡大を保つため)、統計の欄とグラフの上に知らせを出す。
-    /// 計算中はデータ・統計のコピーと CSV 保存をしない(前の対象の値を出さない)。
+    /// 計算中はデータ・統計のコピーと CSV 保存をしない(前の対象の値を出さない)。見た目は <see cref="BusyDelay"/>
+    /// だけ遅らせる(その前に結果が来ればちらつかない。コピーはすぐ止める)。
     /// </summary>
     /// <param name="message">知らせ。</param>
     internal void ShowBusy(string message)
     {
         EndPan();
         _busyMessage = message;
+        _busyShown = false;
+        _busyTimer?.Stop();
+        if (BusyDelay <= TimeSpan.Zero)
+        {
+            _busyShown = true;
+        }
+        else
+        {
+            if (_busyTimer is null)
+            {
+                _busyTimer = new DispatcherTimer(DispatcherPriority.Normal, Dispatcher);
+                _busyTimer.Tick += (_, _) =>
+                {
+                    _busyTimer.Stop();
+                    if (IsBusy)
+                    {
+                        _busyShown = true;
+                        Redraw();
+                    }
+                };
+            }
+
+            _busyTimer.Interval = BusyDelay;
+            _busyTimer.Start();
+        }
+
         Redraw();
     }
 
-    // グラフの上に出すメッセージ(ShowMessage のもの)。データを設定したら消す
-    private string? _overlayMessage;
+    /// <summary>計算中の知らせを差し替える(進み具合。グラフは描き直さない)。</summary>
+    /// <param name="message">知らせ。</param>
+    internal void UpdateBusyMessage(string message)
+    {
+        if (!IsBusy) return;
+        _busyMessage = message;
+        if (_busyShown)
+        {
+            StatsText.Text = message;
+            OverlayText.Text = message;
+        }
+    }
+
+    private void EndBusy()
+    {
+        _busyMessage = null;
+        _busyShown = false;
+        _busyTimer?.Stop();
+    }
 
     /// <summary>横軸の見出しとツールチップを設定する。</summary>
     /// <param name="title">見出し。</param>
@@ -175,6 +231,7 @@ public partial class ProfilePlotView : UserControl
     internal void EndInteraction()
     {
         EndPan();
+        _busyTimer?.Stop();
         YScalePopup.IsOpen = false;
     }
 
@@ -356,17 +413,18 @@ public partial class ProfilePlotView : UserControl
         // 断面は整数の raw code なので最小・最大・P-P は整数で出す。射影は直交方向の平均(実数)で 1 code 未満の
         // 列ムラを見るための値なので、整数に丸めず平均・σ と同じ小数2桁で出す
         string extremeFormat = _data.IntegerValues ? "F0" : "F2";
-        StatsText.Text = _busyMessage ?? _statsMessage ?? (stats.Count == 0
+        string? busy = _busyShown ? _busyMessage : null;
+        StatsText.Text = busy ?? _statsMessage ?? (stats.Count == 0
             ? "—"
             : $"N={stats.Count}   平均 {stats.Mean:F2}   最小 {stats.Min.ToString(extremeFormat)}   " +
               $"最大 {stats.Max.ToString(extremeFormat)}   中央値 {stats.Median:F1}   σ {stats.Sigma:F2}   " +
               $"P-P {(stats.Max - stats.Min).ToString(extremeFormat)}");
 
         // 計算中は前のデータを薄く残し、上に知らせを出す。断る理由などもグラフの上に出す
-        string? overlay = _busyMessage ?? _overlayMessage;
+        string? overlay = busy ?? _overlayMessage;
         OverlayText.Text = overlay ?? "";
         OverlayText.Visibility = overlay is null ? Visibility.Collapsed : Visibility.Visible;
-        double opacity = IsBusy ? 0.35 : 1;
+        double opacity = busy is not null ? 0.35 : 1;
         PlotCanvas.Opacity = opacity;
         XAxisCanvas.Opacity = opacity;
         bool exportable = !IsBusy && data.Length > 0;
