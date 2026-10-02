@@ -1384,7 +1384,8 @@ public sealed class ImageViewport : FrameworkElement
             return;
         }
 
-        ModifierKeys modifiers = Keyboard.Modifiers;
+        // 修飾キーはこのキー入力を起こしたキーボードから読む(実際の入力では Keyboard.Modifiers と同じ)
+        ModifierKeys modifiers = e.KeyboardDevice.Modifiers;
         e.Handled = true;
         if (modifiers.HasFlag(ModifierKeys.Control))
         {

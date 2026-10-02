@@ -1,4 +1,3 @@
-using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Interop;
@@ -899,48 +898,40 @@ public class ImageViewportTests
     });
 
     /// <summary>
-    /// Ctrl を押したまま矢印キーを押す。ビューポートは Ctrl の状態を <see cref="Keyboard.Modifiers"/>
-    /// (このスレッドのキーボード状態)から読むので、その間だけこのスレッドのキーボード状態で Ctrl を押した扱いにする
-    /// (ほかのスレッド・アプリの入力には影響しない)。
+    /// Ctrl を押したまま矢印キーを押す。ビューポートは Ctrl の状態をキー入力を起こしたキーボードから読むので、
+    /// Ctrl を押した状態を返すキーボードでキー入力を起こす。
     /// </summary>
+    /// <remarks>
+    /// 以前はこのスレッドのキーボード状態(SetKeyboardState)で Ctrl を押した扱いにしていたが、スレッドの入力状態は
+    /// ほかのスレッドと共有されることがあり(同じ机上で別のアプリの入力が進むなど)、全体を流すとまれに直後の
+    /// Keyboard.Modifiers が None に戻って失敗していた(OS の入力状態に頼らない)。
+    /// </remarks>
     private static void PressWithControl(UIElement target, Key key)
     {
-        const int VkControl = 0x11;
-        const int VkLeftControl = 0xA2;
-        var saved = new byte[256];
-        Assert.True(GetKeyboardState(saved));
-        var pressed = (byte[])saved.Clone();
-        pressed[VkControl] |= 0x80;
-        pressed[VkLeftControl] |= 0x80;
-        Assert.True(SetKeyboardState(pressed));
-        try
+        _controlHeld ??= new ControlHeldKeyboard();
+        Assert.Equal(ModifierKeys.Control, _controlHeld.Modifiers);
+        var source = new TestInputSource();
+        var preview = new KeyEventArgs(_controlHeld, source, Environment.TickCount, key)
         {
-            Assert.Equal(ModifierKeys.Control, Keyboard.Modifiers);
-            var source = new TestInputSource();
-            var preview = new KeyEventArgs(Keyboard.PrimaryDevice, source, Environment.TickCount, key)
-            {
-                RoutedEvent = Keyboard.PreviewKeyDownEvent,
-            };
-            target.RaiseEvent(preview);
-            target.RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice, source, Environment.TickCount, key)
-            {
-                RoutedEvent = Keyboard.KeyDownEvent,
-                Handled = preview.Handled,
-            });
-        }
-        finally
+            RoutedEvent = Keyboard.PreviewKeyDownEvent,
+        };
+        target.RaiseEvent(preview);
+        target.RaiseEvent(new KeyEventArgs(_controlHeld, source, Environment.TickCount, key)
         {
-            SetKeyboardState(saved);
-        }
+            RoutedEvent = Keyboard.KeyDownEvent,
+            Handled = preview.Handled,
+        });
     }
 
-    [DllImport("user32.dll", ExactSpelling = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool GetKeyboardState(byte[] keyState);
+    // UI テストのスレッド(InputManager はスレッドごと)で初めて使うときに作る
+    private static ControlHeldKeyboard? _controlHeld;
 
-    [DllImport("user32.dll", ExactSpelling = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool SetKeyboardState(byte[] keyState);
+    /// <summary>左 Ctrl だけを押した状態を返すキーボード(OS のキーボード状態を読まない)。</summary>
+    private sealed class ControlHeldKeyboard() : KeyboardDevice(InputManager.Current)
+    {
+        protected override KeyStates GetKeyStatesFromSystem(Key key) =>
+            key == Key.LeftCtrl ? KeyStates.Down : KeyStates.None;
+    }
 
     /// <summary>ウィンドウを表示せずにキー入力イベントを作るための入力元。</summary>
     private sealed class TestInputSource : PresentationSource
