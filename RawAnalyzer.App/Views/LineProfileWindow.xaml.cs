@@ -448,9 +448,41 @@ public partial class LineProfileWindow : Window
                 sb.Append(sourceOrigin + (2L * i)).Append(separator);
             }
 
-            sb.Append(data[i].ToString("G6", CultureInfo.InvariantCulture)).AppendLine();
+            sb.Append(FormatValue(data[i])).AppendLine();
         }
 
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// 表・統計のコピーに出す値。射影(直交方向の平均)は 1 code 未満の列ムラを見る値なので、5 桁の raw code でも
+    /// 小数を落とさない桁数で出す(整数の raw code の断面は従来どおり整数になる)。
+    /// </summary>
+    /// <remarks>
+    /// 以前は有効数字 6 桁(G6)で、14bit・16bit の明るい画像(10000 code 以上)では射影の値が小数 1 桁に丸まり、
+    /// 窓の統計(小数 2 桁)より粗い値がコピー・CSV に出ていた(40000.43 が 40000.4)。
+    /// </remarks>
+    private static string FormatValue(double value) => value.ToString("G9", CultureInfo.InvariantCulture);
+
+    /// <summary>統計のコピー(Excel 貼り付け用の TSV)。データがなければ null。</summary>
+    internal string? BuildStatisticsTable()
+    {
+        // データがない(基準点が範囲外など)ときは、0 を並べた統計を実測値のようにコピーしない
+        // (データのコピー・CSV保存と同じ)
+        if (CurrentData.Length == 0)
+        {
+            return null;
+        }
+
+        ProfileStatistics stats = CurrentStatistics;
+        var sb = new StringBuilder();
+        sb.AppendLine("metric\tvalue");
+        sb.Append("N\t").Append(stats.Count).AppendLine();
+        sb.Append("mean\t").Append(FormatValue(stats.Mean)).AppendLine();
+        sb.Append("min\t").Append(FormatValue(stats.Min)).AppendLine();
+        sb.Append("max\t").Append(FormatValue(stats.Max)).AppendLine();
+        sb.Append("median\t").Append(FormatValue(stats.Median)).AppendLine();
+        sb.Append("sigma\t").Append(FormatValue(stats.Sigma)).AppendLine();
         return sb.ToString();
     }
 
@@ -461,23 +493,10 @@ public partial class LineProfileWindow : Window
 
     private void OnCopyStatsClick(object sender, RoutedEventArgs e)
     {
-        // データがない(基準点が範囲外など)ときは、0 を並べた統計を実測値のようにコピーしない
-        // (データのコピー・CSV保存と同じ)
-        if (CurrentData.Length == 0)
+        if (BuildStatisticsTable() is { } table)
         {
-            return;
+            ClipboardHelper.TrySetText(table);
         }
-
-        ProfileStatistics stats = CurrentStatistics;
-        var sb = new StringBuilder();
-        sb.AppendLine("metric\tvalue");
-        sb.Append("N\t").Append(stats.Count).AppendLine();
-        sb.Append("mean\t").Append(stats.Mean.ToString("G6", CultureInfo.InvariantCulture)).AppendLine();
-        sb.Append("min\t").Append(stats.Min.ToString("G6", CultureInfo.InvariantCulture)).AppendLine();
-        sb.Append("max\t").Append(stats.Max.ToString("G6", CultureInfo.InvariantCulture)).AppendLine();
-        sb.Append("median\t").Append(stats.Median.ToString("G6", CultureInfo.InvariantCulture)).AppendLine();
-        sb.Append("sigma\t").Append(stats.Sigma.ToString("G6", CultureInfo.InvariantCulture)).AppendLine();
-        ClipboardHelper.TrySetText(sb.ToString());
     }
 
     private void OnSaveCsvClick(object sender, RoutedEventArgs e)

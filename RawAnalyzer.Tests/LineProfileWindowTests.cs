@@ -422,6 +422,35 @@ public class LineProfileWindowTests
     });
 
     [Fact]
+    public Task ProjectionTableAndStatisticsCopy_KeepSubCodeDigitsOfFiveDigitCodes() => WpfTestHost.Run(() =>
+    {
+        // 射影は 1 code 未満の列ムラを見る値なのに、表(コピー・CSV/TSV)と統計のコピーは有効数字 6 桁で、
+        // 10000 code 以上(14bit・16bit の明るい画像)では小数 1 桁に丸まり、窓の統計(小数 2 桁)より粗かった
+        // (40000.43 が 40000.4)。小数を落とさない桁数で出す。整数の断面は従来どおり整数
+        var window = NewWindow();
+        try
+        {
+            double[] projection = { 40000.43, 40000.57, 40001.25 };
+            window.SetProfiles(new double[] { 40000, 40001, 40003 }, new double[] { 1, 2, 3 },
+                projection, projection, new RegionOfInterest(10, 20, 3, 1000), 0, 0, 65535);
+            ((CheckBox)window.FindName("ProjectionCheck")).IsChecked = true;
+
+            string nl = Environment.NewLine;
+            Assert.Equal($"x,value{nl}10,40000.43{nl}11,40000.57{nl}12,40001.25{nl}", window.BuildTable(','));
+            string statistics = window.BuildStatisticsTable()!;
+            Assert.Contains($"mean\t40000.75{nl}", statistics);
+            Assert.Contains($"min\t40000.43{nl}", statistics);
+
+            ((CheckBox)window.FindName("ProjectionCheck")).IsChecked = false;
+            Assert.Equal($"x,value{nl}0,40000{nl}1,40001{nl}2,40003{nl}", window.BuildTable(','));
+        }
+        finally
+        {
+            window.Close();
+        }
+    });
+
+    [Fact]
     public Task DataOrDirectionChanges_ResetOnlyObsoleteHorizontalZoom() => WpfTestHost.Run(() =>
     {
         var window = NewWindow();
