@@ -29,15 +29,6 @@ public class VideoSettingsTests
         Assert.Equal(15, FpsInput.Parse(text, fallback: 15), 10);
     }
 
-    [Theory]
-    [InlineData("0", 15)]     // 0は不正(ゼロ除算になる)ので既定値
-    [InlineData("999", 240)]  // 上限へクランプ
-    [InlineData("0.01", 0.1)] // 下限へクランプ
-    public void Parse_ClampsToSupportedRange(string text, double expected)
-    {
-        Assert.Equal(expected, FpsInput.Parse(text, fallback: 15), 10);
-    }
-
     [Fact]
     public void ParseInteger_RoundsAndKeepsAtLeastOne()
     {
@@ -125,9 +116,9 @@ public class VideoSettingsTests
     [InlineData(null, 15, "空のため、既定の 15 fps を使います")]
     [InlineData("abc", 15, "「abc」からフレームレートを読めないため、既定の 15 fps を使います")]
     [InlineData("-5", 15, "-5 fps は使えない")]
-    [InlineData("0", 15, "0 fps は使えない")]
-    [InlineData("999", 240, "999 fps は範囲 0.1〜240 fps の外のため、240 fps を使います")]
-    [InlineData("0.01", 0.1, "0.01 fps は範囲 0.1〜240 fps の外のため、0.1 fps を使います")]
+    [InlineData("0", 15, "0 fps は使えない")] // 0 は不正(ゼロ除算になる)ので既定値
+    [InlineData("999", 240, "999 fps は範囲 0.1〜240 fps の外のため、240 fps を使います")]     // 上限へクランプ
+    [InlineData("0.01", 0.1, "0.01 fps は範囲 0.1〜240 fps の外のため、0.1 fps を使います")] // 下限へクランプ
     public void Parse_ReportsFallbackAndClamping(string? text, double expected, string expectedNotice)
     {
         Assert.Equal(expected, FpsInput.Parse(text, fallback: 15, out string? notice), 10);
