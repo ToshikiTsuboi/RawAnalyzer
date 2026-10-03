@@ -205,7 +205,8 @@ public sealed class ImageViewport : FrameworkElement
 
     /// <summary>
     /// チャネル分割とそれ以外の表示が切り替わったときに発火する(表示座標の意味が変わるので ROI を捨てた後)。
-    /// ROI がなくても発火する(射影の窓は画像全体と象限の案内を切り替える)。
+    /// ROI がなくても発火する(射影の窓は画像全体と象限の案内を切り替え、抜けたら選んだチャネルを忘れる)。
+    /// 画像を差し替えて Raw 表示へ戻す <see cref="SetImage"/> で分割表示から抜けたときも発火する。
     /// </summary>
     public event EventHandler? ChannelSplitLayoutChanged;
 
@@ -473,6 +474,7 @@ public sealed class ImageViewport : FrameworkElement
     /// <param name="frame">フレーム番号。</param>
     public void SetImage(RawImage image, RawFormat format, int frame = 0)
     {
+        bool wasChannelSplit = IsChannelSplitLayout;
         _image = image;
         _format = format;
         _frame = frame;
@@ -486,6 +488,12 @@ public sealed class ImageViewport : FrameworkElement
         _profileMarkerVisible = false;
         ClearRoi();
         FitToView();
+
+        // Raw 表示へ戻すので、チャネル分割表示からは抜ける(HDR 表示へ入る・別のファイルを開くなど)
+        if (wasChannelSplit)
+        {
+            ChannelSplitLayoutChanged?.Invoke(this, EventArgs.Empty);
+        }
     }
 
     /// <summary>

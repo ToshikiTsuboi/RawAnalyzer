@@ -1145,6 +1145,32 @@ public class ImageViewportTests
         return pixels;
     }
 
+    [Fact]
+    public Task ChannelSplitLayoutChanged_IsRaisedWhenEnteringAndLeavingIncludingImageReplacement() => WpfTestHost.Run(async () =>
+    {
+        // チャネル分割表示の出入りを知らせる(射影の窓は ROI がなくても対象が変わり、抜けたら選んだチャネルを忘れる)。
+        // 画像を差し替える SetImage も表示モードを Raw 表示へ戻すので、分割表示から抜けたことを知らせる
+        // (HDR 表示へ入る・別のファイルを開くなど。以前は表示モードの切り替えでしか知らせなかった)
+        (ImageViewport viewport, RawImage image) = CreateBayerViewport(BayerPattern.Rggb);
+        var layouts = new List<bool>();
+        viewport.ChannelSplitLayoutChanged += (_, _) => layouts.Add(viewport.IsChannelSplitLayout);
+        try
+        {
+            viewport.SetDisplayMode(ViewportDisplayMode.BayerColor);
+            Assert.Empty(layouts); // Raw 表示 → Bayer カラーは分割表示の出入りではない
+            viewport.SetDisplayMode(ViewportDisplayMode.ChannelSplit);
+            viewport.SetImage(image, image.Format);
+            viewport.SetImage(image, image.Format);
+
+            Assert.Equal(new[] { true, false }, layouts);
+        }
+        finally
+        {
+            await viewport.ClearImageAsync();
+            image.Dispose();
+        }
+    });
+
     private static (ImageViewport Viewport, RawImage Image) CreateBayerViewport(
         BayerPattern pattern, int width = 8, int height = 8)
     {
