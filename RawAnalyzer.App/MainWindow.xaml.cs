@@ -2468,14 +2468,15 @@ public partial class MainWindow : Window
             // HDR派生ビューから保存した画像は元ファイルの画素ではない。どの派生ビューか(合成なら合成で減算した黒点・
             // 露光比・量子化)を書く。[適用処理]の黒点/白点は合成ビューの表示黒点・白点(合成画像の値域で黒0・白65535
             // から始まる)で、合成で減算した黒点とは別物になる
-            if (_derivedImage is { } derived && format is not null)
+            // 分割ビューは段の構成(段の数・幅・各段の露光・各段の Bayer の数え方)も書く(保存の形式によらない)
+            if (format is not null
+                && HdrViewSidecar.DescribeDerivedView(
+                    _derivedImage?.Format, _derivedImage?.SegmentWidth ?? 0, _hdrFloatImage,
+                    _hdrFrameParams?.Length ?? format.HdrStages, format, _hdrSourceFrame.Frame, choice.Format)
+                    is { } derivedView)
             {
                 sb.AppendLine();
-                sb.Append(_hdrFloatImage is { } merged
-                    ? HdrViewSidecar.DescribeMerge(derived.Format, merged, format, _hdrSourceFrame.Frame,
-                        floatRawOutput: choice.Format == SaveFormat.FloatRaw)
-                    : HdrViewSidecar.DescribeSplit(derived.Format, _hdrFrameParams?.Length ?? format.HdrStages,
-                        format, _hdrSourceFrame.Frame));
+                sb.Append(derivedView);
             }
 
             sb.AppendLine();

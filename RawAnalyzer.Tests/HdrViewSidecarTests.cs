@@ -1,4 +1,5 @@
 using RawAnalyzer.App.Services;
+using RawAnalyzer.App.Views;
 using RawAnalyzer.Core;
 using Xunit;
 
@@ -102,6 +103,79 @@ public class HdrViewSidecarTests
         Assert.Contains("派生画像: 12×2 · 12bit · Bayer Rggb (各段 4×2 を左から並置)", text);
         Assert.DoesNotContain("元画像のフレーム", text);
         Assert.DoesNotContain("黒点", text); // 分割は黒レベルを減算しない
+    }
+
+    [Fact]
+    public void Split_RecordsStagesWidthExposureAndBayerCountedFromEachStage()
+    {
+        // 分割ビューから保存した画像は各段を左から並置したもの。開き直すと1枚の画像に見えるので、段の数・段の幅・
+        // 各段の露光(左から長秒 → 短秒、フォーマットの露光比)と、各段の Bayer は段の左端から数えること(段の幅が
+        // 奇数だと並置画像の列の偶奇と逆になる段がある)を書く。行交互 5×8・2段・露光比 16 → 段の幅 5 の 10×4
+        var derived = new RawFormat { Width = 10, Height = 4, BitDepth = 12, Bayer = BayerPattern.Rggb };
+        var source = new RawFormat
+        {
+            Width = 5, Height = 8, BitDepth = 12, Bayer = BayerPattern.Rggb, Hdr = HdrMode.LineInterleaved,
+            HdrStages = 2, ExposureRatio = 16,
+        };
+
+        string text = HdrViewSidecar.DescribeSplit(derived, stages: 2, source, sourceFrame: 0, segmentWidth: 5);
+
+        string nl = Environment.NewLine;
+        Assert.Contains(
+            $"  段の数: 2{nl}" +
+            $"  段の幅: 5 px (各段 5×4){nl}" +
+            $"  各段の露光 (左から):{nl}" +
+            $"    段1 (x 0〜4): 長秒{nl}" +
+            $"    段2 (x 5〜9): 短秒 (長秒の 1/16。フォーマットの露光比 16){nl}" +
+            $"  各段の Bayer: 段の左端を列0として数える (段の幅が奇数でも、各段の左上が Rggb の並びの始まり){nl}",
+            text);
+    }
+
+    [Fact]
+    public void Split_ThreeStages_MiddleIsOneRatioStepAndMonochromeHasNoBayerLine()
+    {
+        // 3段は 長秒 → 中秒 → 短秒。露光比は1段あたり(中秒は長秒の 1/4、短秒は 1/16)
+        var derived = new RawFormat { Width = 12, Height = 2, BitDepth = 12 };
+        var source = new RawFormat
+        {
+            Width = 4, Height = 2, BitDepth = 12, FrameCount = 3, Hdr = HdrMode.FrameSequential, HdrStages = 3,
+            ExposureRatio = 4,
+        };
+
+        string text = HdrViewSidecar.DescribeSplit(derived, stages: 3, source, sourceFrame: 0, segmentWidth: 4);
+
+        Assert.Contains("  段の幅: 4 px (各段 4×2)", text);
+        Assert.Contains("    段1 (x 0〜3): 長秒" + Environment.NewLine, text);
+        Assert.Contains("    段2 (x 4〜7): 中秒 (長秒の 1/4。フォーマットの露光比 4)", text);
+        Assert.Contains("    段3 (x 8〜11): 短秒 (長秒の 1/16。フォーマットの露光比 4)", text);
+        Assert.DoesNotContain("各段の Bayer", text);
+    }
+
+    [Theory]
+    [InlineData(SaveFormat.Raw)]
+    [InlineData(SaveFormat.Tiff16)]
+    [InlineData(SaveFormat.Png16)]
+    [InlineData(SaveFormat.Png8)]
+    [InlineData(SaveFormat.Jpeg8)]
+    public void DerivedView_SplitStageLayoutIsWrittenForEveryOutputFormat(SaveFormat output)
+    {
+        // raw だけでなく TIFF/PNG/JPEG で保存したときも、並置した段の構成を付随テキストに書く
+        var derived = new RawFormat { Width = 10, Height = 4, BitDepth = 12, Bayer = BayerPattern.Grbg };
+        var source = new RawFormat
+        {
+            Width = 5, Height = 8, BitDepth = 12, Bayer = BayerPattern.Grbg, Hdr = HdrMode.LineInterleaved,
+        };
+
+        string? text = HdrViewSidecar.DescribeDerivedView(
+            derived, segmentWidth: 5, merged: null, stages: 2, source, sourceFrame: 0, output);
+
+        Assert.NotNull(text);
+        Assert.StartsWith("[HDR派生ビュー]", text);
+        Assert.Contains("段の数: 2", text);
+        Assert.Contains("段の幅: 5 px", text);
+        Assert.Contains("段2 (x 5〜9): 短秒", text);
+        Assert.Contains("各段の左上が Grbg の並びの始まり", text);
+        Assert.Null(HdrViewSidecar.DescribeDerivedView(null, 0, null, 2, source, 0, output));
     }
 
     [Fact]

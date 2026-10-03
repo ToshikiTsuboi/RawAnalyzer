@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text;
+using RawAnalyzer.App.Views;
 using RawAnalyzer.Core;
 
 namespace RawAnalyzer.App.Services;
@@ -32,21 +33,83 @@ internal static class HdrViewSidecar
     private static readonly CultureInfo Invariant = CultureInfo.InvariantCulture;
 
     /// <summary>HDR分割の派生ビュー(長秒→短秒の各段を左から並置した画像)の来歴。</summary>
+    /// <remarks>
+    /// 保存した並置画像は開き直すと1枚の画像に見えるので、段の構成(段の数・段の幅・各段の露光)と、各段の Bayer は
+    /// 段の左端を列0として数えること(<see cref="RawImage.SegmentWidth"/>。段の幅が奇数だと、後ろの段では並置画像の
+    /// 列の偶奇と位相が逆になる)を書く。露光比はフォーマットで指定した1段あたりの値(長秒:短秒)。付随テキストを
+    /// 読んで段を復元する機能はない(記録のため)。
+    /// </remarks>
     /// <param name="derived">派生画像(並置画像)のフォーマット。</param>
     /// <param name="stages">段数。</param>
-    /// <param name="source">元画像のフォーマット(HDR方式を含む)。</param>
+    /// <param name="source">元画像のフォーマット(HDR方式・露光比を含む)。</param>
     /// <param name="sourceFrame">分割した元画像のフレーム番号(行交互の複数フレームの画像のときだけ書く)。</param>
+    /// <param name="segmentWidth">段の幅(並置画像の区画の幅)。0 なら派生画像の幅を段数で割った幅。</param>
     /// <returns>付随テキストの節(改行で終わる)。</returns>
-    internal static string DescribeSplit(RawFormat derived, int stages, RawFormat source, int sourceFrame)
+    internal static string DescribeSplit(
+        RawFormat derived, int stages, RawFormat source, int sourceFrame, int segmentWidth = 0)
     {
+        stages = Math.Max(1, stages);
+        int width = segmentWidth > 0 ? segmentWidth : derived.Width / stages;
         var sb = new StringBuilder();
         sb.AppendLine(Header);
         sb.Append("  種類: HDR分割 (左: 長秒 → 右: 短秒, ").Append(stages).AppendLine("段)");
         AppendSourceFrame(sb, source, sourceFrame);
         sb.Append("  派生画像: ").Append(DescribeImage(derived))
-            .Append(" (各段 ").Append(derived.Width / Math.Max(1, stages)).Append('×').Append(derived.Height)
+            .Append(" (各段 ").Append(width).Append('×').Append(derived.Height)
             .AppendLine(" を左から並置)");
+        sb.Append("  段の数: ").Append(stages).AppendLine();
+        sb.Append("  段の幅: ").Append(width).Append(" px (各段 ").Append(width).Append('×').Append(derived.Height)
+            .AppendLine(")");
+        sb.AppendLine("  各段の露光 (左から):");
+        for (int stage = 0; stage < stages; stage++)
+        {
+            // 最後の段は並置画像の右端まで(区画の規約と同じ)
+            int first = stage * width;
+            int last = stage == stages - 1 ? derived.Width - 1 : first + width - 1;
+            sb.Append("    段").Append(stage + 1).Append(" (x ").Append(first).Append('〜').Append(last).Append("): ")
+                .Append(StageName(stage, stages));
+            if (stage > 0)
+            {
+                sb.Append(" (長秒の 1/").Append(FormatRatio(Math.Pow(source.ExposureRatio, stage)))
+                    .Append("。フォーマットの露光比 ").Append(FormatRatio(source.ExposureRatio)).Append(')');
+            }
+
+            sb.AppendLine();
+        }
+
+        if (derived.Bayer != BayerPattern.None)
+        {
+            sb.Append("  各段の Bayer: 段の左端を列0として数える (段の幅が奇数でも、各段の左上が ")
+                .Append(derived.Bayer).AppendLine(" の並びの始まり)");
+        }
+
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// HDR派生ビューの表示中に保存したときの[HDR派生ビュー]の節(派生ビューでなければ null)。保存の形式によらず書く
+    /// (raw だけでなく TIFF/PNG/JPEG に保存した並置画像にも段の構成を残す)。
+    /// </summary>
+    /// <param name="derived">派生画像のフォーマット(派生ビューでなければ null)。</param>
+    /// <param name="segmentWidth">分割ビューの段の幅(<see cref="RawImage.SegmentWidth"/>)。</param>
+    /// <param name="merged">合成ビューなら合成結果(分割ビューなら null)。</param>
+    /// <param name="stages">分割ビューの段数。</param>
+    /// <param name="source">元画像のフォーマット(HDR方式・露光比を含む)。</param>
+    /// <param name="sourceFrame">派生ビューの元にした元画像のフレーム番号。</param>
+    /// <param name="output">保存の形式。</param>
+    /// <returns>付随テキストの節(改行で終わる)。派生ビューでなければ null。</returns>
+    internal static string? DescribeDerivedView(
+        RawFormat? derived, int segmentWidth, HdrImage? merged, int stages, RawFormat source, int sourceFrame,
+        SaveFormat output)
+    {
+        if (derived is null)
+        {
+            return null;
+        }
+
+        return merged is not null
+            ? DescribeMerge(derived, merged, source, sourceFrame, floatRawOutput: output == SaveFormat.FloatRaw)
+            : DescribeSplit(derived, stages, source, sourceFrame, segmentWidth);
     }
 
     /// <summary>
@@ -125,6 +188,8 @@ internal static class HdrViewSidecar
     /// <summary>段の名前(表示調整の対象の選択肢と同じ。左端の段が長秒、右端の段が短秒、その間が中秒)。</summary>
     private static string StageName(int stage, int stages) =>
         stage == 0 ? "長秒" : stage == stages - 1 ? "短秒" : "中秒";
+
+    private static string FormatRatio(double ratio) => ratio.ToString("0.###", Invariant);
 
     private static string DescribeImage(RawFormat format) =>
         $"{format.Width}×{format.Height} · {format.BitDepth}bit · Bayer {format.Bayer}";
