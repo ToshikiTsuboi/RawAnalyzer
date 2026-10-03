@@ -596,6 +596,47 @@ public class CompareViewUiTests
         Assert.Null(view.AddRefusal);
     });
 
+    [Fact]
+    public Task AutoContrast_DisplayChangedWhileComputing_KeepsTheLaterChange() => WpfTestHost.Run(async () =>
+    {
+        // レビュー 2026-10-03 races の横展開。ペインの「自動」のヒストグラムを UI スレッドの外で計算する間に「リセット」で
+        // 表示調整を戻した。以前は計算の後に照合せず、後から終わった「自動」の黒/白がリセットの後の表示調整を上書きした
+        // (リンク・「揃える」による適用も同じ)。計算の間に表示調整が変わったら、後からの変更を残して自動の結果は捨てる
+        using var fixture = new ImageFixture();
+        var view = NewView();
+        try
+        {
+            Assert.True(await view.AddPaneFromPathAsync(fixture.Path));
+            await LayoutAsync(view, 1280, 720);
+            ComparePaneView pane = PaneAt(view, 0);
+            var auto = (Button)pane.FindName("AutoButton");
+            Button reset = Descendants<Button>(pane).Single(b => Equals(b.Content, "リセット"));
+            ComparePane source = pane.Pane!;
+            DisplaySettings defaults = DisplaySettings.CreateDefault(source.Format.BitDepth);
+            pane.ApplyDisplay(defaults with { GainDb = 6 });
+            int changes = 0;
+            pane.DisplayChanged += _ => changes++;
+
+            auto.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            reset.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Assert.Equal(defaults, source.Display);
+            await Task.Delay(300);
+            await DrainAsync();
+
+            Assert.Equal(defaults, source.Display);
+            Assert.Equal(1, changes); // リセットだけ
+
+            // 変えずに待てば「自動」の結果を使う(この画像では既定の全域と違う黒/白になる)
+            auto.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            await WaitUntilAsync(() => changes == 2);
+            Assert.NotEqual(defaults, source.Display);
+        }
+        finally
+        {
+            await view.CloseAllAsync();
+        }
+    });
+
     // ボタンの押下と解放(移動なし)。入力の順と同じく Preview → 本体の順に送る
     private static void Click(ComparePaneView pane, System.Windows.Input.MouseButton button)
     {

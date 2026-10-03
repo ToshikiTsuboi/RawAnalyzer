@@ -332,11 +332,15 @@ public partial class ComparePaneView : UserControl
         try
         {
             // カラー画像でも輝度ヒストグラムからのクリップで実用上十分
+            DisplaySettings requested = pane.Display;
             HistogramResult histogram = await Task.Run(
                 () => ImageAnalysis.ComputeHistogram(pane.Image, frame: 0));
-            if (!ReferenceEquals(pane, Pane))
+
+            // 計算中に閉じられた、または表示調整が変わった(リセット・リンクや「揃える」による適用)なら、
+            // 後からの変更を残して結果は捨てる。以前は表示調整を照合せず、後から終わった自動の黒/白がリセットを上書きした
+            if (!ReferenceEquals(pane, Pane) || pane.Display != requested)
             {
-                return; // 計算中に閉じられた
+                return;
             }
 
             if (HistogramTools.ComputeAutoLevels(histogram.Bins) is { } levels)
