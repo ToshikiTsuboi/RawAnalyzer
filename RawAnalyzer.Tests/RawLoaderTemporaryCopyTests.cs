@@ -35,6 +35,7 @@ public class RawLoaderTemporaryCopyTests
             using (RawImage image = LoadCopied(source, format))
             {
                 copy = FindCopy(extension);
+                Assert.Equal(RawLoader.TemporaryCopyFolder, Path.GetDirectoryName(copy)); // 起動時の後始末が探すフォルダ
                 Assert.True(image.IsMemoryMapped);
                 Assert.Equal(format, image.Format);
 
@@ -82,23 +83,6 @@ public class RawLoaderTemporaryCopyTests
             }
 
             Assert.False(File.Exists(copy));
-        }
-        finally
-        {
-            File.Delete(source);
-        }
-    }
-
-    [Fact]
-    public void TemporaryCopy_IsCreatedInTemporaryCopyFolder()
-    {
-        ushort[] codes = TestData.MakePattern(Format.Width * Format.Height, Format.BitDepth);
-        (string source, string extension) = WriteSource(codes);
-        try
-        {
-            using RawImage image = LoadCopied(source, Format);
-
-            Assert.Single(Directory.GetFiles(RawLoader.TemporaryCopyFolder, "*" + extension));
         }
         finally
         {
