@@ -23,7 +23,10 @@ internal static class CursorReadout
     /// <summary>
     /// 元画像の座標 (x, y) の画素値の表示文を作る。
     /// </summary>
-    /// <param name="image">表示中の画像(HDR派生ビューならその画像)。</param>
+    /// <param name="image">
+    /// 表示中の画像(HDR派生ビューならその画像)。HDR分割ビューの並置画像(<see cref="RawImage.SegmentWidth"/>)では、
+    /// チャネル名を段の左端を列0とする位相で決める。
+    /// </param>
     /// <param name="format">表示中の画像のフォーマット(ビット深度と Bayer パターンを使う)。</param>
     /// <param name="color">デコード済みのカラー画像。あれば RGB と YCbCr を出す。</param>
     /// <param name="x">元画像の X 座標。</param>
@@ -62,7 +65,7 @@ internal static class CursorReadout
 
         int code = value >> (16 - format.BitDepth);
         int maxCode = (1 << format.BitDepth) - 1;
-        string channel = BayerHelper.GetLabel(BayerHelper.GetChannel(format.Bayer, x, y));
+        string channel = BayerHelper.GetLabel(BayerHelper.GetChannel(format.Bayer, x, y, image.SegmentWidth));
         return new Text(
             $"({x}, {y}) raw={code}",
             $"({x}, {y})  raw: {code} / {maxCode}  {channel}");

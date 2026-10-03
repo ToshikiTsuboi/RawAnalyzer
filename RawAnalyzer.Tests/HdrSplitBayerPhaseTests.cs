@@ -182,6 +182,32 @@ public class HdrSplitBayerPhaseTests
     [Theory]
     [InlineData(2)]
     [InlineData(3)]
+    public void CursorReadoutChannel_UsesPhaseOfStage(int stages)
+    {
+        // カーソル位置のチャネル名も段の中の座標で決める(右の段の左端の列は R)
+        using RawImage composite = OddWidthSplitView(stages);
+        for (int x = 0; x < composite.Width; x++)
+        {
+            for (int y = 0; y < composite.Height; y++)
+            {
+                string expected = ((x % StageWidth) % 2, y % 2) switch
+                {
+                    (0, 0) => "R",
+                    (1, 0) => "Gr",
+                    (0, 1) => "Gb",
+                    _ => "B",
+                };
+                string overlay = CursorReadout.Compose(composite, composite.Format, null, x, y, 0)!.Value.Overlay;
+                Assert.True(
+                    overlay.EndsWith("  " + expected, StringComparison.Ordinal),
+                    $"({x}, {y}) 段 {x / StageWidth}: {overlay}(期待 {expected})");
+            }
+        }
+    }
+
+    [Theory]
+    [InlineData(2)]
+    [InlineData(3)]
     public void GrayWorldGains_UsePhaseOfEachStage(int stages)
     {
         // どの段のどの 2x2 も R=1000, G=2500, B=4000 なので、ゲインは G/R=2.5、G/B=0.625
