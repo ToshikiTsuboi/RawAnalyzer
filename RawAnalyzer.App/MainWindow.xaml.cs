@@ -3857,6 +3857,7 @@ public partial class MainWindow : Window
 
         // 現像は黒減算後にWBを掛けるので、推定も現像と同じ黒レベルで行う
         ushort blackLevel = _blackPoint;
+        (double R, double G, double B) requestedGains = (_vm.WbGainR, _vm.WbGainG, _vm.WbGainB);
         WhiteBalanceGains gains;
         try
         {
@@ -3869,9 +3870,12 @@ public partial class MainWindow : Window
         }
 
         // 推定中に右パネルでBayerパターンを変えたら、ゲインは変える前のパターンで R・B として平均したもの
-        // (RGGB→BGGR では R と B のゲインが入れ替わる)。表示中の画像の条件と違う推定は適用しない
+        // (RGGB→BGGR では R と B のゲインが入れ替わる)。表示中の画像の条件と違う推定は適用しない。
+        // 推定中に WB のゲインを変えた(スポイト・スライダー)ときも、後からの変更を残して推定は捨てる
+        // (以前はゲインを照合せず、後から終わった推定がスポイトで合わせたゲインを上書きした)
         if (!ReferenceEquals(image, ActiveImage) || frame != Viewport.Frame
-            || pattern != ActiveFormat?.Bayer || blackLevel != _blackPoint)
+            || pattern != ActiveFormat?.Bayer || blackLevel != _blackPoint
+            || requestedGains != (_vm.WbGainR, _vm.WbGainG, _vm.WbGainB))
         {
             return;
         }
