@@ -3815,6 +3815,7 @@ public partial class MainWindow : Window
             Viewport.SetLut(BuildLut());
             RefreshHistogram(roi: null);
             RefreshLineProfile();
+            RefreshProjections();
             _ = BuildDerivedPyramidAsync(derived);
         }
         else
