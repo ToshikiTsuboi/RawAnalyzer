@@ -3591,12 +3591,20 @@ public partial class MainWindow : Window
 
         await Viewport.ClearImageAsync();
 
-        // 適用の直前に、計算元の元画像・フレームのままか確かめ直す。描画の停止を待つ間に替わっていたら
-        // (差し替えた側が表示し直している)、結果は表示中の画像のものではないので捨てる。
-        // 表示モードの選び直しはここでは見ない(元画像を表示し直さないので、断るとビューポートが空のまま残る)
-        if (!IsHdrSourceCurrent(source, sourceFrame))
+        // 適用の直前に、計算元の元画像・フレームのままか、表示モードを選び直していないかを確かめ直す。描画の停止を
+        // 待つ間に元画像が替わった・選び直したら、結果は捨てる。以前は選び直しを見ず、待つ間に Raw表示を選んでも
+        // 選択は Raw表示のまま派生ビューを表示した。選び直した表示を誰も表示し直さないとき(停止のために外した画像が
+        // ビューポートに戻らないとき)は、ここで選ばれている表示で表示し直す(HdrViewReplacement.CheckAdoption)
+        HdrViewReplacement.Adoption adoption = HdrViewReplacement.CheckAdoption(
+            sourceReplaced: !IsHdrSourceCurrent(source, sourceFrame),
+            DisplayModeCombo.SelectedIndex, computedIndex: merged ? 5 : 4,
+            viewportEmpty: Viewport.Image is null,
+            derivedViewShown: _derivedImage is not null,
+            mergedViewShown: _hdrFloatImage is not null);
+        if (adoption != HdrViewReplacement.Adoption.Adopt)
         {
             derived.Dispose();
+            ShowAfterDiscardedHdrView(adoption);
             return false;
         }
 
@@ -3721,7 +3729,18 @@ public partial class MainWindow : Window
         SyncLevelControlsToActiveBitDepth();
         _derivedBayerPyramid?.Dispose();
         _derivedBayerPyramid = null;
+        ShowMainImage();
+    }
 
+    /// <summary>
+    /// 元画像を、HDR表示の元にしたフレームでビューポートへ表示し直す(表示モードは Raw 表示になる)。
+    /// </summary>
+    /// <remarks>
+    /// Raw表示への復帰と、ビューポートから元画像を外して描画の停止を待つ間に表示モードを選び直され、HDR分割・合成の
+    /// 結果を捨てたとき(<see cref="ShowAfterDiscardedHdrView"/>)に使う。解析・送りのUI・縮小ピラミッドも作り直す。
+    /// </remarks>
+    private void ShowMainImage()
+    {
         // HDR表示の元にしたフレームを表示し直す(既定のフレーム0へ戻すと、分割・合成した
         // 撮影とは別のフレームになる)。シーケンスUIは下の DetectSequence が表示フレームに合わせる
         Viewport.SetImage(
@@ -3747,6 +3766,55 @@ public partial class MainWindow : Window
         if (!Viewport.HasPyramidForCurrentFrame && !_imageGate.IsLoadPending)
         {
             _ = BuildPyramidAsync(_currentImage!, _loadCts?.Token ?? CancellationToken.None, Viewport.Frame);
+        }
+    }
+
+    /// <summary>
+    /// HDR分割・合成の結果を、描画の停止を待つ間に表示モードを選び直されて捨てたときに、停止のためにビューポートから
+    /// 外した画像を、いま選ばれている表示モードで表示し直す(レビュー 2026-10-03 R4)。
+    /// </summary>
+    /// <remarks>
+    /// 選び直した側は、派生ビューがなければ(合成ビューの表示を選び直したなら合成ビューのまま)ビューポートの表示モード
+    /// だけを替え、外された画像を表示し直さない。表示し直すと表示モードは Raw 表示に戻るので、選択の表示へそろえる。
+    /// 誰が表示し直すかの判定は <see cref="HdrViewReplacement.CheckAdoption"/>。
+    /// </remarks>
+    /// <param name="adoption">結果を捨てたときの判定。表示し直さない判定なら何もしない。</param>
+    private void ShowAfterDiscardedHdrView(HdrViewReplacement.Adoption adoption)
+    {
+        if (adoption == HdrViewReplacement.Adoption.DiscardAndShowSource && _currentImage is not null)
+        {
+            ShowMainImage();
+        }
+        else if (adoption == HdrViewReplacement.Adoption.DiscardAndShowMergedView && _derivedImage is { } derived)
+        {
+            // 合成ビューの縮小ピラミッドは差し替えのために生成を取り消し、ビューポートからも外れた。作り直す
+            Viewport.SetImage(derived, derived.Format);
+            Viewport.SetBayerPyramid(_derivedBayerPyramid);
+            Viewport.SetLut(BuildLut());
+            RefreshHistogram(roi: null);
+            RefreshLineProfile();
+            _ = BuildDerivedPyramidAsync(derived);
+        }
+        else
+        {
+            return;
+        }
+
+        // 表示し直すと表示モードは Raw 表示に戻るので、いまの選択の表示へそろえる(Bayer なしで選び直しを断られた
+        // ときなどは Raw 表示)
+        ViewportDisplayMode mode = DisplayModeSelection.ForSelectedMode(
+            DisplayModeCombo.SelectedIndex, _derivedImage is null && _colorImage is not null,
+            ActiveFormat?.Bayer ?? BayerPattern.None).ViewportMode;
+        if (mode == ViewportDisplayMode.ColorDevelop)
+        {
+            EnsureDevelopLuts();
+        }
+
+        Viewport.SetDisplayMode(mode);
+        if (mode is ViewportDisplayMode.BayerColor or ViewportDisplayMode.ColorDevelop
+            or ViewportDisplayMode.ChannelSplit)
+        {
+            _ = EnsureBayerPyramidAsync();
         }
     }
 
