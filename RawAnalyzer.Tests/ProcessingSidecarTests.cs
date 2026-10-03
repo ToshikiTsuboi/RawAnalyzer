@@ -22,19 +22,6 @@ public class ProcessingSidecarTests
     }
 
     [Fact]
-    public void ResolvePath_KeepsUnrelatedTextWithSameName()
-    {
-        // 回帰テスト: 付随テキストは画像と同名の .txt へ確認なしで上書きしていた。元 raw の横に撮影条件を書いた
-        // foo.txt があると、初期名のまま同じフォルダへ foo.png を保存しただけで撮影メモが消えた。
-        // 付随テキストでないファイルは残し、画像の名前に .txt を足した名前へ書く
-        using var folder = new TempFolder();
-        string image = Path.Combine(folder.Path, "foo.png");
-        File.WriteAllText(Path.Combine(folder.Path, "foo.txt"), "露光 1/60s, ゲイン 12dB\n");
-
-        Assert.Equal(image + ".txt", ProcessingSidecar.ResolvePath(image));
-    }
-
-    [Fact]
     public void ResolvePath_KeepsSidecarOfAnotherImageWithSameBaseName()
     {
         // 同じフレームを foo.tif と foo.png に保存すると、後の付随テキストが foo.tif の来歴を置き換えていた
@@ -76,11 +63,15 @@ public class ProcessingSidecarTests
         Assert.Equal("", ProcessingSidecar.Write(image, SidecarOf("foo.png")));
         Assert.Equal(SidecarOf("foo.png"), File.ReadAllText(sameName));
 
-        File.WriteAllText(sameName, "メモ\n");
+        // 回帰テスト: 付随テキストは画像と同名の .txt へ確認なしで上書きしていた。元 raw の横に撮影条件を書いた
+        // foo.txt があると、初期名のまま同じフォルダへ foo.png を保存しただけで撮影メモが消えた。
+        // 付随テキストでないファイルは残し、画像の名前に .txt を足した名前へ書く
+        File.WriteAllText(sameName, "露光 1/60s, ゲイン 12dB\n");
+        Assert.Equal(image + ".txt", ProcessingSidecar.ResolvePath(image));
         string note = ProcessingSidecar.Write(image, SidecarOf("foo.png"));
 
         Assert.Contains("foo.png.txt", note);
-        Assert.Equal("メモ\n", File.ReadAllText(sameName));
+        Assert.Equal("露光 1/60s, ゲイン 12dB\n", File.ReadAllText(sameName));
         Assert.Equal(SidecarOf("foo.png"), File.ReadAllText(image + ".txt"));
     }
 
