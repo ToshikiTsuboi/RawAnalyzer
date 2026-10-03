@@ -824,13 +824,42 @@ public class ImageViewportTests
     }
 
     [Fact]
-    public Task ClearRoiDuringRoiDrag_ReleasesMouseCaptureWhenButtonIsReleased() =>
-        WpfTestHost.Run(async () =>
+    public Task ClearRoiDuringRoiDrag_ReleasesMouseCapture() => WpfTestHost.Run(async () =>
     {
         // ROI のドラッグ中に画像の差し替え(HDR 分割の計算完了など)・分割⇔非分割の切り替え・
         // Ctrl+G で ROI が消されることがある。以前はドラッグの状態だけを落としてマウスキャプチャを残し、
         // ボタンを離しても外れなかったため、ビューポートの外のマウス移動と次の1クリックが
-        // ビューポートに吸われていた
+        // ビューポートに吸われていた。
+        // OS のマウスキャプチャは環境によって取れない(外部レビュー 2026-10-03 の環境では単独で流しても、ドラッグの
+        // 開始で取れずに ClearRoi の前で失敗した)ので、ビューポートが求めた取得・解放を記録するものに差し替えて
+        // 確かめる。OS のキャプチャでの確認は次のテスト(取れない環境ではスキップ)
+        (ImageViewport viewport, RawImage image) = CreateBayerViewport(BayerPattern.None);
+        var capture = new RecordedMouseCapture();
+        viewport.OverrideMouseCapture(capture);
+        try
+        {
+            viewport.InteractionMode = ViewportInteractionMode.RoiSelect;
+            RaiseLeftButton(viewport, UIElement.MouseDownEvent);
+            Assert.True(capture.IsCaptured); // ROI のドラッグを始めた
+
+            viewport.ClearRoi();
+            Assert.False(capture.IsCaptured); // ドラッグの状態を解除するときに外す(ボタンを離すのを待たない)
+
+            RaiseLeftButton(viewport, UIElement.MouseUpEvent);
+            Assert.False(capture.IsCaptured);
+        }
+        finally
+        {
+            await viewport.ClearImageAsync();
+            image.Dispose();
+        }
+    });
+
+    [OsMouseCaptureFact]
+    public Task ClearRoiDuringRoiDrag_ReleasesOsMouseCaptureWhenButtonIsReleased() =>
+        WpfTestHost.Run(async () =>
+    {
+        // 前のテストを OS のマウスキャプチャで確かめる(表示しないウィンドウに載せる)
         (ImageViewport viewport, RawImage image) = CreateBayerViewport(BayerPattern.None);
         using HwndSource host = HostInHiddenWindow(viewport);
         try
@@ -949,10 +978,20 @@ public class ImageViewportTests
         protected override CompositionTarget GetCompositionTargetCore() => null!;
     }
 
+    /// <summary>OS のキャプチャの代わりに、ビューポートが求めたマウスキャプチャの取得・解放を記録する。</summary>
+    private sealed class RecordedMouseCapture : ImageViewport.IMouseCapture
+    {
+        public bool IsCaptured { get; private set; }
+
+        public void Capture() => IsCaptured = true;
+
+        public void Release() => IsCaptured = false;
+    }
+
     /// <summary>
     /// マウスキャプチャは PresentationSource に載った要素でしか取れないので、表示しない HWND に載せる。
     /// </summary>
-    private static HwndSource HostInHiddenWindow(ImageViewport viewport)
+    internal static HwndSource HostInHiddenWindow(Visual root)
     {
         const int WsPopup = unchecked((int)0x80000000); // WS_VISIBLE を付けない
         const int WsExToolWindow = 0x00000080;
@@ -967,7 +1006,7 @@ public class ImageViewportTests
             Height = 180,
         })
         {
-            RootVisual = viewport,
+            RootVisual = root,
         };
     }
 
@@ -1140,5 +1179,52 @@ public class ImageViewportTests
                     break;
             }
         }
+    }
+}
+
+/// <summary>
+/// OS のマウスキャプチャを取れる環境でだけ実行するテスト(取れなければスキップ)。
+/// </summary>
+/// <remarks>
+/// 対話的なデスクトップがない環境などでは、表示しないウィンドウに載せた要素でもキャプチャを取れない
+/// (外部レビュー 2026-10-03 の環境では単独で流しても取れなかった)。そのまま流すと検証の前に失敗し、本文の先頭で
+/// return すると一度も検証していないのに成功と数えられるので、UI テストのスレッドで取れるか試し、取れなければ
+/// スキップとして示す。
+/// </remarks>
+public sealed class OsMouseCaptureFactAttribute : FactAttribute
+{
+    private static readonly Lazy<bool> CanCapture = new(ProbeCapture);
+
+    /// <summary>属性を生成し、OS のマウスキャプチャを取れなければスキップ理由を設定する。</summary>
+    public OsMouseCaptureFactAttribute()
+    {
+        if (!CanCapture.Value)
+        {
+            Skip = "この環境では OS のマウスキャプチャを取れません(対話的なデスクトップがないなど)。";
+        }
+    }
+
+    private static bool ProbeCapture()
+    {
+        bool captured = false;
+        try
+        {
+            // 呼び出し元の同期コンテキストに戻らないように、スレッドプールから UI テストのスレッドへ頼んで待つ
+            Task.Run(() => WpfTestHost.Run(() =>
+            {
+                var element = new FrameworkElement();
+                using HwndSource host = ImageViewportTests.HostInHiddenWindow(element);
+                captured = element.CaptureMouse() && element.IsMouseCaptured;
+                element.ReleaseMouseCapture();
+                host.RootVisual = null;
+            })).GetAwaiter().GetResult();
+        }
+        catch (Exception)
+        {
+            // UI テストのスレッドを用意できない・ウィンドウを作れない環境も、キャプチャを取れないものとして扱う
+            return false;
+        }
+
+        return captured;
     }
 }

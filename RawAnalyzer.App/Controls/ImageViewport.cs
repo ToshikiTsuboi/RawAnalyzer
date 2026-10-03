@@ -139,6 +139,9 @@ public sealed class ImageViewport : FrameworkElement
     // 単クリックでROIを消したときに「解除」を通知すべきか判断するのに使う
     private bool _roiHadValue;
 
+    // パン・ROI のドラッグ中のマウスキャプチャ。既定はこのビューポート自身の(OS の)キャプチャ(OverrideMouseCapture)
+    private IMouseCapture _mouseCapture;
+
     private OverlayData? _overlay;
 
     // カラー現像のデモザイク結果。表示範囲が同じ間はLUTだけ適用し直す
@@ -157,6 +160,7 @@ public sealed class ImageViewport : FrameworkElement
     /// <summary>コントロールを生成する。</summary>
     public ImageViewport()
     {
+        _mouseCapture = new OwnMouseCapture(this);
         _idleTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(200) };
         _idleTimer.Tick += (_, _) =>
         {
@@ -510,9 +514,9 @@ public sealed class ImageViewport : FrameworkElement
         // ドラッグ中に消されたら(画像の差し替え・分割⇔非分割の切り替え・Ctrl+G)ドラッグごと中止する。
         // キャプチャを残すと、ボタンを離しても EndDrag はドラッグ中でないので外さず、
         // ビューポートの外のマウス移動と次のクリックまでビューポートに届いてしまう
-        if (wasDragging && !_panning && IsMouseCaptured)
+        if (wasDragging && !_panning && _mouseCapture.IsCaptured)
         {
-            ReleaseMouseCapture();
+            _mouseCapture.Release();
         }
 
         if (had)
@@ -1215,7 +1219,7 @@ public sealed class ImageViewport : FrameworkElement
             _roiHadValue = _roi is { PixelCount: > 0 };
             _roi = null;
             InvalidateVisual();
-            CaptureMouse();
+            _mouseCapture.Capture();
             return;
         }
 
@@ -1244,7 +1248,7 @@ public sealed class ImageViewport : FrameworkElement
         _panStartPoint = pos;
         _panStartOriginX = _originX;
         _panStartOriginY = _originY;
-        CaptureMouse();
+        _mouseCapture.Capture();
     }
 
     /// <inheritdoc />
@@ -1269,9 +1273,9 @@ public sealed class ImageViewport : FrameworkElement
         if (_panning)
         {
             _panning = false;
-            if (IsMouseCaptured)
+            if (_mouseCapture.IsCaptured)
             {
-                ReleaseMouseCapture();
+                _mouseCapture.Release();
             }
 
             RestartIdleTimer();
@@ -1281,18 +1285,18 @@ public sealed class ImageViewport : FrameworkElement
         {
             // ビューポートがキャプチャを取るのはパンとROIのドラッグだけ。どちらでもないのに
             // キャプチャが残っていれば、ボタンを離した時点で外す(残すと次のクリックが吸われる)
-            if (IsMouseCaptured)
+            if (_mouseCapture.IsCaptured)
             {
-                ReleaseMouseCapture();
+                _mouseCapture.Release();
             }
 
             return;
         }
 
         _roiDragging = false;
-        if (IsMouseCaptured)
+        if (_mouseCapture.IsCaptured)
         {
-            ReleaseMouseCapture();
+            _mouseCapture.Release();
         }
 
         // ROIが消えた場合も通知しないと、枠だけ消えて旧統計が残る
@@ -1303,6 +1307,43 @@ public sealed class ImageViewport : FrameworkElement
         }
 
         _roiHadValue = hasRoi;
+    }
+
+    /// <summary>
+    /// パン・ROI のドラッグ中のマウスキャプチャの取得・解放を差し替える(テスト用。null でこのビューポート自身の
+    /// OS のキャプチャに戻す)。
+    /// </summary>
+    /// <remarks>
+    /// OS のキャプチャは環境によって取れない(対話的なデスクトップがないなど)。ドラッグの開始で取得し、ドラッグの
+    /// 状態を解除するときに解放を求めることを、OS のキャプチャに頼らずに確かめるために使う。
+    /// </remarks>
+    /// <param name="capture">取得・解放を受けるもの。</param>
+    internal void OverrideMouseCapture(IMouseCapture? capture)
+    {
+        _mouseCapture = capture ?? new OwnMouseCapture(this);
+    }
+
+    /// <summary>ドラッグ中のマウスキャプチャの取得・解放。</summary>
+    internal interface IMouseCapture
+    {
+        /// <summary>キャプチャを持っているか。</summary>
+        bool IsCaptured { get; }
+
+        /// <summary>キャプチャを取る。</summary>
+        void Capture();
+
+        /// <summary>キャプチャを外す。</summary>
+        void Release();
+    }
+
+    /// <summary>要素自身の(OS の)マウスキャプチャ。</summary>
+    private sealed class OwnMouseCapture(UIElement element) : IMouseCapture
+    {
+        public bool IsCaptured => element.IsMouseCaptured;
+
+        public void Capture() => element.CaptureMouse();
+
+        public void Release() => element.ReleaseMouseCapture();
     }
 
     /// <inheritdoc />
