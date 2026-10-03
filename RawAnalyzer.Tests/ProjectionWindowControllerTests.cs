@@ -1,3 +1,4 @@
+using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Threading;
 using RawAnalyzer.App.Services;
@@ -265,6 +266,73 @@ public class ProjectionWindowControllerTests
             await controller.WhenIdleAsync();
             Assert.Contains("象限", Find<TextBlock>(window, "StatsText").Text);
             Assert.Null(window.BuildTable(','));
+        }
+        finally
+        {
+            controller.Shutdown();
+        }
+    });
+
+    [Fact]
+    public Task ChannelSplit_ChosenChannelIsSharedByBothWindowsAndRoiTakesPriority() => WpfTestHost.Run(async () =>
+    {
+        // 値 = y*8+x の 8×4 RGGB(象限 4×2)。チャネル分割表示で ROI がないとき、一方の窓で Gb を選ぶと、両方の窓が
+        // Gb 全体(元画像の x=0,2,4,6 / y=1,3)の射影を出し、もう一方の窓の選択欄も Gb になる
+        ushort[] codes = Enumerable.Range(0, 32).Select(i => (ushort)i).ToArray();
+        using var view = new FakeView(TestImages.FromCodes(codes, 8, 4, 16, BayerPattern.Rggb)) { Split = true };
+        ProjectionWindowController controller = view.Controller();
+        try
+        {
+            controller.Open(H);
+            controller.Open(V);
+            await controller.WhenIdleAsync();
+            ProjectionWindow horizontal = controller.WindowFor(H)!;
+            ProjectionWindow vertical = controller.WindowFor(V)!;
+            Assert.Equal(ProjectionTargets.ChannelSplitWithoutRoi, Find<TextBlock>(horizontal, "StatsText").Text);
+            Assert.Equal(Visibility.Visible, Find<StackPanel>(horizontal, "ChannelPanel").Visibility);
+
+            Find<ComboBox>(vertical, "ChannelCombo").SelectedIndex = 3; // Gb
+            await controller.WhenIdleAsync();
+
+            string nl = Environment.NewLine;
+            Assert.Equal(
+                $"x_display,x_source,mean,min,max{nl}0,0,16,8,24{nl}1,2,18,10,26{nl}2,4,20,12,28{nl}3,6,22,14,30{nl}",
+                horizontal.BuildTable(','));
+            Assert.Equal($"y_display,y_source,mean,min,max{nl}2,1,11,8,14{nl}3,3,27,24,30{nl}", vertical.BuildTable(','));
+            Assert.Equal("Gb", ((ComboBoxItem)Find<ComboBox>(horizontal, "ChannelCombo").SelectedItem).Content);
+            Assert.StartsWith("対象: チャネル Gb 全体 (4×2", Find<TextBlock>(horizontal, "TargetText").Text);
+
+            // ROI を描いたら ROI を優先する(選択欄は選べなくなり、ROI の画素で射影を取る)。ROI を消すと Gb 全体へ戻る
+            view.Roi = new RegionOfInterest(4, 0, 2, 2);
+            controller.Refresh();
+            await controller.WhenIdleAsync();
+            Assert.False(Find<ComboBox>(horizontal, "ChannelCombo").IsEnabled);
+            Assert.StartsWith("x_display,x_source,mean,min,max" + nl + "4,1,", horizontal.BuildTable(','));
+
+            view.Roi = null;
+            controller.Refresh();
+            await controller.WhenIdleAsync();
+            Assert.True(Find<ComboBox>(horizontal, "ChannelCombo").IsEnabled);
+            Assert.StartsWith("x_display,x_source,mean,min,max" + nl + "0,0,16", horizontal.BuildTable(','));
+
+            // 窓を閉じて開き直しても同じ画像の間は保つ
+            controller.Close(V);
+            controller.Open(V);
+            await controller.WhenIdleAsync();
+            Assert.Equal("Gb", ((ComboBoxItem)Find<ComboBox>(controller.WindowFor(V)!, "ChannelCombo").SelectedItem).Content);
+            Assert.NotNull(controller.WindowFor(V)!.BuildTable(','));
+
+            // チャネル分割表示を抜けたら忘れる(戻っても未選択の案内から)
+            view.Split = false;
+            controller.ForgetChannelSelection();
+            controller.Refresh();
+            await controller.WhenIdleAsync();
+            Assert.Equal(Visibility.Collapsed, Find<StackPanel>(horizontal, "ChannelPanel").Visibility);
+            view.Split = true;
+            controller.Refresh();
+            await controller.WhenIdleAsync();
+            Assert.Equal("未選択", ((ComboBoxItem)Find<ComboBox>(horizontal, "ChannelCombo").SelectedItem).Content);
+            Assert.Equal(ProjectionTargets.ChannelSplitWithoutRoi, Find<TextBlock>(horizontal, "StatsText").Text);
         }
         finally
         {

@@ -252,7 +252,16 @@ public partial class MainWindow : Window
         Viewport.WhiteBalancePicked += OnWhiteBalancePicked;
 
         // チャネル分割表示の出入りでは、ROI がなくても射影の対象(画像全体・象限の案内)が変わる
-        Viewport.ChannelSplitLayoutChanged += (_, _) => RefreshProjections();
+        Viewport.ChannelSplitLayoutChanged += (_, _) =>
+        {
+            // チャネル分割表示を抜けたら、射影の窓で選んだチャネルを忘れる(戻ったときは未選択から)
+            if (!Viewport.IsChannelSplitLayout)
+            {
+                ForgetProjectionChannel();
+            }
+
+            RefreshProjections();
+        };
         HorizontalProjectionToggle.ToolTip = ProjectionText.ToolbarToolTip(ProjectionDirection.Horizontal);
         VerticalProjectionToggle.ToolTip = ProjectionText.ToolbarToolTip(ProjectionDirection.Vertical);
         HorizontalProjectionMenu.ToolTip = ProjectionText.Explanation(ProjectionDirection.Horizontal);
@@ -973,8 +982,9 @@ public partial class MainWindow : Window
         RefreshHistogram(roi: null);
 
         // 開いているラインプロファイル窓は、ヒストグラムと同じく開いた画像で計算し直す(同じ基準点・方向)。
-        // 以前は前の画像の断面を出し続けていた(マーカーだけが消える)
+        // 以前は前の画像の断面を出し続けていた(マーカーだけが消える)。射影の窓で選んだチャネルは、別のファイルでは使わない
         RefreshLineProfile();
+        ForgetProjectionChannel();
         RefreshProjections();
 
         // 差し替えを終えたので、以降の操作は新しい画像を対象に始めてよい

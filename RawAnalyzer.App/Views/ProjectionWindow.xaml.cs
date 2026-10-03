@@ -29,6 +29,13 @@ public partial class ProjectionWindow : Window
     // 出している結果・知らせの対象の説明(計算をやめて前の結果へ戻すときに見出しも戻す)
     private string _shownHeader = "";
 
+    // チャネルの選択欄を共有の選択に合わせている間(利用者の選択として知らせない)。窓を作る間も知らせない
+    private bool _settingChannel = true;
+
+    // 選択欄の並び(未選択・R・Gr・Gb・B)
+    private static readonly BayerChannel?[] ChannelItems =
+        { null, BayerChannel.R, BayerChannel.Gr, BayerChannel.Gb, BayerChannel.B };
+
     /// <summary>向きを指定して窓を生成する。</summary>
     /// <param name="direction">向き。</param>
     internal ProjectionWindow(ProjectionDirection direction)
@@ -45,11 +52,44 @@ public partial class ProjectionWindow : Window
         Plot.CsvFileName = () => $"{(direction == ProjectionDirection.Horizontal ? "horizontal" : "vertical")}_projection.csv";
         Plot.CsvSaveCaption = $"{name}の保存";
         Plot.SetAxisLabels(ProjectionText.AxisTitle(direction, false), ProjectionText.AxisToolTip(false));
+        ChannelCombo.ToolTip = ProjectionText.ChannelChoiceToolTip;
+        RoiPriorityText.ToolTip = ProjectionText.RoiTakesPriorityToolTip;
+        _settingChannel = false;
         Closed += (_, _) => Plot.EndInteraction();
     }
 
     /// <summary>向き。</summary>
     internal ProjectionDirection Direction { get; }
+
+    /// <summary>利用者がチャネルの選択欄で選んだ(未選択に戻したら null)。プログラムからの設定では起きない。</summary>
+    internal event Action<BayerChannel?>? ChannelSelectionChanged;
+
+    /// <summary>チャネルの選択欄の見せ方と選んでいるチャネルを設定する(水平・垂直の窓で共有する選択を映す)。</summary>
+    /// <param name="choice">見せ方。</param>
+    /// <param name="channel">選んでいるチャネル(未選択なら null)。</param>
+    internal void SetChannelChoice(ProjectionChannelChoice choice, BayerChannel? channel)
+    {
+        _settingChannel = true;
+        try
+        {
+            ChannelPanel.Visibility = choice == ProjectionChannelChoice.None ? Visibility.Collapsed : Visibility.Visible;
+            ChannelCombo.IsEnabled = choice == ProjectionChannelChoice.Choosable;
+            RoiPriorityText.Visibility = choice == ProjectionChannelChoice.RoiTakesPriority
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+            ChannelCombo.SelectedIndex = Math.Max(0, Array.IndexOf(ChannelItems, channel));
+        }
+        finally
+        {
+            _settingChannel = false;
+        }
+    }
+
+    private void OnChannelComboChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+    {
+        if (_settingChannel || ChannelCombo is null || ChannelCombo.SelectedIndex < 0) return;
+        ChannelSelectionChanged?.Invoke(ChannelItems[ChannelCombo.SelectedIndex]);
+    }
 
     /// <summary>計算中か(前の結果を薄く残し、コピー・CSV はしない)。</summary>
     internal bool IsBusy => Plot.IsBusy;

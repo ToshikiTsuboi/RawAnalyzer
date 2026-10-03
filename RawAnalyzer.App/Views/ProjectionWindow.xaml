@@ -17,6 +17,22 @@
                            HorizontalAlignment="Center" VerticalAlignment="Center" />
             </Border>
             <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                <!-- チャネル分割表示で ROI がないとき、選んだチャネル全体(その象限全体)の射影を取る -->
+                <StackPanel x:Name="ChannelPanel" Orientation="Horizontal" VerticalAlignment="Center"
+                            Visibility="Collapsed" Margin="12,0,0,0">
+                    <TextBlock Text="チャネル:" VerticalAlignment="Center" Margin="0,0,4,0" FontSize="12" />
+                    <ComboBox x:Name="ChannelCombo" MinWidth="76" FontSize="12" VerticalAlignment="Center"
+                              SelectedIndex="0" SelectionChanged="OnChannelComboChanged"
+                              AutomationProperties.Name="射影を取るチャネル">
+                        <ComboBoxItem Content="未選択" />
+                        <ComboBoxItem Content="R" />
+                        <ComboBoxItem Content="Gr" />
+                        <ComboBoxItem Content="Gb" />
+                        <ComboBoxItem Content="B" />
+                    </ComboBox>
+                    <TextBlock x:Name="RoiPriorityText" Text="ROI を優先" FontSize="11" Foreground="#FFE8C88B"
+                               VerticalAlignment="Center" Margin="6,0,0,0" Visibility="Collapsed" />
+                </StackPanel>
                 <CheckBox x:Name="ExtremesCheck" Content="最大・最小" IsChecked="True"
                           VerticalAlignment="Center" Margin="12,0,10,0"
                           Checked="OnExtremesChanged" Unchecked="OnExtremesChanged" />

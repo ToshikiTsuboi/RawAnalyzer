@@ -40,6 +40,9 @@ internal sealed class ProjectionWindowController
     // 外す(走っている計算がほかの窓のために続いても、その結果で上書きしない)
     private readonly Dictionary<ProjectionDirection, ProjectionRequest> _pending = new();
 
+    // 窓で選んだチャネル(チャネル分割表示で ROI がないときに使う。水平・垂直の窓で共有する)
+    private readonly ProjectionChannelSelection _channelSelection = new();
+
     // 走っている計算(なければ null)と、その完了(テストで待つ)
     private ProjectionJob? _job;
     private Task _jobTask = Task.CompletedTask;
@@ -104,6 +107,7 @@ internal sealed class ProjectionWindowController
 
         ProjectionWindow window = _createWindow(direction, WindowFor(Other(direction)));
         window.Closed += (_, _) => OnWindowClosed(direction, window);
+        window.ChannelSelectionChanged += OnChannelSelected;
         if (direction == ProjectionDirection.Horizontal)
         {
             _horizontal = window;
@@ -143,6 +147,19 @@ internal sealed class ProjectionWindowController
         }
 
         _scheduled = _dispatcher.InvokeAsync(RunRefresh, DispatcherPriority.Background);
+    }
+
+    /// <summary>窓で選んだチャネルを忘れる(別のファイルを開いた・チャネル分割表示を抜けた)。</summary>
+    internal void ForgetChannelSelection()
+    {
+        _channelSelection.Forget();
+    }
+
+    /// <summary>窓でチャネルを選んだ。両方の窓で使い(選択欄も合わせる)、計算し直す。</summary>
+    private void OnChannelSelected(BayerChannel? channel)
+    {
+        _channelSelection.Select(channel, _currentView());
+        Refresh();
     }
 
     /// <summary>走っている計算を取り消す(送り・画像の差し替えのとき)。終わるときに計算し直しを求める。</summary>
@@ -210,14 +227,18 @@ internal sealed class ProjectionWindowController
 
         var states = new List<ProjectionWindowState>();
         ProjectionView? view = _currentView();
+        BayerChannel? chosen = _channelSelection.Current(view);
         foreach (ProjectionDirection direction in new[] { ProjectionDirection.Horizontal, ProjectionDirection.Vertical })
         {
-            if (WindowFor(direction) is null || view is null)
+            if (WindowFor(direction) is not { } window || view is null)
             {
                 continue;
             }
 
-            ProjectionRequest next = ProjectionTargets.BuildRequest(direction, view);
+            ProjectionRequest next = ProjectionTargets.BuildRequest(direction, view, chosen);
+
+            // 共有のチャネルの選択を両方の窓の選択欄に映す(ROI を優先しているときは選べなくする)
+            window.SetChannelChoice(next.ChannelChoice, chosen);
 
             states.Add(new ProjectionWindowState(
                 direction, next, _shown.GetValueOrDefault(direction), _pending.GetValueOrDefault(direction)));

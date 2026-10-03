@@ -341,6 +341,63 @@ public class ProjectionWindowTests
         }
     });
 
+    [Fact]
+    public Task ChannelChoice_ShownOnlyInSplitViewAndDisabledWhileRoiTakesPriority() => WpfTestHost.Run(() =>
+    {
+        // チャネル分割表示で ROI がないときだけ選べる。ROI を描いているときは ROI を優先することを示して選べなくする。
+        // チャネル分割表示でなければ出さない
+        var window = NewWindow(ProjectionDirection.Horizontal);
+        try
+        {
+            var panel = Find<StackPanel>(window, "ChannelPanel");
+            var combo = Find<ComboBox>(window, "ChannelCombo");
+            var priority = Find<TextBlock>(window, "RoiPriorityText");
+            Assert.Equal(Visibility.Collapsed, panel.Visibility);
+
+            window.SetChannelChoice(ProjectionChannelChoice.Choosable, null);
+            Assert.Equal(Visibility.Visible, panel.Visibility);
+            Assert.True(combo.IsEnabled);
+            Assert.Equal("未選択", ((ComboBoxItem)combo.SelectedItem).Content);
+            Assert.Equal(Visibility.Collapsed, priority.Visibility);
+
+            window.SetChannelChoice(ProjectionChannelChoice.RoiTakesPriority, BayerChannel.Gb);
+            Assert.False(combo.IsEnabled);
+            Assert.Equal("Gb", ((ComboBoxItem)combo.SelectedItem).Content);
+            Assert.Equal(Visibility.Visible, priority.Visibility);
+            Assert.Contains("ROI", (string)priority.ToolTip);
+            CaptureIfRequested(window, "projection-channel-roi-priority");
+
+            window.SetChannelChoice(ProjectionChannelChoice.None, BayerChannel.Gb);
+            Assert.Equal(Visibility.Collapsed, panel.Visibility);
+        }
+        finally
+        {
+            window.Close();
+        }
+    });
+
+    [Fact]
+    public Task ChannelChoice_UserSelectionIsReportedButProgrammaticIsNot() => WpfTestHost.Run(() =>
+    {
+        var window = NewWindow(ProjectionDirection.Vertical);
+        var reported = new List<BayerChannel?>();
+        window.ChannelSelectionChanged += reported.Add;
+        try
+        {
+            window.SetChannelChoice(ProjectionChannelChoice.Choosable, BayerChannel.R);
+            Assert.Empty(reported); // 共有の選択を映しただけ
+
+            var combo = Find<ComboBox>(window, "ChannelCombo");
+            combo.SelectedIndex = 4; // B
+            combo.SelectedIndex = 0; // 未選択
+            Assert.Equal(new BayerChannel?[] { BayerChannel.B, null }, reported);
+        }
+        finally
+        {
+            window.Close();
+        }
+    });
+
     private static void ShowRoiResult(ProjectionWindow window)
     {
         window.ShowResult(

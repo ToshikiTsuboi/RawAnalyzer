@@ -91,6 +91,11 @@ public partial class MainWindow
         }
     }
 
+    /// <summary>
+    /// 射影の窓で選んだチャネルを忘れる(別のファイルを開いた・チャネル分割表示を抜けた。前に選んだチャネルを黙って使わない)。
+    /// </summary>
+    private void ForgetProjectionChannel() => _projections?.ForgetChannelSelection();
+
     /// <summary>射影の計算を取り消す(送り・画像の差し替えのとき。取り消した計算は終わるときに計算し直しを求める)。</summary>
     private void CancelProjectionJob() => _projections?.CancelRunning();
 

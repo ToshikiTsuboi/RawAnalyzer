@@ -23,6 +23,9 @@ internal sealed record ProjectionRequest(
 
     /// <summary>断る理由(求められるなら null)。</summary>
     internal string? RefusalReason => Target is UnsupportedRoiTarget unsupported ? unsupported.Reason : null;
+
+    /// <summary>窓のチャネルの選択欄の見せ方(チャネル分割表示でなければ出さない)。</summary>
+    internal ProjectionChannelChoice ChannelChoice { get; init; }
 }
 
 /// <summary>
@@ -72,17 +75,18 @@ internal readonly record struct ProjectionAxis(long Origin, long? SourceOrigin)
 /// (<see cref="HdrExposureMix.HorizontalProjectionRefusal"/>。垂直射影は各行が1つの露光なのでそのまま取る)。
 /// </para>
 /// <para>
-/// ROI がないときは画像全体。ただし、チャネル分割表示では4チャネルのどれかを勝手に選ばず、象限を ROI で囲むよう
-/// 案内する。HDR 分割ビュー(各露光の段を左右に並べた1枚)では、画像全体の水平射影は各列が1つの段に収まるので
+/// ROI がないときは画像全体。ただし、チャネル分割表示では4チャネルのどれかを勝手に選ばず、窓でチャネルを選ぶか
+/// 象限を ROI で囲むよう案内する。窓で選んだチャネルがあれば、そのチャネル全体(その象限全体)の射影を取る
+/// (ROI を描いているときは ROI を優先する)。HDR 分割ビュー(各露光の段を左右に並べた1枚)では、画像全体の水平射影は各列が1つの段に収まるので
 /// 求めるが、垂直射影は各行が段をまたいで露光の違う画素を1つの平均にするので断る(段をまたぐ ROI を断る規則、
 /// 分割ビューの画像全体のノイズ測定を断る規則(<see cref="HdrExposureMix.NoiseRefusal"/>)と同じ考え方)。
 /// </para>
 /// </remarks>
 internal static class ProjectionTargets
 {
-    /// <summary>チャネル分割表示で ROI がないときの案内。</summary>
+    /// <summary>チャネル分割表示で ROI がなく、窓でチャネルも選んでいないときの案内。</summary>
     internal const string ChannelSplitWithoutRoi =
-        "チャネル分割表示では、射影を取るチャネルの象限を ROI で囲んでください" +
+        "チャネル分割表示では、射影を取るチャネルを上の「チャネル」で選ぶか、チャネルの象限を ROI で囲んでください" +
         "(象限全体を囲むとそのチャネル全体になります)。";
 
     /// <summary>HDR 分割ビューで画像全体の垂直射影を断る理由。</summary>
@@ -138,19 +142,63 @@ internal static class ProjectionTargets
     /// <summary>いまの表示での求め方を作る(対象・断る理由・対象の説明)。</summary>
     /// <param name="direction">向き。</param>
     /// <param name="view">いまの表示の状態。</param>
+    /// <param name="chosenChannel">窓で選んだチャネル(チャネル分割表示で ROI がないときに使う。未選択なら null)。</param>
     /// <returns>求め方。</returns>
-    internal static ProjectionRequest BuildRequest(ProjectionDirection direction, ProjectionView view)
+    internal static ProjectionRequest BuildRequest(
+        ProjectionDirection direction, ProjectionView view, BayerChannel? chosenChannel = null)
     {
         RawImage image = view.Image;
 
         // 画像の外(余白)だけをドラッグした画素数0の ROI は、ヒストグラムと同じく ROI なしとみなす
         RegionOfInterest? roi = view.Roi is { PixelCount: > 0 } r ? r : null;
+        ProjectionChannelChoice choice = !view.ChannelSplitLayout ? ProjectionChannelChoice.None
+            : roi is not null ? ProjectionChannelChoice.RoiTakesPriority
+            : ProjectionChannelChoice.Choosable;
+
+        // チャネル分割表示で ROI がなく、窓でチャネルを選んでいれば、そのチャネルの象限全体を ROI と同じに扱う
+        // (行交互HDRの水平射影などの断る規則も ROI と同じに掛かる)
+        RegionOfInterest? quadrant = choice == ProjectionChannelChoice.Choosable && chosenChannel is { } channel
+            ? QuadrantOf(channel, view.Pattern, image.Width, image.Height)
+            : null;
         RoiAnalysisTarget target = Resolve(
-            direction, roi, view.ChannelSplitLayout, image.Width, image.Height, view.Pattern, view.SplitSegmentWidth,
-            view.LineInterleavedRawView);
-        string header = Describe(roi, target, image.Width, image.Height, view.SourceNote);
+            direction, roi ?? quadrant, view.ChannelSplitLayout, image.Width, image.Height, view.Pattern,
+            view.SplitSegmentWidth, view.LineInterleavedRawView);
+        string header = quadrant is not null && target is ChannelRoiTarget whole
+            ? $"対象: チャネル {BayerHelper.GetLabel(whole.Channel)} 全体 " +
+              $"({whole.DisplayRoi.Width}×{whole.DisplayRoi.Height}・チャネル分割表示の座標)" +
+              (view.SourceNote.Length > 0 ? $" · {view.SourceNote}" : "")
+            : Describe(roi, target, image.Width, image.Height, view.SourceNote);
         return new ProjectionRequest(
-            direction, image, view.Frame, target, header, (1 << image.Format.BitDepth) - 1);
+            direction, image, view.Frame, target, header, (1 << image.Format.BitDepth) - 1)
+        {
+            ChannelChoice = choice,
+        };
+    }
+
+    /// <summary>
+    /// チャネル分割表示で、チャネルが並ぶ象限(表示座標の矩形)を返す。象限 (qx, qy) は元画像の偶奇 (qx, qy) の画素を並べる。
+    /// </summary>
+    /// <param name="channel">チャネル。</param>
+    /// <param name="pattern">Bayer パターン。</param>
+    /// <param name="imageWidth">元画像の幅(奇数なら最終列は並べない)。</param>
+    /// <param name="imageHeight">元画像の高さ(奇数なら最終行は並べない)。</param>
+    /// <returns>象限。パターンにそのチャネルがなければ null。</returns>
+    internal static RegionOfInterest? QuadrantOf(BayerChannel channel, BayerPattern pattern, int imageWidth, int imageHeight)
+    {
+        int quadWidth = imageWidth / 2;
+        int quadHeight = imageHeight / 2;
+        for (int parityY = 0; parityY < 2; parityY++)
+        {
+            for (int parityX = 0; parityX < 2; parityX++)
+            {
+                if (BayerHelper.GetChannel(pattern, parityX, parityY) == channel)
+                {
+                    return new RegionOfInterest(parityX * quadWidth, parityY * quadHeight, quadWidth, quadHeight);
+                }
+            }
+        }
+
+        return null;
     }
 
     /// <summary>射影を求められる対象か。</summary>

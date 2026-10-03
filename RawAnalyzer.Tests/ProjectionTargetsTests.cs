@@ -72,6 +72,60 @@ public class ProjectionTargetsTests
         Assert.Contains("象限全体を囲むとそのチャネル全体", refused.Reason);
     }
 
+    [Theory]
+    [InlineData(BayerPattern.Rggb, BayerChannel.R, 0, 0)]
+    [InlineData(BayerPattern.Rggb, BayerChannel.Gr, 1, 0)]
+    [InlineData(BayerPattern.Rggb, BayerChannel.Gb, 0, 1)]
+    [InlineData(BayerPattern.Rggb, BayerChannel.B, 1, 1)]
+    [InlineData(BayerPattern.Gbrg, BayerChannel.R, 0, 1)] // GBRG の左下の象限が R
+    [InlineData(BayerPattern.Bggr, BayerChannel.Gr, 0, 1)] // BGGR は R の行(下の行)の緑が Gr
+    public void ChannelSplit_ChosenChannelWithoutRoi_IsThatChannelsWholeQuadrant(
+        BayerPattern pattern, BayerChannel channel, int quadX, int quadY)
+    {
+        // チャネル分割表示で ROI がないとき、窓で選んだチャネル全体(その象限全体 = そのチャネルの全画素)の射影を取る。
+        // 4001×3001 は偶数へ切り詰めて並べる(象限 2000×1500)。横軸は象限の表示座標
+        using RawImage image = TestImages.FromCodes(new ushort[4001 * 3001], 4001, 3001, 12, pattern);
+        var view = new ProjectionView(image, 0, null, true, pattern, 0, "");
+
+        ProjectionRequest request = ProjectionTargets.BuildRequest(H, view, channel);
+
+        ChannelRoiTarget target = Assert.IsType<ChannelRoiTarget>(request.Target);
+        Assert.Equal(channel, target.Channel);
+        Assert.Equal(new ChannelRegion(quadX, quadY, 2000, 1500), target.Region);
+        Assert.Equal(new RegionOfInterest(quadX * 2000, quadY * 1500, 2000, 1500), target.DisplayRoi);
+        Assert.Equal(ProjectionChannelChoice.Choosable, request.ChannelChoice);
+        Assert.Equal($"対象: チャネル {BayerHelper.GetLabel(channel)} 全体 (2000×1500・チャネル分割表示の座標)",
+            request.Header);
+        Assert.Equal(new ProjectionAxis(quadX * 2000, quadX), ProjectionTargets.AxisOf(target, H));
+    }
+
+    [Fact]
+    public void ChannelSplit_ChoiceIsShownOnlyInSplitViewAndRoiTakesPriority()
+    {
+        using RawImage image = TestImages.FromCodes(new ushort[8 * 4], 8, 4, 12, BayerPattern.Rggb);
+        var split = new ProjectionView(image, 0, null, true, BayerPattern.Rggb, 0, "");
+
+        // 未選択: 勝手に選ばず、選び方(窓のチャネル・象限を ROI で囲む)を案内する
+        ProjectionRequest unselected = ProjectionTargets.BuildRequest(V, split, chosenChannel: null);
+        Assert.Equal(ProjectionChannelChoice.Choosable, unselected.ChannelChoice);
+        Assert.Equal(ProjectionTargets.ChannelSplitWithoutRoi, unselected.RefusalReason);
+        Assert.Contains("「チャネル」で選ぶか", unselected.RefusalReason);
+        Assert.Contains("象限全体を囲むとそのチャネル全体", unselected.RefusalReason);
+
+        // ROI を描いたら ROI を優先する(選択は使わない)
+        ProjectionRequest withRoi = ProjectionTargets.BuildRequest(
+            V, split with { Roi = new RegionOfInterest(4, 0, 2, 2) }, BayerChannel.B);
+        Assert.Equal(ProjectionChannelChoice.RoiTakesPriority, withRoi.ChannelChoice);
+        ChannelRoiTarget roiTarget = Assert.IsType<ChannelRoiTarget>(withRoi.Target);
+        Assert.Equal(BayerChannel.Gr, roiTarget.Channel);
+        Assert.StartsWith("対象: ROI (4, 0, 2×2", withRoi.Header);
+
+        // チャネル分割表示でなければ選択欄は出さず、選択も使わない(画像全体)
+        ProjectionRequest raw = ProjectionTargets.BuildRequest(V, split with { ChannelSplitLayout = false }, BayerChannel.B);
+        Assert.Equal(ProjectionChannelChoice.None, raw.ChannelChoice);
+        Assert.Equal(new WholeImageTarget(), raw.Target);
+    }
+
     [Fact]
     public void HdrSplitView_WholeImage_HorizontalIsAllowedButVerticalIsRefused()
     {
