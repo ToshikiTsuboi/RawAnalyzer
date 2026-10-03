@@ -2306,7 +2306,11 @@ public partial class MainWindow : Window
         ViewportDisplayMode mode = choice.ApplyDemosaic
             ? ViewportDisplayMode.ColorDevelop
             : ViewportDisplayMode.Raw;
-        BayerPattern pattern = choice.ApplyDemosaic ? ActiveFormat!.Bayer : BayerPattern.None;
+
+        // 保存した raw の記憶に使う Bayer も保存を始めるときに決める(付随テキストの書き出しを待つ間に右パネルで
+        // 変えられても、保存した画像・付随テキストと同じパターンを記憶する)
+        BayerPattern savedBayer = ActiveFormat?.Bayer ?? image.Format.Bayer;
+        BayerPattern pattern = choice.ApplyDemosaic ? savedBayer : BayerPattern.None;
         var devLuts = DevelopLuts.Create(developParameters);
 
         // HDR分割ビューは表示調整を段ごとに持ち、段ごとのLUTで描く。表示LUTを焼き込むなら画面と同じく
@@ -2350,7 +2354,8 @@ public partial class MainWindow : Window
             // RawSaver はヘッダを出力しないため、保存したrawを開き直したときに
             // 元のHeaderOffsetのままだと開けない。出力実体に合うフォーマットを記憶する。
             // Bayerはパネルで変更した値が_currentFormat側にしか反映されないため、
-            // 読み込み時のimage.FormatではなくActiveFormatから取る
+            // 読み込み時のimage.FormatではなくActiveFormatから(保存を始めるときに)取る。以前は付随テキストの
+            // 書き出しを待った後で取り、待つ間に右パネルで変えたパターンを、付随テキストと食い違ったまま記憶した
             if (choice.Format == SaveFormat.Raw)
             {
                 RememberFileFormat(path, image.Format with
@@ -2358,7 +2363,7 @@ public partial class MainWindow : Window
                     HeaderOffset = 0,
                     Packing = choice.Packing,
                     Endianness = choice.Endianness,
-                    Bayer = ActiveFormat?.Bayer ?? image.Format.Bayer,
+                    Bayer = savedBayer,
                 });
             }
 
