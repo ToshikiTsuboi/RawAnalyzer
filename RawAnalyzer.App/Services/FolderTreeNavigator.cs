@@ -1,4 +1,5 @@
 using System.IO;
+using System.Windows;
 using System.Windows.Controls;
 using RawAnalyzer.Core;
 
@@ -114,7 +115,10 @@ internal sealed class FolderTreeNavigator
     /// </summary>
     /// <remarks>
     /// 祖先の各階層を順に展開し、未列挙なら列挙を待つ。待つ間に次の同期が始まったら(別のフォルダを開いた)、
-    /// この同期はそこでやめる。
+    /// または利用者がツリーの項目を選んだら(同期による選択ではない選択の変更)、この同期はそこでやめる
+    /// (後から来た利用者の選択を優先する)。以前は別の同期でしか世代が進まず、列挙を待つ間にクリックした項目の
+    /// 選択を、後から終わった同期が表示中のフォルダへ戻していた(クリックした項目を開く側は、実在を確かめた後に
+    /// 選択されたままかを照合するので、そのフォルダへ移れなかった)。
     /// ツリーにない(UNC パス、起動後に接続したドライブ、隠し・システム属性のフォルダの下など、ルートや途中の階層が
     /// 見つからない)ときは、前のフォルダの選択を外す。残すと、TreeView は選択済みの項目をクリックしても選択の
     /// 変更を出さないので、その項目をクリックしても前のフォルダへ戻れない。
@@ -125,6 +129,36 @@ internal sealed class FolderTreeNavigator
     internal async Task SyncToFolderAsync(TreeView tree, string folder)
     {
         int generation = ++_syncGeneration;
+
+        // 同期の途中の利用者の選択で、この同期の世代を古くする(次の同期は進めた世代のさらに先で始まる)
+        void OnSelectionChanged(object sender, RoutedPropertyChangedEventArgs<object> e)
+        {
+            if (!IsSyncingSelection && generation == _syncGeneration)
+            {
+                _syncGeneration++;
+            }
+        }
+
+        tree.SelectedItemChanged += OnSelectionChanged;
+        try
+        {
+            await SyncCoreAsync(tree, folder, generation);
+        }
+        finally
+        {
+            tree.SelectedItemChanged -= OnSelectionChanged;
+        }
+    }
+
+    /// <summary>
+    /// <see cref="SyncToFolderAsync"/> の本体。列挙を待った後は、世代が古くなっていたら何もしない。
+    /// </summary>
+    /// <param name="tree">フォルダツリー。</param>
+    /// <param name="folder">選択するフォルダのフルパス。</param>
+    /// <param name="generation">この同期の世代。</param>
+    /// <returns>同期の完了を表すタスク。</returns>
+    private async Task SyncCoreAsync(TreeView tree, string folder, int generation)
+    {
         string? root = Path.GetPathRoot(folder);
         if (string.IsNullOrEmpty(root))
         {

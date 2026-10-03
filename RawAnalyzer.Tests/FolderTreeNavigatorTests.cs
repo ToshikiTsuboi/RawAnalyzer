@@ -220,6 +220,56 @@ public class FolderTreeNavigatorTests
         Assert.Equal(@"Z:\fast", selected.Tag);
     });
 
+    [Fact]
+    public Task SyncToFolder_UserSelectionWhileWaiting_IsNotTakenBack() => WpfTestHost.Run(async () =>
+    {
+        // レビュー 2026-10-03 R3。表示中のフォルダ A への同期が A の列挙を待つ間に、利用者がツリーで B をクリックした。
+        // 以前は同期の世代が別の同期でしか進まず、後から終わった同期が選択を A へ戻した。B を開く側
+        // (MainWindow.OnFolderTreeSelected)は B の実在を確かめた後に B が選択されたままかを照合するので、B へ移れなかった。
+        // 利用者が選んだ時点で、待っている同期はやめる
+        using var entered = new ManualResetEventSlim();
+        using var gate = new ManualResetEventSlim();
+        var navigator = new FolderTreeNavigator(path =>
+        {
+            if (string.Equals(path, @"Z:\A", StringComparison.OrdinalIgnoreCase))
+            {
+                entered.Set();
+                gate.Wait(TimeSpan.FromSeconds(10));
+                return [Entry(@"Z:\A\run01")];
+            }
+
+            return path.Equals(@"Z:\", StringComparison.OrdinalIgnoreCase)
+                ? [Entry(@"Z:\A"), Entry(@"Z:\B")]
+                : [];
+        });
+        var tree = new TreeView();
+        TreeViewItem root = FolderTreeNavigator.CreateItem("💽 Z:", @"Z:\");
+        tree.Items.Add(root);
+        await navigator.PopulateAsync(root);
+        TreeViewItem b = root.Items.OfType<TreeViewItem>().Single(i => (string)i.Tag == @"Z:\B");
+        var userSelections = new List<object>();
+        tree.SelectedItemChanged += (_, e) =>
+        {
+            if (!navigator.IsSyncingSelection)
+            {
+                userSelections.Add(e.NewValue);
+            }
+        };
+
+        Task syncA = navigator.SyncToFolderAsync(tree, @"Z:\A");
+        await Task.Run(() => entered.Wait(TimeSpan.FromSeconds(10)));
+        b.IsSelected = true; // 利用者のクリック
+        gate.Set();
+        await syncA;
+
+        Assert.Same(b, tree.SelectedItem);
+        Assert.Equal([b], userSelections);
+
+        // 次に表示中のフォルダが替わったら(B を開いた)、同期はこれまでどおり選択する
+        await navigator.SyncToFolderAsync(tree, @"Z:\A");
+        Assert.Equal(@"Z:\A", Assert.IsType<TreeViewItem>(tree.SelectedItem).Tag);
+    });
+
     [Theory]
     [InlineData(@"\\server\share\run03")] // UNC パス(ツリーはドライブだけ)
     [InlineData(@"Q:\data")] // 起動後に接続したドライブ(ツリーは起動時のドライブだけ)
