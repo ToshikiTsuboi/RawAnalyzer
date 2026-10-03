@@ -265,15 +265,16 @@ public partial class MainWindow : Window
             _ = Task.Run(() => RawLoader.DeleteUnusedTemporaryCopies(RawLoader.TemporaryCopyFolder));
             _vm.FileFilterText = _session.FileFilter ?? "";
 
-            // 起動引数のパスの実在は UI スレッドの外で確かめている(App.StartupPath)。確かめる間に利用者が別の
-            // ファイル・フォルダを開いていたら、後から来た方を優先して起動引数のパスは開かない
+            // 起動引数のパスの実在とフォルダかどうかは UI スレッドの外で確かめている(App.StartupPath)。確かめる間に
+            // 利用者が別のファイル・フォルダを開いていたら、後から来た方を優先して起動引数のパスは開かない。
+            // 照合したこの UI ターンのうちに開き始める(照合の後にもう一度待つと、その間に開かれたものを追い越す)
             int openRequests = _openRequests;
             int startupFolderGeneration = _folderGeneration;
             if (await App.StartupPath is { } startup)
             {
                 if (openRequests == _openRequests && startupFolderGeneration == _folderGeneration)
                 {
-                    await OpenStartupPath(startup);
+                    OpenStartupPath(startup);
                 }
 
                 return;
@@ -310,17 +311,21 @@ public partial class MainWindow : Window
     }
 
     /// <summary>起動引数で渡されたパスを開く(フォルダなら一覧表示のみ)。</summary>
-    /// <param name="path">ファイルまたはフォルダのパス。</param>
-    private async Task OpenStartupPath(string path)
+    /// <remarks>
+    /// 一覧の読み込み(・ファイルを開く要求)は呼び出したこの UI ターンで始める(世代を進める)。以前はここで
+    /// もう一度 UI スレッドの外でフォルダかを確かめ、その間に利用者が開いたフォルダを、確認の後で起動引数のフォルダで
+    /// 置き換えていた(利用者のフォルダの一覧の読み込みも捨てていた)。
+    /// </remarks>
+    /// <param name="startup">起動引数のパスとフォルダかどうか(起動引数の解釈(App.StartupPath)で確かめてある)。</param>
+    private void OpenStartupPath(StartupTarget startup)
     {
-        // 起動直後に UI スレッドでネットワーク上のパスを確かめない(実在は起動引数の解釈(App.StartupPath)で確かめてある)
-        if (await Task.Run(() => Directory.Exists(path)))
+        if (startup.IsFolder)
         {
-            await LoadFolderAsync(path, selectPath: null);
+            LoadFolder(startup.Path, selectPath: null);
             return;
         }
 
-        await LoadFolderAndOpenAsync(path);
+        _ = LoadFolderAndOpenAsync(startup.Path);
     }
 
     /// <summary>

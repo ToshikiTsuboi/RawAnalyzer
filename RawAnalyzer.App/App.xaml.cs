@@ -5,6 +5,11 @@ using RawAnalyzer.App.Services;
 
 namespace RawAnalyzer.App;
 
+/// <summary>起動引数で渡された、起動時に開くパス。</summary>
+/// <param name="Path">ファイルまたはフォルダのフルパス。</param>
+/// <param name="IsFolder">フォルダか(フォルダなら一覧の表示のみ、ファイルならそのフォルダの一覧を読んでから開く)。</param>
+internal readonly record struct StartupTarget(string Path, bool IsFolder);
+
 /// <summary>
 /// RawAnalyzerアプリケーション。全ウィンドウへダークタイトルバーを適用し、
 /// 未処理例外を捕捉してログに残す。
@@ -37,23 +42,30 @@ public partial class App : Application
                 }
             }));
 
-        // 起動引数のパスを開く(端末やエクスプローラの「送る」から直接開けるように)。実在の確認は UI スレッドの外で
-        // 行う(ネットワーク上のパスは、切断していればタイムアウトまで戻らず、ウィンドウが出ないまま固まっていた)
+        // 起動引数のパスを開く(端末やエクスプローラの「送る」から直接開けるように)。実在とフォルダかどうかの確認は
+        // UI スレッドの外で行う(ネットワーク上のパスは、切断していればタイムアウトまで戻らず、ウィンドウが出ないまま
+        // 固まっていた)
         string[] args = e.Args;
         StartupPath = args.Length == 0
-            ? Task.FromResult<string?>(null)
+            ? Task.FromResult<StartupTarget?>(null)
             : Task.Run(() => ResolveStartupPath(args));
     }
 
     /// <summary>起動時に開くパス(なければnull)を決めるタスク。MainWindowがLoadedで待つ。</summary>
-    internal static Task<string?> StartupPath { get; private set; } = Task.FromResult<string?>(null);
+    internal static Task<StartupTarget?> StartupPath { get; private set; } = Task.FromResult<StartupTarget?>(null);
 
     /// <summary>
     /// 起動引数から開くべきファイル/フォルダを決める。
     /// </summary>
+    /// <remarks>
+    /// フォルダかどうかも実在と一緒にここで決める。開く側(MainWindow の Loaded)は、待つ間に利用者が別のファイル・
+    /// フォルダを開いていないかを照合したその UI ターンのうちに、一覧の読み込み・ファイルを開く処理を始める。
+    /// 以前は開く側がもう一度 UI スレッドの外でフォルダかを確かめ、その間に利用者が開いたフォルダを、後から終わった
+    /// 確認の続きが起動引数のフォルダで置き換えていた。
+    /// </remarks>
     /// <param name="args">コマンドライン引数。</param>
-    /// <returns>存在するパス。該当なしならnull。</returns>
-    internal static string? ResolveStartupPath(IReadOnlyList<string> args)
+    /// <returns>存在するパスとフォルダかどうか。該当なしならnull。</returns>
+    internal static StartupTarget? ResolveStartupPath(IReadOnlyList<string> args)
     {
         foreach (string arg in args)
         {
@@ -66,9 +78,14 @@ public partial class App : Application
             try
             {
                 string full = System.IO.Path.GetFullPath(arg);
-                if (System.IO.File.Exists(full) || System.IO.Directory.Exists(full))
+                if (System.IO.Directory.Exists(full))
                 {
-                    return full;
+                    return new StartupTarget(full, IsFolder: true);
+                }
+
+                if (System.IO.File.Exists(full))
+                {
+                    return new StartupTarget(full, IsFolder: false);
                 }
             }
             catch (Exception ex) when (ex is ArgumentException or System.IO.PathTooLongException

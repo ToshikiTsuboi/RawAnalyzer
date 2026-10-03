@@ -15,16 +15,20 @@ public class AppStartupTests
         File.WriteAllBytes(file, new byte[8]);
         try
         {
-            Assert.Equal(file, App.App.ResolveStartupPath(new[] { file }));
+            var fileTarget = new App.StartupTarget(file, IsFolder: false);
+            Assert.Equal(fileTarget, App.App.ResolveStartupPath(new[] { file }));
 
             // 存在しないもの・パスとして不正なものは(例外にせず)飛ばす
-            Assert.Equal(file, App.App.ResolveStartupPath(new[] { @"Z:\nope.raw", file }));
-            Assert.Equal(file, App.App.ResolveStartupPath(new[] { "\0invalid", file }));
+            Assert.Equal(fileTarget, App.App.ResolveStartupPath(new[] { @"Z:\nope.raw", file }));
+            Assert.Equal(fileTarget, App.App.ResolveStartupPath(new[] { "\0invalid", file }));
 
             // オプション類は無視する
-            Assert.Equal(file, App.App.ResolveStartupPath(new[] { "--debug", "/x", file }));
+            Assert.Equal(fileTarget, App.App.ResolveStartupPath(new[] { "--debug", "/x", file }));
 
-            Assert.Equal(directory, App.App.ResolveStartupPath(new[] { directory }));
+            // フォルダかどうかも実在と一緒に(UI スレッドの外で)決める。レビュー 2026-10-03 R2。以前はウィンドウの表示後に
+            // UI スレッドの外でもう一度確かめ、確かめる間に利用者が開いたフォルダを起動引数のフォルダで置き換えていた
+            Assert.Equal(new App.StartupTarget(directory, IsFolder: true),
+                App.App.ResolveStartupPath(new[] { directory }));
             Assert.Null(App.App.ResolveStartupPath(Array.Empty<string>()));
             Assert.Null(App.App.ResolveStartupPath(new[] { @"Z:\nope.raw" }));
         }
