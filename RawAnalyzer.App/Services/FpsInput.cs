@@ -8,11 +8,12 @@ namespace RawAnalyzer.App.Services;
 /// フレームレート入力欄(編集可能コンボ)の文字列を数値へ解釈する。
 /// </summary>
 /// <remarks>
-/// コンボの項目は「15 fps」のように単位付きなので、数字部分だけを取り出す。
-/// 空欄や数字なし、0 以下の値は呼び出し側の既定値へ落とす(入力途中で再生が止まらないように)。
+/// コンボの項目は「15 fps」のように単位付きなので、末尾の単位(打っている途中の "f"・"fp" も)を除いた残りの全体を
+/// 数として読む。数として読めない入力の一部分(数らしく見える箇所)だけを採用することはしない。
+/// 空欄や読めない入力、0 以下の値は呼び出し側の既定値へ落とす(入力途中で再生が止まらないように)。
 /// 落としたこと・範囲へ収めたことは説明を返し、入力欄に赤枠とツールチップで示す(黙って落とさない)。
-/// 数字部分の解釈は他の数値入力欄と同じく <see cref="NumericInput"/> を通し、IME がオンのまま打った
-/// 全角の数字・記号と3桁区切りも読む。
+/// 数の解釈は他の数値入力欄と同じく <see cref="NumericInput"/> を通し、IME がオンのまま打った
+/// 全角の数字・記号と3桁区切り、整数部を省いた小数(".5")も読む。
 /// </remarks>
 internal static partial class FpsInput
 {
@@ -27,7 +28,9 @@ internal static partial class FpsInput
     /// </summary>
     /// <remarks>
     /// 以前は符号を取らずに数字だけを探したので "-5" を 5 fps と読み、全角の数字は見つけても読めずに黙って既定値へ
-    /// 落としていた。全角を半角へ寄せてから符号付きの数を探し、負の値は 0 と同じく既定値へ落とす。
+    /// 落としていた。その後も整数部が必須の数の形を部分一致で探したので、".5" と "-.5" から "5" だけを取り出して
+    /// どちらも 5 fps と黙って読んだ(0.5 fps のつもりなら 10 倍の速さ)。全角を半角へ寄せ、単位を除いた残りの全体を
+    /// 数として読み、負の値は 0 と同じく既定値へ落とす。
     /// </remarks>
     /// <param name="text">コンボの表示文字列(例: "15 fps"、"7.5")。</param>
     /// <param name="fallback">解釈できない場合に返す値。</param>
@@ -60,12 +63,11 @@ internal static partial class FpsInput
             return fallback;
         }
 
-        // NFKC で全角の数字・記号(－ ． ，)を半角へ寄せる。かな入力の「ー」(負号)と「。」(小数点)は
-        // NFKC では変わらないので、そのまま拾って NumericInput に読ませる
-        string normalized = text.Normalize(NormalizationForm.FormKC);
-        Match match = NumberPattern().Match(normalized);
-        if (!match.Success || IsCutAtAmbiguousComma(normalized, match)
-            || !NumericInput.TryParseFinite(match.Value, out double value))
+        // NFKC で全角の単位(ｆｐｓ)を半角へ寄せてから単位を除き、残りの全体を NumericInput に読ませる(全角の数字・
+        // 記号、かな入力の「ー」(負号)と「。」(小数点)、3桁区切りはそちらで読む)。小数点のつもりかもしれない
+        // カンマ("7,5")や数の後ろの余計な文字("7.5.3"、"30x")を含む入力は、手前の数だけを読まずに読めない入力とする
+        string number = UnitSuffix().Replace(text.Normalize(NormalizationForm.FormKC), "");
+        if (!NumericInput.TryParseFinite(number, out double value))
         {
             notice = $"「{text.Trim()}」からフレームレートを読めないため、{fallbackText}";
             return fallback;
@@ -88,21 +90,6 @@ internal static partial class FpsInput
     }
 
     private static string Format(double fps) => fps.ToString("0.###", CultureInfo.InvariantCulture);
-
-    /// <summary>
-    /// 取り出した数が、3桁区切りではないカンマの手前で切れているか("7,5" の "7"、"1,5000" の "1,500")。
-    /// </summary>
-    /// <remarks>
-    /// 小数点のつもりかもしれないカンマは、他の数値入力欄(<see cref="NumericInput"/>)と同じく読めない入力とする。
-    /// 以前はカンマの手前だけを読み、"7,5" を 7 fps と黙って誤読した。
-    /// </remarks>
-    private static bool IsCutAtAmbiguousComma(string text, Match match)
-    {
-        int end = match.Index + match.Length;
-        return end < text.Length
-            && (char.IsAsciiDigit(text[end])
-                || (text[end] == ',' && end + 1 < text.Length && char.IsAsciiDigit(text[end + 1])));
-    }
 
     /// <summary>
     /// 動画書き出し用に整数のフレームレートを取り出す(ライタが整数を要求するため)。
@@ -131,6 +118,7 @@ internal static partial class FpsInput
         return (int)Math.Clamp(Math.Round(value, MidpointRounding.AwayFromZero), 1, MaxFps);
     }
 
-    [GeneratedRegex(@"[+\-−ー]?[0-9]+(,[0-9]{3})*([.。][0-9]+)?")]
-    private static partial Regex NumberPattern();
+    // 末尾の単位。コンボの項目の "fps" と、打っている途中の "f"・"fp"(大文字も)
+    [GeneratedRegex(@"\s*f(ps?)?\s*\z", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex UnitSuffix();
 }

@@ -13,6 +13,8 @@ public class VideoSettingsTests
     [InlineData("15 fps", 15)]
     [InlineData("30", 30)]
     [InlineData("7.5", 7.5)]
+    [InlineData("30fps", 30)]  // 単位の前の空白なし
+    [InlineData("60 FPS", 60)] // 単位の大文字
     public void Parse_ReadsNumberFromComboText(string text, double expected)
     {
         Assert.Equal(expected, FpsInput.Parse(text, fallback: 15), 10);
@@ -50,6 +52,8 @@ public class VideoSettingsTests
     [InlineData("７．５", 7.5)]
     [InlineData("７。５", 7.5)]    // かな入力で "." キーは句点になる
     [InlineData("30 f", 30)]       // 単位を打っている途中も数字を読む(再生速度が既定値へ飛ばない)
+    [InlineData("30 fp", 30)]
+    [InlineData("7.", 7)]          // 小数を打っている途中(NumericInput と同じく小数点で終わる数を読む)
     [InlineData("1,000", 240)]     // 3桁区切り(以前は 1 と読んだ)
     public void Parse_ReadsFullWidthAndGroupedNumbers(string text, double expected)
     {
@@ -77,6 +81,40 @@ public class VideoSettingsTests
     public void Parse_NegativeFallsBackLikeZero(string text)
     {
         Assert.Equal(15, FpsInput.Parse(text, fallback: 15), 10);
+    }
+
+    /// <summary>
+    /// 単位を除いた数値の全体を読む(レビュー 2026-10-03 F1)。以前は整数部が必須の数の形を部分一致で探したので、
+    /// ".5" から "5" だけを取り出し、0.5 fps のつもりの入力を知らせずに 10 倍の速さの 5 fps で再生・書き出しした。
+    /// 整数部を省いた小数は、他の数値入力欄(NumericInput)と同じく読む。
+    /// </summary>
+    [Theory]
+    [InlineData(".5", 0.5)]
+    [InlineData(".5fps", 0.5)]
+    [InlineData("．５ ｆｐｓ", 0.5)]
+    [InlineData("。５", 0.5)] // かな入力で "." キーは句点になる
+    public void Parse_FractionWithoutIntegerPart_IsReadWhole(string text, double expected)
+    {
+        Assert.Equal(expected, FpsInput.Parse(text, fallback: 15, out string? notice), 10);
+        Assert.Null(notice);
+    }
+
+    /// <summary>
+    /// 数として読めない・使えない入力は、その一部分の数を採用せずに既定値へ落とし、そのことを示す(レビュー 2026-10-03 F1)。
+    /// 以前は部分一致で見つけた数を黙って使い、"-.5" を 5 fps、"7.5.3" を 7.5 fps と読んだ。
+    /// </summary>
+    [Theory]
+    [InlineData("-.5", "-0.5 fps は使えない")] // 負の値は "-5" と同じく既定値へ(以前は符号と小数点を落として 5 fps)
+    [InlineData("－．５ fps", "-0.5 fps は使えない")]
+    [InlineData("ー.5", "-0.5 fps は使えない")]
+    [InlineData("7.5.3", "「7.5.3」からフレームレートを読めない")]
+    [InlineData("30x", "「30x」からフレームレートを読めない")]
+    [InlineData("1 000", "「1 000」からフレームレートを読めない")] // 以前は 1 fps
+    public void Parse_InvalidInput_DoesNotAdoptAPartOfIt(string text, string expectedNotice)
+    {
+        Assert.Equal(15, FpsInput.Parse(text, fallback: 15, out string? notice), 10);
+        Assert.NotNull(notice);
+        Assert.Contains(expectedNotice, notice);
     }
 
     /// <summary>
@@ -113,6 +151,8 @@ public class VideoSettingsTests
     [InlineData("0.4", 1, "範囲 1〜240 fps の外のため、1 fps を使います")] // 書き出しは整数の 1 fps から
     [InlineData("1000", 240, "範囲 1〜240 fps の外のため、240 fps を使います")]
     [InlineData("abc", 15, "既定の 15 fps を使います")]
+    [InlineData(".5", 1, "0.5 fps は範囲 1〜240 fps の外のため、1 fps を使います")] // 以前は黙って 5 fps(F1)
+    [InlineData("-.5", 15, "-0.5 fps は使えない")]
     [InlineData("29.97", 30, null)] // 整数への丸めは知らせない(書き出しの仕様)
     [InlineData("1", 1, null)]
     public void ParseInteger_ReportsFallbackAndClampingButNotRounding(
