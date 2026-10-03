@@ -150,6 +150,24 @@ public class ProjectionTargetsTests
     }
 
     [Fact]
+    public void BuildRequest_CombinesTargetHeaderAndMaxCode()
+    {
+        // いまの表示の状態から求め方を作る(MainWindow はこの状態を渡すだけ)。画素数0の ROI は ROI なし
+        using RawImage image = TestImages.FromCodes(new ushort[8 * 4], 8, 4, bitDepth: 12, BayerPattern.Rggb);
+        var view = new ProjectionView(image, 0, new RegionOfInterest(2, 2, 0, 0), false, BayerPattern.Rggb, 0,
+            "フレーム 1/3");
+
+        ProjectionRequest request = ProjectionTargets.BuildRequest(ProjectionDirection.Vertical, view);
+
+        Assert.Equal(new WholeImageTarget(), request.Target);
+        Assert.Equal("対象: 画像全体 (8×4) · フレーム 1/3", request.Header);
+        Assert.Equal(4095, request.MaxCode);
+        Assert.Equal(ProjectionDirection.Vertical, request.Direction);
+        Assert.Same(image, request.Image);
+        Assert.Equal(request, ProjectionTargets.BuildRequest(ProjectionDirection.Vertical, view));
+    }
+
+    [Fact]
     public void Compute_ReadsTheResolvedPixels()
     {
         // 値 = y*8+x の 8×4 RGGB。分割表示の右上象限(Gr)の2×2 → 元画像 x=1,3 / y=0,2

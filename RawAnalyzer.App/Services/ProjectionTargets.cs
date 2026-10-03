@@ -25,6 +25,20 @@ internal sealed record ProjectionRequest(
     internal string? RefusalReason => Target is UnsupportedRoiTarget unsupported ? unsupported.Reason : null;
 }
 
+/// <summary>
+/// 射影の求め方を作るための、いまの表示の状態(MainWindow が表示中の画像・ROI・表示モードから作る)。
+/// </summary>
+/// <param name="Image">表示中の画像(HDR表示中は派生ビューの画像)。</param>
+/// <param name="Frame">表示中のフレーム。</param>
+/// <param name="Roi">表示座標の ROI(なければ null。画素数0は ROI なしとみなす)。</param>
+/// <param name="ChannelSplitLayout">チャネル分割のタイル表示中か(表示座標 = タイル座標)。</param>
+/// <param name="Pattern">表示中の画像の Bayer パターン(右パネルの指定を含む)。</param>
+/// <param name="SplitSegmentWidth">HDR 分割ビューの段の幅(分割ビューでなければ0)。</param>
+/// <param name="SourceNote">表示中の画像の説明(フレーム・ページ・HDR 表示。<see cref="ProjectionTargets.SourceNote"/>)。</param>
+internal sealed record ProjectionView(
+    RawImage Image, int Frame, RegionOfInterest? Roi, bool ChannelSplitLayout, BayerPattern Pattern,
+    int SplitSegmentWidth, string SourceNote);
+
 /// <summary>射影の横軸の座標(表示する座標と、チャネル分割表示なら元画像の座標)。</summary>
 /// <param name="Origin">射影の先頭の位置の横軸の座標(ROI を描いた表示座標)。</param>
 /// <param name="SourceOrigin">
@@ -102,6 +116,23 @@ internal static class ProjectionTargets
         }
 
         return new WholeImageTarget();
+    }
+
+    /// <summary>いまの表示での求め方を作る(対象・断る理由・対象の説明)。</summary>
+    /// <param name="direction">向き。</param>
+    /// <param name="view">いまの表示の状態。</param>
+    /// <returns>求め方。</returns>
+    internal static ProjectionRequest BuildRequest(ProjectionDirection direction, ProjectionView view)
+    {
+        RawImage image = view.Image;
+
+        // 画像の外(余白)だけをドラッグした画素数0の ROI は、ヒストグラムと同じく ROI なしとみなす
+        RegionOfInterest? roi = view.Roi is { PixelCount: > 0 } r ? r : null;
+        RoiAnalysisTarget target = Resolve(
+            direction, roi, view.ChannelSplitLayout, image.Width, image.Height, view.Pattern, view.SplitSegmentWidth);
+        string header = Describe(roi, target, image.Width, image.Height, view.SourceNote);
+        return new ProjectionRequest(
+            direction, image, view.Frame, target, header, (1 << image.Format.BitDepth) - 1);
     }
 
     /// <summary>射影を求められる対象か。</summary>

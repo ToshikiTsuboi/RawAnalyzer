@@ -33,7 +33,7 @@ public partial class MainWindow
     {
         var controller = new ProjectionWindowController(
             Dispatcher,
-            BuildProjectionRequest,
+            CurrentProjectionView,
             () => _playTimer?.IsEnabled == true,
             (image, frame) => new AnalysisSource(image, frame).IsCurrent(ActiveImage, Viewport.Frame),
             CreateProjectionWindow,
@@ -94,21 +94,17 @@ public partial class MainWindow
     /// <summary>射影の計算を取り消す(送り・画像の差し替えのとき。取り消した計算は終わるときに計算し直しを求める)。</summary>
     private void CancelProjectionJob() => _projections?.CancelRunning();
 
-    /// <summary>いまの表示での求め方を作る(画像がなければ null)。</summary>
-    private ProjectionRequest? BuildProjectionRequest(ProjectionDirection direction)
+    /// <summary>射影の求め方を作るための、いまの表示の状態(画像がなければ null)。</summary>
+    private ProjectionView? CurrentProjectionView()
     {
         if (ActiveImage is not { } image || ActiveFormat is not { } format)
         {
             return null;
         }
 
-        // 画像の外(余白)だけをドラッグした画素数0の ROI は、ヒストグラムと同じく ROI なしとみなす
-        RegionOfInterest? roi = Viewport.Roi is { PixelCount: > 0 } r ? r : null;
-        RoiAnalysisTarget target = ProjectionTargets.Resolve(
-            direction, roi, Viewport.IsChannelSplitLayout, image.Width, image.Height, format.Bayer,
-            HdrSplitSegmentWidth);
-        string header = ProjectionTargets.Describe(roi, target, image.Width, image.Height, ProjectionSourceNote(image));
-        return new ProjectionRequest(direction, image, Viewport.Frame, target, header, (1 << format.BitDepth) - 1);
+        return new ProjectionView(
+            image, Viewport.Frame, Viewport.Roi, Viewport.IsChannelSplitLayout, format.Bayer,
+            HdrSplitSegmentWidth, ProjectionSourceNote(image));
     }
 
     /// <summary>窓の上部に出す、表示中の画像の説明(HDR 表示・ページ・フレーム)。</summary>

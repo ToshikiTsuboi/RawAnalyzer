@@ -23,7 +23,7 @@ namespace RawAnalyzer.App.Views;
 internal sealed class ProjectionWindowController
 {
     private readonly Dispatcher _dispatcher;
-    private readonly Func<ProjectionDirection, ProjectionRequest?> _buildRequest;
+    private readonly Func<ProjectionView?> _currentView;
     private readonly Func<bool> _isPlaying;
     private readonly Func<RawImage, int, bool> _isCurrent;
     private readonly Func<ProjectionDirection, ProjectionWindow?, ProjectionWindow> _createWindow;
@@ -48,7 +48,7 @@ internal sealed class ProjectionWindowController
 
     /// <summary>窓の管理を作る。</summary>
     /// <param name="dispatcher">UI スレッドのディスパッチャ(計算し直しの判断を手番の後へ送る)。</param>
-    /// <param name="buildRequest">いまの表示での求め方を作る(画像がなければ null)。</param>
+    /// <param name="currentView">いまの表示の状態(画像がなければ null)。</param>
     /// <param name="isPlaying">再生中か。</param>
     /// <param name="isCurrent">画像・フレームがいまも表示中か(計算中に送った・差し替えたら結果を出さない)。</param>
     /// <param name="createWindow">窓を作る(もう一方の窓が開いていればそれを渡す。並べて開くため)。</param>
@@ -56,7 +56,7 @@ internal sealed class ProjectionWindowController
     /// <param name="compute">1回の走査で射影を求める(UI スレッドの外で呼ぶ。省略時は <see cref="ProjectionTargets.Compute"/>)。</param>
     internal ProjectionWindowController(
         Dispatcher dispatcher,
-        Func<ProjectionDirection, ProjectionRequest?> buildRequest,
+        Func<ProjectionView?> currentView,
         Func<bool> isPlaying,
         Func<RawImage, int, bool> isCurrent,
         Func<ProjectionDirection, ProjectionWindow?, ProjectionWindow> createWindow,
@@ -64,7 +64,7 @@ internal sealed class ProjectionWindowController
         ComputePass? compute = null)
     {
         _dispatcher = dispatcher;
-        _buildRequest = buildRequest;
+        _currentView = currentView;
         _isPlaying = isPlaying;
         _isCurrent = isCurrent;
         _createWindow = createWindow;
@@ -209,12 +209,15 @@ internal sealed class ProjectionWindowController
         }
 
         var states = new List<ProjectionWindowState>();
+        ProjectionView? view = _currentView();
         foreach (ProjectionDirection direction in new[] { ProjectionDirection.Horizontal, ProjectionDirection.Vertical })
         {
-            if (WindowFor(direction) is null || _buildRequest(direction) is not { } next)
+            if (WindowFor(direction) is null || view is null)
             {
                 continue;
             }
+
+            ProjectionRequest next = ProjectionTargets.BuildRequest(direction, view);
 
             states.Add(new ProjectionWindowState(
                 direction, next, _shown.GetValueOrDefault(direction), _pending.GetValueOrDefault(direction)));

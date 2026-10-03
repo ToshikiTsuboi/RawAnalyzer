@@ -391,7 +391,8 @@ public class ProjectionWindowControllerTests
 
         internal ProjectionWindowController Controller() => new(
             Dispatcher.CurrentDispatcher,
-            Build,
+            () => new ProjectionView(Image, Frame, Roi, Split, Image.Format.Bayer, SegmentWidth,
+                ProjectionTargets.SourceNote(Frame, Image.FrameCount, 0, 0, null)),
             () => Playing,
             IsCurrent,
             (direction, other) =>
@@ -407,15 +408,6 @@ public class ProjectionWindowControllerTests
             });
 
         public void Dispose() => Image.Dispose();
-
-        private ProjectionRequest? Build(ProjectionDirection direction)
-        {
-            RoiAnalysisTarget target = ProjectionTargets.Resolve(
-                direction, Roi, Split, Image.Width, Image.Height, Image.Format.Bayer, SegmentWidth);
-            string header = ProjectionTargets.Describe(Roi, target, Image.Width, Image.Height,
-                ProjectionTargets.SourceNote(Frame, Image.FrameCount, 0, 0, null));
-            return new ProjectionRequest(direction, Image, Frame, target, header, (1 << Image.Format.BitDepth) - 1);
-        }
 
         private bool IsCurrent(RawImage image, int frame)
         {
