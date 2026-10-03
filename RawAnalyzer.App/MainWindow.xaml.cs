@@ -166,6 +166,12 @@ public partial class MainWindow : Window
     // ファイルを開く要求(OpenPath)の数。フォーマット指定ダイアログを出す前に数える(世代とは別)
     private int _openRequests;
 
+    // 実在・種類の確認を UI スレッドの外で待ってから開く要求(ツリーの選択・最近使ったファイル・ドロップ・一覧の更新)を
+    // 受け付けた数。受け付けた時点で数える。_openRequests・_folderGeneration は開き始めるときに進むので、確認を待っている
+    // 要求は数えられない。以前はこれがなく、先に受け付けた要求・起動時に開くもの(起動引数・前回のフォルダ)が、確認を
+    // 待っている後からの要求より先に開き始めて、後からの要求を照合で捨てさせていた(後から来た方を優先する)
+    private int _deferredOpenRequests;
+
     // ウィンドウを閉じた。UI スレッドの外での確認(ファイルサイズ・実在)を待つ間に閉じられたら、ダイアログを出さない
     // (閉じたウィンドウを Owner にできない)
     private bool _closed;
@@ -268,11 +274,14 @@ public partial class MainWindow : Window
             // 起動引数のパスの実在とフォルダかどうかは UI スレッドの外で確かめている(App.StartupPath)。確かめる間に
             // 利用者が別のファイル・フォルダを開いていたら、後から来た方を優先して起動引数のパスは開かない。
             // 照合したこの UI ターンのうちに開き始める(照合の後にもう一度待つと、その間に開かれたものを追い越す)
+            // 確認を待っている利用者の要求(ツリーの選択・最近使ったファイル・ドロップ)も後から来た方として優先する
             int openRequests = _openRequests;
             int startupFolderGeneration = _folderGeneration;
+            int deferredRequests = _deferredOpenRequests;
             if (await App.StartupPath is { } startup)
             {
-                if (openRequests == _openRequests && startupFolderGeneration == _folderGeneration)
+                if (openRequests == _openRequests && startupFolderGeneration == _folderGeneration
+                    && deferredRequests == _deferredOpenRequests)
                 {
                     OpenStartupPath(startup);
                 }
@@ -287,8 +296,10 @@ public partial class MainWindow : Window
                 int folderGeneration = _folderGeneration;
                 bool exists = await Task.Run(() => Directory.Exists(folder));
 
-                // 確かめている間に利用者がフォルダ・ファイルを開いていたら、前回のフォルダで一覧を上書きしない
-                if (exists && folderGeneration == _folderGeneration && _vm.Files.Count == 0)
+                // 確かめている間に利用者がフォルダ・ファイルを開いていた(確認を待っている要求を含む)ら、前回のフォルダで
+                // 一覧を上書きしない
+                if (exists && folderGeneration == _folderGeneration && deferredRequests == _deferredOpenRequests
+                    && _vm.Files.Count == 0)
                 {
                     LoadFolder(folder, selectPath: null);
                 }
@@ -333,17 +344,18 @@ public partial class MainWindow : Window
     /// </summary>
     /// <remarks>
     /// 連番判定はファイル一覧を見るので、一覧が揃ってから開く。一覧の列挙を待つ間に別のフォルダの読み込みや
-    /// 別のファイルを開く操作が始まったら、後から来た方を優先してこのファイルは開かない。以前は遅れて終わった
-    /// 列挙の後にも開いたので、後から開いた画像を古いファイルで置き換え(一覧は後から開いたフォルダのまま)、
-    /// 新規サイズの raw なら別の画像を見ている途中に突然フォーマット指定ダイアログを出していた。
+    /// 別のファイルを開く操作が始まったら(確認を待っている要求を含む)、後から来た方を優先してこのファイルは開かない。
+    /// 以前は遅れて終わった列挙の後にも開いたので、後から開いた画像を古いファイルで置き換え(一覧は後から開いたフォルダの
+    /// まま)、新規サイズの raw なら別の画像を見ている途中に突然フォーマット指定ダイアログを出していた。
     /// </remarks>
     /// <param name="path">開くファイル。</param>
     /// <returns>開く処理を始める(または開かずに終える)までのタスク。</returns>
     private async Task LoadFolderAndOpenAsync(string path)
     {
         int openRequests = _openRequests;
+        int deferredRequests = _deferredOpenRequests;
         bool latest = await LoadFolderAsync(Path.GetDirectoryName(path)!, selectPath: path);
-        if (latest && openRequests == _openRequests)
+        if (latest && openRequests == _openRequests && deferredRequests == _deferredOpenRequests)
         {
             OpenPath(path);
         }
@@ -1831,12 +1843,16 @@ public partial class MainWindow : Window
                 // 実在はメニューを作り直したときにしか確かめないので、その後に消えた・接続が切れたファイルの項目も
                 // 残っている。開く前に UI スレッドを止めずに確かめ、無ければ一度だけ知らせてメニューから外す
                 // (確かめずに開くと、フォルダを読み込めない警告に続けて、実在しない raw にフォーマット指定ダイアログを出していた)
+                int deferredRequests = ++_deferredOpenRequests;
                 int openRequests = _openRequests;
                 int folderGeneration = _folderGeneration;
                 bool exists = await Task.Run(() => File.Exists(captured));
-                if (openRequests != _openRequests || folderGeneration != _folderGeneration)
+                if (deferredRequests != _deferredOpenRequests
+                    || openRequests != _openRequests || folderGeneration != _folderGeneration)
                 {
-                    return; // 確かめている間に別のファイル・フォルダが開かれた(後から来た方を優先する)
+                    // 確かめている間に別のファイル・フォルダが開かれた、または確認を待つ別の要求を受け付けた
+                    // (後から来た方を優先する)
+                    return;
                 }
 
                 if (!exists)
@@ -5038,11 +5054,13 @@ public partial class MainWindow : Window
             // 存在の確認も切断されたネットワークドライブではタイムアウトまで戻らないので、UI スレッドの外で行う。
             // 確かめる間に別の項目を選んでいた・別のファイルやフォルダを開いていたら(後から来た方を優先する)開かない。
             // 以前は選択だけを見ていたので、確かめる間に「開く」で別のフォルダのファイルを開くと、その一覧の列挙中に
-            // このフォルダを読み込み始めて列挙の結果を捨てさせ、後から開いたファイルが開かれなかった
+            // このフォルダを読み込み始めて列挙の結果を捨てさせ、後から開いたファイルが開かれなかった。
+            // 確かめ始めた時点で受け付けを数え、確認を待っている前の要求・起動時に開くものに追い越されないようにする
+            int deferredRequests = ++_deferredOpenRequests;
             int openRequests = _openRequests;
             int folderGeneration = _folderGeneration;
             bool exists = await Task.Run(() => Directory.Exists(path));
-            if (exists && ReferenceEquals(FolderTree.SelectedItem, item)
+            if (exists && ReferenceEquals(FolderTree.SelectedItem, item) && deferredRequests == _deferredOpenRequests
                 && openRequests == _openRequests && folderGeneration == _folderGeneration)
             {
                 LoadFolder(path, selectPath: null);
@@ -5811,10 +5829,11 @@ public partial class MainWindow : Window
         }
 
         // 実在の確認は UI スレッドの外で行う(切断した NAS ではタイムアウトまで戻らない)。確かめる間に別のフォルダの
-        // 読み込みが始まったら、後から来た方を優先して読み込み直さない
+        // 読み込みが始まった・確認を待つ別の要求を受け付けたら、後から来た方を優先して読み込み直さない
+        int deferredRequests = ++_deferredOpenRequests;
         int folderGeneration = _folderGeneration;
         bool exists = await Task.Run(() => Directory.Exists(folder));
-        if (exists && folderGeneration == _folderGeneration)
+        if (exists && folderGeneration == _folderGeneration && deferredRequests == _deferredOpenRequests)
         {
             LoadFolder(folder, _vm.SelectedFile?.FullPath);
         }
@@ -5947,13 +5966,16 @@ public partial class MainWindow : Window
         }
 
         // フォルダかファイルかの確認は UI スレッドの外で行う(ネットワーク上のパスは、切断していればタイムアウトまで
-        // 戻らない)。確かめる間に別のファイル・フォルダが開かれたら、後から来た方を優先してドロップしたものは開かない
+        // 戻らない)。確かめる間に別のファイル・フォルダが開かれた・確認を待つ別の要求を受け付けたら、後から来た方を
+        // 優先してドロップしたものは開かない
         string path = paths[0];
+        int deferredRequests = ++_deferredOpenRequests;
         int openRequests = _openRequests;
         int folderGeneration = _folderGeneration;
         (bool isFolder, bool isFile) = await Task.Run(
             () => Directory.Exists(path) ? (true, false) : (false, File.Exists(path)));
-        if (openRequests != _openRequests || folderGeneration != _folderGeneration)
+        if (deferredRequests != _deferredOpenRequests
+            || openRequests != _openRequests || folderGeneration != _folderGeneration)
         {
             return;
         }
