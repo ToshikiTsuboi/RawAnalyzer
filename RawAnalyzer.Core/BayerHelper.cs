@@ -71,6 +71,33 @@ public static class BayerHelper
     }
 
     /// <summary>
+    /// 同じBayerパターンの画像を左から同じ幅で並置した画像(<see cref="RawImage.SegmentWidth"/>)で、
+    /// 指定座標の画素チャネルを返す。位相は座標を含む区画の左端を列0として数える。
+    /// </summary>
+    /// <param name="pattern">各区画のBayerパターン。</param>
+    /// <param name="x">並置画像のX座標。</param>
+    /// <param name="y">Y座標。</param>
+    /// <param name="segmentWidth">
+    /// 区画の幅。0以下なら並置ではない(<see cref="GetChannel(BayerPattern, int, int)"/> と同じ)。
+    /// </param>
+    /// <returns>チャネル。パターンがNoneの場合はBayerChannel.None。</returns>
+    public static BayerChannel GetChannel(BayerPattern pattern, int x, int y, int segmentWidth)
+    {
+        return GetChannel(pattern, x - SegmentStart(x, segmentWidth), y);
+    }
+
+    /// <summary>
+    /// 並置画像(<see cref="RawImage.SegmentWidth"/>)で、X座標を含む区画の左端の列を返す。
+    /// </summary>
+    /// <param name="x">並置画像のX座標。0未満は先頭の区画とみなす。</param>
+    /// <param name="segmentWidth">区画の幅。0以下なら並置ではない(常に0)。</param>
+    /// <returns>区画の左端の列。</returns>
+    public static int SegmentStart(int x, int segmentWidth)
+    {
+        return segmentWidth > 0 && x > 0 ? x / segmentWidth * segmentWidth : 0;
+    }
+
+    /// <summary>
     /// 原点を (dx, dy) だけずらして切り出したときのBayerパターンを返す。
     /// </summary>
     /// <remarks>

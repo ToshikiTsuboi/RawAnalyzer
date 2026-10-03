@@ -102,7 +102,10 @@ public static class DefectPixelDetector
     /// <param name="detectHot">白点を検出するか。</param>
     /// <param name="detectDead">黒点を検出するか。</param>
     /// <param name="maxResults">収集する最大件数(超過分は打ち切り)。</param>
-    /// <param name="pattern">Bayerパターン。None以外でチャネル別判定になる。</param>
+    /// <param name="pattern">
+    /// Bayerパターン。None以外でチャネル別判定になる。並置画像(<see cref="RawImage.SegmentWidth"/>)では、
+    /// 画素を含む区画の左端を列0とする位相でチャネルを決める。
+    /// </param>
     /// <param name="progress">進捗通知(0〜1)。</param>
     /// <param name="cancellationToken">キャンセルトークン。</param>
     /// <param name="segmentWidth">
@@ -143,7 +146,8 @@ public static class DefectPixelDetector
         double scalarDead = double.NaN;
         var channelThresholds = new List<DefectChannelThreshold>();
 
-        // 判定パスで毎画素分岐しないよう、区画×2x2位相→閾値のテーブルにしておく
+        // 判定パスで毎画素分岐しないよう、区画×2x2位相→閾値のテーブルにしておく。位相は画像の区画
+        // (並置画像の段。RawImage.SegmentWidth)の左端から数えた座標の偶奇
         var hotTable = new double[segments * 4];
         var deadTable = new double[segments * 4];
 
@@ -219,6 +223,7 @@ public static class DefectPixelDetector
         progress?.Report(0.5);
 
         int shift = 16 - image.Format.BitDepth;
+        int phaseSegmentWidth = image.SegmentWidth;
 
         // パス2: 閾値超過画素の収集。行の塊を上から順に取り出して並列に走査し、結果は塊ごとに持つ。
         // 上限で打ち切るときは、上から(y→x順)の先頭 limit 件を残す。先頭から途切れずに揃った塊までの
@@ -270,22 +275,37 @@ public static class DefectPixelDetector
                         for (int segment = 0; segment < segments; segment++)
                         {
                             int t = segment * 4 + (y & 1) * 2;
-                            double hotEvenX = hotTable[t];
-                            double hotOddX = hotTable[t + 1];
-                            double deadEvenX = deadTable[t];
-                            double deadOddX = deadTable[t + 1];
                             int right = Math.Min(width, (segment + 1) * segmentSize);
-                            for (int x = segment * segmentSize; x < right; x++)
+                            int x = segment * segmentSize;
+                            while (x < right)
                             {
-                                int code = buffer[x] >> shift;
-                                bool evenX = (x & 1) == 0;
-                                if (detectHot && code > (evenX ? hotEvenX : hotOddX))
+                                // 画像の区画(並置画像の段)ごとに位相を数え直す。区画の左端が奇数の列なら、
+                                // 列の偶奇と区画の中の偶奇が逆になる(並置でなければ区画は画像全体で、逆にならない)
+                                int pieceRight = right;
+                                int flip = 0;
+                                if (phaseSegmentWidth > 0)
                                 {
-                                    hits.Add(new DefectPixel(x, y, code, DefectType.Hot));
+                                    int start = BayerHelper.SegmentStart(x, phaseSegmentWidth);
+                                    pieceRight = (int)Math.Min(right, (long)start + phaseSegmentWidth);
+                                    flip = start & 1;
                                 }
-                                else if (detectDead && code < (evenX ? deadEvenX : deadOddX))
+
+                                double hotEvenX = hotTable[t + flip];
+                                double hotOddX = hotTable[t + (flip ^ 1)];
+                                double deadEvenX = deadTable[t + flip];
+                                double deadOddX = deadTable[t + (flip ^ 1)];
+                                for (; x < pieceRight; x++)
                                 {
-                                    hits.Add(new DefectPixel(x, y, code, DefectType.Dead));
+                                    int code = buffer[x] >> shift;
+                                    bool evenX = (x & 1) == 0;
+                                    if (detectHot && code > (evenX ? hotEvenX : hotOddX))
+                                    {
+                                        hits.Add(new DefectPixel(x, y, code, DefectType.Hot));
+                                    }
+                                    else if (detectDead && code < (evenX ? deadEvenX : deadOddX))
+                                    {
+                                        hits.Add(new DefectPixel(x, y, code, DefectType.Dead));
+                                    }
                                 }
                             }
                         }

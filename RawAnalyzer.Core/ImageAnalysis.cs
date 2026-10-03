@@ -426,6 +426,7 @@ public static class ImageAnalysis
     /// <summary>
     /// Bayerチャネル別のヒストグラムと統計を計算する(全体分も同時に返す)。
     /// 領域の画素だけを、画素の絶対座標の偶奇でチャネルへ振り分ける(2x2境界へ広げも削りもしない)。
+    /// 並置画像(<see cref="RawImage.SegmentWidth"/>)では、画素を含む区画の左端から数えた座標の偶奇で振り分ける。
     /// サンプリング時は絶対座標の2x2ブロック単位で間引き、全チャネルを均等に含める。
     /// </summary>
     /// <param name="image">対象画像。</param>
@@ -509,6 +510,10 @@ public static class ImageAnalysis
             }
         }
 
+        // 並置画像(HDR分割ビューの各段など)では、チャネルは区画の左端を列0とする位相で決まる。区画の幅が奇数なら
+        // 左端が奇数の列の区画では列の偶奇と位相が逆になるので、領域の列ごとに逆かどうかを控える(逆の列がなければ null)
+        byte[]? columnFlips = ColumnPhaseFlips(roi.X, roi.Width, image.SegmentWidth);
+
         if (blocksX > 0 && blocksY > 0)
         {
             int roiBottom = roi.Y + roi.Height;
@@ -537,7 +542,7 @@ public static class ImageAnalysis
                             image.CopyRegion(frame, roi.X, y, roi.Width, 1, row);
                             local.AddBlockRow(
                                 row, firstEvenColumn, blocksX, strideBlocks, shift,
-                                parityToChannel[(y & 1) * 2], parityToChannel[((y & 1) * 2) + 1]);
+                                parityToChannel[(y & 1) * 2], parityToChannel[((y & 1) * 2) + 1], columnFlips);
                         }
                     }
 
@@ -816,6 +821,33 @@ public static class ImageAnalysis
     /// ロックなしで加算し、走査後に一度だけ合算する。ビン配列はチャネル分
     /// (16bitでは4×64Ki要素)あるため、区画ごとに1個だけ作る。
     /// </remarks>
+    /// <summary>
+    /// 並置画像(<see cref="RawImage.SegmentWidth"/>)の列 left〜left+count−1 ごとに、Bayer の位相が絶対座標の偶奇と
+    /// 逆か(列を含む区画の左端が奇数の列なら1)を返す。逆の列がなければ null。
+    /// </summary>
+    /// <param name="left">最初の列。</param>
+    /// <param name="count">列数。</param>
+    /// <param name="segmentWidth">区画の幅(並置でなければ0)。</param>
+    /// <returns>列ごとの逆かどうか。逆の列がなければ null。</returns>
+    internal static byte[]? ColumnPhaseFlips(int left, int count, int segmentWidth)
+    {
+        // 区画の幅が偶数なら、どの区画の左端も偶数の列で位相は変わらない
+        if (segmentWidth <= 0 || (segmentWidth & 1) == 0 || count <= 0)
+        {
+            return null;
+        }
+
+        var flips = new byte[count];
+        bool any = false;
+        for (int i = 0; i < count; i++)
+        {
+            flips[i] = (byte)(BayerHelper.SegmentStart(left + i, segmentWidth) & 1);
+            any |= flips[i] != 0;
+        }
+
+        return any ? flips : null;
+    }
+
     private sealed class ChannelAccumulator
     {
         internal readonly long[] TotalBins;
@@ -870,12 +902,35 @@ public static class ImageAnalysis
         /// <param name="blocksX">領域にかかるブロックの列数。</param>
         /// <param name="strideBlocks">間引きの刻み(ブロック数。1なら全ブロック)。</param>
         /// <param name="shift">16bit正規化値を raw code へ戻す右シフト量。</param>
-        /// <param name="evenChannel">この行の偶数Xの画素のチャネル番号。</param>
+        /// <param name="evenChannel">この行の偶数Xの画素のチャネル番号(区画の左端から数えた偶奇)。</param>
         /// <param name="oddChannel">この行の奇数Xの画素のチャネル番号。</param>
+        /// <param name="columnFlips">
+        /// <paramref name="row"/> の列ごとに、区画の左端が奇数の列で位相が逆か(<see cref="ColumnPhaseFlips"/>)。
+        /// null なら全列で絶対座標の偶奇のまま。
+        /// </param>
         internal void AddBlockRow(
             ushort[] row, int firstEvenColumn, int blocksX, int strideBlocks, int shift,
-            int evenChannel, int oddChannel)
+            int evenChannel, int oddChannel, byte[]? columnFlips)
         {
+            if (columnFlips is not null)
+            {
+                for (int bx = 0; bx < blocksX; bx += strideBlocks)
+                {
+                    int i = firstEvenColumn + (bx * 2);
+                    if (i >= 0)
+                    {
+                        Add(row[i] >> shift, columnFlips[i] == 0 ? evenChannel : oddChannel);
+                    }
+
+                    if (i + 1 < row.Length)
+                    {
+                        Add(row[i + 1] >> shift, columnFlips[i + 1] == 0 ? oddChannel : evenChannel);
+                    }
+                }
+
+                return;
+            }
+
             for (int bx = 0; bx < blocksX; bx += strideBlocks)
             {
                 int i = firstEvenColumn + (bx * 2);

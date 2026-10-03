@@ -14,6 +14,8 @@ public static class WhiteBalance
     /// グレーワールド仮定でWBゲインを計算する。
     /// 画像全体(サンプリング)の各チャネル平均から黒レベルを引き、
     /// R/Bゲイン = G平均 / 各平均 を求める。
+    /// 並置画像(<see cref="RawImage.SegmentWidth"/>)では、区画ごとにその左端から2x2ブロックを取る
+    /// (区画の幅が奇数でも、隣の区画の画素とブロックを組まず、区画の中の位相でチャネルを決める)。
     /// </summary>
     /// <param name="image">対象画像。</param>
     /// <param name="frame">フレーム番号。</param>
@@ -42,6 +44,9 @@ public static class WhiteBalance
         int width = image.Width & ~1;
         int height = image.Height & ~1;
         long totalPixels = (long)width * height;
+
+        // 2x2ブロックは区画(並置でなければ画像全体)の左端から取る。区画の右端の端数の列は使わない
+        int segmentWidth = image.SegmentWidth > 0 ? image.SegmentWidth : image.Width;
         int rowPairStride = (int)Math.Max(1, totalPixels / Math.Max(1, maxSamples));
 
         long sumR = 0;
@@ -50,26 +55,30 @@ public static class WhiteBalance
         long cntR = 0;
         long cntG = 0;
         long cntB = 0;
-        var rowTop = new ushort[width];
-        var rowBottom = new ushort[width];
+        var rowTop = new ushort[image.Width];
+        var rowBottom = new ushort[image.Width];
 
         for (int blockY = 0; blockY * 2 < height; blockY += rowPairStride)
         {
             cancellationToken.ThrowIfCancellationRequested();
             int y = blockY * 2;
-            image.CopyRegion(frame, 0, y, width, 1, rowTop);
-            image.CopyRegion(frame, 0, y + 1, width, 1, rowBottom);
-            for (int x = 0; x < width; x += 2)
+            image.CopyRegion(frame, 0, y, image.Width, 1, rowTop);
+            image.CopyRegion(frame, 0, y + 1, image.Width, 1, rowBottom);
+            for (int left = 0; left < image.Width; left += segmentWidth)
             {
-                ColorPipeline.BlockToRgb(
-                    pattern, rowTop[x], rowTop[x + 1], rowBottom[x], rowBottom[x + 1],
-                    out ushort r, out ushort g, out ushort b);
-                sumR += r;
-                sumG += g;
-                sumB += b;
-                cntR++;
-                cntG++;
-                cntB++;
+                int right = left + (Math.Min(segmentWidth, image.Width - left) & ~1);
+                for (int x = left; x < right; x += 2)
+                {
+                    ColorPipeline.BlockToRgb(
+                        pattern, rowTop[x], rowTop[x + 1], rowBottom[x], rowBottom[x + 1],
+                        out ushort r, out ushort g, out ushort b);
+                    sumR += r;
+                    sumG += g;
+                    sumB += b;
+                    cntR++;
+                    cntG++;
+                    cntB++;
+                }
             }
         }
 
@@ -83,6 +92,8 @@ public static class WhiteBalance
 
     /// <summary>
     /// 指定画素を含む2x2ブロックを白(グレー)とみなしてWBゲインを計算する(スポイト)。
+    /// 並置画像(<see cref="RawImage.SegmentWidth"/>)では、指定画素を含む区画の中で、区画の左端から数えた
+    /// 2x2ブロックを使う(区画の幅が奇数でも、隣の区画の画素とブロックを組まない)。
     /// </summary>
     /// <param name="image">対象画像。</param>
     /// <param name="frame">フレーム番号。</param>
@@ -102,15 +113,21 @@ public static class WhiteBalance
             return new WhiteBalanceGains(1.0, 1.0);
         }
 
+        // 指定画素を含む区画(並置でなければ画像全体)。ブロックは区画の左端から数えて取る
+        int left = image.SegmentWidth > 0
+            ? BayerHelper.SegmentStart(Math.Clamp(x, 0, image.Width - 1), image.SegmentWidth)
+            : 0;
+        int segmentWidth = image.SegmentWidth > 0 ? Math.Min(image.SegmentWidth, image.Width - left) : image.Width;
+
         // 2x2ブロックが取れないサイズでは判定不能
-        if (image.Width < 2 || image.Height < 2)
+        if (segmentWidth < 2 || image.Height < 2)
         {
             return new WhiteBalanceGains(1.0, 1.0);
         }
 
         // クランプ上限も偶数へ落とさないと、奇数幅/高さの最終列・最終行で
         // ブロックが1画素ずれてR/Bが緑画素から算出される
-        int blockX = Math.Clamp(x & ~1, 0, (image.Width - 2) & ~1);
+        int blockX = left + Math.Clamp((x - left) & ~1, 0, (segmentWidth - 2) & ~1);
         int blockY = Math.Clamp(y & ~1, 0, (image.Height - 2) & ~1);
         ushort v00 = image.GetPixel(blockX, blockY, frame);
         ushort v10 = image.GetPixel(blockX + 1, blockY, frame);

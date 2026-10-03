@@ -12,10 +12,16 @@ internal static class HdrSplitComposite
     /// 分割した各段を左から順に並べた1枚にする。HDR分割ビューの表示画像(MainWindow の分割表示)と、
     /// ノイズ測定の2枚目の並置の両方がこれを使う。
     /// </summary>
+    /// <remarks>
+    /// 並置した画像には段の幅を区画の幅(<see cref="RawImage.SegmentWidth"/>)として持たせる。Bayer を使う解析
+    /// (チャネル別ヒストグラム・欠陥検出の閾値・WB など)は各段の左端を列0とする位相でチャネルを決める。
+    /// 段の幅が奇数だと、並置画像全体に1つのパターンを当てたのでは後ろの段(左端が奇数の列)の R/Gr/Gb/B を
+    /// 取り違える。
+    /// </remarks>
     /// <param name="frames">HdrSplitter.Split の結果(長秒→短秒、同じ寸法)。</param>
     /// <param name="splitFormat">分割に使ったフォーマット。</param>
     /// <param name="cancellationToken">キャンセルトークン。</param>
-    /// <returns>並置した画像(単一フレーム・Hdr=None)。</returns>
+    /// <returns>並置した画像(単一フレーム・Hdr=None・区画の幅は段の幅)。</returns>
     /// <exception cref="OperationCanceledException">取り消された場合。</exception>
     internal static RawImage Compose(
         IReadOnlyList<RawImage> frames, RawFormat splitFormat, CancellationToken cancellationToken = default)
@@ -43,7 +49,7 @@ internal static class HdrSplitComposite
             // 負の行オフセットでは整列後の位相が元と変わる(分割フレーム側に合わせる)
             Bayer = frames[0].Format.Bayer,
         };
-        return RawImage.FromPixels(format, pixels);
+        return RawImage.FromPixels(format, pixels, segmentWidth: subWidth);
     }
 
     /// <summary>ノイズ測定の2枚目の raw を読むフォーマット(元の raw ファイルの形式)。</summary>

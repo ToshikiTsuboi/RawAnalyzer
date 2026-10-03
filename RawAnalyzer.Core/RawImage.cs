@@ -39,10 +39,11 @@ public sealed unsafe class RawImage : IDisposable
     // 実解放の二重実行防止
     private int _released;
 
-    internal RawImage(RawFormat format, ushort[] pixels)
+    internal RawImage(RawFormat format, ushort[] pixels, int segmentWidth = 0)
     {
         Format = format;
         _pixels = pixels;
+        SegmentWidth = segmentWidth;
     }
 
     internal RawImage(
@@ -82,8 +83,45 @@ public sealed unsafe class RawImage : IDisposable
         return new RawImage(format, pixels);
     }
 
+    /// <summary>
+    /// 同じ幅の画像(区画)を左から並置した画素配列から画像を生成する(HDR分割ビューの各露光の段など)。
+    /// </summary>
+    /// <param name="format">並置した画像全体のフォーマット記述子。</param>
+    /// <param name="pixels">TotalPixels以上の長さの画素配列。</param>
+    /// <param name="segmentWidth">区画の幅(<see cref="SegmentWidth"/>)。0なら並置ではない。</param>
+    /// <returns>生成された画像。</returns>
+    /// <exception cref="ArgumentException">フォーマットが不正、または配列長が不足する場合。</exception>
+    /// <exception cref="ArgumentOutOfRangeException">区画の幅が負、または画像の幅を超える場合。</exception>
+    public static RawImage FromPixels(RawFormat format, ushort[] pixels, int segmentWidth)
+    {
+        format.Validate();
+        if (pixels.Length < format.TotalPixels)
+        {
+            throw new ArgumentException("画素配列がフォーマットの画素数より短いです。", nameof(pixels));
+        }
+
+        if (segmentWidth < 0 || segmentWidth > format.Width)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(segmentWidth), segmentWidth, "区画の幅は0以上・画像の幅以下である必要があります。");
+        }
+
+        return new RawImage(format, pixels, segmentWidth);
+    }
+
     /// <summary>この画像のフォーマット記述子。</summary>
     public RawFormat Format { get; }
+
+    /// <summary>
+    /// 同じ幅の画像を左から並置した画像(HDR分割ビューの各露光の段など)の区画の幅(画素)。並置でなければ0。
+    /// </summary>
+    /// <remarks>
+    /// 区画はそれぞれ1枚の画像として扱う。Bayer のチャネルは区画の左端を列0とする位相で決まる
+    /// (<see cref="BayerHelper.GetChannel(BayerPattern, int, int, int)"/>。区画の幅が奇数なら、左端が奇数の列の
+    /// 区画では並置画像の列の偶奇と逆になる)。
+    /// 最後の区画は画像の右端までの残りの幅。
+    /// </remarks>
+    public int SegmentWidth { get; }
 
     /// <summary>画像の幅(画素数)。</summary>
     public int Width => Format.Width;
