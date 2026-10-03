@@ -98,6 +98,41 @@ public class ProjectionTargetsTests
         Assert.Contains("段", refused.Reason);
     }
 
+    [Theory]
+    [InlineData(false, false)] // 画像全体
+    [InlineData(true, false)]  // ROI(1つの露光の行だけに掛かる高さでも、ノイズ測定と同じく断る)
+    [InlineData(false, true)]  // チャネル分割表示の象限(格子の行も長秒・短秒が交互になる)
+    public void LineInterleavedRawView_RefusesHorizontalButKeepsVertical(bool withRoi, bool split)
+    {
+        // 行交互HDRの Raw 表示では各列に長秒と短秒の行が交互に入るので水平射影は断り、分割ビューへ案内する。
+        // 各行は1つの露光なので垂直射影はそのまま取る
+        RegionOfInterest? roi = split ? new RegionOfInterest(0, 0, 4, 4)
+            : withRoi ? new RegionOfInterest(10, 20, 30, 1) : null;
+
+        UnsupportedRoiTarget refused = Assert.IsType<UnsupportedRoiTarget>(
+            ProjectionTargets.Resolve(H, roi, split, 4000, 3000, BayerPattern.Rggb, 0, lineInterleavedRawView: true));
+        RoiAnalysisTarget vertical =
+            ProjectionTargets.Resolve(V, roi, split, 4000, 3000, BayerPattern.Rggb, 0, lineInterleavedRawView: true);
+
+        Assert.Equal(HdrExposureMix.HorizontalProjectionRefusal(true), refused.Reason);
+        Assert.True(ProjectionTargets.IsComputable(vertical));
+        Assert.Equal(vertical, Resolve(V, roi, split));
+    }
+
+    [Fact]
+    public void LineInterleavedRawView_ComesFromTheView()
+    {
+        using RawImage image = TestImages.FromCodes(new ushort[8 * 4], 8, 4, bitDepth: 12, BayerPattern.Rggb);
+        var view = new ProjectionView(image, 0, null, false, BayerPattern.Rggb, 0, "")
+        {
+            LineInterleavedRawView = true,
+        };
+
+        Assert.False(ProjectionTargets.BuildRequest(H, view).IsComputable);
+        Assert.Equal(new WholeImageTarget(), ProjectionTargets.BuildRequest(V, view).Target);
+        Assert.True(ProjectionTargets.BuildRequest(H, view with { LineInterleavedRawView = false }).IsComputable);
+    }
+
     [Fact]
     public void Axis_UsesRoiOriginAndSplitViewCoordinates()
     {

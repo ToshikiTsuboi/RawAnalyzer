@@ -46,6 +46,21 @@ public class HdrExposureMixTests
         Assert.Contains("分割ビュー", reason);
     }
 
+    [Fact]
+    public void HorizontalProjection_LineInterleavedRawView_IsRefusedWithSplitViewGuidance()
+    {
+        // 行交互HDRの Raw 表示の水平射影(各列を縦に平均)は、どの列にも長秒と短秒の行が交互に入り、露光差が列ごとの
+        // 平均・最大・最小に乗る。ノイズ測定・欠陥検出と同じく理由を示して分割ビューへ案内する。分割ビュー・
+        // フレーム連結の Raw 表示(1フレーム=1露光)は断らない
+        string? reason = HdrExposureMix.HorizontalProjectionRefusal(lineInterleavedRawView: true);
+
+        Assert.NotNull(reason);
+        Assert.StartsWith("行交互HDRのrawは、Raw表示のままでは水平射影を取れません", reason);
+        Assert.Contains("HDR分割ビュー(Ctrl+5)にすると露光ごとに射影できます", reason);
+        Assert.Contains("垂直射影", reason);
+        Assert.Null(HdrExposureMix.HorizontalProjectionRefusal(lineInterleavedRawView: false));
+    }
+
     [Theory]
     [InlineData(90, 0, 20, 10, true)]     // 段の境界(x=100)をまたぐ
     [InlineData(10, 5, 80, 40, false)]    // 長秒の段の中

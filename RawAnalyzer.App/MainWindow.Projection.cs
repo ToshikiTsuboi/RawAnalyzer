@@ -104,7 +104,12 @@ public partial class MainWindow
 
         return new ProjectionView(
             image, Viewport.Frame, Viewport.Roi, Viewport.IsChannelSplitLayout, format.Bayer,
-            HdrSplitSegmentWidth, ProjectionSourceNote(image));
+            HdrSplitSegmentWidth, ProjectionSourceNote(image))
+        {
+            // 行交互HDRの raw を(派生ビューでなく)そのまま表示しているか。ノイズ測定・欠陥検出と同じ判定
+            LineInterleavedRawView = _derivedImage is null && _currentFormat is { } current
+                && HdrExposureMix.InFrame(current),
+        };
     }
 
     /// <summary>窓の上部に出す、表示中の画像の説明(HDR 表示・ページ・フレーム)。</summary>

@@ -37,7 +37,11 @@ internal sealed record ProjectionRequest(
 /// <param name="SourceNote">表示中の画像の説明(フレーム・ページ・HDR 表示。<see cref="ProjectionTargets.SourceNote"/>)。</param>
 internal sealed record ProjectionView(
     RawImage Image, int Frame, RegionOfInterest? Roi, bool ChannelSplitLayout, BayerPattern Pattern,
-    int SplitSegmentWidth, string SourceNote);
+    int SplitSegmentWidth, string SourceNote)
+{
+    /// <summary>行交互HDRの raw を Raw 表示しているか(各列に長秒と短秒の行が交互に入る。<see cref="HdrExposureMix.InFrame"/>)。</summary>
+    internal bool LineInterleavedRawView { get; init; }
+}
 
 /// <summary>射影の横軸の座標(表示する座標と、チャネル分割表示なら元画像の座標)。</summary>
 /// <param name="Origin">射影の先頭の位置の横軸の座標(ROI を描いた表示座標)。</param>
@@ -62,6 +66,10 @@ internal readonly record struct ProjectionAxis(long Origin, long? SourceOrigin)
 /// <para>
 /// ROI の扱いはヒストグラム・ROI 統計と同じ(<see cref="RoiAnalysis.Resolve"/>): チャネル分割表示では1つの象限の中の
 /// ROI をそのチャネルの格子へ写し、象限をまたぐ ROI と、HDR 分割ビューで段(露光)をまたぐ ROI は断る。
+/// </para>
+/// <para>
+/// 行交互HDRの raw の Raw 表示では、水平射影は各列に長秒と短秒の行が交互に入るので断り、分割ビューへ案内する
+/// (<see cref="HdrExposureMix.HorizontalProjectionRefusal"/>。垂直射影は各行が1つの露光なのでそのまま取る)。
 /// </para>
 /// <para>
 /// ROI がないときは画像全体。ただし、チャネル分割表示では4チャネルのどれかを勝手に選ばず、象限を ROI で囲むよう
@@ -95,11 +103,20 @@ internal static class ProjectionTargets
     /// <param name="imageHeight">表示中の画像の高さ。</param>
     /// <param name="pattern">Bayer パターン(チャネル名に使う)。</param>
     /// <param name="splitSegmentWidth">HDR 分割ビューの段の幅(分割ビューでなければ0)。</param>
+    /// <param name="lineInterleavedRawView">行交互HDRの raw を Raw 表示しているか。</param>
     /// <returns>対象。断るときは理由付きの <see cref="UnsupportedRoiTarget"/>。</returns>
     internal static RoiAnalysisTarget Resolve(
         ProjectionDirection direction, RegionOfInterest? displayRoi, bool channelSplitLayout,
-        int imageWidth, int imageHeight, BayerPattern pattern, int splitSegmentWidth)
+        int imageWidth, int imageHeight, BayerPattern pattern, int splitSegmentWidth,
+        bool lineInterleavedRawView = false)
     {
+        // 行交互HDRの Raw 表示の水平射影は、ROI・チャネル分割表示によらず各列に露光の違う行が交互に入る
+        if (direction == ProjectionDirection.Horizontal
+            && HdrExposureMix.HorizontalProjectionRefusal(lineInterleavedRawView) is { } mixed)
+        {
+            return new UnsupportedRoiTarget(mixed);
+        }
+
         if (displayRoi is { PixelCount: > 0 } roi)
         {
             return RoiAnalysis.Resolve(roi, channelSplitLayout, imageWidth, imageHeight, pattern, splitSegmentWidth);
@@ -129,7 +146,8 @@ internal static class ProjectionTargets
         // 画像の外(余白)だけをドラッグした画素数0の ROI は、ヒストグラムと同じく ROI なしとみなす
         RegionOfInterest? roi = view.Roi is { PixelCount: > 0 } r ? r : null;
         RoiAnalysisTarget target = Resolve(
-            direction, roi, view.ChannelSplitLayout, image.Width, image.Height, view.Pattern, view.SplitSegmentWidth);
+            direction, roi, view.ChannelSplitLayout, image.Width, image.Height, view.Pattern, view.SplitSegmentWidth,
+            view.LineInterleavedRawView);
         string header = Describe(roi, target, image.Width, image.Height, view.SourceNote);
         return new ProjectionRequest(
             direction, image, view.Frame, target, header, (1 << image.Format.BitDepth) - 1);

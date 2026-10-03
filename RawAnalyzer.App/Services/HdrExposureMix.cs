@@ -3,7 +3,7 @@ using RawAnalyzer.Core;
 namespace RawAnalyzer.App.Services;
 
 /// <summary>
-/// Raw表示のHDR素材で、露光の違う行を1つの母集団として扱う解析を断る規約。
+/// Raw表示のHDR素材で、露光の違う行を1つの母集団として扱う解析(ノイズ測定・欠陥検出・水平射影)を断る規約。
 /// </summary>
 /// <remarks>
 /// 行交互HDRは1フレームの中に長秒と短秒の行が交互に並ぶ(Bayer の既定はライン単位2なので、同じ Bayer
@@ -77,6 +77,24 @@ internal static class HdrExposureMix
         return "HDR分割ビューでは、長秒と短秒の段をまたいだ範囲(画像全体を含む)のノイズは測定できません" +
             "(露光差がσ_total・σ_FPN・DRに乗ります)。\n" +
             "測る段の中にROIを置き、「ROI内のみで測定」で測定してください。";
+    }
+
+    /// <summary>水平射影を断る理由を返す。</summary>
+    /// <remarks>
+    /// 水平射影は各列を縦に平均する。行交互HDRの Raw 表示では、どの列(ROI・チャネル分割表示の象限の格子の列も)
+    /// にも長秒と短秒の行が交互に入り、露光差が列ごとの平均・最大・最小に乗る(ノイズ測定と同じく、1つの露光の行
+    /// だけに掛かる ROI かどうかは見ない)。垂直射影は各行が1つの露光なので断らない。分割ビュー(各段が1つの露光)と
+    /// フレーム連結の Raw 表示(1フレーム=1露光)は混ざらない。
+    /// </remarks>
+    /// <param name="lineInterleavedRawView">行交互HDRの raw を Raw 表示しているか(<see cref="InFrame"/>)。</param>
+    /// <returns>断る理由。射影できるならnull。</returns>
+    internal static string? HorizontalProjectionRefusal(bool lineInterleavedRawView)
+    {
+        return lineInterleavedRawView
+            ? "行交互HDRのrawは、Raw表示のままでは水平射影を取れません" +
+              "(どの列にも長秒と短秒の行が交互に入り、露光差が列ごとの平均・最大・最小に乗ります)。\n" +
+              "HDR分割ビュー(Ctrl+5)にすると露光ごとに射影できます。垂直射影は各行が1つの露光なのでそのまま取れます。"
+            : null;
     }
 
     /// <summary>欠陥検出を断る理由を返す。</summary>
