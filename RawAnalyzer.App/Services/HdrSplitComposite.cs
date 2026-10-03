@@ -16,7 +16,8 @@ internal static class HdrSplitComposite
     /// 並置した画像には段の幅を区画の幅(<see cref="RawImage.SegmentWidth"/>)として持たせる。Bayer を使う解析
     /// (チャネル別ヒストグラム・欠陥検出の閾値・WB など)は各段の左端を列0とする位相でチャネルを決める。
     /// 段の幅が奇数だと、並置画像全体に1つのパターンを当てたのでは後ろの段(左端が奇数の列)の R/Gr/Gb/B を
-    /// 取り違える。
+    /// 取り違える。縮小ピラミッドも段ごとに縮小する(全体を一様に縮小すると、段の幅が縮小率の倍数でないとき
+    /// 境目のブロックが露光の違う両方の段の画素を平均し、段ごとの表示ゲインで偽の縦帯になる)。
     /// </remarks>
     /// <param name="frames">HdrSplitter.Split の結果(長秒→短秒、同じ寸法)。</param>
     /// <param name="splitFormat">分割に使ったフォーマット。</param>

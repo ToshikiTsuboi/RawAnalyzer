@@ -60,10 +60,37 @@ public abstract class RenderSource
     /// <summary><see cref="SeamY"/> の位置に対応するレベルY座標。</summary>
     public virtual int SeamLevelY => 0;
 
-    /// <summary>ソースX座標(0以上)を、継ぎ目を考慮してレベルX座標へ写す(範囲へのクランプはしない)。</summary>
+    /// <summary>
+    /// 左から同じ幅で並置した区画を区画ごとに縮小したソース(HDR分割ビューの縮小ピラミッド。
+    /// <see cref="PyramidLevel.SegmentWidth"/>)の、区画の幅(ソース座標)。区画に分けないソースは0。
+    /// </summary>
+    /// <remarks>
+    /// 区画 s のレベルX座標は s×<see cref="LevelSegmentWidth"/> から数え直す。並置画像全体を一様に縮小すると、
+    /// 区画の幅が縮小率で割り切れないとき境目のブロックが両方の区画の画素を平均する。
+    /// </remarks>
+    public virtual int SegmentWidth => 0;
+
+    /// <summary>区画1つぶんのレベルの幅(<see cref="SegmentWidth"/> が0なら0)。</summary>
+    public virtual int LevelSegmentWidth => 0;
+
+    /// <summary>
+    /// ソースX座標(0以上)を、継ぎ目・区画を考慮してレベルX座標へ写す(範囲へのクランプはしない)。
+    /// </summary>
     /// <param name="sourceX">ソースX座標。</param>
     /// <returns>レベルX座標。</returns>
-    public int ToLevelX(double sourceX) => ToLevel(sourceX, SeamX, SeamLevelX);
+    public int ToLevelX(double sourceX)
+    {
+        int segmentWidth = SegmentWidth;
+        if (segmentWidth > 0)
+        {
+            // 区画は列の整数除算で決める(描画で段ごとのLUTを選ぶのと同じ)
+            int column = (int)sourceX;
+            int segment = column / segmentWidth;
+            return (segment * LevelSegmentWidth) + ((column - (segment * segmentWidth)) / Factor);
+        }
+
+        return ToLevel(sourceX, SeamX, SeamLevelX);
+    }
 
     /// <summary>ソースY座標(0以上)を、継ぎ目を考慮してレベルY座標へ写す(範囲へのクランプはしない)。</summary>
     /// <param name="sourceY">ソースY座標。</param>
@@ -244,6 +271,12 @@ public sealed class PyramidLevelRenderSource : RenderSource
 
     /// <inheritdoc />
     public override object CacheKey => _level;
+
+    /// <inheritdoc />
+    public override int SegmentWidth => _level.SegmentWidth;
+
+    /// <inheritdoc />
+    public override int LevelSegmentWidth => _level.LevelSegmentWidth;
 
     /// <inheritdoc />
     public override void ReadRow(int levelY, int levelX, int count, Span<ushort> destination)

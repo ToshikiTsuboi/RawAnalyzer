@@ -116,9 +116,9 @@ public sealed unsafe class RawImage : IDisposable
     /// 同じ幅の画像を左から並置した画像(HDR分割ビューの各露光の段など)の区画の幅(画素)。並置でなければ0。
     /// </summary>
     /// <remarks>
-    /// 区画はそれぞれ1枚の画像として扱う。Bayer のチャネルは区画の左端を列0とする位相で決まる
+    /// 区画はそれぞれ1枚の画像として扱う。Bayer のチャネルは区画の左端を列0とする位相で決まり
     /// (<see cref="BayerHelper.GetChannel(BayerPattern, int, int, int)"/>。区画の幅が奇数なら、左端が奇数の列の
-    /// 区画では並置画像の列の偶奇と逆になる)。
+    /// 区画では並置画像の列の偶奇と逆になる)、縮小ピラミッドは区画ごとに縮小する(<see cref="TilePyramid"/>)。
     /// 最後の区画は画像の右端までの残りの幅。
     /// </remarks>
     public int SegmentWidth { get; }

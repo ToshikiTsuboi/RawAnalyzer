@@ -229,6 +229,10 @@ public static class ViewportRenderer
         int seamLevelX = source.SeamLevelX;
         double invFactor = 1.0 / factor;
 
+        // 区画ごとに縮小したソース(HDR分割ビューの縮小ピラミッド)は、区画ごとにレベル座標を数え直す
+        int sourceSegmentWidth = source.SegmentWidth;
+        int levelSegmentWidth = source.LevelSegmentWidth;
+
         // 行バッファは幅数万でLOH行きになるため、描画ごとに確保せずプールから借りる
         Parallel.For(
             0,
@@ -264,13 +268,23 @@ public static class ViewportRenderer
                 for (int dx = s.Dx0; dx <= s.Dx1; dx++)
                 {
                     double srcX = originX + ((dx + 0.5) * invZoom);
-                    int levelX = Math.Clamp(
-                        (srcX < seamX
+                    int levelX;
+                    if (sourceSegmentWidth > 0)
+                    {
+                        // 区画は列の整数除算で決める(下で段ごとのLUTを選ぶのと同じ)
+                        int column = (int)srcX;
+                        int segment = column / sourceSegmentWidth;
+                        levelX = (segment * levelSegmentWidth)
+                            + ((column - (segment * sourceSegmentWidth)) / factor);
+                    }
+                    else
+                    {
+                        levelX = srcX < seamX
                             ? (int)(originOverFactor + ((dx + 0.5) * invZoomOverFactor))
-                            : seamLevelX + (int)((srcX - seamX) * invFactor))
-                            - s.LevelX0,
-                        0,
-                        s.Count - 1);
+                            : seamLevelX + (int)((srcX - seamX) * invFactor);
+                    }
+
+                    levelX = Math.Clamp(levelX - s.LevelX0, 0, s.Count - 1);
                     // 段は描く画素の列の整数除算で決める。1/段幅 を掛けると、段幅によっては
                     // 段幅×fl(1/段幅) が1未満になり、境目ちょうどの列が前の段のLUTで描かれる
                     DisplayLut activeLut = segmentLuts is null
