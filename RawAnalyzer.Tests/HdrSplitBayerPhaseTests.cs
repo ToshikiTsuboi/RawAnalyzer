@@ -180,6 +180,27 @@ public class HdrSplitBayerPhaseTests
     }
 
     [Theory]
+    [InlineData(2, 0, 10)]
+    [InlineData(2, 3, 4)]
+    [InlineData(3, 4, 7)]
+    public void NoiseSpatialSigma_PoolsChannelsByPhaseOfStage(int stages, int left, int width)
+    {
+        // σ_total はチャネル内の分散を画素数で重み付けしたもの。各チャネルは段によらず一定なので 0。
+        // 段をまたぐ範囲でも、段の中の位相でチャネルに分ける(列の偶奇で分けると R と Gr などが混ざる)。
+        // アプリの分割ビューは段をまたぐ範囲のノイズ測定を断るが、Core の測定は並置画像の段の位相に従う
+        using RawImage composite = OddWidthSplitView(stages);
+
+        NoiseMeasurement single = NoiseAnalysis.MeasureSingle(
+            composite, 0, new RegionOfInterest(left, 0, width, StageHeight), Pattern);
+        NoiseMeasurement pair = NoiseAnalysis.MeasurePair(
+            composite, composite, 0, 0, new RegionOfInterest(left, 0, width, StageHeight), Pattern);
+
+        Assert.Equal(width * StageHeight, single.SampleCount);
+        Assert.Equal(0, single.SigmaTotal);
+        Assert.Equal(0, pair.SigmaTotal);
+    }
+
+    [Theory]
     [InlineData(2)]
     [InlineData(3)]
     public void CursorReadoutChannel_UsesPhaseOfStage(int stages)

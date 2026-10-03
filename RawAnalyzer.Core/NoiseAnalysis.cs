@@ -194,7 +194,8 @@ public static class NoiseAnalysis
 
     /// <summary>
     /// 空間統計(σ_totalの元)のモーメントを集計する。評価画素は時間ノイズの差分と同じ roi の全画素。
-    /// Bayer指定時は画素の絶対座標の偶奇(=チャネル)ごとの4つ、指定なしは全画素で1つを返す
+    /// Bayer指定時は画素の絶対座標の偶奇(=チャネル。並置画像では区画の左端から数えた偶奇)ごとの4つ、
+    /// 指定なしは全画素で1つを返す
     /// (チャネル内分散の画素数重みプール √(Σ nᵢσᵢ² / Σ nᵢ) は <see cref="NoiseDefinition"/> が行う)。
     /// </summary>
     private static NoiseMoments[] ComputeSpatialMoments(
@@ -217,8 +218,11 @@ public static class NoiseAnalysis
         // 測定値の定義は整数の和・二乗和から求めるので、ヒストグラムを作らないこちらで集計する)。
         // Bayerチャネルは画素の絶対座標の偶奇で決まるので、2x2に揃えなくても roi の画素をそのまま
         // 振り分けられる。4つの偶奇クラスがR/Gr/Gb/Bに1対1で対応するため、プール分散はパターンの
-        // 種類に依らない。測定用途なのでサンプリングせず全画素から取る
+        // 種類に依らない。並置画像(RawImage.SegmentWidth。HDR分割ビューの各段)では、偶奇は画素を含む区画の
+        // 左端から数える(区画の幅が奇数なら、左端が奇数の列の区画では列の偶奇と逆になり、そのまま分けると
+        // 1つのクラスに R と Gr などが混ざる)。測定用途なのでサンプリングせず全画素から取る
         int shift = 16 - image.Format.BitDepth;
+        int segmentWidth = image.SegmentWidth;
         object gate = new();
         var classes = new NoiseMoments[4];
 
@@ -231,7 +235,22 @@ public static class NoiseAnalysis
             {
                 int y = roi.Y + row;
                 image.CopyRegion(frame, roi.X, y, roi.Width, 1, local.Row);
-                local.AddRow(y & 1, roi.X & 1, shift);
+                if (segmentWidth <= 0)
+                {
+                    local.AddRow(y & 1, 0, roi.Width, roi.X & 1, shift);
+                    return local;
+                }
+
+                // 区画ごとに、区画の左端から数えた偶奇でクラスに分ける
+                for (int from = 0; from < roi.Width;)
+                {
+                    int x = roi.X + from;
+                    int start = BayerHelper.SegmentStart(x, segmentWidth);
+                    int to = (int)Math.Min(roi.Width, (long)start + segmentWidth - roi.X);
+                    local.AddRow(y & 1, from, to, (x - start) & 1, shift);
+                    from = to;
+                }
+
                 return local;
             },
             local =>
@@ -278,21 +297,25 @@ public static class NoiseAnalysis
         /// <summary>クラス別のモーメント(添字 = 行偶奇×2 + 列偶奇)。</summary>
         internal NoiseMoments[] Classes { get; } = new NoiseMoments[4];
 
-        /// <summary><see cref="Row"/> に読み込んだ1行を集計する。</summary>
+        /// <summary><see cref="Row"/> に読み込んだ1行のうち、Row[from]〜Row[to−1] を集計する。</summary>
         /// <param name="rowParity">行の絶対Y座標の偶奇。</param>
-        /// <param name="firstColumnParity">Row[0] の絶対X座標の偶奇。</param>
+        /// <param name="from">集計する最初の位置。</param>
+        /// <param name="to">集計する範囲の終わり(この位置は含まない)。</param>
+        /// <param name="firstColumnParity">
+        /// Row[from] のX座標の偶奇(並置画像では区画の左端から数えた偶奇)。
+        /// </param>
         /// <param name="shift">16bit正規化値を raw code へ戻す右シフト量。</param>
-        internal void AddRow(int rowParity, int firstColumnParity, int shift)
+        internal void AddRow(int rowParity, int from, int to, int firstColumnParity, int shift)
         {
             ushort[] row = Row;
-            for (int start = 0; start < 2 && start < row.Length; start++)
+            for (int start = 0; start < 2 && from + start < to; start++)
             {
                 long sum = 0;
 
                 // 1画素あたり最大 65535² ≈ 4.3e9 なので、1行(半分)なら ulong で桁あふれしない
                 ulong sumSq = 0;
                 long count = 0;
-                for (int x = start; x < row.Length; x += 2)
+                for (int x = from + start; x < to; x += 2)
                 {
                     int code = row[x] >> shift;
                     sum += code;
