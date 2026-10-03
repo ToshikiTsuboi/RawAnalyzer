@@ -39,6 +39,9 @@ public partial class NoiseMeasureDialog : Window
     // 「参照…」の初期フォルダを確かめている・選択ダイアログを出している間
     private bool _browsing;
 
+    // ダイアログを閉じた。2枚目を確かめる間に閉じられたら測定を依頼しない
+    private bool _closed;
+
     /// <summary>ダイアログを生成する。</summary>
     /// <param name="sourceName">対象画像(A)の表示名。</param>
     /// <param name="initialFolder">参照ファイル選択の初期フォルダ。</param>
@@ -54,6 +57,7 @@ public partial class NoiseMeasureDialog : Window
         long expectedReferenceSize, object? source = null, long targetFileSize = 0)
     {
         InitializeComponent();
+        Closed += (_, _) => _closed = true;
         _initialResultText = ResultText.Text;
         UpdateSource(
             sourceName, initialFolder, maxCode, hasRoi, expectedReferenceSize, source, targetFileSize);
@@ -256,18 +260,62 @@ public partial class NoiseMeasureDialog : Window
 
     private async void OnRunClick(object sender, RoutedEventArgs e)
     {
-        if (!NumericInput.TryParsePositive(SaturationBox.Text, out double saturation))
+        await RunAsync();
+    }
+
+    /// <summary>
+    /// 2枚目の実在とバイト数を確かめる(UI スレッドの外で行う)。テストは確かめ終える時期を差し替える。
+    /// </summary>
+    internal Func<string, bool, Task<(bool Exists, long Length)>> ReferenceProbe { get; set; } =
+        (path, checkSize) => Task.Run(() => File.Exists(path)
+            ? (true, checkSize ? SafeLength(path) : -1L)
+            : (false, -1L));
+
+    /// <summary>「測定実行」で測定を依頼する元にした対象と設定(値で比べる)。</summary>
+    /// <param name="Source">対象の同一性(<see cref="UpdateSource"/> の source。画像とフレームの組)。</param>
+    /// <param name="MaxCode">対象のビット深度の最大code。</param>
+    /// <param name="ExpectedReferenceSize">raw参照ファイルの期待バイト数。</param>
+    /// <param name="TargetFileSize">対象(A)の raw ファイルのバイト数。</param>
+    /// <param name="Saturation">飽和信号レベルの入力。</param>
+    /// <param name="UseRoi">「ROI内のみ」のチェック。</param>
+    /// <param name="Reference">2枚目のパスの入力(前後の空白を除く)。</param>
+    private readonly record struct RunSettings(
+        object? Source, int MaxCode, long ExpectedReferenceSize, long TargetFileSize,
+        string Saturation, bool UseRoi, string Reference);
+
+    private RunSettings CaptureRunSettings() => new(
+        _source, _maxCode, _expectedReferenceSize, _targetFileSize,
+        SaturationBox.Text, RoiCheck.IsChecked == true, ReferenceBox.Text.Trim());
+
+    /// <summary>
+    /// 押したときから、閉じられた・対象や設定が替わったか(替わっていたら測定を依頼しない)。
+    /// </summary>
+    /// <param name="settings">押したときの対象と設定。</param>
+    /// <returns>依頼をやめるなら true。</returns>
+    private bool IsSuperseded(RunSettings settings) => _closed || CaptureRunSettings() != settings;
+
+    /// <summary>「測定実行」: 入力を確かめて測定を依頼する(<see cref="MeasureRequested"/>)。</summary>
+    /// <remarks>
+    /// 2枚目の実在とサイズは UI スレッドの外で確かめる(切断した NAS 上のパスでは File.Exists・FileInfo が
+    /// タイムアウトまで戻らない)。確かめる間は「測定実行」を受け付けない。確かめる間・サイズの不一致の確認を
+    /// 出している間(メインウィンドウの操作・再生は続く)に閉じられた、または対象(画像・フレーム)・設定(2枚目・
+    /// 飽和信号レベル・ROI内のみ)が替わったら、測定を依頼しない(後から来た変更を優先する。押し直せる)。
+    /// 以前は2枚目のパスしか照合せず、押したときに読んだ飽和信号レベルで依頼したため、確かめる間に 8bit の画像から
+    /// 16bit の画像へ替えると、画面は 65535 なのに 255 で測り、DR を約 48dB 小さく出した。
+    /// </remarks>
+    /// <returns>依頼する(または依頼せずに終える)までのタスク。</returns>
+    internal async Task RunAsync()
+    {
+        RunSettings settings = CaptureRunSettings();
+        if (!NumericInput.TryParsePositive(settings.Saturation, out double saturation))
         {
             MessageBox.Show(this, "飽和信号レベルは正の数値で指定してください。", "ノイズ測定",
                 MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
 
-        // 2枚目の実在とサイズは UI スレッドの外で確かめる(切断した NAS 上のパスでは File.Exists・FileInfo が
-        // タイムアウトまで戻らない)。確かめる間は「測定実行」を受け付けず、閉じられた・2枚目のパスが変わったら
-        // 測定を始めない(押し直せる)
-        string reference = ReferenceBox.Text.Trim();
-        bool checkSize = _expectedReferenceSize > 0 && IsRawPath(reference);
+        string reference = settings.Reference;
+        bool checkSize = settings.ExpectedReferenceSize > 0 && IsRawPath(reference);
         bool exists = true;
         long actual = -1;
         if (reference.Length > 0)
@@ -275,16 +323,14 @@ public partial class NoiseMeasureDialog : Window
             RunButton.IsEnabled = false;
             try
             {
-                (exists, actual) = await Task.Run(() => File.Exists(reference)
-                    ? (true, checkSize ? SafeLength(reference) : -1L)
-                    : (false, -1L));
+                (exists, actual) = await ReferenceProbe(reference, checkSize);
             }
             finally
             {
                 RunButton.IsEnabled = true;
             }
 
-            if (!IsVisible || ReferenceBox.Text.Trim() != reference)
+            if (IsSuperseded(settings))
             {
                 return;
             }
@@ -304,17 +350,19 @@ public partial class NoiseMeasureDialog : Window
         if (reference.Length > 0 && checkSize)
         {
             if (actual >= 0
-                && !ReferenceImage.IsExpectedRawSize(actual, _expectedReferenceSize, _targetFileSize))
+                && !ReferenceImage.IsExpectedRawSize(
+                    actual, settings.ExpectedReferenceSize, settings.TargetFileSize))
             {
                 string message =
                     $"2枚目のファイルサイズが対象Aと一致しません。{Environment.NewLine}" +
-                    $"期待: {ReferenceImage.DescribeExpectedRawSize(_expectedReferenceSize, _targetFileSize)}" +
+                    $"期待: {ReferenceImage.DescribeExpectedRawSize(settings.ExpectedReferenceSize, settings.TargetFileSize)}" +
                     $" / 実際: {actual:N0} バイト" +
                     $"{Environment.NewLine}{Environment.NewLine}" +
                     "対象Aのフォーマットで強制的に読み込むため、測定値が正しくない可能性があります。" +
                     $"{Environment.NewLine}続行しますか?";
                 if (MessageBox.Show(this, message, "ノイズ測定",
-                        MessageBoxButton.OKCancel, MessageBoxImage.Warning) != MessageBoxResult.OK)
+                        MessageBoxButton.OKCancel, MessageBoxImage.Warning) != MessageBoxResult.OK
+                    || IsSuperseded(settings))
                 {
                     return;
                 }
@@ -325,7 +373,7 @@ public partial class NoiseMeasureDialog : Window
         MeasureRequested?.Invoke(new NoiseMeasureRequest(
             reference.Length > 0 ? reference : null,
             saturation,
-            RoiCheck.IsChecked == true));
+            settings.UseRoi));
     }
 
     private static bool IsRawPath(string path)
