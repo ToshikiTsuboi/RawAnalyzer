@@ -167,12 +167,12 @@ public partial class ProfilePlotView
     private void OnAxisFormatClick(object sender, RoutedEventArgs e)
     {
         EndPan();
-        RefreshAllInputs();
         OpenAxisFormat(null);
     }
 
     private void OpenAxisFormat(TextBox? focus)
     {
+        RefreshAllInputs();
         AxisFormatPopup.IsOpen = true;
         if (focus is null) return;
         focus.Focus();
