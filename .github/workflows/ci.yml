@@ -1,0 +1,32 @@
+name: CI
+
+# ブランチへの push のたびに Windows でビルドとテストを回す
+# (WPF のテストは Windows でしか動かないため。タグの push は release.yml が扱う)
+on:
+  push:
+    branches:
+      - '**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# 同じブランチへ続けて push したときは、前の実行を取り消して最新のコミットだけを確かめる
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      # 警告はエラー扱い(Directory.Build.props)なので、ビルドが通れば警告ゼロ
+      - name: Test
+        run: dotnet test RawAnalyzer.sln -c Release
