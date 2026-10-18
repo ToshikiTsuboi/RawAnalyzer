@@ -2,12 +2,10 @@ using System.Globalization;
 using System.Text;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Shapes;
 using System.Windows.Threading;
 using Microsoft.Win32;
-using RawAnalyzer.App.Controls;
 using RawAnalyzer.App.Services;
 using RawAnalyzer.Core;
 
@@ -36,8 +34,8 @@ internal sealed record ProfilePlotData(
     IReadOnlyList<ProfileSeries>? ExtraSeries = null);
 
 /// <summary>
-/// ラインプロファイル窓と射影の窓で共有するグラフ。統計、縦軸の全範囲・自動・手動、ホイールでの拡大・縮小、
-/// ドラッグでの移動、ダブルクリックで全体表示、データ・統計のコピーと CSV 保存を持つ。
+/// ラインプロファイル窓と射影の窓で共有するグラフ。統計、軸の書式(縦軸・横軸の範囲、目盛りの間隔、目盛線)、
+/// ホイールでの拡大・縮小、ドラッグでの移動、ダブルクリックで全体表示、データ・統計のコピーと CSV 保存を持つ。
 /// </summary>
 /// <remarks>
 /// 拡大・移動は表示だけを変える。統計・コピー・CSV は常に主の線の全体が対象。表の列(座標の見出しなど)は
@@ -76,6 +74,7 @@ public partial class ProfilePlotView : UserControl
     public ProfilePlotView()
     {
         InitializeComponent();
+        InitializeAxisFormat();
         _ready = true;
         Redraw();
     }
@@ -224,14 +223,19 @@ public partial class ProfilePlotView : UserControl
     internal void SetAxisLabels(string title, string toolTip)
     {
         XAxisTitle.Text = title;
-        XAxisCanvas.ToolTip = toolTip;
+        _xAxisToolTip = toolTip;
+        XAxisCanvas.ToolTip = HorizontalAxisToolTip();
     }
 
-    /// <summary>横軸の拡大を全体へ戻す(向きの切り替えなど、同じ長さでも別の座標になったとき)。</summary>
+    /// <summary>
+    /// 横軸を自動(データ全体)へ戻す(向きの切り替えなど、同じ長さでも別の座標になったとき。手動の範囲も
+    /// 別の座標の値なので使わない)。
+    /// </summary>
     internal void ResetHorizontalRange()
     {
         EndPan();
         _horizontalRange = null;
+        SetHorizontalMode(manual: false);
         Redraw();
     }
 
@@ -240,7 +244,7 @@ public partial class ProfilePlotView : UserControl
     {
         EndPan();
         _busyTimer?.Stop();
-        YScalePopup.IsOpen = false;
+        AxisFormatPopup.IsOpen = false;
     }
 
     /// <summary>
@@ -260,84 +264,6 @@ public partial class ProfilePlotView : UserControl
 
             return _stats;
         }
-    }
-
-    private void OnYScaleChanged(object sender, SelectionChangedEventArgs e)
-    {
-        if (!_ready || _updatingScaleControls) return;
-        // 初回の手動切替は現在の表示範囲を固定。その後は最後に適用した値を復元する。
-        if (ManualScale) _manualRange ??= _axisRange;
-        YMinimumBox.IsEnabled = ManualScale;
-        YMaximumBox.IsEnabled = ManualScale;
-        Redraw();
-        UpdateScaleInputs();
-    }
-
-    private void UpdateScaleInputs()
-    {
-        _updatingScaleControls = true;
-        // 自動表示は読みやすく、手動入力へ移すときは丸めず値を引き継ぐ。
-        string format = ManualScale ? "G17" : "G8";
-        YMinimumBox.Text = _axisRange.Minimum.ToString(format, CultureInfo.CurrentCulture);
-        YMaximumBox.Text = _axisRange.Maximum.ToString(format, CultureInfo.CurrentCulture);
-        YMinimumBox.IsEnabled = ManualScale;
-        YMaximumBox.IsEnabled = ManualScale;
-        _updatingScaleControls = false;
-        ValidateScaleInputs();
-    }
-
-    private bool ValidateScaleInputs()
-    {
-        bool valid = ProfileAxisRange.TryParse(YMinimumBox.Text, YMaximumBox.Text,
-            CultureInfo.CurrentCulture, out _);
-        ApplyYScaleButton.IsEnabled = ManualScale && valid;
-        YScaleErrorText.Visibility = ManualScale && !valid ? Visibility.Visible : Visibility.Collapsed;
-        MarkInvalidScaleInputs();
-        return valid;
-    }
-
-    /// <summary>
-    /// 手動の縦軸の欄のうち悪いほうを、ファイル一覧の絞り込み欄と同じく赤枠とツールチップの理由で示す。
-    /// </summary>
-    /// <remarks>
-    /// 以前は欄の下の説明だけで、どちらの欄が悪いのかは欄の見た目で分からなかった。読めない欄はその欄に、
-    /// 「最小 ＜ 最大」になっていないときは最大の欄に出す。手動でないときは欄を使わない(無効)ので知らせない。
-    /// </remarks>
-    private void MarkInvalidScaleInputs()
-    {
-        const string NotNumber = "有限の数値で指定してください。現在の表示範囲は変更していません。";
-        bool minValid = ProfileAxisRange.TryParseLimit(YMinimumBox.Text, CultureInfo.CurrentCulture, out double min);
-        bool maxValid = ProfileAxisRange.TryParseLimit(YMaximumBox.Text, CultureInfo.CurrentCulture, out double max);
-        string? maxError = !maxValid ? NotNumber
-            : !minValid ? null
-            : !(min < max) ? "最小値より大きい値を指定してください。現在の表示範囲は変更していません。"
-            : !double.IsFinite(max - min) ? "最小と最大の差が大きすぎます。現在の表示範囲は変更していません。"
-            : null;
-        InputFeedback.SetError(YMinimumBox, ManualScale && !minValid ? NotNumber : null);
-        InputFeedback.SetError(YMaximumBox, ManualScale ? maxError : null);
-    }
-
-    private void OnYLimitsTextChanged(object sender, TextChangedEventArgs e)
-    {
-        if (_ready && !_updatingScaleControls) ValidateScaleInputs();
-    }
-
-    private void OnYLimitsKeyDown(object sender, KeyEventArgs e)
-    {
-        if (e.Key != Key.Enter) return;
-        ApplyManualScale();
-        e.Handled = true;
-    }
-
-    private void OnApplyYScaleClick(object sender, RoutedEventArgs e) => ApplyManualScale();
-
-    private void ApplyManualScale()
-    {
-        if (!ManualScale || !ValidateScaleInputs()
-            || !ProfileAxisRange.TryParse(YMinimumBox.Text, YMaximumBox.Text,
-                CultureInfo.CurrentCulture, out ProfileAxisRange range)) return;
-        _manualRange = range;
-        Redraw();
     }
 
     private void OnCanvasSizeChanged(object sender, SizeChangedEventArgs e)
@@ -381,7 +307,7 @@ public partial class ProfilePlotView : UserControl
         return _extraExtent;
     }
 
-    /// <summary>再描画する(データ・縦軸・窓の大きさが変わったとき)。</summary>
+    /// <summary>再描画する(データ・軸の書式・窓の大きさが変わったとき)。</summary>
     internal void Redraw()
     {
         if (!_ready || PlotCanvas is null)
@@ -410,13 +336,9 @@ public partial class ProfilePlotView : UserControl
             MinLabel.Text = _axisRange.Minimum.ToString("G17", CultureInfo.CurrentCulture);
         }
 
-        const string axisHint = "\n右クリックで縦軸スケールを設定";
+        const string axisHint = "\n右クリックで縦軸の範囲・軸の書式";
         MaxLabel.ToolTip = _axisRange.Maximum.ToString("G17", CultureInfo.CurrentCulture) + axisHint;
         MinLabel.ToolTip = _axisRange.Minimum.ToString("G17", CultureInfo.CurrentCulture) + axisHint;
-        double middle = _axisRange.Minimum + (_axisRange.Maximum - _axisRange.Minimum) / 2;
-        MiddleLabel.Text = middle.ToString("G8", CultureInfo.CurrentCulture);
-        MiddleLabel.ToolTip = middle.ToString("G17", CultureInfo.CurrentCulture) + axisHint;
-        if (_ready && !ManualScale) UpdateScaleInputs();
 
         // 断面は整数の raw code なので最小・最大・P-P は整数で出す。射影は直交方向の平均(実数)で 1 code 未満の
         // 列ムラを見るための値なので、整数に丸めず平均・σ と同じ小数2桁で出す
@@ -435,12 +357,16 @@ public partial class ProfilePlotView : UserControl
         double opacity = busy is not null ? 0.35 : 1;
         PlotCanvas.Opacity = opacity;
         XAxisCanvas.Opacity = opacity;
+        YAxisCanvas.Opacity = opacity;
         bool exportable = !IsBusy && data.Length > 0;
         CopyDataMenu.IsEnabled = exportable;
         CopyStatsMenu.IsEnabled = exportable;
         SaveCsvMenu.IsEnabled = exportable;
 
+        // 目盛線はデータの線の下に描く
         DrawHorizontalAxis(width, height);
+        DrawVerticalAxis(width, height);
+        RefreshAutomaticInputs();
         if (data.Length == 0 || width < 4 || height < 4)
         {
             return;

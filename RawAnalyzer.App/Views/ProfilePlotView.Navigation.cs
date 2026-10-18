@@ -1,9 +1,6 @@
-using System.Globalization;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
-using System.Windows.Media;
-using System.Windows.Shapes;
 using RawAnalyzer.App.Services;
 
 namespace RawAnalyzer.App.Views;
@@ -15,8 +12,12 @@ public partial class ProfilePlotView
     private ProfileAxisRange _panHorizontal;
     private ProfileAxisRange _panVertical;
 
-    /// <summary>表示中の横軸の範囲(データの位置で)。</summary>
-    internal ProfileAxisRange HorizontalRange => _horizontalRange ?? ProfilePlotNavigation.FullHorizontal(_data.Values.Length);
+    /// <summary>
+    /// 表示中の横軸の範囲(データの位置で)。手動の横軸は座標で持つので、データ・ROI が変わっても同じ座標を示す。
+    /// </summary>
+    internal ProfileAxisRange HorizontalRange => ManualHorizontal && _manualHorizontal is { } fixedRange
+        ? Shift(fixedRange, -_data.CoordinateOffset)
+        : _horizontalRange ?? FullHorizontalRange;
 
     private void OnYAxisContextMenuOpening(object sender, ContextMenuEventArgs e)
     {
@@ -42,18 +43,7 @@ public partial class ProfilePlotView
     private void OnYManualRangeClick(object sender, RoutedEventArgs e)
     {
         PrepareYScaleEditor();
-        YScalePopup.IsOpen = true;
-        YMinimumBox.Focus();
-        YMinimumBox.SelectAll();
-    }
-
-    private void OnCloseYScaleClick(object sender, RoutedEventArgs e) => YScalePopup.IsOpen = false;
-
-    private void OnYScalePopupKeyDown(object sender, KeyEventArgs e)
-    {
-        if (e.Key != Key.Escape) return;
-        YScalePopup.IsOpen = false;
-        e.Handled = true;
+        OpenAxisFormat(YMinimumBox);
     }
 
     private void OnPlotMouseWheel(object sender, MouseWheelEventArgs e)
@@ -113,7 +103,9 @@ public partial class ProfilePlotView
 
     private void ApplyNavigation(ProfileAxisRange? horizontal, ProfileAxisRange? vertical)
     {
-        if (horizontal is { } x) _horizontalRange = x;
+        // 手動の横軸は、拡大・移動した範囲を新しい手動の範囲にする(縦軸と同じ)
+        if (horizontal is { } x && ManualHorizontal) _manualHorizontal = Shift(x, _data.CoordinateOffset);
+        else if (horizontal is { } zoomed) _horizontalRange = zoomed;
         if (vertical is { } y && y != _axisRange)
         {
             _manualRange = y;
@@ -124,6 +116,7 @@ public partial class ProfilePlotView
 
         Redraw();
         if (vertical is not null) UpdateScaleInputs();
+        if (horizontal is not null && ManualHorizontal) UpdateHorizontalInputs();
     }
 
     private void OnPlotMouseDown(object sender, MouseButtonEventArgs e)
@@ -188,61 +181,15 @@ public partial class ProfilePlotView
         if (PlotCanvas.IsMouseCaptured) PlotCanvas.ReleaseMouseCapture();
     }
 
-    /// <summary>両軸を全体表示へ戻す(縦軸は全範囲)。</summary>
+    /// <summary>両軸を全体表示へ戻す(縦軸は全範囲、横軸は自動。目盛りの間隔・目盛線の設定は保つ)。</summary>
     internal void ResetView()
     {
         EndPan();
         _horizontalRange = null;
+        SetHorizontalMode(manual: false);
         YScaleCombo.SelectedIndex = 0;
         Redraw();
     }
 
     private void OnResetViewClick(object sender, RoutedEventArgs e) => ResetView();
-
-    private void DrawHorizontalAxis(double width, double height)
-    {
-        XAxisCanvas.Children.Clear();
-        int count = _data.Values.Length;
-        if (count == 0 || width < 4) return;
-        long offset = _data.CoordinateOffset;
-        ProfileAxisRange horizontal = HorizontalRange;
-        var coordinates = new ProfileAxisRange(horizontal.Minimum + offset, horizontal.Maximum + offset);
-        foreach (double coordinate in ProfilePlotNavigation.Ticks(coordinates, width))
-        {
-            double x = ProfilePlotNavigation.ToCanvasX(coordinate - offset, horizontal, width);
-            XAxisCanvas.Children.Add(new Line
-            {
-                X1 = x,
-                X2 = x,
-                Y1 = 0,
-                Y2 = 4,
-                Stroke = Brushes.Gray,
-                StrokeThickness = 1,
-            });
-            var label = new TextBlock
-            {
-                Text = coordinate.ToString("0", CultureInfo.CurrentCulture),
-                FontFamily = new FontFamily("Consolas"),
-                FontSize = 10,
-                Foreground = Brushes.DarkGray,
-                Tag = coordinate,
-            };
-            label.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
-            Canvas.SetLeft(label, Math.Clamp(x - label.DesiredSize.Width / 2, 0, Math.Max(0, width - label.DesiredSize.Width)));
-            Canvas.SetTop(label, 5);
-            XAxisCanvas.Children.Add(label);
-            if (height >= 4)
-            {
-                PlotCanvas.Children.Add(new Line
-                {
-                    X1 = x,
-                    X2 = x,
-                    Y1 = 0,
-                    Y2 = height,
-                    Stroke = new SolidColorBrush(Color.FromArgb(0x18, 0x9A, 0x9A, 0x95)),
-                    StrokeThickness = 1,
-                });
-            }
-        }
-    }
 }

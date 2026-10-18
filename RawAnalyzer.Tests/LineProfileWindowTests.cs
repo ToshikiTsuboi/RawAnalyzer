@@ -27,7 +27,7 @@ public class LineProfileWindowTests
             var mode = ProfileWindowParts.Find<ComboBox>(window, "YScaleCombo");
             var min = ProfileWindowParts.Find<TextBox>(window, "YMinimumBox");
             var max = ProfileWindowParts.Find<TextBox>(window, "YMaximumBox");
-            var apply = ProfileWindowParts.Find<Button>(window, "ApplyYScaleButton");
+            var apply = ProfileWindowParts.Find<Button>(window, "ApplyAxisFormatButton");
             var error = ProfileWindowParts.Find<TextBlock>(window, "YScaleErrorText");
             Assert.Equal(new ProfileAxisRange(0, 4095), window.AxisRange);
             Assert.False(min.IsEnabled);
@@ -85,8 +85,8 @@ public class LineProfileWindowTests
             Assert.Equal(auto, window.AxisRange);
             Assert.Equal(2, mode.SelectedIndex);
             Assert.Equal(auto.Minimum.ToString("G17", CultureInfo.CurrentCulture), min.Text);
-            ProfileWindowParts.CaptureElementIfRequested((FrameworkElement)(ProfileWindowParts.Find<Popup>(window, "YScalePopup")).Child,
-                "profile-axis-editor", 330, 280);
+            ProfileWindowParts.CaptureElementIfRequested((FrameworkElement)(ProfileWindowParts.Find<Popup>(window, "AxisFormatPopup")).Child,
+                "profile-axis-editor", 460, 420);
         }
         finally
         {
@@ -145,7 +145,7 @@ public class LineProfileWindowTests
             mode.SelectedIndex = 2;
             (ProfileWindowParts.Find<TextBox>(window, "YMinimumBox")).Text = "-10.25";
             (ProfileWindowParts.Find<TextBox>(window, "YMaximumBox")).Text = "1010.5";
-            (ProfileWindowParts.Find<Button>(window, "ApplyYScaleButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            (ProfileWindowParts.Find<Button>(window, "ApplyAxisFormatButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             var expected = new ProfileAxisRange(-10.25, 1010.5);
             (ProfileWindowParts.Find<RadioButton>(window, "VerticalRadio")).IsChecked = true;
             Assert.Equal(expected, window.AxisRange);
@@ -347,7 +347,7 @@ public class LineProfileWindowTests
             mode.SelectedIndex = 2;
             (ProfileWindowParts.Find<TextBox>(window, "YMinimumBox")).Text = "100";
             (ProfileWindowParts.Find<TextBox>(window, "YMaximumBox")).Text = "300";
-            (ProfileWindowParts.Find<Button>(window, "ApplyYScaleButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            (ProfileWindowParts.Find<Button>(window, "ApplyAxisFormatButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
 
             window.ShowOutsideImage(1000, 2, 640, 480, 1023);
 

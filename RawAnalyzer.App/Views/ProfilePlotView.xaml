@@ -23,9 +23,9 @@
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
-            <Border x:Name="YAxisArea" Grid.Column="0" Margin="0,0,6,0" Background="Transparent"
+            <Border x:Name="YAxisArea" Grid.Column="0" Background="Transparent"
                     MouseWheel="OnYAxisMouseWheel" ContextMenuOpening="OnYAxisContextMenuOpening"
-                    ToolTip="右クリック: 縦軸スケールを設定&#x0a;ホイール: 縦軸のみ拡大・縮小">
+                    ToolTip="右クリック: 縦軸の範囲・軸の書式&#x0a;ホイール: 縦軸のみ拡大・縮小">
                 <Border.ContextMenu>
                     <ContextMenu>
                         <MenuItem x:Name="YFullRangeMenu" Header="全範囲 (0〜最大code)"
@@ -34,6 +34,8 @@
                                   IsCheckable="True" Click="OnYAutoRangeClick" />
                         <MenuItem x:Name="YManualRangeMenu" Header="最小・最大を指定…"
                                   IsCheckable="True" Click="OnYManualRangeClick" />
+                        <Separator />
+                        <MenuItem Header="軸の書式 (目盛間隔・目盛線)…" Click="OnAxisFormatClick" />
                     </ContextMenu>
                 </Border.ContextMenu>
                 <Grid>
@@ -45,12 +47,14 @@
                                HorizontalAlignment="Center" VerticalAlignment="Center">
                         <TextBlock.LayoutTransform><RotateTransform Angle="-90" /></TextBlock.LayoutTransform>
                     </TextBlock>
+                    <!-- 目盛り(グラフと同じ高さ・同じ縦の座標。上下の端は範囲の値のラベルに譲る) -->
+                    <Canvas x:Name="YAxisCanvas" Grid.Column="1" Margin="0,1,0,1" ClipToBounds="True" />
                     <TextBlock x:Name="MaxLabel" Grid.Column="1" VerticalAlignment="Top" TextAlignment="Right"
-                               FontFamily="Consolas" FontSize="10" Foreground="#FFAAAAA5" TextTrimming="CharacterEllipsis" />
-                    <TextBlock x:Name="MiddleLabel" Grid.Column="1" VerticalAlignment="Center" TextAlignment="Right"
-                               FontFamily="Consolas" FontSize="10" Foreground="#FFAAAAA5" TextTrimming="CharacterEllipsis" />
+                               Margin="0,0,6,0" FontFamily="Consolas" FontSize="10" Foreground="#FFAAAAA5"
+                               TextTrimming="CharacterEllipsis" />
                     <TextBlock x:Name="MinLabel" Grid.Column="1" VerticalAlignment="Bottom" TextAlignment="Right"
-                               FontFamily="Consolas" FontSize="10" Foreground="#FFAAAAA5" TextTrimming="CharacterEllipsis" />
+                               Margin="0,0,6,0" FontFamily="Consolas" FontSize="10" Foreground="#FFAAAAA5"
+                               TextTrimming="CharacterEllipsis" />
                 </Grid>
             </Border>
             <Border x:Name="PlotBorder" Grid.Column="1" Grid.Row="0" Background="#FF161618" BorderBrush="#FF48484E"
@@ -62,7 +66,7 @@
                     <Canvas.ContextMenu>
                         <ContextMenu>
                             <MenuItem Header="全体表示に戻す" Click="OnResetViewClick" />
-                            <MenuItem Header="縦軸スケールを設定…" Click="OnYManualRangeClick" />
+                            <MenuItem Header="軸の書式 (範囲・目盛間隔・目盛線)…" Click="OnAxisFormatClick" />
                             <Separator />
                             <MenuItem x:Name="CopyDataMenu" Header="データをコピー (Excel貼り付け用)"
                                       Click="OnCopyDataClick" />
@@ -81,47 +85,136 @@
 
             <Canvas x:Name="XAxisCanvas" Grid.Column="1" Grid.Row="1" Margin="1,0,1,0"
                     Background="Transparent" ClipToBounds="True" MouseWheel="OnXAxisMouseWheel"
-                    ToolTip="元画像上の画素座標。ホイールで横軸だけ拡大・縮小できます。" />
+                    ContextMenuOpening="OnXAxisContextMenuOpening"
+                    ToolTip="元画像上の画素座標。ホイールで横軸だけ拡大・縮小できます。">
+                <Canvas.ContextMenu>
+                    <ContextMenu>
+                        <MenuItem x:Name="XAutoRangeMenu" Header="自動 (データ全体)"
+                                  IsCheckable="True" Click="OnXAutoRangeClick" />
+                        <MenuItem x:Name="XManualRangeMenu" Header="最小・最大を指定…"
+                                  IsCheckable="True" Click="OnXManualRangeClick" />
+                        <Separator />
+                        <MenuItem Header="軸の書式 (目盛間隔・目盛線)…" Click="OnAxisFormatClick" />
+                    </ContextMenu>
+                </Canvas.ContextMenu>
+            </Canvas>
             <TextBlock x:Name="XAxisTitle" Grid.Column="1" Grid.Row="2" TextAlignment="Center"
                        FontSize="12" Foreground="#FFD8D8D4" Margin="0,0,0,5" />
             <TextBlock Grid.ColumnSpan="2" Grid.Row="3" FontSize="10" Foreground="#FF9A9A95"
-                       TextWrapping="Wrap" Text="ホイール: 拡大・縮小 (Shift: 横軸 / Ctrl: 縦軸)　ドラッグ: 移動　ダブルクリック: 全体表示　縦軸右クリック: 設定" />
+                       TextWrapping="Wrap" Text="ホイール: 拡大・縮小 (Shift: 横軸 / Ctrl: 縦軸)　ドラッグ: 移動　ダブルクリック: 全体表示　軸を右クリック: 範囲・目盛りの設定" />
 
             <!-- 設定は必要時だけ表示し、通常はグラフの表示領域を確保する。 -->
-            <Popup x:Name="YScalePopup" Placement="Right" PlacementTarget="{Binding ElementName=YAxisArea}"
+            <Popup x:Name="AxisFormatPopup" Placement="Right" PlacementTarget="{Binding ElementName=YAxisArea}"
                    StaysOpen="False" AllowsTransparency="True">
                 <Border Background="#FF2E2E32" BorderBrush="#FF5B9DD9" BorderThickness="1"
-                        CornerRadius="5" Padding="14" Width="330" KeyDown="OnYScalePopupKeyDown">
+                        CornerRadius="5" Padding="14" Width="460" KeyDown="OnAxisFormatPopupKeyDown">
                     <StackPanel>
                         <DockPanel Margin="0,0,0,10">
-                            <Button DockPanel.Dock="Right" Content="✕" Click="OnCloseYScaleClick" Padding="6,1"
-                                    AutomationProperties.Name="縦軸設定を閉じる" />
-                            <TextBlock Text="縦軸スケール (raw code)" Foreground="#FFD8D8D4"
+                            <Button DockPanel.Dock="Right" Content="✕" Click="OnCloseAxisFormatClick" Padding="6,1"
+                                    AutomationProperties.Name="軸の書式を閉じる" />
+                            <TextBlock Text="軸の書式" Foreground="#FFD8D8D4"
                                        VerticalAlignment="Center" FontWeight="SemiBold" />
                         </DockPanel>
-                        <ComboBox x:Name="YScaleCombo" SelectedIndex="0" Margin="0,0,0,10"
-                                  SelectionChanged="OnYScaleChanged" AutomationProperties.Name="縦軸スケール">
-                            <ComboBoxItem Content="全範囲 (0〜最大code)" />
-                            <ComboBoxItem Content="自動 (データに合わせる)" />
-                            <ComboBoxItem Content="手動" />
-                        </ComboBox>
                         <Grid>
-                            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition /></Grid.ColumnDefinitions>
-                            <Grid.RowDefinitions><RowDefinition /><RowDefinition /></Grid.RowDefinitions>
-                            <TextBlock Text="最小" VerticalAlignment="Center" Margin="0,0,8,6" Foreground="#FFD8D8D4" />
-                            <TextBox x:Name="YMinimumBox" Grid.Column="1" Margin="0,0,0,6"
-                                     TextChanged="OnYLimitsTextChanged" KeyDown="OnYLimitsKeyDown"
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition />
+                                <ColumnDefinition Width="12" />
+                                <ColumnDefinition />
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition />
+                                <RowDefinition />
+                                <RowDefinition />
+                                <RowDefinition />
+                                <RowDefinition />
+                                <RowDefinition />
+                            </Grid.RowDefinitions>
+                            <TextBlock Grid.Column="1" Text="縦軸 (raw code)" Foreground="#FF9A9A95" Margin="0,0,0,4" />
+                            <TextBlock Grid.Column="3" Text="横軸 (座標)" Foreground="#FF9A9A95" Margin="0,0,0,4" />
+
+                            <TextBlock Grid.Row="1" Text="範囲" VerticalAlignment="Center" Margin="0,0,10,6" />
+                            <ComboBox x:Name="YScaleCombo" Grid.Row="1" Grid.Column="1" SelectedIndex="0" Margin="0,0,0,6"
+                                      SelectionChanged="OnYScaleChanged" AutomationProperties.Name="縦軸の範囲">
+                                <ComboBoxItem Content="全範囲 (0〜最大code)" />
+                                <ComboBoxItem Content="自動 (データに合わせる)" />
+                                <ComboBoxItem Content="手動" />
+                            </ComboBox>
+                            <ComboBox x:Name="XScaleCombo" Grid.Row="1" Grid.Column="3" SelectedIndex="0" Margin="0,0,0,6"
+                                      SelectionChanged="OnXScaleChanged" AutomationProperties.Name="横軸の範囲">
+                                <ComboBoxItem Content="自動 (データ全体)" />
+                                <ComboBoxItem Content="手動 (固定)" />
+                            </ComboBox>
+
+                            <TextBlock Grid.Row="2" Text="最小" VerticalAlignment="Center" Margin="0,0,10,6" />
+                            <TextBox x:Name="YMinimumBox" Grid.Row="2" Grid.Column="1" Margin="0,0,0,6"
+                                     TextChanged="OnAxisFormatTextChanged" KeyDown="OnAxisFormatKeyDown"
                                      AutomationProperties.Name="縦軸の最小値" ToolTip="小数・負の値も指定できます。" />
-                            <TextBlock Text="最大" Grid.Row="1" VerticalAlignment="Center" Margin="0,0,8,0" Foreground="#FFD8D8D4" />
-                            <TextBox x:Name="YMaximumBox" Grid.Column="1" Grid.Row="1"
-                                     TextChanged="OnYLimitsTextChanged" KeyDown="OnYLimitsKeyDown"
+                            <TextBox x:Name="XMinimumBox" Grid.Row="2" Grid.Column="3" Margin="0,0,0,6"
+                                     TextChanged="OnAxisFormatTextChanged" KeyDown="OnAxisFormatKeyDown"
+                                     AutomationProperties.Name="横軸の最小値"
+                                     ToolTip="横軸の目盛りと同じ座標で指定します。データ・ROI が変わっても保ちます。" />
+
+                            <TextBlock Grid.Row="3" Text="最大" VerticalAlignment="Center" Margin="0,0,10,6" />
+                            <TextBox x:Name="YMaximumBox" Grid.Row="3" Grid.Column="1" Margin="0,0,0,6"
+                                     TextChanged="OnAxisFormatTextChanged" KeyDown="OnAxisFormatKeyDown"
                                      AutomationProperties.Name="縦軸の最大値" ToolTip="最小値より大きい値を指定してください。" />
+                            <TextBox x:Name="XMaximumBox" Grid.Row="3" Grid.Column="3" Margin="0,0,0,6"
+                                     TextChanged="OnAxisFormatTextChanged" KeyDown="OnAxisFormatKeyDown"
+                                     AutomationProperties.Name="横軸の最大値" ToolTip="最小値より大きい値を指定してください。" />
+
+                            <TextBlock Grid.Row="4" Text="目盛間隔" VerticalAlignment="Center" Margin="0,0,10,6" />
+                            <DockPanel Grid.Row="4" Grid.Column="1" Margin="0,0,0,6">
+                                <CheckBox x:Name="YMajorAutoCheck" DockPanel.Dock="Right" Content="自動" IsChecked="True"
+                                          Margin="8,0,0,0" VerticalAlignment="Center" Click="OnStepAutoClick"
+                                          AutomationProperties.Name="縦軸の目盛間隔を自動にする" />
+                                <TextBox x:Name="YMajorStepBox" TextChanged="OnAxisFormatTextChanged" KeyDown="OnAxisFormatKeyDown"
+                                         AutomationProperties.Name="縦軸の目盛間隔"
+                                         ToolTip="目盛りとラベルの間隔 (raw code)。目盛りはこの値の整数倍に置きます。" />
+                            </DockPanel>
+                            <DockPanel Grid.Row="4" Grid.Column="3" Margin="0,0,0,6">
+                                <CheckBox x:Name="XMajorAutoCheck" DockPanel.Dock="Right" Content="自動" IsChecked="True"
+                                          Margin="8,0,0,0" VerticalAlignment="Center" Click="OnStepAutoClick"
+                                          AutomationProperties.Name="横軸の目盛間隔を自動にする" />
+                                <TextBox x:Name="XMajorStepBox" TextChanged="OnAxisFormatTextChanged" KeyDown="OnAxisFormatKeyDown"
+                                         AutomationProperties.Name="横軸の目盛間隔"
+                                         ToolTip="目盛りとラベルの間隔 (px、1 以上の整数)。目盛りはこの値の整数倍の座標に置きます。" />
+                            </DockPanel>
+
+                            <TextBlock Grid.Row="5" Text="補助目盛間隔" VerticalAlignment="Center" Margin="0,0,10,0" />
+                            <DockPanel Grid.Row="5" Grid.Column="1">
+                                <CheckBox x:Name="YMinorAutoCheck" DockPanel.Dock="Right" Content="自動" IsChecked="True"
+                                          Margin="8,0,0,0" VerticalAlignment="Center" Click="OnStepAutoClick"
+                                          AutomationProperties.Name="縦軸の補助目盛間隔を自動にする" />
+                                <TextBox x:Name="YMinorStepBox" TextChanged="OnAxisFormatTextChanged" KeyDown="OnAxisFormatKeyDown"
+                                         AutomationProperties.Name="縦軸の補助目盛間隔"
+                                         ToolTip="ラベルのない短い目盛りの間隔 (raw code)。0 で補助目盛りなし。" />
+                            </DockPanel>
+                            <DockPanel Grid.Row="5" Grid.Column="3">
+                                <CheckBox x:Name="XMinorAutoCheck" DockPanel.Dock="Right" Content="自動" IsChecked="True"
+                                          Margin="8,0,0,0" VerticalAlignment="Center" Click="OnStepAutoClick"
+                                          AutomationProperties.Name="横軸の補助目盛間隔を自動にする" />
+                                <TextBox x:Name="XMinorStepBox" TextChanged="OnAxisFormatTextChanged" KeyDown="OnAxisFormatKeyDown"
+                                         AutomationProperties.Name="横軸の補助目盛間隔"
+                                         ToolTip="ラベルのない短い目盛りの間隔 (px、整数)。0 で補助目盛りなし。" />
+                            </DockPanel>
                         </Grid>
+                        <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+                            <TextBlock Text="目盛線:" VerticalAlignment="Center" Margin="0,0,10,0" />
+                            <CheckBox x:Name="MajorGridCheck" Content="主目盛り" IsChecked="True" VerticalAlignment="Center"
+                                      Click="OnGridCheckClick" AutomationProperties.Name="主目盛りの目盛線を描く" />
+                            <CheckBox x:Name="MinorGridCheck" Content="補助目盛り" Margin="16,0,0,0" VerticalAlignment="Center"
+                                      Click="OnGridCheckClick" AutomationProperties.Name="補助目盛りの目盛線を描く" />
+                        </StackPanel>
                         <TextBlock x:Name="YScaleErrorText" Foreground="#FFE8A34B" FontSize="11"
                                    Visibility="Collapsed" Margin="0,8,0,0" TextWrapping="Wrap"
                                    Text="有限の数値で「最小 ＜ 最大」を指定してください。現在の表示範囲は変更していません。" />
-                        <Button x:Name="ApplyYScaleButton" Content="適用" Padding="12,4" Margin="0,10,0,0"
-                                HorizontalAlignment="Right" Click="OnApplyYScaleClick" ToolTip="Enterでも適用" />
+                        <TextBlock x:Name="AxisFormatNote" Foreground="#FFE8C88B" FontSize="11"
+                                   Visibility="Collapsed" Margin="0,8,0,0" TextWrapping="Wrap" />
+                        <TextBlock Foreground="#FF9A9A95" FontSize="11" Margin="0,8,0,0" TextWrapping="Wrap"
+                                   Text="目盛りは間隔の整数倍の値に置き、ラベルが重なるときは間引きます。指定の間隔が細かすぎて詰まる拡大率では自動の間隔で描きます。" />
+                        <Button x:Name="ApplyAxisFormatButton" Content="適用" Padding="12,4" Margin="0,10,0,0"
+                                HorizontalAlignment="Right" Click="OnApplyAxisFormatClick" ToolTip="Enterでも適用" />
                     </StackPanel>
                 </Border>
             </Popup>

@@ -51,24 +51,6 @@ public class ProfilePlotNavigationTests
         Assert.Equal(new ProfileAxisRange(-0.5, 0.5), ProfilePlotNavigation.FullHorizontal(1));
     }
 
-    [Theory]
-    [InlineData(0, 1999, 700)]
-    [InlineData(100.25, 150.25, 700)]
-    [InlineData(400, 402, 500)]
-    [InlineData(500.5, 501.5, 500)]
-    [InlineData(2147483600, 2147483647, 400)]
-    public void Ticks_AreOrderedIntegerImageCoordinates(double minimum, double maximum, double width)
-    {
-        IReadOnlyList<double> ticks = ProfilePlotNavigation.Ticks(new(minimum, maximum), width);
-        Assert.NotEmpty(ticks);
-        Assert.Equal(ticks.Distinct().OrderBy(v => v), ticks);
-        foreach (double value in ticks)
-        {
-            Assert.InRange(value, minimum, maximum);
-            Assert.Equal(Math.Round(value), value);
-        }
-    }
-
     [Fact]
     public void Samples_UseVisibleIntervalAndAdjacentBoundaryPoints()
     {

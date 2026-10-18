@@ -319,7 +319,7 @@ public class ProjectionWindowTests
             mode.SelectedIndex = 2;
             Find<TextBox>(window, "YMinimumBox").Text = "100";
             Find<TextBox>(window, "YMaximumBox").Text = "300";
-            Find<Button>(window, "ApplyYScaleButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Find<Button>(window, "ApplyAxisFormatButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             ShowRoiResult(window);
 
             window.ShowMessage("対象: ROI なし", ProjectionTargets.ChannelSplitWithoutRoi, 1023);

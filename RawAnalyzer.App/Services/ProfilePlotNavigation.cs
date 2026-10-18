@@ -45,20 +45,6 @@ internal static class ProfilePlotNavigation
     internal static double ToCanvasX(double index, ProfileAxisRange horizontal, double width) =>
         (index - horizontal.Minimum) / (horizontal.Maximum - horizontal.Minimum) * width;
 
-    /// <summary>横軸目盛りは画像上の整数画素座標。1/2/5刻みで重なりを抑える。</summary>
-    internal static IReadOnlyList<double> Ticks(ProfileAxisRange coordinates, double width)
-    {
-        double span = coordinates.Maximum - coordinates.Minimum;
-        double target = span / Math.Max(1, Math.Floor(width / 100));
-        double power = Math.Pow(10, Math.Floor(Math.Log10(Math.Max(1, target))));
-        double step = new[] { 1.0, 2.0, 5.0, 10.0 }.First(value => value * power >= target) * power;
-        var ticks = new List<double>();
-        double first = Math.Ceiling(coordinates.Minimum / step) * step;
-        for (double value = first; value <= coordinates.Maximum && ticks.Count < 100; value += step)
-            ticks.Add(value);
-        return ticks;
-    }
-
     /// <summary>表示中の区間だけを読む。間引く場合も列ごとの極値とその出現順を保つ。</summary>
     internal static IReadOnlyList<Point> SampleVisible(double[] data, ProfileAxisRange horizontal, double width)
     {
