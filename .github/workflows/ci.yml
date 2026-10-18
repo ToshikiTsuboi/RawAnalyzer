@@ -27,6 +27,22 @@ jobs:
         with:
           dotnet-version: '8.0.x'
 
-      # 警告はエラー扱い(Directory.Build.props)なので、ビルドが通れば警告ゼロ
+      # 警告はエラー扱い(Directory.Build.props)なので、ビルドが通れば警告ゼロ。
+      # RAWANALYZER_UI_SNAPSHOTS を渡すと、UI テストが窓の見た目を PNG に書き出す
       - name: Test
-        run: dotnet test RawAnalyzer.sln -c Release
+        shell: pwsh
+        env:
+          RAWANALYZER_UI_SNAPSHOTS: ${{ runner.temp }}/ui-snapshots
+        run: |
+          New-Item -ItemType Directory -Force -Path $env:RAWANALYZER_UI_SNAPSHOTS | Out-Null
+          dotnet test RawAnalyzer.sln -c Release
+
+      # 画面を開けない環境(クラウドなど)でも見た目を確かめられるよう、テストが失敗しても残す
+      - name: Upload UI snapshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-snapshots
+          path: ${{ runner.temp }}/ui-snapshots
+          if-no-files-found: ignore
+          retention-days: 14
