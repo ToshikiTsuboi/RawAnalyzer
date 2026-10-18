@@ -51,6 +51,20 @@ public class ProfilePlotNavigationTests
         Assert.Equal(new ProfileAxisRange(-0.5, 0.5), ProfilePlotNavigation.FullHorizontal(1));
     }
 
+    [Theory]
+    [InlineData(0, 3e9)]
+    [InlineData(-3e9, 999)]
+    [InlineData(-3e9, 3e9)]
+    public void Samples_HugeManualRangeBeyondIntStillDrawsTheData(double minimum, double maximum)
+    {
+        // 手動の横軸の範囲は有限なら何でも入るので、int の範囲を超えても、範囲内のデータの線を描く
+        double[] values = Enumerable.Range(0, 1000).Select(v => (double)v).ToArray();
+        IReadOnlyList<Point> points = ProfilePlotNavigation.SampleVisible(values, new(minimum, maximum), 700);
+        Assert.True(points.Count >= 2);
+        Assert.Equal(0, points[0].Y);
+        Assert.Equal(999, points[^1].Y);
+    }
+
     [Fact]
     public void Samples_UseVisibleIntervalAndAdjacentBoundaryPoints()
     {

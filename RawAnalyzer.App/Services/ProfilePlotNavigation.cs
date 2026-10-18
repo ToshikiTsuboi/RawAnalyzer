@@ -50,8 +50,9 @@ internal static class ProfilePlotNavigation
     {
         var points = new List<Point>();
         if (data.Length == 0 || width < 1) return points;
-        int start = Math.Clamp((int)Math.Floor(horizontal.Minimum), 0, data.Length - 1);
-        int end = Math.Clamp((int)Math.Ceiling(horizontal.Maximum), start, data.Length - 1);
+        // int へ変換する前に範囲へ収める(手動の横軸に 2^31 以上を入れると、変換の桁あふれで線が消えていた)
+        int start = (int)Math.Clamp(Math.Floor(horizontal.Minimum), 0, data.Length - 1);
+        int end = (int)Math.Clamp(Math.Ceiling(horizontal.Maximum), start, data.Length - 1);
         int count = end - start + 1;
         int columns = Math.Max(1, (int)width);
         void Add(int index)
