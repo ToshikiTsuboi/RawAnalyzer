@@ -789,11 +789,11 @@ public class WideSampleTiffTests
     [Theory]
     [InlineData(1, 2, new[] { 0, 10 << 8, 20 << 8 })]                  // ExtraSamplesがあるとWICは復号できない
     [InlineData(0, -1, new[] { 255 << 8, 245 << 8, 235 << 8 })]         // WICはRGBとして返し反転しない
-    [InlineData(1, -1, new[] { 0, 10 * 257, 20 * 257 })]                // WICが読めるもの(RGBのR)はWICのまま
+    [InlineData(1, -1, new[] { 0, 10 << 8, 20 << 8 })]                  // WICが読めるもの(RGBのR)も同じ置き方
     public void ThreeSampleGray8Unsigned_OpensFirstChannelAsGray(int photometric, int extraSamples, int[] expected)
     {
         // WICで読めない8bit×3サンプルのグレーは自前で先頭チャネルを読む。自前復号は8bitを
-        // ほかの自前復号の8bit(CFA・BigTIFFなど)と同じく v<<8 で置き、WICで読めるものは従来どおり v×257
+        // ほかの自前復号の8bit(CFA・BigTIFFなど)と同じく v<<8 で置く。WICで読めるものも v<<8
         DecodedImage decoded = Load(MultiChannelGrayPage(8, 1, 3, extraSamples, new[] { 0f, 10f, 20f }, 100f, photometric));
         using RawImage owned = decoded.Luminance;
 
@@ -886,11 +886,11 @@ public class WideSampleTiffTests
         DecodedImage actual = Load(AlphaPage(bits, photometric, samplesPerPixel, gray, 1, extraSamples: 1, compressed));
         using RawImage actualOwned = actual.Luminance;
 
-        // 8bitはWIC経路の規約どおり v×257、16bitはそのまま(WhiteIsZero は 最大値−v)
+        // 8bitは raw と同じく v<<8、16bitはそのまま(WhiteIsZero は 最大値−v)
         int[] codes = Array.ConvertAll(gray, v =>
         {
             long sample = photometric == 0 ? max - v : v;
-            return (int)(bits == 8 ? sample * 257 : sample);
+            return (int)(bits == 8 ? sample << 8 : sample);
         });
         Assert.Null(actual.Color);
         Assert.Equal(bits, actual.Luminance.Format.BitDepth);
@@ -921,7 +921,7 @@ public class WideSampleTiffTests
         Assert.NotNull(actual.Color);
         Assert.Equal(bits, actual.Color!.BitDepth);
         actual.Color.GetPixel(1, 0, out ushort r, out ushort g, out ushort b);
-        int scale = bits == 8 ? 257 : 1;
+        int scale = bits == 8 ? 256 : 1;
         Assert.Equal((10 * scale, 6 * scale, 16 * scale), ((int)r, (int)g, (int)b));
         AssertSameColor(expected, actual);
     }

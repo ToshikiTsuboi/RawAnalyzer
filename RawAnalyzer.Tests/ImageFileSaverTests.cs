@@ -21,7 +21,7 @@ public class ImageFileSaverTests
         // Codexレビュー(2026-09-29)#7。1億画素を超える画像の TIFF は WIC を使わず自前ライタで行単位に書くが、
         // その経路は輝度画像を Gray16 で書いており、読み込んだ RGB 画像(JPEG/PNG/カラーTIFF)の色成分が
         // 画像の大きさだけで失われていた。巨大画像を作らずに境目を下げて自前ライタの経路を通し、1億画素以下の
-        // WIC 経路と同じ RGB48(8bit 由来の画像も読込時の v×257 の16bit値のまま)で読み戻せることを確かめる
+        // WIC 経路と同じ RGB48(8bit 由来の画像も読込時の code<<8 の16bit値のまま)で読み戻せることを確かめる
         const int width = 7;
         const int height = 5;
         ColorImage color = MakeColorImage(width, height, bitDepth);
@@ -237,7 +237,7 @@ public class ImageFileSaverTests
     }
 
     /// <summary>
-    /// チャネルごとに値の異なるカラー画像。8bit は WIC の読込と同じく v×257 の16bit値で持つ。
+    /// チャネルごとに値の異なるカラー画像。8bit は WIC の読込と同じく code<<8 の16bit値で持つ。
     /// </summary>
     private static ColorImage MakeColorImage(int width, int height, int bitDepth)
     {
@@ -246,9 +246,9 @@ public class ImageFileSaverTests
         {
             if (bitDepth == 8)
             {
-                rgb[i * 3] = (ushort)(((i * 37) & 0xFF) * 257);
-                rgb[(i * 3) + 1] = (ushort)((255 - ((i * 11) & 0xFF)) * 257);
-                rgb[(i * 3) + 2] = (ushort)((((i * 101) + 7) & 0xFF) * 257);
+                rgb[i * 3] = (ushort)(((i * 37) & 0xFF) << 8);
+                rgb[(i * 3) + 1] = (ushort)((255 - ((i * 11) & 0xFF)) << 8);
+                rgb[(i * 3) + 2] = (ushort)((((i * 101) + 7) & 0xFF) << 8);
             }
             else
             {

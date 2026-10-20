@@ -34,14 +34,14 @@ public class TiffStackTests
             Assert.Equal(5, image.Width);
             Assert.Equal(3, image.Height);
             ushort code = new ushort[] { 11, 73, 201 }[index];
-            ushort expected = bits == 8 ? (ushort)(code * 257) : code;
+            ushort expected = bits == 8 ? (ushort)(code << 8) : code;
             if (color)
             {
                 Assert.NotNull(decoded.Color);
                 decoded.Color.GetPixel(4, 2, out ushort r, out ushort g, out ushort b);
                 Assert.Equal(expected, r);
-                Assert.Equal(bits == 8 ? (code + 1) * 257 : code + 1, g);
-                Assert.Equal(bits == 8 ? (code + 2) * 257 : code + 2, b);
+                Assert.Equal(bits == 8 ? (code + 1) << 8 : code + 1, g);
+                Assert.Equal(bits == 8 ? (code + 2) << 8 : code + 2, b);
             }
             else
             {
@@ -319,7 +319,7 @@ public class TiffStackTests
         using RawImage image = first.Luminance;
         Assert.Equal(3, first.PageCount);
         Assert.Equal(8, image.Format.BitDepth);
-        Assert.Equal(232 * 257, image.GetPixel(0, 0));
+        Assert.Equal(232 << 8, image.GetPixel(0, 0));
         Assert.ThrowsAny<Exception>(() => ImageFileLoader.Load(file.Path, pageIndex: 1));
     }
 
