@@ -73,6 +73,22 @@ public class DisplayLevelsTests
         Assert.Equal((ushort)65535, DisplayLevels.ToPoints(0, 65535, 12).WhitePoint);
     }
 
+    [Fact]
+    public void AutoLevels_IgnoreHistogramOfAnotherBitDepth()
+    {
+        // HDR合成ビュー(16bit)へ切り替えた直後、合成画像のヒストグラムができる前に「自動」を押すと、元画像(12bit)の
+        // 4096ビンのコード(黒75/白3053)を16bitのコードとして使い、合成画像がほぼ全面白飛びになっていた。
+        // 表示中の画像のビット深度と違うヒストグラムでは何もしない
+        ushort[] codes = Enumerable.Range(75, 3053 - 75 + 1).Select(c => (ushort)c).ToArray();
+        using RawImage image12 = TestImages.FromCodes(codes, codes.Length, 1, bitDepth: 12);
+        HistogramResult histogram12 = ImageAnalysis.ComputeHistogram(image12, 0);
+
+        Assert.Null(DisplayLevels.AutoLevelsFor(histogram12, shownBitDepth: 16));
+        Assert.Null(DisplayLevels.AutoLevelsFor(null, shownBitDepth: 12));
+        Assert.Equal(
+            HistogramTools.ComputeAutoLevels(histogram12.Bins), DisplayLevels.AutoLevelsFor(histogram12, shownBitDepth: 12));
+    }
+
     [Theory]
     [InlineData(8)]
     [InlineData(10)]

@@ -64,6 +64,29 @@ internal static class DisplayLevels
         return (black, white);
     }
 
+    /// <summary>
+    /// 自動コントラスト(上下 0.35% のクリップ)の黒/白レベルを、表示中の画像のヒストグラムから求める。
+    /// </summary>
+    /// <param name="histogram">いま持っているヒストグラム。</param>
+    /// <param name="shownBitDepth">表示中の画像のビット深度。</param>
+    /// <returns>
+    /// 黒/白レベル(コード値)。ヒストグラムがない・表示中の画像と違うビット深度のもの(派生ビューへの出入りの直後で、
+    /// 前の画像のヒストグラムしかない)・決められないときは null(何もしない)。
+    /// </returns>
+    /// <remarks>
+    /// 別のビット深度のヒストグラムのコードを今のビット深度で解釈すると、12bit のコード(白3053)を16bitの合成画像の
+    /// 白点にしてほぼ全面を白飛びさせる。コードだけ換算しても別の画像の分布で黒/白を決めることになるので使わない。
+    /// </remarks>
+    internal static AutoLevels? AutoLevelsFor(HistogramResult? histogram, int shownBitDepth)
+    {
+        if (histogram is null || histogram.BitDepth != shownBitDepth)
+        {
+            return null;
+        }
+
+        return HistogramTools.ComputeAutoLevels(histogram.Bins);
+    }
+
     /// <summary>既定の黒点・白点(黒0・白=そのビット深度の最大コード)。</summary>
     /// <param name="bitDepth">表示中の画像のビット深度。</param>
     /// <returns>黒点・白点(16bit)。</returns>

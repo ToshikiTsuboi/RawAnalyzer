@@ -3650,6 +3650,11 @@ public partial class MainWindow : Window
         _derivedImage?.Dispose();
         _derivedImage = derived;
 
+        // 前の画像(元画像・前の派生ビュー)のヒストグラムを捨てる。下の RefreshHistogram が終わるまでに自動コントラストを
+        // 押すと、別のビット深度・別の画像の分布で黒/白を決めてしまう(画像を開く・処理結果へ差し替える経路と同じ)
+        _histogram = null;
+        _channelHistograms = null;
+
         // 派生ビューは計算を始めたときの Bayer で作った画像。表示中は右パネルの Bayer を選べなくする
         // (変えても派生ビューは古いパターンのままで、右パネルの表示と食い違う)。Raw表示へ戻ると選べる
         _vm.IsHdrViewShown = true;
@@ -3790,6 +3795,10 @@ public partial class MainWindow : Window
         UpdateNoiseWindowSource();
         UpdateProcessingBadge();
         DetectSequence();
+
+        // 派生ビューのヒストグラムを捨ててから元画像で作り直す(できるまでの自動コントラストは何もしない)
+        _histogram = null;
+        _channelHistograms = null;
         RefreshHistogram(roi: null);
 
         // 派生ビューで出していたラインプロファイルも、元画像(HDR表示の元にしたフレーム)で計算し直す
@@ -4015,12 +4024,13 @@ public partial class MainWindow : Window
 
     private void OnAutoContrastClick(object sender, RoutedEventArgs e)
     {
-        if (_histogram is null || _currentFormat is null)
+        if (_currentFormat is null)
         {
             return;
         }
 
-        if (HistogramTools.ComputeAutoLevels(_histogram.Bins) is not { } levels)
+        // 派生ビューへの出入りの直後など、表示中の画像のヒストグラムがまだなければ何もしない
+        if (DisplayLevels.AutoLevelsFor(_histogram, ActiveFormat?.BitDepth ?? 16) is not { } levels)
         {
             return;
         }
