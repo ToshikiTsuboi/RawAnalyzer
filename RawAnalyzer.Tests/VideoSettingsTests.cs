@@ -59,6 +59,7 @@ public class VideoSettingsTests
     [InlineData("7,5")]
     [InlineData("７，５ fps")]
     [InlineData("1,5000")]
+    [InlineData("0,125")] // 以前は3桁区切りとみなして 125 fps と読んだ
     public void Parse_AmbiguousCommaIsNotMisread(string text)
     {
         Assert.Equal(15, FpsInput.Parse(text, fallback: 15, out string? notice), 10);

@@ -47,6 +47,11 @@ public class NumericInputTests
     [InlineData("12,34")]
     [InlineData("1,0000")]
     [InlineData(",100")]
+    [InlineData("0,125")]  // 3桁区切りの数は "0," で始まらない。小数点のつもりのカンマとみなし 125 と誤読しない
+    [InlineData("0,001")]
+    [InlineData("-0,250")]
+    [InlineData("000,123")]
+    [InlineData("０，１２５")]
     public void TryParseFinite_RejectsMisplacedSeparators(string text)
     {
         Assert.False(NumericInput.TryParseFinite(text, out _));
@@ -68,6 +73,9 @@ public class NumericInputTests
     [Theory]
     [InlineData("1.5")]   // 整数でない
     [InlineData("1,5")]   // 3桁区切りでないカンマ
+    [InlineData("0,125")] // 先頭の群が 0 の3桁区切りはない(125 と誤読しない)
+    [InlineData("000,123")]
+    [InlineData("-0,250")]
     [InlineData("1e3")]
     [InlineData("abc")]
     [InlineData("")]

@@ -34,6 +34,8 @@ internal static partial class NumericInput
     /// "." が「。」、"-" が「ー」になる。どれも InvariantCulture の解釈では失敗し、
     /// 入力が黙って元の値へ戻されていた。カンマは3桁ごとの位置にあるときだけ区切りとみなし、
     /// "1,5" のような小数点のつもりかもしれない書き方は 15 と誤読せずに失敗のままにする。
+    /// 先頭の群が 0 で始まる "0,125" も、3桁区切りの数はこう書かないので小数点のつもりのカンマとみなし、
+    /// 125 と誤読せずに失敗のままにする(以前は区切りとみなして 1000 倍の値で通した)。
     /// </remarks>
     private static string? Normalize(string? text)
     {
@@ -72,7 +74,7 @@ internal static partial class NumericInput
         }
     }
 
-    [GeneratedRegex(@"^\s*[+-]?[0-9]{1,3}(,[0-9]{3})+(\.[0-9]*)?\s*$")]
+    [GeneratedRegex(@"^\s*[+-]?[1-9][0-9]{0,2}(,[0-9]{3})+(\.[0-9]*)?\s*$")]
     private static partial Regex GroupedThousands();
 
     /// <summary>有限かつ正の数値として解釈する。</summary>
