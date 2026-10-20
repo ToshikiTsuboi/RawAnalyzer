@@ -215,17 +215,19 @@ public sealed unsafe class RawImage : IDisposable
             throw new ArgumentOutOfRangeException(nameof(frame));
         }
 
-        if (x < 0 || width <= 0 || x + width > Width)
+        // int の加算・乗算は x・y・width・height が大きいと負へ回って検査を素通りし、
+        // MMF ではマップ外を読んでプロセスごと落ちるため、long で比べる
+        if (x < 0 || width <= 0 || (long)x + width > Width)
         {
             throw new ArgumentOutOfRangeException(nameof(width));
         }
 
-        if (y < 0 || height <= 0 || y + height > Height)
+        if (y < 0 || height <= 0 || (long)y + height > Height)
         {
             throw new ArgumentOutOfRangeException(nameof(height));
         }
 
-        if (destination.Length < width * height)
+        if (destination.Length < (long)width * height)
         {
             throw new ArgumentException("出力バッファが領域の画素数より短いです。", nameof(destination));
         }

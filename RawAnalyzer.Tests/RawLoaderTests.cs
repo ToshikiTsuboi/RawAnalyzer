@@ -155,6 +155,65 @@ public class RawLoaderTests
         }
     }
 
+    /// <summary>
+    /// int の加算・乗算が桁あふれする領域の指定。範囲の検査を素通りさせないことを確かめる。
+    /// (frame, x, y, width, height, 期待する ParamName)
+    /// </summary>
+    public static IEnumerable<object[]> OverflowingRegions()
+    {
+        yield return new object[] { 0, 1, 2, int.MaxValue, "height" };   // y + height と width * height が負へ回る
+        yield return new object[] { 0, int.MaxValue, 2, 1, "height" };   // y + height が負へ回る
+        yield return new object[] { int.MaxValue, 0, 1, 1, "width" };    // x + width が負へ回る
+        yield return new object[] { 1, 0, int.MaxValue, 1, "width" };    // x + width が負へ回る
+    }
+
+    [Theory]
+    [MemberData(nameof(OverflowingRegions))]
+    public void CopyRegion_OverflowingRegion_InMemory_ThrowsWithoutWriting(
+        int x, int y, int width, int height, string paramName)
+    {
+        // 2x4・2フレームのヒープ画像。桁あふれで検査を通ると次のフレームの画素まで書いていた
+        var format = new RawFormat { Width = 2, Height = 4, BitDepth = 16, FrameCount = 2 };
+        ushort[] pixels = Enumerable.Range(1000, 16).Select(v => (ushort)v).ToArray();
+        using RawImage image = RawImage.FromPixels(format, pixels);
+        var destination = new ushort[14];
+        Array.Fill(destination, (ushort)0xFFFF);
+
+        var ex = Assert.Throws<ArgumentOutOfRangeException>(
+            () => image.CopyRegion(0, x, y, width, height, destination));
+
+        Assert.Equal(paramName, ex.ParamName);
+        Assert.All(destination, v => Assert.Equal(0xFFFF, v));
+    }
+
+    [Theory]
+    [MemberData(nameof(OverflowingRegions))]
+    public void CopyRegion_OverflowingRegion_MemoryMapped_ThrowsWithoutReading(
+        int x, int y, int width, int height, string paramName)
+    {
+        // MMF の 2x4・8bit 画像(ファイル8バイト)。桁あふれで検査を通るとマップ外を読んで
+        // AccessViolation でプロセスごと落ちていた
+        var format = new RawFormat { Width = 2, Height = 4, BitDepth = 8 };
+        string path = TestData.WriteTempFile(new byte[] { 1, 2, 3, 4, 5, 6, 7, 8 });
+        try
+        {
+            using RawImage image = RawLoader.Load(path, format, inMemoryPixelThreshold: 0);
+            Assert.True(image.IsMemoryMapped);
+            var destination = new ushort[2_000_000];
+            Array.Fill(destination, (ushort)0xFFFF);
+
+            var ex = Assert.Throws<ArgumentOutOfRangeException>(
+                () => image.CopyRegion(0, x, y, width, height, destination));
+
+            Assert.Equal(paramName, ex.ParamName);
+            Assert.All(destination.Take(16), v => Assert.Equal(0xFFFF, v));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
     /// <summary>報告値を同期的に記録するIProgress(Progress&lt;T&gt;は同期コンテキスト依存のため)。</summary>
     private sealed class RecordingProgress : IProgress<double>
     {
