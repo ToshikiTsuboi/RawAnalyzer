@@ -1,3 +1,4 @@
+using System.Globalization;
 using RawAnalyzer.Core;
 using Xunit;
 
@@ -15,6 +16,21 @@ public class SampleScalingTests
         }
 
         return bits;
+    }
+
+    /// <summary>説明の数値の書式を実行環境の地域設定によらず確かめるため、InvariantCulture で説明を作る。</summary>
+    private static string DescribeInvariant(SampleScaling scaling, int bitsPerSample = 32)
+    {
+        CultureInfo previous = CultureInfo.CurrentCulture;
+        CultureInfo.CurrentCulture = CultureInfo.InvariantCulture;
+        try
+        {
+            return scaling.Describe(bitsPerSample);
+        }
+        finally
+        {
+            CultureInfo.CurrentCulture = previous;
+        }
     }
 
     [Fact]
@@ -93,6 +109,41 @@ public class SampleScalingTests
         Assert.Equal(double.PositiveInfinity, scaling.Span);
         Assert.InRange(scaling.ValuePerCode, 3.05e303, 3.06e303);
         Assert.Equal("64bit値 -1E+308〜1E+308 → 16bit (1code≈3.05E+303)", scaling.Describe(64));
+    }
+
+    /// <summary>
+    /// 最小が -0.0 でも負の下端(オフセット)は持たず、説明は「0〜」になる。以前は Math.Min(0, -0.0) が -0.0 を返して
+    /// 「32bit値 -0〜4095」と出し、+0 と -0 のどちらが先に出たかで説明が変わった。
+    /// </summary>
+    [Theory]
+    [InlineData(true)]  // -0 が先
+    [InlineData(false)] // +0 が先
+    public void NegativeZero_IsTreatedAsZero(bool negativeFirst)
+    {
+        int[] bits = negativeFirst ? FloatBits(-0f, 0f, 100f, 4095f) : FloatBits(0f, -0f, 100f, 4095f);
+        SampleRange range = SampleScaling.Scan(bits, bits.Length, SampleInterpretation.Float);
+        SampleScaling scaling = SampleScaling.FromRange(range);
+
+        Assert.False(double.IsNegative(range.Minimum));
+        Assert.False(double.IsNegative(scaling.Offset));
+        Assert.Equal(
+            "32bit値 0〜4095 → 16bit (1code≈0.0625)",
+            DescribeInvariant(scaling));
+    }
+
+    [Fact]
+    public void NegativeZero_FromAccumulator_IsTreatedAsZero()
+    {
+        // TiffLoader の自前復号の経路(1値ずつ集計)
+        var accumulator = new SampleRangeAccumulator();
+        accumulator.Add(-0.0);
+        accumulator.Add(5);
+        SampleRange range = accumulator.ToRange();
+        SampleScaling scaling = SampleScaling.FromRange(range);
+
+        Assert.False(double.IsNegative(range.Minimum));
+        Assert.False(double.IsNegative(scaling.Offset));
+        Assert.StartsWith("32bit値 0〜5 → 16bit", DescribeInvariant(scaling));
     }
 
     [Theory]

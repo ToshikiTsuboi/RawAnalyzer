@@ -66,11 +66,14 @@ public struct SampleRangeAccumulator
         }
     }
 
-    /// <summary>集計結果。有限値が1つもなければ 0〜0。</summary>
+    /// <summary>集計結果。有限値が1つもなければ 0〜0。-0.0 は +0 として返す。</summary>
     /// <returns>値域。</returns>
     public readonly SampleRange ToRange()
     {
-        return _any ? new SampleRange(_min, _max, _nonFinite) : new SampleRange(0, 0, _nonFinite);
+        // 大小比較では -0.0 と +0 が等しく、最初に出た方の符号が残る。並びで値域の表示が変わらないよう +0 へそろえる
+        return _any
+            ? new SampleRange(_min + 0.0, _max + 0.0, _nonFinite)
+            : new SampleRange(0, 0, _nonFinite);
     }
 }
 
@@ -225,8 +228,10 @@ public sealed record SampleScaling(double Offset, double Upper, SampleRange Rang
             });
 
         cancellationToken.ThrowIfCancellationRequested();
+
+        // -0.0 と +0 は大小比較で等しく、区画内で最初に出た方の符号が残る。並びで値域が変わらないよう +0 へそろえる
         return double.IsFinite(totalMin) && double.IsFinite(totalMax)
-            ? new SampleRange(totalMin, totalMax, totalNonFinite)
+            ? new SampleRange(totalMin + 0.0, totalMax + 0.0, totalNonFinite)
             : new SampleRange(0, 0, totalNonFinite);
     }
 
@@ -244,7 +249,8 @@ public sealed record SampleScaling(double Offset, double Upper, SampleRange Rang
     {
         double minimum = double.IsFinite(range.Minimum) ? range.Minimum : 0;
         double maximum = double.IsFinite(range.Maximum) ? range.Maximum : 0;
-        double offset = Math.Min(0, minimum);
+        // Math.Min(0, -0.0) は -0.0 を返し、説明が「-0〜」になる。負値があるときだけ下端へ寄せる
+        double offset = minimum < 0 ? minimum : 0;
         double upper = maximum;
         if (offset == 0 && upper <= 1)
         {
