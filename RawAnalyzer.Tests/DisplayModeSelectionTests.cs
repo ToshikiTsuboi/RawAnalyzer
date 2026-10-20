@@ -1,4 +1,4 @@
-using RawAnalyzer.App.Rendering;
+﻿using RawAnalyzer.App.Rendering;
 using RawAnalyzer.App.Services;
 using RawAnalyzer.Core;
 using Xunit;
@@ -21,7 +21,7 @@ public class DisplayModeSelectionTests
         // 送った先でも成立するモードは選択を保つ
         // (以前はビューポートだけ Raw 表示へ戻り、選択はカラーや分割のまま食い違った)
         DisplayModeSelection.Choice choice =
-            DisplayModeSelection.ForSequenceImage(selected, isColor: false, BayerPattern.Rggb);
+            DisplayModeSelection.ForSequenceImage(selected, isColor: false, BayerPattern.Rggb, bayerPhaseMismatch: false);
 
         Assert.Equal(selected, choice.ComboIndex);
         Assert.True(choice.ComboEnabled);
@@ -38,7 +38,7 @@ public class DisplayModeSelectionTests
         // デコード済みのカラー画像は RGB のまま表示し、Bayer 系の表示は選ばせない
         // (開いたときと同じく、選択は Raw 表示で操作不可)
         DisplayModeSelection.Choice choice =
-            DisplayModeSelection.ForSequenceImage(selected, isColor: true, BayerPattern.None);
+            DisplayModeSelection.ForSequenceImage(selected, isColor: true, BayerPattern.None, bayerPhaseMismatch: false);
 
         Assert.Equal(0, choice.ComboIndex);
         Assert.False(choice.ComboEnabled);
@@ -51,7 +51,7 @@ public class DisplayModeSelectionTests
     {
         // Bayer なしではカラー・現像・分割は成立しない。選択も Raw 表示へ戻して表示とそろえる
         DisplayModeSelection.Choice choice =
-            DisplayModeSelection.ForSequenceImage(selected, isColor: false, BayerPattern.None);
+            DisplayModeSelection.ForSequenceImage(selected, isColor: false, BayerPattern.None, bayerPhaseMismatch: false);
 
         Assert.Equal(0, choice.ComboIndex);
         Assert.True(choice.ComboEnabled);
@@ -65,7 +65,7 @@ public class DisplayModeSelectionTests
     {
         // HDR 分割・合成は元画像から作る派生ビューなので、送った先の画像へは持ち越さない
         DisplayModeSelection.Choice choice =
-            DisplayModeSelection.ForSequenceImage(selected, isColor: false, BayerPattern.Rggb);
+            DisplayModeSelection.ForSequenceImage(selected, isColor: false, BayerPattern.Rggb, bayerPhaseMismatch: false);
 
         Assert.Equal(0, choice.ComboIndex);
         Assert.True(choice.ComboEnabled);
@@ -79,7 +79,7 @@ public class DisplayModeSelectionTests
         // カラー画像の「Raw表示」は RGB のままの表示(開いたとき・送りと同じ)。
         // 以前はメニューから Bayer 系を選んで断られた後の戻り先が Raw 表示で、カラー画像がグレーになった
         DisplayModeSelection.Selected selected =
-            DisplayModeSelection.ForSelectedMode(0, isColor: true, bayer);
+            DisplayModeSelection.ForSelectedMode(0, isColor: true, bayer, bayerPhaseMismatch: false);
 
         Assert.Equal(DisplayModeSelection.Refusal.None, selected.Refusal);
         Assert.Equal(ViewportDisplayMode.TrueColor, selected.ViewportMode);
@@ -93,7 +93,7 @@ public class DisplayModeSelectionTests
         // カラー画像には右パネルで Bayer を指定していても Bayer 系の表示を使わない
         // (表示モード選択はカラー画像で操作不可。メニューから選んでも RGB のまま表示する)
         DisplayModeSelection.Selected selected =
-            DisplayModeSelection.ForSelectedMode(index, isColor: true, bayer);
+            DisplayModeSelection.ForSelectedMode(index, isColor: true, bayer, bayerPhaseMismatch: false);
 
         Assert.Equal(DisplayModeSelection.Refusal.ColorImage, selected.Refusal);
         Assert.Equal(ViewportDisplayMode.TrueColor, selected.ViewportMode);
@@ -107,7 +107,7 @@ public class DisplayModeSelectionTests
     {
         // Bayer なしのグレー画像ではカラー・現像・分割は成立しない。戻り先は Raw 表示
         DisplayModeSelection.Selected selected =
-            DisplayModeSelection.ForSelectedMode(index, isColor: false, BayerPattern.None);
+            DisplayModeSelection.ForSelectedMode(index, isColor: false, BayerPattern.None, bayerPhaseMismatch: false);
 
         Assert.Equal(DisplayModeSelection.Refusal.NoBayer, selected.Refusal);
         Assert.Equal(ViewportDisplayMode.Raw, selected.ViewportMode);
@@ -122,10 +122,57 @@ public class DisplayModeSelectionTests
         int index, BayerPattern bayer, ViewportDisplayMode expected)
     {
         DisplayModeSelection.Selected selected =
-            DisplayModeSelection.ForSelectedMode(index, isColor: false, bayer);
+            DisplayModeSelection.ForSelectedMode(index, isColor: false, bayer, bayerPhaseMismatch: false);
 
         Assert.Equal(DisplayModeSelection.Refusal.None, selected.Refusal);
         Assert.Equal(expected, selected.ViewportMode);
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(3)]
+    public void SelectedBayerMode_OnLineInterleavedHdrWithMismatchedPhase_IsRefusedWithGuidance(int index)
+    {
+        // 検証 r2-render-rawview-hdr-phase-1。行交互HDRでライン単位か行オフセットが奇数の raw は、Raw 表示のファイル行の
+        // 偶奇がセンサの Bayer の位相と一致せず、Bayerカラー・カラー現像・チャネル分割が短秒の行などの色を取り違えていた。
+        // 理由を示して断り、HDR分割ビュー(Ctrl+5)・合成ビュー(Ctrl+6)へ案内する。戻り先は Raw 表示
+        DisplayModeSelection.Selected selected = DisplayModeSelection.ForSelectedMode(
+            index, isColor: false, BayerPattern.Rggb, bayerPhaseMismatch: true);
+        string message = DisplayModeSelection.Explain(selected.Refusal);
+
+        Assert.Equal(DisplayModeSelection.Refusal.HdrBayerPhase, selected.Refusal);
+        Assert.Equal(ViewportDisplayMode.Raw, selected.ViewportMode);
+        Assert.StartsWith("行交互HDRのrawは、ライン単位か行オフセットが奇数のため", message);
+        Assert.Contains("HDR分割ビュー(Ctrl+5)", message);
+        Assert.Contains("HDR合成ビュー(Ctrl+6)", message);
+    }
+
+    [Fact]
+    public void RawItem_OnLineInterleavedHdrWithMismatchedPhase_IsShown()
+    {
+        // Raw(グレー)表示は色を使わないので断らない
+        DisplayModeSelection.Selected selected = DisplayModeSelection.ForSelectedMode(
+            0, isColor: false, BayerPattern.Rggb, bayerPhaseMismatch: true);
+
+        Assert.Equal(DisplayModeSelection.Refusal.None, selected.Refusal);
+        Assert.Equal(ViewportDisplayMode.Raw, selected.ViewportMode);
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(3)]
+    public void NewImage_WithMismatchedHdrPhase_ResetsBayerModesToRaw(int selected)
+    {
+        // 開き直し(フォーマット変更…)・右パネルの Bayer の変更・送りで、位相が一致しない行交互HDRの raw になったら
+        // Bayer 系の選択を Raw 表示へ戻す(Bayer なしと同じく、成立しないモードだけ選択ごと戻す)
+        DisplayModeSelection.Choice choice = DisplayModeSelection.ForSequenceImage(
+            selected, isColor: false, BayerPattern.Rggb, bayerPhaseMismatch: true);
+
+        Assert.Equal(0, choice.ComboIndex);
+        Assert.True(choice.ComboEnabled);
+        Assert.Equal(ViewportDisplayMode.Raw, choice.ViewportMode);
     }
 
     [Fact]

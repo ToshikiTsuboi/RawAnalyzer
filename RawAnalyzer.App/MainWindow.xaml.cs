@@ -389,6 +389,13 @@ public partial class MainWindow : Window
     /// </summary>
     private RawFormat? ActiveFormat => _derivedImage?.Format ?? _currentFormat;
 
+    /// <summary>
+    /// 行交互HDRの raw を Raw 表示していて、ファイル上の行の偶奇がセンサの Bayer の位相と一致しないか
+    /// (<see cref="HdrExposureMix.BayerPhaseMismatch"/>。派生ビューのフォーマットは HDR 方式を持たないので偽)。
+    /// </summary>
+    private bool BayerPhaseMismatchShown =>
+        ActiveFormat is { } format && HdrExposureMix.BayerPhaseMismatch(format);
+
     private int CurrentShift => 16 - (ActiveFormat?.BitDepth ?? 16);
 
     // ---- セッション記憶 ----
@@ -1158,7 +1165,10 @@ public partial class MainWindow : Window
         int frame = Viewport.Frame;
         var analyzed = new AnalysisSource(image, frame);
         BayerPattern pattern = ActiveFormat?.Bayer ?? BayerPattern.None;
-        bool byChannel = _vm.HistogramByChannel && pattern != BayerPattern.None;
+
+        // 行交互HDRの Raw 表示で Bayer の位相が一致しないときは、ファイル上の行の偶奇で振り分けると色を取り違えるので
+        // チャネル別にしない(Bayer なしと同じく全画素の分布だけを出す。チェックした時点で理由を示している)
+        bool byChannel = _vm.HistogramByChannel && pattern != BayerPattern.None && !BayerPhaseMismatchShown;
 
         // ROIは表示座標。チャネル分割表示ではタイル画像の座標なので、
         // 表示されている画素の集合へ対応づけてから集計する
@@ -1615,6 +1625,20 @@ public partial class MainWindow : Window
 
         if (e.PropertyName == nameof(MainViewModel.HistogramByChannel))
         {
+            // 行交互HDRの Raw 表示でライン単位か行オフセットが奇数だと、ファイル上の行の偶奇で振り分けたチャネルが
+            // センサの色と食い違う。チャネル別にしようとしたら理由を示して分割ビューへ案内し、チェックを戻す
+            // (チェックボックスの値の書き込み中に戻さないよう、後で行う)
+            if (_vm.HistogramByChannel
+                && HdrExposureMix.ChannelHistogramRefusal(BayerPhaseMismatchShown) is { } refusal)
+            {
+                _ = Dispatcher.InvokeAsync(() =>
+                {
+                    MessageBox.Show(this, refusal, "ヒストグラム", MessageBoxButton.OK, MessageBoxImage.Information);
+                    _vm.HistogramByChannel = false;
+                });
+                return;
+            }
+
             RefreshHistogram(Viewport.Roi is { PixelCount: > 0 } roi ? roi : null);
             return;
         }
@@ -2232,11 +2256,13 @@ public partial class MainWindow : Window
         RawImage target = ActiveImage;
         HdrImage? targetFloat = _hdrFloatImage;
 
-        // WIC 経路は表示中の1フレームのみ扱うため、判定も1フレームの画素数で行う
+        // WIC 経路は表示中の1フレームのみ扱うため、判定も1フレームの画素数で行う。
+        // 行交互HDRの Raw 表示で Bayer の位相が一致しない raw は、カラー現像の表示と同じく色を取り違えるので
+        // デモザイク(WB・カラーマトリクス)を選ばせない(分割ビュー・合成ビューからは現像して保存できる)
         var dialog = new SaveDialog(
             (long)target.Width * target.Height,
             allowFloatRaw: targetFloat is not null,
-            hasBayer: ActiveFormat?.Bayer is not (null or BayerPattern.None),
+            hasBayer: ActiveFormat?.Bayer is not (null or BayerPattern.None) && !BayerPhaseMismatchShown,
             bitDepth: target.Format.BitDepth)
         {
             Owner = this,
@@ -2800,7 +2826,7 @@ public partial class MainWindow : Window
         // 表示モードは処理前の選択を保つ(送りと同じ規約)。カラーの処理結果は RGB のまま表示する
         // (Raw 表示へ戻すとカラー画像のビニング・フィルタの結果がグレーで表示される)
         DisplayModeSelection.Choice display =
-            ApplyDisplayModeToNewImage(color is not null, processed.Format.Bayer);
+            ApplyDisplayModeToNewImage(color is not null, processed.Format);
         Viewport.SetLut(BuildLut());
 
         // 加工結果はディスク上のファイルと一致しないためシーケンス再生は無効化
@@ -3175,9 +3201,11 @@ public partial class MainWindow : Window
         }
 
         // カラー画像の Raw 表示は RGB のままの表示で、Bayer 系の表示は使わない(開いたとき・送りと同じ)。
-        // メニューなどから Bayer 系を選んで断ったあとの戻り先も、グレーの Raw 表示ではなくカラー表示にする
+        // メニューなどから Bayer 系を選んで断ったあとの戻り先も、グレーの Raw 表示ではなくカラー表示にする。
+        // 行交互HDRでファイル上の行の偶奇がセンサの Bayer の位相と一致しない raw も、色を取り違えるので断る
         DisplayModeSelection.Selected selected = DisplayModeSelection.ForSelectedMode(
-            index, _colorImage is not null, _currentFormat.Bayer);
+            index, _colorImage is not null, _currentFormat.Bayer,
+            HdrExposureMix.BayerPhaseMismatch(_currentFormat));
         if (selected.Refusal != DisplayModeSelection.Refusal.None)
         {
             MessageBox.Show(this, DisplayModeSelection.Explain(selected.Refusal),
@@ -3212,12 +3240,14 @@ public partial class MainWindow : Window
     /// 新しい画像へ交換してから呼ぶ。分割⇔非分割の切替で ROI を捨てるのはビューポートが行う。
     /// </remarks>
     /// <param name="isColor">新しい画像がデコード済みのカラー画像か。</param>
-    /// <param name="bayer">新しい画像のBayerパターン。</param>
+    /// <param name="format">
+    /// 新しい画像のフォーマット(Bayerパターンと、行交互HDRで Bayer の位相が一致しないかを見る)。
+    /// </param>
     /// <returns>適用した表示モード。</returns>
-    private DisplayModeSelection.Choice ApplyDisplayModeToNewImage(bool isColor, BayerPattern bayer)
+    private DisplayModeSelection.Choice ApplyDisplayModeToNewImage(bool isColor, RawFormat format)
     {
         DisplayModeSelection.Choice display = DisplayModeSelection.ForSequenceImage(
-            DisplayModeCombo.SelectedIndex, isColor, bayer);
+            DisplayModeCombo.SelectedIndex, isColor, format.Bayer, HdrExposureMix.BayerPhaseMismatch(format));
         DisplayModeCombo.IsEnabled = display.ComboEnabled;
 
         // 再生中の送りでは多くの場合どちらも変わらないので、変わるときだけ設定する
@@ -3838,7 +3868,7 @@ public partial class MainWindow : Window
         // ときなどは Raw 表示)
         ViewportDisplayMode mode = DisplayModeSelection.ForSelectedMode(
             DisplayModeCombo.SelectedIndex, _derivedImage is null && _colorImage is not null,
-            ActiveFormat?.Bayer ?? BayerPattern.None).ViewportMode;
+            ActiveFormat?.Bayer ?? BayerPattern.None, BayerPhaseMismatchShown).ViewportMode;
         if (mode == ViewportDisplayMode.ColorDevelop)
         {
             EnsureDevelopLuts();
@@ -4524,7 +4554,7 @@ public partial class MainWindow : Window
                 // Bayer系表示、Bayerなしでのカラー・現像・分割)だけ、選択も含めて戻す
                 // (SetColorImage は選択を見ずに Raw/カラー表示へ戻すので、表示と選択が食い違う)。
                 // 選択の変更は OnDisplayModeChanged を通るので状態の交換後に行う
-                ApplyDisplayModeToNewImage(color is not null, format.Bayer);
+                ApplyDisplayModeToNewImage(color is not null, format);
 
                 Title = $"RawAnalyzer — {Path.GetFileName(path)}{TiffPageNote}";
                 if (layoutChanged)
@@ -5641,7 +5671,7 @@ public partial class MainWindow : Window
             // Bayerカラー・カラー現像・チャネル分割が成立しないので選択ごと Raw 表示へ戻す(残すとツールバーは
             // カラー系のままグレーで描き、同じモードを選び直しても選択が変わらず理由も出ない)。
             // 有効なパターンで Bayer 系の表示を続けるなら Bayer ピラミッドを用意する(作り済みなら何もしない)
-            DisplayModeSelection.Choice display = ApplyDisplayModeToNewImage(_colorImage is not null, format.Bayer);
+            DisplayModeSelection.Choice display = ApplyDisplayModeToNewImage(_colorImage is not null, format);
             if (display.ViewportMode is ViewportDisplayMode.BayerColor
                 or ViewportDisplayMode.ColorDevelop or ViewportDisplayMode.ChannelSplit)
             {
