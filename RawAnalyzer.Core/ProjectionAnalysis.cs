@@ -97,7 +97,7 @@ public static class ProjectionAnalysis
     /// <param name="roi">対象の矩形(ROI、画像全体なら (0, 0, 幅, 高さ))。</param>
     /// <param name="axes">求める向き。</param>
     /// <param name="cancellationToken">キャンセルトークン。</param>
-    /// <param name="progress">進み具合(0〜1。読み終えたタイルの割合。作業スレッドから呼ばれる)。</param>
+    /// <param name="progress">進み具合(0〜1。読み終えたタイルの割合で、報告する順に単調に増え、読み終えれば1。作業スレッドから呼ばれる)。</param>
     /// <returns>求めた向きの射影(求めなかった向きは null)。</returns>
     /// <exception cref="OperationCanceledException">取り消された場合。</exception>
     public static ProjectionResult Compute(
@@ -115,7 +115,7 @@ public static class ProjectionAnalysis
     /// <param name="frame">フレーム番号。</param>
     /// <param name="axes">求める向き。</param>
     /// <param name="cancellationToken">キャンセルトークン。</param>
-    /// <param name="progress">進み具合(0〜1。読み終えたタイルの割合。作業スレッドから呼ばれる)。</param>
+    /// <param name="progress">進み具合(0〜1。読み終えたタイルの割合で、報告する順に単調に増え、読み終えれば1。作業スレッドから呼ばれる)。</param>
     /// <returns>求めた向きの射影(求めなかった向きは null)。</returns>
     /// <exception cref="OperationCanceledException">取り消された場合。</exception>
     public static ProjectionResult ComputeWholeImage(
@@ -135,7 +135,7 @@ public static class ProjectionAnalysis
     /// <param name="region">対象の格子(画像の範囲内であること)。</param>
     /// <param name="axes">求める向き。</param>
     /// <param name="cancellationToken">キャンセルトークン。</param>
-    /// <param name="progress">進み具合(0〜1。読み終えたタイルの割合。作業スレッドから呼ばれる)。</param>
+    /// <param name="progress">進み具合(0〜1。読み終えたタイルの割合で、報告する順に単調に増え、読み終えれば1。作業スレッドから呼ばれる)。</param>
     /// <returns>求めた向きの射影(求めなかった向きは null)。</returns>
     /// <exception cref="ArgumentOutOfRangeException">格子が画像の範囲外の場合。</exception>
     /// <exception cref="OperationCanceledException">取り消された場合。</exception>
@@ -192,7 +192,7 @@ public static class ProjectionAnalysis
     /// <param name="axes">求める向き。</param>
     /// <param name="tiling">タイルの大きさ。</param>
     /// <param name="cancellationToken">キャンセルトークン。</param>
-    /// <param name="progress">進み具合(読み終えたタイルの割合)。</param>
+    /// <param name="progress">進み具合(読み終えたタイルの割合。報告する順に単調に増える)。</param>
     /// <returns>求めた向きの射影。</returns>
     internal static ProjectionResult ComputeLattice(
         RawImage image, int frame, Lattice lattice, ProjectionAxes axes, ProjectionTiling tiling,
@@ -226,6 +226,10 @@ public static class ProjectionAnalysis
 
         int shift = 16 - image.Format.BitDepth;
         object gate = new();
+
+        // 読み終えたタイルの数え上げと報告は同じ lock の中で行う。Interlocked.Increment のあと lock の外で報告すると、
+        // 先に数えたスレッドの小さい割合が後に数えたスレッドの大きい割合より後に届き、進み具合が逆戻りした
+        object progressGate = new();
         int finished = 0;
         Parallel.For(
             0,
@@ -242,7 +246,13 @@ public static class ProjectionAnalysis
                 AccumulateTile(
                     image, frame, lattice, area, shift, columns, directColumns: bands == 1,
                     rows, directRows: strips == 1, gate, cancellationToken);
-                progress?.Report((double)Interlocked.Increment(ref finished) / tileCount);
+                if (progress is not null)
+                {
+                    lock (progressGate)
+                    {
+                        progress.Report((double)++finished / tileCount);
+                    }
+                }
             });
 
         cancellationToken.ThrowIfCancellationRequested();

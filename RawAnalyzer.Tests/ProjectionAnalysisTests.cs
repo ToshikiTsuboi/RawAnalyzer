@@ -301,6 +301,41 @@ public class ProjectionAnalysisTests
     }
 
     [Fact]
+    public void Progress_IsReportedInIncreasingOrder()
+    {
+        // 回帰テスト: タイルを読み終えたときの数え上げ(Interlocked.Increment)と報告の間で別のスレッドが先に報告すると、
+        // 小さい割合が大きい割合より後に届き、窓の「計算中… N%」が 80% から 57% へ戻るような逆戻りをしていた。
+        // 小さなタイルを多数にして報告を込み合わせ、届いた順に単調に増えることを確かめる
+        using RawImage image = TestImages.FromCodes(new ushort[64 * 64], 64, 64);
+        for (int attempt = 0; attempt < 5; attempt++)
+        {
+            var reported = new List<double>();
+            var progress = new SynchronousProgress(value =>
+            {
+                lock (reported)
+                {
+                    reported.Add(value);
+                    Thread.SpinWait(50);
+                }
+            });
+
+            ProjectionAnalysis.ComputeLattice(
+                image, 0, new ProjectionAnalysis.Lattice(0, 0, 1, 64, 64), ProjectionAxes.Both,
+                new ProjectionTiling(1, 1), CancellationToken.None, progress);
+
+            Assert.Equal(64 * 64, reported.Count);
+            for (int i = 1; i < reported.Count; i++)
+            {
+                Assert.True(
+                    reported[i] > reported[i - 1],
+                    $"{i}番目の報告 {reported[i]} が前の {reported[i - 1]} より小さい(試行 {attempt})");
+            }
+
+            Assert.Equal(1.0, reported[^1]);
+        }
+    }
+
+    [Fact]
     public void RoiOutsideImage_IsClampedAndChannelGridOutsideImage_Throws()
     {
         using RawImage image = TestImages.FromCodes(new ushort[] { 1, 2, 3, 7, 5, 9 }, 3, 2);
