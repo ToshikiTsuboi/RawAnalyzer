@@ -1612,6 +1612,14 @@ public static unsafe class TiffLoader
 
                 for (int r = 0; r < rows; r++)
                 {
+                    // 画像全体が1タイルのような大きなタイルでも中止でき、進捗が進むように、
+                    // ストリップ経路と同じく64行ごとにキャンセルを見て、タイル内の行の進みを報告する
+                    if (r > 0 && (r & 63) == 0)
+                    {
+                        ct.ThrowIfCancellationRequested();
+                        progress?.Report(progressStart + (progressSpan * (t + ((double)r / rows)) / tileCount));
+                    }
+
                     handler(y0 + r, x0, columns, data.Slice(offsets[tile] + (r * tileRowBytes), (int)tileRowBytes));
                 }
 

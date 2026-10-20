@@ -231,6 +231,39 @@ public class TiffSpecTests
             () => TiffLoader.TryDecodeUncompressed(file.Path, 0, out _, out _, out _));
     }
 
+    [Theory]
+    [InlineData(16)] // 16bit以下の整数(1パス)
+    [InlineData(32)] // 32bit整数(値域を調べる1パス目)
+    public void SingleTile_CancelsAndReportsProgressWithinTile(int bits)
+    {
+        // 回帰テスト: タイル経路はキャンセルをタイルの先頭でしか見ず、進捗もタイルを読み終えたときだけ
+        // 報告していたため、画像全体が1タイルだと中止できずに最後まで復号し、進捗も0から1へ飛んでいた。
+        // ストリップ経路と同じく64行ごとに見るので、最初の進捗の報告で中止すれば途中で止まる
+        const int width = 8;
+        const int height = 512;
+        byte[] samples = new byte[width * height * (bits / 8)];
+        var page = TiffBuilder.TiledGrayPage(width, height, bits, samples, width, height);
+        using var file = TempTiff.Write(new TiffBuilder(bigTiff: true).Build(page));
+
+        using var cts = new CancellationTokenSource();
+        var reports = new List<double>();
+        var progress = new CancelOnFirstReport(cts, reports);
+
+        Assert.ThrowsAny<OperationCanceledException>(() => TiffLoader.TryDecodeUncompressed(
+            file.Path, 0, out _, out _, out _, cts.Token, progress));
+        Assert.NotEmpty(reports);
+        Assert.True(reports[0] < 0.5, $"最初の進捗はタイルの途中で報告する: {reports[0]}");
+    }
+
+    private sealed class CancelOnFirstReport(CancellationTokenSource cts, List<double> reports) : IProgress<double>
+    {
+        public void Report(double value)
+        {
+            reports.Add(value);
+            cts.Cancel();
+        }
+    }
+
     // ------------------------------------------------------------------ P2: 開けない・情報が落ちる
 
     [Theory]
