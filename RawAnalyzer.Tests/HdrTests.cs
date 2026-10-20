@@ -271,6 +271,28 @@ public class HdrSplitterTests
         Assert.Throws<InvalidOperationException>(() => HdrSplitter.Split(image, format));
     }
 
+    [Theory]
+    [InlineData(2, 6, 1431655766, 0)]          // 段数×ライン単位が int で 2 へ巻き戻る
+    [InlineData(2, 3, 1431655766, 0)]          // 巻き戻った周期で 28.6 億画素の確保を試みていた
+    [InlineData(2, 12, 1, int.MaxValue)]       // 行オフセット×(段数−1) が int で −2 へ巻き戻る
+    [InlineData(2, 12, 1, -int.MaxValue)]
+    [InlineData(2, 12, 1, int.MinValue)]
+    public void Split_HugeLineBlockOrRowOffset_ThrowsInvalidOperation(
+        int width, int height, int lineBlock, int rowOffset)
+    {
+        // 回帰テスト: int の乗算が桁あふれして重なりの判定をすり抜け、範囲外の行を読んで
+        // AggregateException(ArgumentOutOfRangeException)や OverflowException になっていた。
+        // 画面は InvalidOperationException だけを警告として出すので、汎用のエラーになっていた
+        var format = new RawFormat
+        {
+            Width = width, Height = height, BitDepth = 16,
+            Hdr = HdrMode.Auto, HdrStages = 3, HdrLineBlock = lineBlock, HdrRowOffset = rowOffset,
+        };
+        using RawImage image = TestImages.FromCodes(new ushort[width * height], format);
+
+        Assert.Throws<InvalidOperationException>(() => HdrSplitter.Split(image, format));
+    }
+
     [Fact]
     public void ResolveLayout_AutoInfersFromFrameCount()
     {

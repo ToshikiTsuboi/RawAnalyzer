@@ -188,22 +188,29 @@ public static class HdrSplitter
 
         // 既定はBayerなら色ペア(2行)単位。物理ライン1本ごとに長秒/短秒を読み出す
         // センサでは1を指定する(部分画像側では2行ごとに色位相が進むためモザイクは保たれる)
+        // ライン単位・行オフセットは任意の int を指定できるので、段数を掛けると int では桁あふれして
+        // 小さな値へ巻き戻り、重なりの判定をすり抜けて範囲外の行を読んでしまう。long で求めて判定する
         int blockHeight = format.EffectiveHdrLineBlock;
-        int period = stages * blockHeight;
-        int fullSubHeight = image.Height / period * blockHeight;
+        long periodL = (long)stages * blockHeight;
+        int period = periodL > image.Height ? 0 : (int)periodL;
+        int fullSubHeight = period == 0 ? 0 : image.Height / period * blockHeight;
 
         // 読み出しのパイプライン遅延ぶん段ごとに縦へずれているので、
         // 重なる範囲だけを切り出して各段を行方向に整列させる
         int offsetStep = format.HdrRowOffset;
-        int maxOffset = offsetStep * (stages - 1);
-        int lowest = Math.Min(0, maxOffset);
-        int highest = Math.Max(0, maxOffset);
-        int subHeight = fullSubHeight - (highest - lowest);
-        if (subHeight <= 0)
+        long maxOffset = (long)offsetStep * (stages - 1);
+        long lowestL = Math.Min(0, maxOffset);
+        long highestL = Math.Max(0, maxOffset);
+        long subHeightL = fullSubHeight - (highestL - lowestL);
+        if (subHeightL <= 0)
         {
             throw new InvalidOperationException(
                 "行オフセットが大きすぎて重なる領域がありません。設定値を見直してください。");
         }
+
+        // ここまで来れば |行オフセット|×(段数−1) < fullSubHeight ≤ 高さ なので、以降の行の計算は int に収まる
+        int subHeight = (int)subHeightL;
+        int lowest = (int)lowestL;
 
         // Bayer位相は整列後のコンテンツ(=実際に読み出したセンサ行)で決まる。
         // パイプライン遅延は「どのセンサ行のデータがどのファイル行に書かれるか」を
