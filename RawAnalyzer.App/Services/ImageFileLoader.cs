@@ -868,6 +868,10 @@ internal static class ImageFileLoader
         }
     }
 
+    /// <summary>
+    /// WIC の画素を帯ごとに読み、16bit へ置く。8bit のサンプルは raw・自前復号の TIFF と同じく code&lt;&lt;8 で置く
+    /// (以前は v×257 で、16bit 値をそのまま使う減算・ビニング・TIFF16 の書き出しが他の 8bit と食い違った)。
+    /// </summary>
     private static ushort[] ReadBands(
         BitmapSource source, int inputChannels, int outputChannels, bool sixteenBit, bool bgr,
         CancellationToken ct, IProgress<double>? progress)
@@ -904,7 +908,7 @@ internal static class ImageFileLoader
                     {
                         int input = i * inputChannels + (bgr ? 2 - c : c);
                         output[offset + i * outputChannels + c] = buffer is ushort[] data
-                            ? data[input] : (ushort)(((byte[])buffer)[input] * 257);
+                            ? data[input] : (ushort)(((byte[])buffer)[input] << 8);
                     }
                 }
             }

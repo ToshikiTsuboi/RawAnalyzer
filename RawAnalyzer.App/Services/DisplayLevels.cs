@@ -1,3 +1,5 @@
+using RawAnalyzer.Core;
+
 namespace RawAnalyzer.App.Services;
 
 /// <summary>
@@ -44,14 +46,61 @@ internal static class DisplayLevels
     /// <param name="blackCode">黒レベル(コード値)。</param>
     /// <param name="whiteCode">白レベル(コード値)。</param>
     /// <param name="bitDepth">表示中の画像のビット深度。</param>
-    /// <returns>黒点・白点(16bit)。白点はそのコードの上端まで含める(下位ビットを立てる)。</returns>
+    /// <returns>
+    /// 黒点・白点(16bit)。どちらもそのコードの画素と同じ値(code&lt;&lt;(16−N)、コードの区間の下端)に置く。
+    /// </returns>
+    /// <remarks>
+    /// Nbit の画素は code&lt;&lt;(16−N) に正規化されている。白点をコードの区間の上端(下位ビットを1で埋めた値)に
+    /// 置くと、白レベルに指定したコードの画素が白点に届かず 255 にならない(12bit 黒100/白101 で 132、
+    /// 8bit の既定表示で 255 が 254)。区間の下端に置けば、白レベルのコードの画素はどのビット深度でも 255 になり、
+    /// 8bit の既定表示は恒等になる。ピラミッドの平均などコードの間の値も、白点以上なら白になる。
+    /// </remarks>
     internal static (ushort BlackPoint, ushort WhitePoint) ToPoints(
         double blackCode, double whiteCode, int bitDepth)
     {
         int shift = 16 - bitDepth;
         var black = (ushort)Math.Clamp((long)blackCode << shift, 0, 65535);
-        var white = (ushort)Math.Clamp(
-            ((long)whiteCode << shift) | ((1L << shift) - 1), 0, 65535);
+        var white = (ushort)Math.Clamp((long)whiteCode << shift, 0, 65535);
         return (black, white);
+    }
+
+    /// <summary>
+    /// 自動コントラスト(上下 0.35% のクリップ)の黒/白レベルを、表示中の画像のヒストグラムから求める。
+    /// </summary>
+    /// <param name="histogram">いま持っているヒストグラム。</param>
+    /// <param name="shownBitDepth">表示中の画像のビット深度。</param>
+    /// <returns>
+    /// 黒/白レベル(コード値)。ヒストグラムがない・表示中の画像と違うビット深度のもの(派生ビューへの出入りの直後で、
+    /// 前の画像のヒストグラムしかない)・決められないときは null(何もしない)。
+    /// </returns>
+    /// <remarks>
+    /// 別のビット深度のヒストグラムのコードを今のビット深度で解釈すると、12bit のコード(白3053)を16bitの合成画像の
+    /// 白点にしてほぼ全面を白飛びさせる。コードだけ換算しても別の画像の分布で黒/白を決めることになるので使わない。
+    /// </remarks>
+    internal static AutoLevels? AutoLevelsFor(HistogramResult? histogram, int shownBitDepth)
+    {
+        if (histogram is null || histogram.BitDepth != shownBitDepth)
+        {
+            return null;
+        }
+
+        return HistogramTools.ComputeAutoLevels(histogram.Bins);
+    }
+
+    /// <summary>既定の黒点・白点(黒0・白=そのビット深度の最大コード)。</summary>
+    /// <param name="bitDepth">表示中の画像のビット深度。</param>
+    /// <returns>黒点・白点(16bit)。</returns>
+    internal static (ushort BlackPoint, ushort WhitePoint) DefaultPoints(int bitDepth) =>
+        ToPoints(0, MaxCode(bitDepth), bitDepth);
+
+    /// <summary>
+    /// 表示調整をしない(既定の黒点・白点、ゲイン・ガンマ・コントラストが等倍の)表示パラメータ。
+    /// </summary>
+    /// <param name="bitDepth">表示中の画像のビット深度。</param>
+    /// <returns>表示パラメータ。</returns>
+    internal static DisplayParameters IdentityParameters(int bitDepth)
+    {
+        (ushort black, ushort white) = DefaultPoints(bitDepth);
+        return new DisplayParameters(black, white);
     }
 }

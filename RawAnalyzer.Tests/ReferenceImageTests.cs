@@ -51,8 +51,10 @@ public class ReferenceImageTests
             using RawImage result = ImageCalculator.Apply(
                 filtered, dark, ImageOperation.Subtract, 0, 0, BayerPattern.Rggb);
 
-            // 黒レベル 64 code(内部値 1024)を引く。処理結果の形式は保つ(16bit)
-            Assert.Equal((1000 - 64) << 4, result.GetPixel(3, 2));
+            // 黒レベル 64 code(内部値 1024)を引く。処理結果の形式は保つ(16bit)。フィルタの結果は 12bit の最大 code を
+            // 65535 へ写した値域(code 1000 は 1000×65535/4095 ≈ 16004)なので、引く前の値はフィルタの結果から取る
+            Assert.Equal(16004, filtered.GetPixel(3, 2));
+            Assert.Equal(16004 - (64 << 4), result.GetPixel(3, 2));
             Assert.Equal(16, result.Format.BitDepth);
         }
         finally

@@ -15,16 +15,19 @@ namespace RawAnalyzer.App.Services;
 /// (Nbit の白レベルの画素は code&lt;&lt;(16−N) で、白点と code で比べる)。TIFFのページや連番のファイルは
 /// ビット深度が異なることがあるため、現像LUTは書き出す画像のビット深度ごとに1回だけ作って使い回す
 /// (表示中の画像のLUTを使い回すと、飽和した12bitのページを16bitの白点未満とみなし、WBと行列で着色する)。
-/// 表示LUTは16bitの内部値の領域で作るので、ビット深度によらず同じものを使う。
+/// 表示調整を焼き込むときの表示LUTは16bitの内部値の領域で作るので、ビット深度によらず同じものを使う。
+/// 焼き込まないとき(表示LUTに null を渡す)は、画像のビット深度ごとに既定の黒点・白点(白=最大コード&lt;&lt;(16−N))の
+/// 表示LUT・現像の白点を使う(8bit は恒等。16bit の白点 65535 のままだと 8bit の 255 が 254 になる)。
 /// 1枚の画素数が上限(既定は1億画素)を超えるものは焼き込まずに断る(<see cref="EnsureWithinPixelLimit"/>)。
 /// 1つの書き出しの中で順に呼ぶ(スレッドセーフではない)。
 /// </remarks>
 internal sealed class BatchFrameRenderer
 {
     private readonly BayerPattern _pattern;
-    private readonly DisplayLut _lut;
+    private readonly DisplayLut? _lut;
     private readonly DevelopParameters _developParameters;
     private readonly Dictionary<int, DevelopLuts> _developLuts = new();
+    private readonly Dictionary<int, DisplayLut> _identityLuts = new();
     private readonly long _maxPixels;
 
     // MP4 のフレームごとに確保すると LOH を圧迫するので使い回す
@@ -36,10 +39,13 @@ internal sealed class BatchFrameRenderer
     /// <param name="developParameters">
     /// 現像パラメータ。<see cref="DevelopParameters.SourceBitDepth"/> は使わず、書き出す画像のビット深度に置き換える。
     /// </param>
-    /// <param name="lut">表示LUT。</param>
+    /// <param name="lut">
+    /// 表示LUT。null なら表示調整を焼き込まない(画像のビット深度ごとの既定の黒点・白点を使い、現像の白点も
+    /// そのビット深度の最大コードに置き換える)。
+    /// </param>
     /// <param name="maxPixels">1枚の画素数の上限(既定は1億画素。テストでは巨大な画像を作らずに試すため下げる)。</param>
     internal BatchFrameRenderer(
-        BayerPattern pattern, DevelopParameters developParameters, DisplayLut lut,
+        BayerPattern pattern, DevelopParameters developParameters, DisplayLut? lut,
         long maxPixels = RawLoader.DefaultInMemoryPixelThreshold)
     {
         _pattern = pattern;
@@ -95,7 +101,7 @@ internal sealed class BatchFrameRenderer
         if (entry.Color is { } trueColor)
         {
             EnsureBuffers((long)trueColor.Width * trueColor.Height);
-            ImageExport.RenderColorRgb24(trueColor, _lut, _rgb!, ct);
+            ImageExport.RenderColorRgb24(trueColor, LutFor(trueColor.BitDepth), _rgb!, ct);
             return _rgb!;
         }
 
@@ -110,7 +116,7 @@ internal sealed class BatchFrameRenderer
 
         byte[] gray = _gray!;
         byte[] rgb = _rgb!;
-        ImageExport.RenderGray8(image, entry.Frame, _lut, gray, ct);
+        ImageExport.RenderGray8(image, entry.Frame, LutFor(image.Format.BitDepth), gray, ct);
         for (long i = 0; i < pixels; i++)
         {
             byte v = gray[i];
@@ -162,11 +168,34 @@ internal sealed class BatchFrameRenderer
         int bitDepth = image.Format.BitDepth;
         if (!_developLuts.TryGetValue(bitDepth, out DevelopLuts? luts))
         {
-            luts = DevelopLuts.Create(_developParameters with { SourceBitDepth = bitDepth });
+            DevelopParameters parameters = _developParameters with { SourceBitDepth = bitDepth };
+            if (_lut is null)
+            {
+                parameters = parameters with { WhitePoint = DisplayLevels.DefaultPoints(bitDepth).WhitePoint };
+            }
+
+            luts = DevelopLuts.Create(parameters);
             _developLuts.Add(bitDepth, luts);
         }
 
         return luts;
+    }
+
+    /// <summary>表示LUT。表示調整を焼き込まないときは、ビット深度ごとの既定の表示LUTを1回だけ作って使い回す。</summary>
+    private DisplayLut LutFor(int bitDepth)
+    {
+        if (_lut is not null)
+        {
+            return _lut;
+        }
+
+        if (!_identityLuts.TryGetValue(bitDepth, out DisplayLut? lut))
+        {
+            lut = DisplayLut.Create(DisplayLevels.IdentityParameters(bitDepth));
+            _identityLuts.Add(bitDepth, lut);
+        }
+
+        return lut;
     }
 
     private BitmapSource Bake(FileFrame entry, bool forceRgb, CancellationToken ct)
@@ -175,7 +204,7 @@ internal sealed class BatchFrameRenderer
         if (entry.Color is { } trueColor)
         {
             // デコード済みのカラー画像は現像せず、表示LUTだけを焼き込む
-            byte[] colorRgb = ImageExport.RenderColorRgb24(trueColor, _lut, ct);
+            byte[] colorRgb = ImageExport.RenderColorRgb24(trueColor, LutFor(trueColor.BitDepth), ct);
             return BitmapSource.Create(
                 trueColor.Width, trueColor.Height, 96, 96, PixelFormats.Rgb24, null, colorRgb,
                 trueColor.Width * 3);
@@ -192,7 +221,7 @@ internal sealed class BatchFrameRenderer
                 width, height, 96, 96, PixelFormats.Rgb24, null, rgb, width * 3);
         }
 
-        byte[] gray = ImageExport.RenderGray8(image, entry.Frame, _lut, ct);
+        byte[] gray = ImageExport.RenderGray8(image, entry.Frame, LutFor(image.Format.BitDepth), ct);
         if (!forceRgb)
         {
             return BitmapSource.Create(

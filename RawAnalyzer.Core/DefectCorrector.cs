@@ -33,7 +33,10 @@ public static class DefectCorrector
     /// <param name="frame">フレーム番号。</param>
     /// <param name="progress">進捗通知(0〜1)。</param>
     /// <param name="cancellationToken">キャンセルトークン。</param>
-    /// <returns>補正済み画像(単一フレーム、指定CFA)。</returns>
+    /// <returns>
+    /// 補正済み画像(単一フレーム、指定CFA、元のビット深度)。補正値は近傍の平均(偶数個の中央値は中央2値の平均)を
+    /// 元のビット深度の code へ四捨五入(0.5 は切り上げ)した値。
+    /// </returns>
     /// <exception cref="InvalidOperationException">画像が大きすぎてヒープ展開できない場合。</exception>
     public static RawImage Correct(
         RawImage image,
@@ -114,7 +117,7 @@ public static class DefectCorrector
             }
 
             corrected[i] = neighbors.Count > 0
-                ? Combine(neighbors, method)
+                ? Combine(neighbors, method, image.Format.BitDepth)
                 : pixels[(long)defect.Y * width + defect.X];
         }
 
@@ -161,7 +164,12 @@ public static class DefectCorrector
         }
     }
 
-    private static ushort Combine(List<ushort> values, DefectCorrectionMethod method)
+    /// <summary>
+    /// 近傍の平均(偶数個の中央値は中央2値の平均)を、元のビット深度の code へ四捨五入(0.5 は切り上げ)して返す。
+    /// 16bit 域の端数を残したまま Nbit を名乗ると、ラインプロファイル・統計・raw 保存の &gt;&gt;(16−N) で
+    /// 切り捨てられ、補正値が約 0.4 code 低くなる。
+    /// </summary>
+    private static ushort Combine(List<ushort> values, DefectCorrectionMethod method, int bitDepth)
     {
         if (method == DefectCorrectionMethod.Mean)
         {
@@ -171,13 +179,13 @@ public static class DefectCorrector
                 sum += v;
             }
 
-            return (ushort)(sum / values.Count);
+            return PixelProcessing.RoundToCodeGrid((double)sum / values.Count, bitDepth);
         }
 
         values.Sort();
         int middle = values.Count / 2;
         return values.Count % 2 == 1
             ? values[middle]
-            : (ushort)((values[middle - 1] + values[middle]) / 2);
+            : PixelProcessing.RoundToCodeGrid((values[middle - 1] + values[middle]) / 2.0, bitDepth);
     }
 }

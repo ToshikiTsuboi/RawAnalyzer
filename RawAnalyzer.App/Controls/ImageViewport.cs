@@ -1790,6 +1790,8 @@ public sealed class ImageViewport : FrameworkElement
             SegmentLuts = _segmentLuts,
             SegmentWidth = Math.Max(1, _segmentWidth / coordinateFactor),
             ZebraEnabled = _zebraEnabled,
+            ZebraBitDepth = _colorImage is { } shownColor && _displayMode == ViewportDisplayMode.TrueColor
+                ? shownColor.BitDepth : _format?.BitDepth ?? 16,
             Color = _colorImage,
             DemosaicCache = _demosaicCache,
         };

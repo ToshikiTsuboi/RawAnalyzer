@@ -109,7 +109,7 @@ public class ColorImageTests
     [Fact]
     public void ToLuminance_8Bit_RawCodeIsRoundedLumaLikeCursor()
     {
-        // 8bitのカラー画像(WIC経路は v*257 で置く)の輝度は、解析が value >> 8 で読む raw code が
+        // 8bitのカラー画像(raw と同じく code<<8 で置く)の輝度は、解析が value >> 8 で読む raw code が
         // カーソルの YCbCr の Y(8bitの code から BT.601 で求めて四捨五入)と一致すること。
         // 16bitで丸めてから >> 8 で切り捨てると (30,20,10) の Y=21.85 が 21 になり、
         // (240,200,150) の Y=206.26 が 207 になっていた
@@ -128,9 +128,9 @@ public class ColorImageTests
         var rgb = new ushort[colors.Count * 3];
         for (int i = 0; i < colors.Count; i++)
         {
-            rgb[i * 3] = (ushort)(colors[i].R * 257);
-            rgb[(i * 3) + 1] = (ushort)(colors[i].G * 257);
-            rgb[(i * 3) + 2] = (ushort)(colors[i].B * 257);
+            rgb[i * 3] = (ushort)(colors[i].R << 8);
+            rgb[(i * 3) + 1] = (ushort)(colors[i].G << 8);
+            rgb[(i * 3) + 2] = (ushort)(colors[i].B << 8);
         }
 
         ColorImage image = ColorImage.FromInterleaved(colors.Count, 1, 8, rgb);
@@ -143,7 +143,7 @@ public class ColorImageTests
             int cursorY = ColorConvert.RgbToYCbCr(c.R, c.G, c.B, 255).Y;
             ushort value = luminance.GetPixel(i, 0);
             Assert.True(cursorY == value >> 8, $"({c.R},{c.G},{c.B}): 輝度 {value} >> 8 = {value >> 8}、カーソルの Y = {cursorY}");
-            Assert.Equal(cursorY * 257, value);   // 元のチャネルと同じ v*257 の置き方
+            Assert.Equal(cursorY << 8, value);   // 元のチャネルと同じ code<<8 の置き方
         }
 
         // 一様なパッチのROI平均も同じ値になる

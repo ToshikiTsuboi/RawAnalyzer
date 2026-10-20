@@ -55,7 +55,8 @@ public sealed record ImageFilterOptions(
 /// <summary>
 /// 16bit空間フィルタ。端は同じチャネルの端画素を複製する。
 /// Bayerは2画素刻みでR/Gr/Gb/Bを分離し、RGBは各成分を独立に処理する。
-/// 入力は変更せず、16bit・単一フレームの結果を返す。
+/// 入力は変更せず、16bit・単一フレームの結果を返す。Nbit 素材は最大 code を 65535 へ写した値域で返す
+/// (code c は c×65535/(2^N−1)。12bit の code 100 は 1600、白飛びの 4095 は 65535 で、飽和は飽和のまま残る)。
 /// </summary>
 public static class ImageFilters
 {
@@ -80,7 +81,7 @@ public static class ImageFilters
         BayerPattern cfa = pattern ?? source.Format.Bayer;
         PixelProcessing.ValidatePattern(cfa);
         ushort[] pixels = Process(source.Width, source.Height, 1,
-            cfa == BayerPattern.None ? 1 : 2, options,
+            cfa == BayerPattern.None ? 1 : 2, options, PixelProcessing.FullScaleFactor(source.Format.BitDepth),
             (y, row) => source.CopyRegion(frame, 0, y, source.Width, 1, row),
             progress, cancellationToken);
         return RawImage.FromPixels(
@@ -98,13 +99,13 @@ public static class ImageFilters
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(source);
-        ushort[] pixels = Process(source.Width, source.Height, 3, 1, options,
+        ushort[] pixels = Process(source.Width, source.Height, 3, 1, options, PixelProcessing.FullScaleFactor(source.BitDepth),
             (y, row) => source.CopyRow(y, 0, source.Width, row), progress, cancellationToken);
         return ColorImage.FromInterleaved(source.Width, source.Height, 16, pixels);
     }
 
     private static ushort[] Process(
-        int width, int height, int channels, int step, ImageFilterOptions options,
+        int width, int height, int channels, int step, ImageFilterOptions options, double scale,
         Action<int, ushort[]> readRow, IProgress<double>? progress, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(options);
@@ -189,7 +190,7 @@ public static class ImageFilters
                             value = Math.Sqrt(gx * gx + gy * gy) / 4;
                         }
 
-                        output[offset + position] = PixelProcessing.Clamp(value);
+                        output[offset + position] = PixelProcessing.Clamp(value * scale);
                     }
                 }
 

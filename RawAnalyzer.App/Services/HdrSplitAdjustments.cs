@@ -37,9 +37,12 @@ internal sealed record HdrSplitAdjustments(IReadOnlyList<DisplayParameters> Stag
     /// <param name="stages">分割ビューの段ごとの表示パラメータ。分割ビューでなければ null。</param>
     /// <param name="segmentWidth">各段の幅(並置画像の画素数)。</param>
     /// <param name="applyDisplayLut">表示LUTを焼き込むか。</param>
+    /// <param name="bitDepth">
+    /// 分割ビューの画像のビット深度。焼き込まないときの恒等の表示調整(白=最大コード&lt;&lt;(16−N))に使う。
+    /// </param>
     /// <returns>保存に使う段ごとの表示調整。分割ビューでなければ null。</returns>
     internal static HdrSplitAdjustments? ForSave(
-        IReadOnlyList<DisplayParameters>? stages, int segmentWidth, bool applyDisplayLut)
+        IReadOnlyList<DisplayParameters>? stages, int segmentWidth, bool applyDisplayLut, int bitDepth)
     {
         if (stages is null)
         {
@@ -47,9 +50,10 @@ internal sealed record HdrSplitAdjustments(IReadOnlyList<DisplayParameters> Stag
         }
 
         var copy = new DisplayParameters[stages.Count];
+        DisplayParameters identity = DisplayLevels.IdentityParameters(bitDepth);
         for (int i = 0; i < copy.Length; i++)
         {
-            copy[i] = applyDisplayLut ? stages[i] : new DisplayParameters();
+            copy[i] = applyDisplayLut ? stages[i] : identity;
         }
 
         return new HdrSplitAdjustments(copy, segmentWidth);

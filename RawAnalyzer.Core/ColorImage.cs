@@ -116,8 +116,8 @@ public sealed class ColorImage
     /// </summary>
     /// <remarks>
     /// 16bitの画像は16bitの値からYを求める。8bitの画像は、解析が value &gt;&gt; 8 で raw code に戻すため、
-    /// 8bitの code(各チャネル &gt;&gt; 8)からYを求めて四捨五入した整数 code にし、WIC経路の8bitと同じ
-    /// v*257 の置き方で16bitへ置く。16bitで丸めてから &gt;&gt; 8 で切り捨てると、Yが水準により
+    /// 8bitの code(各チャネル &gt;&gt; 8)からYを求めて四捨五入した整数 code にし、各チャネルと同じ
+    /// code&lt;&lt;8 の置き方で16bitへ置く。16bitで丸めてから &gt;&gt; 8 で切り捨てると、Yが水準により
     /// −1〜+1 code ずれ、カーソルの YCbCr(<see cref="ColorConvert.RgbToYCbCr"/>)とも食い違う。
     /// </remarks>
     /// <returns>輝度のRawImage(Bayerなし)。</returns>
@@ -148,12 +148,12 @@ public sealed class ColorImage
                     continue;
                 }
 
-                // カーソルの RgbToYCbCr の Y と同じ式・同じ丸め。上位ビットを下位へ複製して置く(8bitは v*257)
+                // カーソルの RgbToYCbCr の Y と同じ式・同じ丸め。各チャネルと同じく code<<shift で置く
                 int rCode = r >> shift;
                 int gCode = g >> shift;
                 int bCode = b >> shift;
                 int luma = (int)Math.Clamp(Math.Round(0.299 * rCode + 0.587 * gCode + 0.114 * bCode), 0, maxCode);
-                luminance[dest + x] = (ushort)((luma << shift) | (luma >> (BitDepth - shift)));
+                luminance[dest + x] = (ushort)(luma << shift);
             }
         });
 

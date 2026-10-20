@@ -52,6 +52,12 @@ public sealed class RenderRequest
     /// <summary>ゼブラ(飽和/黒潰れ警告)を表示するか(グレー系モードのみ)。</summary>
     public bool ZebraEnabled { get; init; }
 
+    /// <summary>
+    /// 表示中の画像のビット深度。ゼブラのしきい値をこのビット深度の code で決める
+    /// (<see cref="ViewportRenderer.ZebraThresholds"/>)。
+    /// </summary>
+    public int ZebraBitDepth { get; init; } = 16;
+
     /// <summary>デコード済みカラー画像(TrueColorモードで使用)。</summary>
     public ColorImage? Color { get; init; }
 
@@ -77,11 +83,32 @@ public static class ViewportRenderer
     /// </summary>
     public const long BilinearRegionBudget = 6_000_000;
 
-    /// <summary>ゼブラの飽和閾値(フルスケールの98%)。</summary>
-    public const ushort ZebraSaturationThreshold = 64224;
+    /// <summary>ゼブラの飽和の割合(最大 code の98%以上)。</summary>
+    public const double ZebraSaturationRatio = 0.98;
 
-    /// <summary>ゼブラの黒潰れ閾値(フルスケールの2%)。</summary>
-    public const ushort ZebraBlackThreshold = 1310;
+    /// <summary>ゼブラの黒潰れの割合(最大 code の2%以下)。</summary>
+    public const double ZebraBlackRatio = 0.02;
+
+    /// <summary>
+    /// ゼブラのしきい値(16bit値)を、表示中の画像のビット深度の code で決める。
+    /// </summary>
+    /// <remarks>
+    /// Nbit の画素は code&lt;&lt;(16−N)(code の区間の下端)にある。16bit値の 98%(64224)と比べると、8bit の code 250
+    /// (98.04%、250&lt;&lt;8 = 64000)・10bit の 1003 が飽和に数えられず、ツールチップの「≥98%」と食い違う。
+    /// 飽和は ceil(0.98·(2^N−1)) 以上の code(その code の区間の下端以上)、黒潰れは floor(0.02·(2^N−1)) 以下の
+    /// code(その code の区間の上端以下)とする。縮小表示の平均などコードの間の値も、code へ切り捨てた値で判定される。
+    /// </remarks>
+    /// <param name="bitDepth">表示中の画像のビット深度(1〜16)。</param>
+    /// <returns>この値以上を飽和、この値以下を黒潰れとする16bit値。</returns>
+    public static (ushort Saturation, ushort Black) ZebraThresholds(int bitDepth)
+    {
+        int depth = Math.Clamp(bitDepth, 1, 16);
+        int shift = 16 - depth;
+        int max = (1 << depth) - 1;
+        int saturatedCode = (int)Math.Ceiling(ZebraSaturationRatio * max);
+        int crushedCode = (int)Math.Floor(ZebraBlackRatio * max);
+        return ((ushort)(saturatedCode << shift), (ushort)((crushedCode << shift) | ((1 << shift) - 1)));
+    }
 
     /// <summary>
     /// ビューポートを描画する。
@@ -231,6 +258,7 @@ public static class ViewportRenderer
         int seamX = source.SeamX;
         int seamLevelX = source.SeamLevelX;
         double invFactor = 1.0 / factor;
+        (ushort zebraSaturation, ushort zebraBlack) = ZebraThresholds(request.ZebraBitDepth);
 
         // 区画ごとに縮小したソース(HDR分割ビューの縮小ピラミッド)は、区画ごとにレベル座標を数え直す
         int sourceSegmentWidth = source.SegmentWidth;
@@ -301,7 +329,7 @@ public static class ViewportRenderer
                     // ゼブラ: 斜めストライプで飽和=赤 / 黒潰れ=青
                     if (zebra && ((dx + destY) & 7) < 4)
                     {
-                        if (value >= ZebraSaturationThreshold)
+                        if (value >= zebraSaturation)
                         {
                             destRow[o] = 0x3C;
                             destRow[o + 1] = 0x50;
@@ -310,7 +338,7 @@ public static class ViewportRenderer
                             continue;
                         }
 
-                        if (value <= ZebraBlackThreshold)
+                        if (value <= zebraBlack)
                         {
                             destRow[o] = 0xE6;
                             destRow[o + 1] = 0x78;
@@ -338,6 +366,7 @@ public static class ViewportRenderer
         ColorImage color = request.Color!;
         DisplayLut lut = request.Lut;
         bool zebra = request.ZebraEnabled;
+        (ushort zebraSaturation, ushort zebraBlack) = ZebraThresholds(request.ZebraBitDepth);
         double invZoom = 1.0 / zoom;
 
         Parallel.For(
@@ -389,7 +418,7 @@ public static class ViewportRenderer
                     {
                         int peak = Math.Max(r, Math.Max(g, b));
                         int floorValue = Math.Min(r, Math.Min(g, b));
-                        if (peak >= ZebraSaturationThreshold)
+                        if (peak >= zebraSaturation)
                         {
                             destRow[o] = 0x3C;
                             destRow[o + 1] = 0x50;
@@ -398,7 +427,7 @@ public static class ViewportRenderer
                             continue;
                         }
 
-                        if (floorValue <= ZebraBlackThreshold)
+                        if (floorValue <= zebraBlack)
                         {
                             destRow[o] = 0xE6;
                             destRow[o + 1] = 0x78;

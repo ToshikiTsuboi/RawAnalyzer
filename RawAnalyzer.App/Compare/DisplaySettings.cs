@@ -1,3 +1,4 @@
+using RawAnalyzer.App.Services;
 using RawAnalyzer.Core;
 
 namespace RawAnalyzer.App.Compare;
@@ -42,18 +43,15 @@ internal sealed record DisplaySettings
     /// 内部16bit表現用の表示パラメータへ変換する。
     /// </summary>
     /// <remarks>
-    /// 白レベルは code の占める区間の上端((code&lt;&lt;shift) | (2^shift - 1))へ
-    /// マップする。メインビューの変換(ApplyLevelCodes)と同じ規約で、
-    /// 12bit の 4095 が 65535 になり最大codeが白に届く。
+    /// 黒・白レベルは、そのコードの画素と同じ16bit値(code&lt;&lt;shift、コードの区間の下端)へマップする。
+    /// メインビューの変換(ApplyLevelCodes → <see cref="DisplayLevels.ToPoints"/>)と同じ規約で、
+    /// 白レベルのコードの画素が白(255)に届き、既定(白=最大コード)の8bitは恒等になる。
     /// </remarks>
     /// <param name="bitDepth">対象画像のビット深度。</param>
     /// <returns>表示パラメータ。</returns>
     public DisplayParameters ToDisplayParameters(int bitDepth)
     {
-        int shift = 16 - bitDepth;
-        ushort black = (ushort)Math.Clamp((long)BlackCode << shift, 0, 65535);
-        ushort white = (ushort)Math.Clamp(
-            ((long)WhiteCode << shift) | ((1L << shift) - 1), 0, 65535);
+        (ushort black, ushort white) = DisplayLevels.ToPoints(BlackCode, WhiteCode, bitDepth);
         return new DisplayParameters(black, white, GainLinear, Gamma, Contrast);
     }
 

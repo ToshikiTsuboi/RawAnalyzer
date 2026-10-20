@@ -110,7 +110,7 @@ public class TiffSpecTests
     {
         // SampleFormat=4(未定義)はTIFF 6.0の勧めどおり、タグがないとき(符号なし整数)と同じに読む。16bitは
         // 値域換算の経路に入って 0〜最大値 → 0〜65535 に引き伸ばされ、SampleFormat=1 と違う値で開いていた
-        // (全体レビュー 2026-10-01 B97)。8bit はもとから ×257 のまま
+        // (全体レビュー 2026-10-01 B97)。8bit は raw と同じ v<<8
         int max = bits == 8 ? 255 : 4095;
         int[] values = Enumerable.Range(0, W * H).Select(i => i * max / ((W * H) - 1)).ToArray();
         byte[] samples = bits switch
@@ -519,7 +519,8 @@ public class TiffSpecTests
         Assert.Null(decoded.Color);
         Assert.Equal(8, image.Format.BitDepth);
         Assert.Equal(0, image.GetPixel(0, 0));
-        Assert.Equal(65535, image.GetPixel(max % W, max / W));
+        // WIC が Gray8 へ広げた最大値 255 を、ほかの 8bit と同じく 255<<8 で置く(既定表示で白)
+        Assert.Equal(255 << 8, image.GetPixel(max % W, max / W));
     }
 
     [Fact]

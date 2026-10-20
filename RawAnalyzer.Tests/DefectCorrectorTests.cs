@@ -142,4 +142,31 @@ public class DefectCorrectorTests
             image, Array.Empty<DefectPixel>(), BayerPattern.Grbg);
         Assert.Equal(BayerPattern.Grbg, changed.Format.Bayer);
     }
+
+    [Theory]
+    [InlineData(DefectCorrectionMethod.Mean, new[] { 100, 100, 100, 101, 101, 101, 101, 101 }, 101)] // 100.625 → 101
+    [InlineData(DefectCorrectionMethod.Mean, new[] { 100, 100, 100, 100, 100, 101, 101, 101 }, 100)] // 100.375 → 100
+    [InlineData(DefectCorrectionMethod.Median, new[] { 100, 100, 100, 100, 101, 101, 101, 101 }, 101)] // 100.5 → 101
+    [InlineData(DefectCorrectionMethod.Median, new[] { 99, 99, 99, 100, 102, 103, 103, 103 }, 101)]   // 101
+    public void Correct_12Bit_RoundsToNearestCode(DefectCorrectionMethod method, int[] neighbors, int expected)
+    {
+        // 12bit の近傍の平均(偶数個の中央値は中央2値の平均)は code へ四捨五入する。以前は16bit域の整数除算の
+        // 端数を持ったまま 12bit を名乗り、ラインプロファイル・統計・raw 保存の >>4 で切り捨てられて
+        // 100.625 の近傍が 100 になった(約 −0.4 code の偏り)
+        const int size = 3;
+        var codes = new ushort[size * size];
+        int n = 0;
+        for (int i = 0; i < codes.Length; i++)
+        {
+            codes[i] = i == 4 ? (ushort)4095 : (ushort)neighbors[n++];
+        }
+
+        using RawImage image = TestImages.FromCodes(codes, size, size, bitDepth: 12);
+        var defects = new[] { new DefectPixel(1, 1, 4095, DefectType.Hot) };
+
+        using RawImage result = DefectCorrector.Correct(image, defects, BayerPattern.None, method);
+
+        Assert.Equal(12, result.Format.BitDepth);
+        Assert.Equal(expected << 4, result.GetPixel(1, 1));
+    }
 }

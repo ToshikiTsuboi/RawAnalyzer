@@ -65,4 +65,33 @@ internal static class ProcessedImageReplacement
             "表示中の画像で、もう一度実行してください。",
         _ => "",
     };
+
+    /// <summary>
+    /// 処理結果へ差し替えるときに、表示の黒点・白点(16bit)を結果の値域へ写す。
+    /// </summary>
+    /// <remarks>
+    /// 16bit にする処理(平均ビニング・フィルタ)は Nbit 素材の最大 code の16bit値 (2^N−1)&lt;&lt;(16−N) を 65535 へ
+    /// 写す(ImageBinning・ImageFilters)。黒点・白点も同じ倍率で写し、処理の前後で同じ code が同じ明るさに見え、
+    /// 最大 code の白レベル(12bit は 65520)は結果の 65535 になるようにする。写さないと白点が 65520 のまま残り、
+    /// 結果の 16bit の現像で白飛びの判定(白点以上)がずれる。ビット深度が変わらない処理(画像演算・欠陥補正)と
+    /// 16bit の素材はそのまま返す。
+    /// </remarks>
+    /// <param name="blackPoint">いまの表示黒点(16bit)。</param>
+    /// <param name="whitePoint">いまの表示白点(16bit)。</param>
+    /// <param name="sourceBitDepth">処理の元にした画像のビット深度。</param>
+    /// <param name="resultBitDepth">処理結果のビット深度。</param>
+    /// <returns>処理結果に使う黒点・白点。</returns>
+    internal static (ushort BlackPoint, ushort WhitePoint) CarryLevels(
+        ushort blackPoint, ushort whitePoint, int sourceBitDepth, int resultBitDepth)
+    {
+        if (resultBitDepth != 16 || sourceBitDepth >= 16)
+        {
+            return (blackPoint, whitePoint);
+        }
+
+        double scale = 65535.0 / (((1 << sourceBitDepth) - 1) << (16 - sourceBitDepth));
+        return (Scale(blackPoint), Scale(whitePoint));
+
+        ushort Scale(ushort value) => (ushort)Math.Clamp(Math.Floor((value * scale) + 0.5), 0, 65535);
+    }
 }

@@ -9,14 +9,17 @@ public enum ImageOperation
     /// <summary>絶対差: out = |A − B|。2条件比較用。</summary>
     AbsoluteDifference,
 
-    /// <summary>ゲイン補正: out = clamp(A × mean(B) / B)。フラットフィールド補正用。</summary>
+    /// <summary>
+    /// ゲイン補正: out = clamp(A × mean(B) / B)。フラットフィールド補正用。mean(B) は B の16bit値の平均。
+    /// </summary>
     DivideGain,
 }
 
 /// <summary>
 /// 2画像間の演算(ImageJのImage Calculator相当のサブセット)。
 /// ダーク減算・フラットフィールド補正・差分比較に使う。
-/// 演算は正規化済み16bit値域で行い、結果は0〜65535へクランプされる。
+/// 演算は正規化済み16bit値域で行い、結果は A のビット深度の code へ四捨五入(0.5 は切り上げ)して0〜最大コードへ
+/// 収め、code&lt;&lt;(16−N) で置く(端数を残さないので、統計・raw 保存で code へ戻しても切り捨てで偏らない)。
 /// </summary>
 public static class ImageCalculator
 {
@@ -73,17 +76,16 @@ public static class ImageCalculator
         double referenceMean = 0;
         if (operation == ImageOperation.DivideGain)
         {
-            RegionStatistics stats = ImageAnalysis.ComputeStatistics(
-                reference, referenceFrame, new RegionOfInterest(0, 0, width, height),
-                cancellationToken);
-            int shift = 16 - reference.Format.BitDepth;
-            referenceMean = stats.Mean * (1 << shift); // raw code → 16bit正規化域
+            referenceMean = SixteenBitMean(reference, referenceFrame, cancellationToken);
             if (referenceMean <= 0)
             {
                 throw new InvalidOperationException("参照画像の平均が0のためゲイン補正できません。");
             }
         }
 
+        // 結果は A の Nbit の code の格子へ四捨五入して返す(16bit 域の端数を残したまま Nbit を名乗ると、
+        // 統計・raw 保存の >>shift で切り捨てられ、平均が約 0.5 code 下がる)
+        int bitDepth = source.Format.BitDepth;
         var pixels = new ushort[(long)width * height];
         long rowsDone = 0;
         Parallel.For(
@@ -102,15 +104,15 @@ public static class ImageCalculator
                         for (int x = 0; x < width; x++)
                         {
                             int v = buffers.RowA[x] - buffers.RowB[x];
-                            pixels[offset + x] = (ushort)Math.Max(0, v);
+                            pixels[offset + x] = PixelProcessing.RoundToCodeGrid(Math.Max(0, v), bitDepth);
                         }
 
                         break;
                     case ImageOperation.AbsoluteDifference:
                         for (int x = 0; x < width; x++)
                         {
-                            pixels[offset + x] = (ushort)Math.Abs(
-                                buffers.RowA[x] - buffers.RowB[x]);
+                            pixels[offset + x] = PixelProcessing.RoundToCodeGrid(
+                                Math.Abs(buffers.RowA[x] - buffers.RowB[x]), bitDepth);
                         }
 
                         break;
@@ -119,8 +121,7 @@ public static class ImageCalculator
                         {
                             double b = Math.Max(1, (int)buffers.RowB[x]);
                             double v = buffers.RowA[x] * referenceMean / b;
-                            pixels[offset + x] = (ushort)Math.Clamp(
-                                (long)Math.Round(v), 0, 65535);
+                            pixels[offset + x] = PixelProcessing.RoundToCodeGrid(v, bitDepth);
                         }
 
                         break;
@@ -144,6 +145,37 @@ public static class ImageCalculator
         HdrMode hdr = IsLineInterleaved(source.Format) ? source.Format.Hdr : HdrMode.None;
         RawFormat format = source.Format with { FrameCount = 1, Hdr = hdr, Bayer = cfa };
         return RawImage.FromPixels(format, pixels);
+    }
+
+    /// <summary>
+    /// 参照画像の 16bit 値の平均。code の統計から「code 平均×2^shift」で戻すと、下位ビットの立った画素
+    /// (16bit 値に端数を持つ参照)の分が落ちるので、16bit 値をそのまま合計する。
+    /// 1億画素の上限があるので long の合計で足りる(65535×1e8 ≈ 6.6e12)。
+    /// </summary>
+    private static double SixteenBitMean(RawImage reference, int frame, CancellationToken cancellationToken)
+    {
+        int width = reference.Width;
+        int height = reference.Height;
+        long total = 0;
+        Parallel.For(
+            0,
+            height,
+            new ParallelOptions { CancellationToken = cancellationToken },
+            () => (Row: new ushort[width], Sum: 0L),
+            (y, state, local) =>
+            {
+                reference.CopyRegion(frame, 0, y, width, 1, local.Row);
+                long sum = local.Sum;
+                foreach (ushort v in local.Row)
+                {
+                    sum += v;
+                }
+
+                return (local.Row, sum);
+            },
+            local => Interlocked.Add(ref total, local.Sum));
+        cancellationToken.ThrowIfCancellationRequested();
+        return (double)total / ((long)width * height);
     }
 
     private static bool IsLineInterleaved(RawFormat format)

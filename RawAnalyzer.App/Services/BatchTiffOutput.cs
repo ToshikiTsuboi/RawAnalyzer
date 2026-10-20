@@ -7,7 +7,8 @@ namespace RawAnalyzer.App.Services;
 /// 一括書き出しの16bitグレーTIFF。画素値を内部表現の16bitフルスケールで書くか、raw の code のまま書くか。
 /// </summary>
 /// <remarks>
-/// 内部表現は Nbit の code を16bitへ左詰めした値(code×2^(16−N)。12bit の code 100 は 1600)。外部ツールで
+/// 内部表現は Nbit の code を16bitへ左詰めした値(code×2^(16−N)。12bit の code 100 は 1600。WIC で読む 8bit の
+/// PNG・JPEG・TIFF も raw と同じ code×256)。外部ツールで
 /// code のまま統計を取るには、BitsPerSample は16のまま値だけを code(下詰め)にしたTIFFが要る。
 /// 一括書き出しは付随テキストを書かないので、どちらで書いたかは完了の表示に添える。
 /// </remarks>

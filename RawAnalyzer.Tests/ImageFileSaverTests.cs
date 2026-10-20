@@ -21,7 +21,7 @@ public class ImageFileSaverTests
         // Codexレビュー(2026-09-29)#7。1億画素を超える画像の TIFF は WIC を使わず自前ライタで行単位に書くが、
         // その経路は輝度画像を Gray16 で書いており、読み込んだ RGB 画像(JPEG/PNG/カラーTIFF)の色成分が
         // 画像の大きさだけで失われていた。巨大画像を作らずに境目を下げて自前ライタの経路を通し、1億画素以下の
-        // WIC 経路と同じ RGB48(8bit 由来の画像も読込時の v×257 の16bit値のまま)で読み戻せることを確かめる
+        // WIC 経路と同じ RGB48(8bit 由来の画像も読込時の code<<8 の16bit値のまま)で読み戻せることを確かめる
         const int width = 7;
         const int height = 5;
         ColorImage color = MakeColorImage(width, height, bitDepth);
@@ -95,7 +95,7 @@ public class ImageFileSaverTests
                 composite, 0, path, SaveFormat.Png8, ViewportDisplayMode.Raw, BayerPattern.None,
                 sliderLut, DevelopLuts.Create(new DevelopParameters()), null, new Progress<double>(),
                 CancellationToken.None,
-                split: HdrSplitAdjustments.ForSave(stages, stageWidth, applyDisplayLut: true));
+                split: HdrSplitAdjustments.ForSave(stages, stageWidth, applyDisplayLut: true, bitDepth: 12));
             byte[] saved = DecodePixels(path, PixelFormats.Gray8);
 
             // 分割ビューの画面: 段ごとの表示LUT(MainWindow の ApplySplitLuts と同じ作り方)で等倍に描く
@@ -166,7 +166,7 @@ public class ImageFileSaverTests
 
         // 保存に渡すLUTと段ごとの表示調整は MainWindow の ExecuteSave と同じく作る(スライダーの値は最後に調整した
         // 段のもの。表示LUTを焼き込まないなら表示調整は恒等)
-        DisplayParameters slider = applyDisplayLut ? stages[^1] : new DisplayParameters();
+        DisplayParameters slider = applyDisplayLut ? stages[^1] : DisplayLevels.IdentityParameters(12);
         string path = TempPath(".png");
         try
         {
@@ -174,14 +174,14 @@ public class ImageFileSaverTests
                 composite, 0, path, SaveFormat.Png8, ViewportDisplayMode.ColorDevelop, BayerPattern.Rggb,
                 DisplayLut.Create(slider), DevelopLuts.Create(WithDisplay(common, slider)), null,
                 new Progress<double>(), CancellationToken.None,
-                split: HdrSplitAdjustments.ForSave(stages, stageWidth, applyDisplayLut));
+                split: HdrSplitAdjustments.ForSave(stages, stageWidth, applyDisplayLut, bitDepth: 12));
             byte[] saved = DecodePixels(path, PixelFormats.Rgb24);
 
             var expected = new byte[width * height * 3];
             for (int stage = 0; stage < stages.Length; stage++)
             {
                 using RawImage alone = TestImages.FromCodes(stage == 0 ? longCodes : shortCodes, stageFormat);
-                DisplayParameters display = applyDisplayLut ? stages[stage] : new DisplayParameters();
+                DisplayParameters display = applyDisplayLut ? stages[stage] : DisplayLevels.IdentityParameters(12);
                 byte[] developed = ImageExport.DevelopRgb24(
                     alone, 0, BayerPattern.Rggb, DevelopLuts.Create(WithDisplay(common, display)));
                 for (int y = 0; y < height; y++)
@@ -237,7 +237,7 @@ public class ImageFileSaverTests
     }
 
     /// <summary>
-    /// チャネルごとに値の異なるカラー画像。8bit は WIC の読込と同じく v×257 の16bit値で持つ。
+    /// チャネルごとに値の異なるカラー画像。8bit は WIC の読込と同じく code<<8 の16bit値で持つ。
     /// </summary>
     private static ColorImage MakeColorImage(int width, int height, int bitDepth)
     {
@@ -246,9 +246,9 @@ public class ImageFileSaverTests
         {
             if (bitDepth == 8)
             {
-                rgb[i * 3] = (ushort)(((i * 37) & 0xFF) * 257);
-                rgb[(i * 3) + 1] = (ushort)((255 - ((i * 11) & 0xFF)) * 257);
-                rgb[(i * 3) + 2] = (ushort)((((i * 101) + 7) & 0xFF) * 257);
+                rgb[i * 3] = (ushort)(((i * 37) & 0xFF) << 8);
+                rgb[(i * 3) + 1] = (ushort)((255 - ((i * 11) & 0xFF)) << 8);
+                rgb[(i * 3) + 2] = (ushort)((((i * 101) + 7) & 0xFF) << 8);
             }
             else
             {

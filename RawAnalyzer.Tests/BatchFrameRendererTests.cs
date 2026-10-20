@@ -114,6 +114,43 @@ public class BatchFrameRendererTests
         Assert.Contains("TIFF", refused.Message);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void WithoutDisplayAdjustment_EachBitDepthMapsMaxCodeToWhite_AndEightBitIsIdentity(bool develop)
+    {
+        // 「表示調整を焼き込む」オフ(lut = null)では、1枚ごとのビット深度の既定(白=最大コード<<(16−N))で焼き込む。
+        // 以前は白点65535の恒等LUTを全ビット深度に使い、8bit(255 = 65280)が254になっていた
+        var codes8 = new ushort[256];
+        var codes12 = new ushort[256];
+        for (int i = 0; i < 256; i++)
+        {
+            codes8[i] = (ushort)i;
+            codes12[i] = (ushort)(i * 4095 / 255);
+        }
+
+        var renderer = new BatchFrameRenderer(
+            develop ? BayerPattern.Rggb : BayerPattern.None,
+            new DevelopParameters(Gamma: 1.0, WhitePoint: 65535),
+            lut: null);
+        foreach ((ushort[] codes, int bitDepth) in new[] { (codes8, 8), (codes12, 12) })
+        {
+            using RawImage image = TestImages.FromCodes(codes, 16, 16, bitDepth);
+            byte[] rgb = renderer.RenderRgb24(
+                new FileFrame(image, null, 0, 0, 1, false, "x.raw"), CancellationToken.None).ToArray();
+            if (!develop)
+            {
+                for (int i = 0; i < 256; i++)
+                {
+                    Assert.Equal((byte)Math.Round(codes[i] * 255.0 / ((1 << bitDepth) - 1)), rgb[i * 3]);
+                }
+            }
+
+            // 最大コードの画素(右下)は白
+            Assert.Equal(255, rgb[(255 * 3) + (develop ? 2 : 0)]);
+        }
+    }
+
     private static byte[] Render(BatchFrameRenderer renderer, FileFrame entry, Output output)
     {
         switch (output)

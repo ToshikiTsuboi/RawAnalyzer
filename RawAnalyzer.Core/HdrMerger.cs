@@ -58,7 +58,10 @@ public sealed class HdrImage
     /// </summary>
     public float[] Pixels { get; }
 
-    /// <summary>合成域のフルスケール値((65535-black)×露光比^(段数-1))。</summary>
+    /// <summary>
+    /// 合成域のフルスケール値((最大code&lt;&lt;(16−N) − black)×露光比^(段数-1))。最大codeは元素材のビット深度 N の
+    /// 2^N−1(12bit は 4095&lt;&lt;4 = 65520)で、全露光で飽和した画素がちょうどこの値になり、16bit の 65535 へ量子化される。
+    /// </summary>
     public float FullScale { get; }
 
     /// <summary>元フレームのBayerパターン(合成後もモザイク構造は保存される)。</summary>
@@ -196,7 +199,10 @@ public static class HdrMerger
         }
 
         float black = parameters.BlackLevel;
-        float linearFullScale = 65535f - black;
+        // 線形化したフルスケールは素材の最大 code の16bit値から黒を引いたもの。65535 にすると12bit 素材(最大 65520)の
+        // 飽和画素がフルスケールに届かず、16bit の合成画像で 65520 になって飽和率・現像の白飛びの判定から漏れる
+        int sourceBitDepth = frames[0].Format.BitDepth;
+        float linearFullScale = (((1 << sourceBitDepth) - 1) << (16 - sourceBitDepth)) - black;
 
         // 長秒フレームを線形化して初期値とする
         float[] current = ToLinear(frames[0], black, cancellationToken);
