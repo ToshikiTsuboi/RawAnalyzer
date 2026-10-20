@@ -12,7 +12,8 @@ public enum BinningMode
 
 /// <summary>
 /// 空間ビニング。BayerはR/Gr/Gb/Bの位置を個別に集約し、元のCFA配列を維持する。
-/// 結果は丸め誤差を抑えるため正規化16bit・単一フレームで保持する。
+/// 結果は丸め誤差を抑えるため正規化16bit・単一フレームで保持する。Nbit 素材は最大 code を 65535 へ写した値域で返す
+/// (code c は c×65535/(2^N−1)。12bit の code 100 は 1600、白飛びの 4095 は 65535 で、飽和は飽和のまま残る)。
 /// </summary>
 public static class ImageBinning
 {
@@ -71,7 +72,7 @@ public static class ImageBinning
         BayerPattern cfa = pattern ?? source.Format.Bayer;
         var size = GetDimensions(source.Width, source.Height, factor, cfa);
         ushort[] pixels = Process(source.Width, size.Width, size.Height, 1,
-            cfa == BayerPattern.None ? 1 : 2, factor, mode,
+            cfa == BayerPattern.None ? 1 : 2, factor, mode, PixelProcessing.FullScaleFactor(source.Format.BitDepth),
             (y, row) => source.CopyRegion(frame, 0, y, size.Width * factor, 1, row),
             progress, cancellationToken);
         return RawImage.FromPixels(PixelProcessing.OutputFormat(source, size.Width, size.Height, cfa), pixels);
@@ -91,12 +92,13 @@ public static class ImageBinning
         ArgumentNullException.ThrowIfNull(source);
         var size = GetDimensions(source.Width, source.Height, factor);
         ushort[] pixels = Process(source.Width, size.Width, size.Height, 3, 1, factor, mode,
+            PixelProcessing.FullScaleFactor(source.BitDepth),
             (y, row) => source.CopyRow(y, 0, size.Width * factor, row), progress, cancellationToken);
         return ColorImage.FromInterleaved(size.Width, size.Height, 16, pixels);
     }
 
     private static ushort[] Process(
-        int sourceWidth, int width, int height, int channels, int step, int factor, BinningMode mode,
+        int sourceWidth, int width, int height, int channels, int step, int factor, BinningMode mode, double scale,
         Action<int, ushort[]> readRow, IProgress<double>? progress, CancellationToken ct)
     {
         if (!Enum.IsDefined(mode))
@@ -142,7 +144,7 @@ public static class ImageBinning
                 }
 
                 int offset = y * width * channels;
-                double divisor = mode == BinningMode.Average ? factor * factor : 1;
+                double divisor = (mode == BinningMode.Average ? factor * factor : 1) / scale;
                 for (int i = 0; i < local.Sums.Length; i++)
                 {
                     output[offset + i] = PixelProcessing.Clamp(local.Sums[i] / divisor);

@@ -64,5 +64,25 @@ public class ProcessedImageReplacementTests
         Assert.Equal("", ProcessedImageReplacement.Explain(ProcessedImageReplacement.Refusal.None, "x"));
     }
 
+    [Fact]
+    public void CarryLevels_MapsLevelsLikeSixteenBitProcessing()
+    {
+        // 12bit の既定(白 = 4095<<4 = 65520)で平均ビニングすると、結果は最大 code を 65535 へ写すので白点も 65535。
+        // 黒/白レベルは処理の結果の画素と同じ倍率で写す(処理の前後で同じ code が同じ明るさ)
+        using RawImage saturated = TestImages.FromCodes([4095, 4095, 4095, 4095], 2, 2, bitDepth: 12);
+        using RawImage binned = ImageBinning.Apply(saturated, 2);
+        (ushort black, ushort white) = ProcessedImageReplacement.CarryLevels(100 << 4, 4095 << 4, 12, 16);
+        Assert.Equal(binned.GetPixel(0, 0), white);
+        Assert.Equal(65535, white);
+        Assert.Equal(1600, black); // 100×65535/4095 = 1600.4
+
+        (_, ushort lowered) = ProcessedImageReplacement.CarryLevels(0, 2000 << 4, 12, 16);
+        Assert.Equal(32007, lowered); // 2000×65535/4095 = 32007.3
+
+        // ビット深度が変わらない処理(画像演算・欠陥補正)と16bitの素材はそのまま
+        Assert.Equal(((ushort)1600, (ushort)65520), ProcessedImageReplacement.CarryLevels(1600, 65520, 12, 12));
+        Assert.Equal(((ushort)1600, (ushort)65520), ProcessedImageReplacement.CarryLevels(1600, 65520, 16, 16));
+    }
+
     private static RawImage MakeImage() => TestImages.FromCodes(new ushort[16], 4, 4, bitDepth: 12);
 }

@@ -20,9 +20,11 @@ public class DevelopLutCacheTests
     public void BitDepthChange_RebuildsLutForSaturationCodeOfShownImage()
     {
         // レビュー指摘: 12bitのBayerをカラー現像で表示してLUTを作った後、HDR合成(16bit)へ切り替えて
-        // カラー現像を選ぶと、作り直しの印が立たず12bitのLUTのまま描いていた。HDR出力 65520 は16bitでは
-        // 白点未満なので WB(2,1,1.5)・典型的なCCMで色が付くが、12bitのLUTでは白飛びとして白になる
-        // (保存は現在のパラメータでLUTを作るので、画面と保存の色も食い違った)
+        // カラー現像を選ぶと、作り直しの印が立たず12bitのLUTのまま描いていた。16bit値 65520 は16bitのLUTでは
+        // 白点未満なので WB(2,1,1.5)・典型的なCCMで色が付くが、12bitのLUTでは白飛び(code 4095)として白になる
+        // (保存は現在のパラメータでLUTを作るので、画面と保存の色も食い違った)。ここで確かめるのはLUTが表示中の画像の
+        // ビット深度で作り直されること。HDR合成は全露光で飽和した画素を 65535 へ写すので、合成画像の白飛びは
+        // 65520 では止まらない(SixteenBitSaturationTests)
         var cache = new DevelopLutCache();
         var raw12 = new DevelopParameters(
             GainR: 2.0, GainB: 1.5, Gamma: 1.0, Matrix: TypicalCcm, SourceBitDepth: 12);

@@ -2777,7 +2777,11 @@ public partial class MainWindow : Window
         _vm.HasRoi = false;
         ClearCursorReadout();
         // 演算結果の16bit化や寸法変更に合わせてUIを更新する。
-        // 表示LUTの内部値は維持し、コード値だけ新しいビット深度へ換算する。
+        // 表示LUTの内部値は維持し、コード値だけ新しいビット深度へ換算する。ただし16bitにする処理(平均ビニング・
+        // フィルタ)は Nbit 素材の最大 code を 65535 へ写すので、黒点・白点も同じ倍率で写す(白レベルが最大 code なら
+        // 65535。写さないと白点 65520 のまま 16bit の現像で白飛びの判定がずれる)
+        (_blackPoint, _whitePoint) = ProcessedImageReplacement.CarryLevels(
+            _blackPoint, _whitePoint, source.Format.BitDepth, processed.Format.BitDepth);
         _updatingSliders = true;
         _vm.BlackLevelMax = (1 << processed.Format.BitDepth) - 1;
         _vm.BlackLevel = _blackPoint >> CurrentShift;

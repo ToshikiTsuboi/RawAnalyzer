@@ -12,7 +12,7 @@ namespace RawAnalyzer.Tests;
 /// </summary>
 public class MergedViewLevelsTests
 {
-    // 元12bitの黒コード64。合成域のフルスケールは (65535 − 1024) × 16 = 1032176 で、65535へ量子化する
+    // 元12bitの黒コード64。合成域のフルスケールは (4095<<4 − 1024) × 16 = 1031936(12bit の最大 code から)で、65535へ量子化する
     private const ushort SourceBlack = 64 << 4;
 
     [Fact]
@@ -31,8 +31,8 @@ public class MergedViewLevelsTests
         using RawImage quantized = Merge(longFrame, shortFrame);
         ushort highlight = quantized.GetPixel(0, 0);
         ushort shadow = quantized.GetPixel(1, 0);
-        Assert.Equal(47722, highlight); // (3000 × 16 − 1024) × 16 = 751616 を 1032176 → 65535 へ量子化
-        Assert.Equal(951, shadow);      // 1000 × 16 − 1024 = 14976 を 1032176 → 65535 へ量子化
+        Assert.Equal(47733, highlight); // (3000 × 16 − 1024) × 16 = 751616 を 1031936 → 65535 へ量子化
+        Assert.Equal(951, shadow);      // 1000 × 16 − 1024 = 14976 を 1031936 → 65535 へ量子化
 
         (ushort sourceBlack, ushort sourceWhite) = DisplayLevels.ToPoints(64, 2000, bitDepth: 12);
         var levels = new MergedViewLevels();

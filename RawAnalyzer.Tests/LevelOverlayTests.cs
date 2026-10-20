@@ -37,10 +37,11 @@ public class LevelOverlayTests
         using RawImage short12 = TestImages.FromCodes(new ushort[4], format12);
         HdrImage lossless = HdrMerger.Merge([long12, short12], new HdrMergeParameters(16));
 
+        // フルスケールは素材の最大 code から: 14bit は (16383<<2)×16 = 1048512、12bit は (4095<<4)×16 = 1048320
         Assert.Equal(
-            "HDR合成表示 (フルスケール 1048560, ゲイン=露出, 黒点未満は0, 表示・解析は16bit量子化後 " +
+            "HDR合成表示 (フルスケール 1048512, ゲイン=露出, 黒点未満は0, 表示・解析は16bit量子化後 " +
             "(1LSB=16.0, 元素材比 約2bit損失 / 無損失はfloat raw保存))",
             LevelOverlay.DescribeMerge(lossy));
-        Assert.Equal("HDR合成表示 (フルスケール 1048560, ゲイン=露出, 黒点未満は0)", LevelOverlay.DescribeMerge(lossless));
+        Assert.Equal("HDR合成表示 (フルスケール 1048320, ゲイン=露出, 黒点未満は0)", LevelOverlay.DescribeMerge(lossless));
     }
 }

@@ -36,9 +36,9 @@ public class HdrViewSidecarTests
         Assert.Contains("種類: HDR合成 (2段, 露光比 16)", text);
         Assert.Contains("元画像のフレーム: 3/25", text);
         Assert.Contains("合成で減算した黒点: 1024 (12bitのcode 64)", text);
-        Assert.Contains("合成域のフルスケール: 1032176", text); // (65535 − 1024) × 16
+        Assert.Contains("合成域のフルスケール: 1031936", text); // (4095<<4 − 1024) × 16(12bit の最大 code から)
         Assert.Contains("派生画像: 2×2 · 16bit · Bayer Rggb", text);
-        Assert.Contains("量子化の1LSB: 15.7 (元素材比で損失なし)", text); // 1032176 / 65535 = 15.74999…
+        Assert.Contains("量子化の1LSB: 15.7 (元素材比で損失なし)", text); // 1031936 / 65535 = 15.746…
     }
 
     [Fact]
