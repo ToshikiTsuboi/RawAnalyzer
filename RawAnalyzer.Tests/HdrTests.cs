@@ -293,6 +293,47 @@ public class HdrSplitterTests
         Assert.Throws<InvalidOperationException>(() => HdrSplitter.Split(image, format));
     }
 
+    [Theory]
+    [InlineData(150, BayerPattern.Rggb, 2, 100)]          // 周期200 > 高さ150
+    [InlineData(1, BayerPattern.None, 2, 0)]              // 既定のライン単位1で周期2 > 高さ1
+    [InlineData(3, BayerPattern.Rggb, 2, 0)]              // 既定のライン単位2で周期4 > 高さ3
+    [InlineData(6, BayerPattern.None, 3, 1431655766)]     // int では周期が2へ巻き戻る大きさ
+    public void Split_ImageShorterThanOnePeriod_BlamesLineBlock(
+        int height, BayerPattern bayer, int stages, int lineBlock)
+    {
+        // 回帰テスト: 高さが段数×ライン単位に満たないときも、行オフセット0なのに
+        // 「行オフセットが大きすぎて重なる領域がありません」と無関係な原因を示していた
+        var format = new RawFormat
+        {
+            Width = 4, Height = height, BitDepth = 16, Bayer = bayer,
+            Hdr = HdrMode.Auto, HdrStages = stages, HdrLineBlock = lineBlock, HdrRowOffset = 0,
+        };
+        using RawImage image = TestImages.FromCodes(new ushort[4 * height], format);
+
+        InvalidOperationException ex = Assert.Throws<InvalidOperationException>(
+            () => HdrSplitter.Split(image, format));
+
+        Assert.Contains("ライン単位", ex.Message);
+        Assert.DoesNotContain("行オフセット", ex.Message);
+    }
+
+    [Fact]
+    public void Split_RowOffsetLeavingNoOverlap_BlamesRowOffset()
+    {
+        // 1周期以上の行があり、行オフセットのずれで重なりがなくなるときは従来どおり行オフセットを示す
+        var format = new RawFormat
+        {
+            Width = 2, Height = 8, BitDepth = 16,
+            Hdr = HdrMode.Auto, HdrStages = 2, HdrLineBlock = 1, HdrRowOffset = 4,
+        };
+        using RawImage image = TestImages.FromCodes(new ushort[16], format);
+
+        InvalidOperationException ex = Assert.Throws<InvalidOperationException>(
+            () => HdrSplitter.Split(image, format));
+
+        Assert.Contains("行オフセット", ex.Message);
+    }
+
     [Fact]
     public void ResolveLayout_AutoInfersFromFrameCount()
     {

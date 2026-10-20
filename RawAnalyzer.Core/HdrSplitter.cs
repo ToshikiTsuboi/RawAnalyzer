@@ -14,7 +14,8 @@ public static class HdrSplitter
     /// <param name="image">分割する画像。</param>
     /// <returns>分割された各フレーム(長秒→短秒の順、各Hdr=None)。</returns>
     /// <exception cref="InvalidOperationException">
-    /// HDR方式が未指定、フレーム構成が不正、または画像が大きすぎる場合。
+    /// HDR方式が未指定、フレーム構成が不正、行交互で高さが1周期(段数×ライン単位)に満たないか
+    /// 行オフセットで重なる行がない、または画像が大きすぎる場合。
     /// </exception>
     public static IReadOnlyList<RawImage> Split(RawImage image) => Split(image, image.Format);
 
@@ -32,7 +33,8 @@ public static class HdrSplitter
     /// <returns>分割された各フレーム(長秒→短秒の順、各Hdr=None)。</returns>
     /// <exception cref="ArgumentException">画素レイアウトが画像と一致しない場合。</exception>
     /// <exception cref="InvalidOperationException">
-    /// HDR方式が未指定、フレーム構成が不正、または画像が大きすぎる場合。
+    /// HDR方式が未指定、フレーム構成が不正、行交互で高さが1周期(段数×ライン単位)に満たないか
+    /// 行オフセットで重なる行がない、または画像が大きすぎる場合。
     /// </exception>
     public static IReadOnlyList<RawImage> Split(RawImage image, RawFormat format)
         => Split(image, format, frame: 0);
@@ -57,7 +59,8 @@ public static class HdrSplitter
     /// <exception cref="ArgumentOutOfRangeException">フレーム番号が範囲外の場合。</exception>
     /// <exception cref="OperationCanceledException">取り消された場合(作りかけのフレームは破棄する)。</exception>
     /// <exception cref="InvalidOperationException">
-    /// HDR方式が未指定、フレーム構成が不正、または展開する画素数
+    /// HDR方式が未指定、フレーム構成が不正、行交互で高さが1周期(段数×ライン単位)に満たないか
+    /// 行オフセットで重なる行がない、または展開する画素数
     /// (行交互は1フレーム分、フレーム連結は全フレームの合計)が1億画素を超える場合。
     /// </exception>
     public static IReadOnlyList<RawImage> Split(
@@ -188,12 +191,21 @@ public static class HdrSplitter
 
         // 既定はBayerなら色ペア(2行)単位。物理ライン1本ごとに長秒/短秒を読み出す
         // センサでは1を指定する(部分画像側では2行ごとに色位相が進むためモザイクは保たれる)
+        int blockHeight = format.EffectiveHdrLineBlock;
+
         // ライン単位・行オフセットは任意の int を指定できるので、段数を掛けると int では桁あふれして
         // 小さな値へ巻き戻り、重なりの判定をすり抜けて範囲外の行を読んでしまう。long で求めて判定する
-        int blockHeight = format.EffectiveHdrLineBlock;
         long periodL = (long)stages * blockHeight;
-        int period = periodL > image.Height ? 0 : (int)periodL;
-        int fullSubHeight = period == 0 ? 0 : image.Height / period * blockHeight;
+        if (periodL > image.Height)
+        {
+            // 1周期もとれないのは行オフセットではなく高さとライン単位の問題なので、そちらを示す
+            throw new InvalidOperationException(
+                $"画像の高さ({image.Height}行)が1周期(段数{stages}×ライン単位{blockHeight} = {periodL}行)" +
+                "に満たないため分割できません。ライン単位を見直してください。");
+        }
+
+        int period = (int)periodL;
+        int fullSubHeight = image.Height / period * blockHeight;
 
         // 読み出しのパイプライン遅延ぶん段ごとに縦へずれているので、
         // 重なる範囲だけを切り出して各段を行方向に整列させる
