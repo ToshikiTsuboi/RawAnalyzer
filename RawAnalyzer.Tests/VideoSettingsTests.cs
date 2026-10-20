@@ -46,6 +46,7 @@ public class VideoSettingsTests
     [InlineData("30 fp", 30)]
     [InlineData("7.", 7)]          // 小数を打っている途中(NumericInput と同じく小数点で終わる数を読む)
     [InlineData("1,000", 240)]     // 3桁区切り(以前は 1 と読んだ)
+    [InlineData("１、０００", 240)] // かな入力で "," キーは読点「、」になる
     public void Parse_ReadsFullWidthAndGroupedNumbers(string text, double expected)
     {
         Assert.Equal(expected, FpsInput.Parse(text, fallback: 15), 10);

@@ -11,7 +11,7 @@ namespace RawAnalyzer.App.Services;
 /// <c>double.TryParse</c> は "NaN" や "Infinity" も受け付ける。
 /// <c>NaN &lt;= 0</c> は false なので、大小比較だけの検証はすり抜けてしまう。
 /// 解釈は必ずここを通し、有限値であることを保証する。
-/// IME がオンのまま打った全角の数字・記号と、3桁区切りのカンマも受け付ける。
+/// IME がオンのまま打った全角の数字・記号と、3桁区切りのカンマ(かな入力の読点「、」を含む)も受け付ける。
 /// </remarks>
 internal static partial class NumericInput
 {
@@ -31,7 +31,7 @@ internal static partial class NumericInput
     /// </summary>
     /// <remarks>
     /// IME がオンのままだと「１２８」「１．５」「－５」のように全角で入り、かな入力では
-    /// "." が「。」、"-" が「ー」になる。どれも InvariantCulture の解釈では失敗し、
+    /// "." が「。」、"-" が「ー」、"," が「、」になる。どれも InvariantCulture の解釈では失敗し、
     /// 入力が黙って元の値へ戻されていた。カンマは3桁ごとの位置にあるときだけ区切りとみなし、
     /// "1,5" のような小数点のつもりかもしれない書き方は 15 と誤読せずに失敗のままにする。
     /// 先頭の群が 0 で始まる "0,125" も、3桁区切りの数はこう書かないので小数点のつもりのカンマとみなし、
@@ -48,7 +48,8 @@ internal static partial class NumericInput
         string normalized = ToHalfWidth(text)
             .Replace('\u2212', '-') // MINUS SIGN(−)
             .Replace('ー', '-')
-            .Replace('。', '.');
+            .Replace('。', '.')
+            .Replace('、', ','); // 半角の読点(U+FF64)も NFKC でこれになる
         return GroupedThousands().IsMatch(normalized) ? normalized.Replace(",", "") : normalized;
     }
 

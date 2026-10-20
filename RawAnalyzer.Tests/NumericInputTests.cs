@@ -35,6 +35,8 @@ public class NumericInputTests
     [InlineData("−0.25", -0.25)] // U+2212 MINUS SIGN
     [InlineData("4,095", 4095)] // 3桁区切り
     [InlineData("１，０００", 1000)]
+    [InlineData("１、０００", 1000)] // かな入力で "," キーは読点「、」になる
+    [InlineData("1､000", 1000)] // 半角の読点(NFKC で「、」になる)
     [InlineData("-1,234,567.5", -1234567.5)]
     public void TryParseFinite_AcceptsFullWidthAndThousandsSeparators(string text, double expected)
     {
@@ -47,6 +49,8 @@ public class NumericInputTests
     [InlineData("12,34")]
     [InlineData("1,0000")]
     [InlineData(",100")]
+    [InlineData("１、５")]    // かな入力の読点も、3桁区切りの位置になければ失敗のまま
+    [InlineData("12、34")]
     [InlineData("0,125")]  // 3桁区切りの数は "0," で始まらない。小数点のつもりのカンマとみなし 125 と誤読しない
     [InlineData("0,001")]
     [InlineData("-0,250")]
@@ -60,6 +64,7 @@ public class NumericInputTests
     [Theory]
     [InlineData("６４０", 640)]
     [InlineData("１，９２０", 1920)]
+    [InlineData("１、９２０", 1920)] // かな入力の読点
     [InlineData("ー２", -2)]
     [InlineData(" 12 ", 12)]
     public void TryParseInteger_AcceptsFullWidthAndThousandsSeparators(string text, long expected)
