@@ -188,6 +188,9 @@ public class ProjectionWindowTests
             Assert.StartsWith("N=3   平均 1000.52", stats);
             Assert.Contains("最小 1000.40", stats);
             Assert.Contains("最大 1000.60", stats);
+
+            // 中央値も平均と同じ小数2桁(以前は中央値だけ F1 で「1000.5」と出ていた)
+            Assert.Contains("中央値 1000.55", stats);
             Assert.EndsWith("P-P 0.20", stats);
         }
         finally
