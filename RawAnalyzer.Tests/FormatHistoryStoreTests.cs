@@ -110,6 +110,37 @@ public class FormatHistoryStoreTests : IDisposable
     }
 
     [Fact]
+    public void Load_UndefinedEnumValues_DiscardsOnlyThoseEntries()
+    {
+        // 回帰テスト: 未定義の Endianness / Packing / Bayer の整数が Validate を通り、記憶に残っていた
+        var store = new FormatHistoryStore(_directory);
+        Directory.CreateDirectory(_directory);
+        File.WriteAllText(store.FilePath,
+            """
+            {
+              "Version": 1,
+              "Entries": [
+                { "FileSize": 4, "Extension": ".raw", "LastUsedUtc": "2026-09-01T00:00:00Z",
+                  "Format": { "Width": 2, "Height": 1, "BitDepth": 12, "Endianness": 5 } },
+                { "FileSize": 4, "Extension": ".bin", "LastUsedUtc": "2026-09-01T00:00:00Z",
+                  "Format": { "Width": 2, "Height": 1, "BitDepth": 12, "Packing": 7 } },
+                { "FileSize": 4, "Extension": ".dat", "LastUsedUtc": "2026-09-01T00:00:00Z",
+                  "Format": { "Width": 2, "Height": 1, "BitDepth": 12, "Bayer": 9 } },
+                { "FileSize": 4, "Extension": ".img", "LastUsedUtc": "2026-09-01T00:00:00Z",
+                  "Format": { "Width": 2, "Height": 1, "BitDepth": 12, "Endianness": "Big" } }
+              ]
+            }
+            """);
+
+        FormatHistory loaded = store.LoadOrQuarantine(out bool corrupted);
+
+        Assert.False(corrupted);
+        FormatHistoryEntry entry = Assert.Single(loaded.Entries);
+        Assert.Equal(".img", entry.Extension);
+        Assert.Equal(Endianness.Big, entry.Format.Endianness);
+    }
+
+    [Fact]
     public void Update_AppliesChangeToLatestSavedHistoryNotToOwnSnapshot()
     {
         // 複数起動: 先に読んだストア(B)が、後から別のストア(A)が保存した記憶を巻き戻さない

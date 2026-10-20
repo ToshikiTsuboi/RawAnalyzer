@@ -169,7 +169,7 @@ public partial class RawImportDialog : Window
         int depthIndex = Array.IndexOf(BitDepths, format.BitDepth);
         BitDepthCombo.SelectedIndex = depthIndex >= 0 ? depthIndex : 0;
         PackingCombo.SelectedIndex = format.Packing == BitPacking.Lsb ? 0 : 1;
-        EndianCombo.SelectedIndex = format.Endianness == Endianness.Little ? 0 : 1;
+        EndianCombo.SelectedIndex = format.Endianness == Endianness.Big ? 1 : 0; // 読み込みと同じく Big 以外は Little
         BayerCombo.SelectedIndex = format.Bayer switch
         {
             BayerPattern.Rggb => 0,

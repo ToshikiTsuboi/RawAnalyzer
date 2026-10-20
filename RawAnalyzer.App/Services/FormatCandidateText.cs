@@ -54,7 +54,7 @@ internal static class FormatCandidateText
                 _ => "モノクロ",
             },
         };
-        if (format.Packing == BitPacking.Msb)
+        if (format.Packing != BitPacking.Lsb) // 読み込みと同じく Lsb 以外は上詰め
         {
             parts.Add("上詰め");
         }

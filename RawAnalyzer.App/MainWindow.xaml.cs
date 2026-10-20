@@ -474,8 +474,8 @@ public partial class MainWindow : Window
             return null;
         }
 
-        long required = format.HeaderOffset + format.FrameSizeInBytes * format.FrameCount;
-        return required <= fileSize ? format : null;
+        // 手で編集した・壊れた session.json の未定義の列挙値などは、サイズ別の記憶と同じ基準で使わない
+        return FormatHistory.CanOpen(format, fileSize) ? format : null;
     }
 
     /// <summary>
@@ -1131,7 +1131,7 @@ public partial class MainWindow : Window
     {
         string packing = format.Packing == BitPacking.Lsb ? "下詰め" : "上詰め";
         _vm.FmtBitDepthText = $"{format.BitDepth}bit {packing}";
-        _vm.FmtEndianText = format.Endianness == Endianness.Little ? "Little" : "Big";
+        _vm.FmtEndianText = format.Endianness == Endianness.Big ? "Big" : "Little";
         _updatingFormatPanel = true;
         FmtBayerCombo.SelectedIndex = format.Bayer switch
         {

@@ -85,6 +85,27 @@ public class RawImportDialogTests : IDisposable
         });
     }
 
+    [Fact]
+    public Task UndefinedPackingAndEndianness_AreShownAsTheReaderInterpretsThem()
+    {
+        // 回帰テスト: 読み込みは Big 以外を Little とみなすのに、ダイアログは Little 以外を Big として示していた
+        // (壊れたプリセットの Endianness=5 など)。詰め方向は読み込みと同じく Lsb 以外を上詰めとして示す
+        string path = CreateFile("undefined_enums.raw", FileSize);
+        return WpfTestHost.Run(() =>
+        {
+            RawFormat initial = Fmt(640, 480, bitDepth: 16) with
+            {
+                Packing = (BitPacking)7, Endianness = (Endianness)5,
+            };
+
+            RawImportDialog dialog = CreateDialog(path, null, initial: initial);
+
+            Assert.Equal(1, Find<ComboBox>(dialog, "PackingCombo").SelectedIndex);
+            Assert.Equal(0, Find<ComboBox>(dialog, "EndianCombo").SelectedIndex);
+            dialog.Close();
+        });
+    }
+
     private static T Find<T>(Window window, string name)
         where T : class
     {
