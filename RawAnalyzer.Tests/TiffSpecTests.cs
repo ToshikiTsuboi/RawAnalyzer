@@ -187,6 +187,50 @@ public class TiffSpecTests
         Assert.Contains("CFA", ex.Message);
     }
 
+    [Theory]
+    [InlineData(0xFFFF_FFFFL)] // -1 を書いた壊れたヘッダ(int.MaxValue に丸められる)
+    [InlineData(0x7FFF_FFF0L)]
+    public void TiledHugeTileLength_DecodesRealRowsInsteadOfZeros(long tileLength)
+    {
+        // 回帰テスト: タイル数を int で求めていたため 高さ + タイル高 − 1 が負へ回り、タイル数0として
+        // 1枚も読まずに全画素0の画像を成功として返していた。高さ20で1タイル(タイル高は高さ以上)として読む
+        const int width = 5;
+        const int height = 20;
+        var values = new ushort[width * height];
+        for (int i = 0; i < values.Length; i++)
+        {
+            values[i] = (ushort)(1000 + (i * 300));
+        }
+
+        var page = TiffBuilder.TiledGrayPage(width, height, 16, TiffBuilder.SampleBytes(values, 16), width, height);
+        page.Tags[323] = (4, new[] { tileLength });
+        using var file = TempTiff.Write(new TiffBuilder(bigTiff: true).Build(page));
+
+        Assert.True(TiffLoader.TryDecodeUncompressed(file.Path, 0, out RawImage? image, out _, out string reason), reason);
+        using (image)
+        {
+            for (int i = 0; i < values.Length; i++)
+            {
+                Assert.Equal(values[i], image!.GetPixel(i % width, i / width));
+            }
+        }
+    }
+
+    [Fact]
+    public void Tiled8BitHugeTileWidth_ThrowsInvalidData()
+    {
+        // 8bit では TileWidth=0xFFFFFFFF でもタイル1行のバイト数が int に収まり、タイル数0として
+        // 全画素0の画像を返していた。1タイルが画像の行数ぶんに足りないので壊れたファイルとして断る
+        const int width = 4;
+        const int height = 2;
+        var page = TiffBuilder.TiledGrayPage(width, height, 8, new byte[] { 1, 2, 3, 4, 5, 6, 7, 8 }, width, height);
+        page.Tags[322] = (4, new[] { 0xFFFF_FFFFL });
+        using var file = TempTiff.Write(new TiffBuilder(bigTiff: true).Build(page));
+
+        Assert.Throws<InvalidDataException>(
+            () => TiffLoader.TryDecodeUncompressed(file.Path, 0, out _, out _, out _));
+    }
+
     // ------------------------------------------------------------------ P2: 開けない・情報が落ちる
 
     [Theory]

@@ -1573,9 +1573,15 @@ public static unsafe class TiffLoader
                 throw new InvalidDataException("タイルサイズが不正です。");
             }
 
-            long tilesAcross = (page.Width + tileWidth - 1) / tileWidth;
-            long tilesDown = (page.Height + tileHeight - 1) / tileHeight;
+            // タイル寸法は int.MaxValue に丸めて持つので、int のまま足すと 幅(高さ) + タイル寸法 − 1 が
+            // 負へ回ってタイル数が0以下になり、1枚も読まずに全画素0の画像を返してしまう
+            long tilesAcross = ((long)page.Width + tileWidth - 1) / tileWidth;
+            long tilesDown = ((long)page.Height + tileHeight - 1) / tileHeight;
             long tileCount = tilesAcross * tilesDown;
+            if (tileCount <= 0)
+            {
+                throw new InvalidDataException("タイル数が不正です。");
+            }
 
             // プレーン分離では成分ごとに tileCount 枚ずつ並ぶ
             long firstTile = plane * tileCount;
