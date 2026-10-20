@@ -112,6 +112,7 @@ public static class SequenceScanner
     /// <summary>
     /// ファイル名(拡張子を除く)を「連番部分の前」と「後ろ」に分ける。
     /// 連番は末尾側にある数字の並びを採る(例 2026-08-04_012 → "2026-08-04_" と "")。
+    /// 全角数字(IME がオンのまま付けた「暗室１２」など)も数字とみなす。
     /// </summary>
     /// <param name="path">ファイルパス。</param>
     /// <param name="prefix">連番より前の部分。</param>
@@ -125,7 +126,7 @@ public static class SequenceScanner
         int end = -1;
         for (int i = stem.Length - 1; i >= 0; i--)
         {
-            if (char.IsAsciiDigit(stem[i]))
+            if (DigitChar.IsDigit(stem[i]))
             {
                 end = i;
                 break;
@@ -138,7 +139,7 @@ public static class SequenceScanner
         }
 
         int start = end;
-        while (start > 0 && char.IsAsciiDigit(stem[start - 1]))
+        while (start > 0 && DigitChar.IsDigit(stem[start - 1]))
         {
             start--;
         }

@@ -27,6 +27,19 @@ public class SequenceScannerTests
     }
 
     [Fact]
+    public void FindStack_FullWidthNumbers_ReturnsNaturalOrder()
+    {
+        // IME がオンのまま付けた全角数字の連番。以前は 暗室１, 暗室１０, 暗室１１, 暗室１２, 暗室２… の順だった
+        string[] names = Enumerable.Range(1, 12)
+            .Select(i => @"C:\d\暗室" + NaturalOrderComparerTests.ToFullWidth(i) + ".raw").ToArray();
+
+        IReadOnlyList<string> stack = SequenceScanner.FindStack(
+            names[0], 1000, names.Reverse().Select(n => new SequenceFile(n, 1000)));
+
+        Assert.Equal(names, stack);
+    }
+
+    [Fact]
     public void FindStack_ExtensionComparisonIsCaseInsensitive()
     {
         var folder = new[]
