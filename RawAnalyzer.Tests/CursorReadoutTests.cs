@@ -94,6 +94,73 @@ public class CursorReadoutTests
         Assert.Null(CursorReadout.Compose(image, image.Format, null, 1, 1, 0));
     }
 
+    /// <summary>
+    /// 行交互HDRの raw の、ファイル行 y の画素が持つセンサ行(HdrSplitter の解釈: 段 s のサブ行 k は
+    /// ファイル行 (k/B)·P + s·B + k%B にあり、センサ行 k − s·offset を持つ)。
+    /// </summary>
+    private static int SensorRowOf(int fileRow, int lineBlock, int stages, int rowOffset)
+    {
+        int period = lineBlock * stages;
+        int subRow = (fileRow / period * lineBlock) + (fileRow % lineBlock);
+        int stage = fileRow % period / lineBlock;
+        return subRow - (stage * rowOffset);
+    }
+
+    [Theory]
+    [InlineData(0, 0, false)]   // 既定(Bayer ありでライン単位2)・オフセット0: 位相が一致する
+    [InlineData(2, 2, false)]   // ライン単位・オフセットとも偶数
+    [InlineData(1, 0, true)]    // ライン単位1(物理ライン1本ごとに露光を読むセンサ)
+    [InlineData(3, 0, true)]
+    [InlineData(2, 1, true)]    // 奇数の行オフセット
+    [InlineData(2, -1, true)]
+    [InlineData(1, 1, true)]
+    public void LineInterleavedHdr_ChannelNameNeverContradictsTheSensorPhase(
+        int lineBlock, int rowOffset, bool phaseMismatch)
+    {
+        // 検証 r2-render-rawview-hdr-phase-1。Raw 表示のチャネル名はファイル行の偶奇で決めていたが、
+        // 行交互HDRのファイル行の偶奇がセンサ行の偶奇と一致するのは、ライン単位と行オフセットがともに偶数のときだけ。
+        // ライン単位1では (0,1)(センサ行0の短秒の R)に R の値 52000 を表示しながら「Gb」と出していた。
+        // 位相が一致しないときは名前を出さない(「-」。HDR分割ビューでは段の位相で正しく出る)
+        const int width = 8;
+        const int height = 32;
+        const int stages = 2;
+        var codes = new ushort[width * height];
+        var format = new RawFormat
+        {
+            Width = width, Height = height, BitDepth = 16, Bayer = BayerPattern.Rggb,
+            Hdr = HdrMode.LineInterleaved, HdrStages = stages, HdrLineBlock = lineBlock, HdrRowOffset = rowOffset,
+        };
+        int block = format.EffectiveHdrLineBlock;
+        for (int y = 0; y < height; y++)
+        {
+            int sensorRow = SensorRowOf(y, block, stages, rowOffset);
+            for (int x = 0; x < width; x++)
+            {
+                codes[(y * width) + x] = BayerHelper.GetChannel(BayerPattern.Rggb, x, sensorRow & 1) switch
+                {
+                    BayerChannel.R => 52000,
+                    BayerChannel.Gr => 31000,
+                    BayerChannel.Gb => 19000,
+                    _ => 8000,
+                };
+            }
+        }
+
+        using RawImage image = TestImages.FromCodes(codes, format);
+        for (int y = 0; y < height; y++)
+        {
+            int sensorRow = SensorRowOf(y, block, stages, rowOffset);
+            for (int x = 0; x < width; x++)
+            {
+                string expected = BayerHelper.GetLabel(BayerHelper.GetChannel(BayerPattern.Rggb, x, sensorRow & 1));
+                string overlay = CursorReadout.Compose(image, format, null, x, y, 0)!.Value.Overlay;
+                string shown = overlay[(overlay.LastIndexOf(' ') + 1)..];
+
+                Assert.Equal(phaseMismatch ? "-" : expected, shown);
+            }
+        }
+    }
+
     [Fact]
     public void ColorImage_ShowsRgbAndYCbCr()
     {

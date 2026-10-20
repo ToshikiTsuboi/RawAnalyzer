@@ -5,7 +5,8 @@ using Xunit;
 namespace RawAnalyzer.Tests;
 
 /// <summary>
-/// Raw表示のHDR素材で、露光の違う行を1つの母集団として扱う解析(欠陥検出・ノイズ測定)を断る規約。
+/// Raw表示のHDR素材で、露光の違う行を1つの母集団として扱う解析(欠陥検出・ノイズ測定)と、
+/// Bayer の位相が一致しない行交互HDRの Bayer 系の表示・チャネル別集計を断る規約。
 /// </summary>
 public class HdrExposureMixTests
 {
@@ -104,6 +105,47 @@ public class HdrExposureMixTests
     public void Noise_OrdinaryImage_IsMeasured()
     {
         Assert.Null(HdrExposureMix.NoiseRefusal(false, 0, new WholeImageTarget()));
+    }
+
+    [Theory]
+    [InlineData(HdrMode.LineInterleaved, 1, 0, 0, BayerPattern.Rggb, false)]   // 既定(Bayer ありはライン単位2)
+    [InlineData(HdrMode.LineInterleaved, 1, 2, 0, BayerPattern.Rggb, false)]
+    [InlineData(HdrMode.LineInterleaved, 1, 2, 2, BayerPattern.Rggb, false)]
+    [InlineData(HdrMode.LineInterleaved, 1, 4, -2, BayerPattern.Bggr, false)]
+    [InlineData(HdrMode.LineInterleaved, 1, 1, 0, BayerPattern.Rggb, true)]    // ライン単位1
+    [InlineData(HdrMode.LineInterleaved, 1, 3, 0, BayerPattern.Grbg, true)]    // ライン単位3
+    [InlineData(HdrMode.LineInterleaved, 1, 2, 1, BayerPattern.Rggb, true)]    // 奇数の行オフセット
+    [InlineData(HdrMode.LineInterleaved, 1, 0, -1, BayerPattern.Rggb, true)]
+    [InlineData(HdrMode.Auto, 1, 1, 0, BayerPattern.Rggb, true)]               // Auto でフレーム数1は行交互
+    [InlineData(HdrMode.LineInterleaved, 1, 1, 0, BayerPattern.None, false)]   // Bayer なしは色を使わない
+    [InlineData(HdrMode.FrameSequential, 2, 1, 1, BayerPattern.Rggb, false)]   // フレーム連結は1フレーム=1露光
+    [InlineData(HdrMode.None, 1, 1, 1, BayerPattern.Rggb, false)]
+    public void BayerPhaseMismatch_IsTrueOnlyForOddLineBlockOrRowOffsetOfLineInterleaved(
+        HdrMode hdr, int frameCount, int lineBlock, int rowOffset, BayerPattern bayer, bool expected)
+    {
+        // 検証 r2-render-rawview-hdr-phase-1。行交互HDRのファイル行の偶奇がセンサ行の偶奇と一致するのは、
+        // ライン単位と行オフセットがともに偶数のときだけ(既定の場合の挙動は変えない)
+        RawFormat format = Format(hdr, frameCount) with
+        {
+            Bayer = bayer, HdrLineBlock = lineBlock, HdrRowOffset = rowOffset,
+        };
+
+        Assert.Equal(expected, HdrExposureMix.BayerPhaseMismatch(format));
+    }
+
+    [Fact]
+    public void ChannelHistogram_MismatchedPhase_IsRefusedWithSplitViewGuidance()
+    {
+        // チャネル別ヒストグラムはファイル行の偶奇でチャネルへ振り分けるので、位相が一致しないと R に Gb の値が混ざる
+        // (8×32・ライン単位1で R に 19000 が16画素)。理由を示して分割ビューへ案内する
+        string? reason = HdrExposureMix.ChannelHistogramRefusal(bayerPhaseMismatch: true);
+
+        Assert.NotNull(reason);
+        Assert.StartsWith("行交互HDRのrawは、ライン単位か行オフセットが奇数のため、Raw表示のままではチャネル別ヒストグラムを取れません", reason);
+        Assert.Contains("R↔Gb・Gr↔B", reason);
+        Assert.Contains("HDR分割ビュー(Ctrl+5)", reason);
+        Assert.Null(HdrExposureMix.ChannelHistogramRefusal(bayerPhaseMismatch: false));
+        Assert.Null(HdrExposureMix.BayerDisplayRefusal(bayerPhaseMismatch: false));
     }
 
     [Fact]

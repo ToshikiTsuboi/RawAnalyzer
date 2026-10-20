@@ -27,7 +27,10 @@ internal static class CursorReadout
     /// 表示中の画像(HDR派生ビューならその画像)。HDR分割ビューの並置画像(<see cref="RawImage.SegmentWidth"/>)では、
     /// チャネル名を段の左端を列0とする位相で決める。
     /// </param>
-    /// <param name="format">表示中の画像のフォーマット(ビット深度と Bayer パターンを使う)。</param>
+    /// <param name="format">
+    /// 表示中の画像のフォーマット(ビット深度と Bayer パターンを使う)。行交互HDRの raw の Raw 表示で
+    /// Bayer の位相が一致しないとき(<see cref="HdrExposureMix.BayerPhaseMismatch"/>)は、チャネル名を「-」にする。
+    /// </param>
     /// <param name="color">デコード済みのカラー画像。あれば RGB と YCbCr を出す。</param>
     /// <param name="x">元画像の X 座標。</param>
     /// <param name="y">元画像の Y 座標。</param>
@@ -65,7 +68,11 @@ internal static class CursorReadout
 
         int code = value >> (16 - format.BitDepth);
         int maxCode = (1 << format.BitDepth) - 1;
-        string channel = BayerHelper.GetLabel(BayerHelper.GetChannel(format.Bayer, x, y, image.SegmentWidth));
+        // 行交互HDRの raw の Raw 表示でライン単位か行オフセットが奇数だと、ファイル上の行の偶奇がセンサの Bayer の
+        // 位相と一致せず、短秒の行などで R↔Gb・Gr↔B を取り違える。名前を出さない(HDR分割ビューでは段の位相で出る)
+        string channel = image.SegmentWidth == 0 && HdrExposureMix.BayerPhaseMismatch(format)
+            ? BayerHelper.GetLabel(BayerChannel.None)
+            : BayerHelper.GetLabel(BayerHelper.GetChannel(format.Bayer, x, y, image.SegmentWidth));
         return new Text(
             $"({x}, {y}) raw={code}",
             $"({x}, {y})  raw: {code} / {maxCode}  {channel}");

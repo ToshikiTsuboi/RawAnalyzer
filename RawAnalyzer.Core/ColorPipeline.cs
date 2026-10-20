@@ -56,7 +56,9 @@ public sealed record ColorMatrix(
 /// 中間値は0〜1へ切り詰めず、ガンマの直前で1回だけクリップする
 /// (WBゲインで1を超えた値も、後段の行列やコントラストで範囲内へ戻り得るため)。
 /// ただしカラーマトリクス適用時、白点に達したチャネルを含む画素(情報が失われた白飛び)は、
-/// 行列でチャネル比が崩れて色かぶりしないよう、行列の前で0〜1へ切り詰めて中性に保つ。
+/// 行列でチャネル比が崩れて色かぶりしないよう、行列の前で切り詰めて中性に保つ。切り詰めの上限は、
+/// 白点での線形値(WBゲイン×全体ゲイン)が最も小さいチャネルの値(1を超える場合は1)とする。
+/// 全体ゲインや WBゲインが1未満でも、白点に達したチャネルはすべて同じ値になる。
 /// </summary>
 /// <param name="BlackLevel">黒レベル(16bitフルスケール値域)。減算後に正規化する。</param>
 /// <param name="GainR">Rチャネルのホワイトバランスゲイン。</param>
@@ -107,10 +109,15 @@ public sealed class DevelopLuts
     // いずれかのチャネルがこの16bit値以上なら白点に達した(情報が失われた)画素
     private readonly int _saturationThreshold;
 
+    // 白点に達した画素の線形値を行列の前で切り詰める上限(0〜1)。白点の画素がどのチャネルでも
+    // 同じ値になるよう、白点での線形値(WB×全体ゲイン)が最も小さいチャネルに合わせる
+    private readonly float _saturatedCeiling;
+
     private DevelopLuts(
         byte[] r, byte[] g, byte[] b, DevelopParameters parameters,
         float[]? linearR, float[]? linearG, float[]? linearB,
-        byte[]? gammaLut, float[]? matrix, float contrastOffset, int saturationThreshold)
+        byte[]? gammaLut, float[]? matrix, float contrastOffset, int saturationThreshold,
+        float saturatedCeiling)
     {
         R = r;
         G = g;
@@ -123,6 +130,7 @@ public sealed class DevelopLuts
         _matrix = matrix;
         _contrastOffset = contrastOffset;
         _saturationThreshold = saturationThreshold;
+        _saturatedCeiling = saturatedCeiling;
     }
 
     /// <summary>Rチャネル用LUT(マトリクスなし時)。</summary>
@@ -198,20 +206,46 @@ public sealed class DevelopLuts
             double contrast = parameters.Contrast;
             float[] matrix = Array.ConvertAll(
                 parameters.Matrix.ToArray(), v => (float)(v * contrast));
+            float[] linearR = BuildLinearChannel(parameters, parameters.GainR);
+            float[] linearG = BuildLinearChannel(parameters, parameters.GainG);
+            float[] linearB = BuildLinearChannel(parameters, parameters.GainB);
+            int threshold = SaturationThreshold(parameters);
             return new DevelopLuts(
                 Array.Empty<byte>(), Array.Empty<byte>(), Array.Empty<byte>(), parameters,
-                BuildLinearChannel(parameters, parameters.GainR),
-                BuildLinearChannel(parameters, parameters.GainG),
-                BuildLinearChannel(parameters, parameters.GainB),
+                linearR, linearG, linearB,
                 BuildGammaLut(parameters), matrix, (float)(0.5 * (1.0 - contrast)),
-                SaturationThreshold(parameters));
+                threshold, SaturatedCeiling(parameters, linearR, linearG, linearB, threshold));
         }
 
         return new DevelopLuts(
             BuildChannel(parameters, parameters.GainR),
             BuildChannel(parameters, parameters.GainG),
             BuildChannel(parameters, parameters.GainB),
-            parameters, null, null, null, null, null, 0f, SaturationThreshold(parameters));
+            parameters, null, null, null, null, null, 0f, SaturationThreshold(parameters), 1f);
+    }
+
+    /// <summary>
+    /// 白点に達した画素の線形値を行列の前で切り詰める上限(0〜1)を求める。
+    /// </summary>
+    private static float SaturatedCeiling(
+        DevelopParameters p, float[] linearR, float[] linearG, float[] linearB, int threshold)
+    {
+        // 上限が1固定だと、WB×全体ゲイン < 1 のチャネルがあるとき(全体ゲインを0dBより下げる、
+        // WBゲインが1未満)白点の画素が (2,1,1.5)×Gain のような比のまま行列へ入り、色かぶりする。
+        // 白点のcodeの画素の線形値が最も小さいチャネルに上限を合わせると、白点に達したチャネルは
+        // すべて同じ値になり、行の和が1の行列から中性のまま出る。線形LUTの値そのものを使うので、
+        // WB=1 で同じ明るさの全体ゲインにしたときと同じ値になる。全チャネルで WB×全体ゲイン ≥ 1 なら
+        // 従来どおり1
+        int index = threshold;
+        if (p.WhitePoint > p.BlackLevel && threshold <= p.BlackLevel)
+        {
+            // 黒点が白レベルのcodeの中にある縮退した設定では、しきい値の線形値が0以下になる。
+            // 白点そのものの線形値(= WB×全体ゲイン)で代える
+            index = p.WhitePoint;
+        }
+
+        float ceiling = Math.Min(linearR[index], Math.Min(linearG[index], linearB[index]));
+        return ceiling < 1f ? ceiling : 1f;
     }
 
     /// <summary>
@@ -251,7 +285,8 @@ public sealed class DevelopLuts
     /// <summary>
     /// 線形RGB(16bit)を8bit表示値へ変換する。
     /// マトリクスなしはチャネル別LUT、ありは線形化→行列(コントラスト込み)→クリップ→ガンマで変換する。
-    /// マトリクスありでは、白点に達したチャネルを含む画素だけ線形値を行列の前で0〜1へ切り詰める。
+    /// マトリクスありでは、白点に達したチャネルを含む画素だけ線形値を行列の前で 0〜上限 へ切り詰める
+    /// (上限は白点での線形値が最も小さいチャネルの値。1を超える場合は1)。
     /// </summary>
     /// <param name="r16">R(16bitフルスケール)。</param>
     /// <param name="g16">G(16bitフルスケール)。</param>
@@ -279,11 +314,13 @@ public sealed class DevelopLuts
         {
             // 白点に達したチャネルを含む画素は真の値が失われている。WB後の値をそのまま行列へ
             // 通すとチャネル比が崩れ、負の係数で白飛びが色かぶりする(WB(2,1,1.5)と典型的な
-            // CCMでマゼンタ)。この画素だけ従来どおり行列の前で0〜1へ切り詰め、白飛びを中性に
-            // 保つ(dcraw の既定 -H 0 と同じ扱い)
-            lr = ClampUnit(lr);
-            lg = ClampUnit(lg);
-            lb = ClampUnit(lb);
+            // CCMでマゼンタ)。この画素だけ行列の前で 0〜上限 へ切り詰め、白飛びを中性に
+            // 保つ(dcraw の既定 -H 0 と同じ扱い)。上限は白点での線形値が最も小さいチャネルに
+            // 合わせる(1固定だと、全体ゲイン<1 や WBゲイン<1 のとき白点の比が残ってかぶる)
+            float ceiling = _saturatedCeiling;
+            lr = ClampSaturated(lr, ceiling);
+            lg = ClampSaturated(lg, ceiling);
+            lb = ClampSaturated(lb, ceiling);
         }
 
         float[] m = _matrix;
@@ -299,6 +336,13 @@ public sealed class DevelopLuts
     private static int ToGammaIndex(float value)
     {
         return (int)(ClampUnit(value) * (GammaLutSize - 1) + 0.5f);
+    }
+
+    /// <summary>0〜<paramref name="ceiling"/> へクリップする。NaN は 0。</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static float ClampSaturated(float value, float ceiling)
+    {
+        return value > 0f ? (value < ceiling ? value : ceiling) : 0f;
     }
 
     /// <summary>0〜1 へクリップする。NaN は 0。</summary>

@@ -36,6 +36,13 @@ internal static class DisplayModeSelection
         NoBayer,
 
         /// <summary>
+        /// 行交互HDRの raw の Raw 表示で、ファイル上の行の偶奇がセンサの Bayer の位相と一致しない
+        /// (ライン単位か行オフセットが奇数)ため、Bayer カラー・カラー現像・チャネル分割の色を取り違える
+        /// (<see cref="HdrExposureMix.BayerPhaseMismatch"/>)。
+        /// </summary>
+        HdrBayerPhase,
+
+        /// <summary>
         /// HDR 方式の指定がないため、HDR 分割・合成が成立しない(raw は「フォーマット変更…」で指定できる)。
         /// </summary>
         NoHdr,
@@ -64,20 +71,26 @@ internal static class DisplayModeSelection
     /// デコード済みのカラー画像は RGB のまま表示し、選択は Raw 表示で操作不可にする
     /// (ファイルを開いたときと同じ)。Bayer カラー・カラー現像・チャネル分割は Bayer パターンが
     /// なければ成立しない。HDR 分割・合成は元画像から作る派生ビューなので持ち越さない。
+    /// 行交互HDRの raw でファイル上の行の偶奇がセンサの Bayer の位相と一致しないとき(ライン単位か行オフセットが
+    /// 奇数)も、Bayer 系の表示は色を取り違えるので成立しない。
     /// 選択とビューポートを同じ結果にそろえ、表示と選択が食い違わないようにする。
     /// </remarks>
     /// <param name="selectedIndex">現在の表示モード選択の項目番号。</param>
     /// <param name="isColor">新しい画像がデコード済みのカラー画像か。</param>
     /// <param name="bayer">新しい画像のBayerパターン。</param>
+    /// <param name="bayerPhaseMismatch">
+    /// 新しい画像の Raw 表示で、行交互HDRの Bayer の位相が一致しないか(<see cref="HdrExposureMix.BayerPhaseMismatch"/>)。
+    /// </param>
     /// <returns>適用する表示モード。</returns>
-    internal static Choice ForSequenceImage(int selectedIndex, bool isColor, BayerPattern bayer)
+    internal static Choice ForSequenceImage(
+        int selectedIndex, bool isColor, BayerPattern bayer, bool bayerPhaseMismatch)
     {
         if (isColor)
         {
             return new Choice(0, ComboEnabled: false, ViewportDisplayMode.TrueColor);
         }
 
-        int index = selectedIndex is >= 1 and <= 3 && bayer != BayerPattern.None
+        int index = selectedIndex is >= 1 and <= 3 && bayer != BayerPattern.None && !bayerPhaseMismatch
             ? selectedIndex
             : 0;
         return new Choice(index, ComboEnabled: true, ModeOf(index));
@@ -91,13 +104,18 @@ internal static class DisplayModeSelection
     /// カラー画像の Raw 表示(選択 0)は RGB のままの表示で、Bayer 系の表示は右パネルで Bayer を
     /// 指定していても使わない(<see cref="ForSequenceImage"/> と同じ規約。選択を戻した先もカラー表示)。
     /// HDR 分割・合成(4, 5)は派生ビューを作るので、呼び出し側が先に <see cref="ForHdrMode"/> で扱う
-    /// (ここでは Raw 表示と同じ扱い)。
+    /// (ここでは Raw 表示と同じ扱い)。行交互HDRの raw の Raw 表示でファイル上の行の偶奇がセンサの Bayer の位相と
+    /// 一致しないとき(ライン単位か行オフセットが奇数)は、Bayer 系の表示を断る(戻り先は Raw 表示)。
     /// </remarks>
     /// <param name="selectedIndex">選ばれた表示モード選択の項目番号。</param>
     /// <param name="isColor">表示中の画像がデコード済みのカラー画像か。</param>
     /// <param name="bayer">表示中の画像のBayerパターン。</param>
+    /// <param name="bayerPhaseMismatch">
+    /// 表示中の画像の Raw 表示で、行交互HDRの Bayer の位相が一致しないか(<see cref="HdrExposureMix.BayerPhaseMismatch"/>)。
+    /// </param>
     /// <returns>表示するモードと、使えないときはその理由。</returns>
-    internal static Selected ForSelectedMode(int selectedIndex, bool isColor, BayerPattern bayer)
+    internal static Selected ForSelectedMode(
+        int selectedIndex, bool isColor, BayerPattern bayer, bool bayerPhaseMismatch)
     {
         bool bayerMode = selectedIndex is >= 1 and <= 3;
         if (isColor)
@@ -106,8 +124,13 @@ internal static class DisplayModeSelection
                 ViewportDisplayMode.TrueColor, bayerMode ? Refusal.ColorImage : Refusal.None);
         }
 
-        return bayerMode && bayer == BayerPattern.None
-            ? new Selected(ViewportDisplayMode.Raw, Refusal.NoBayer)
+        if (bayerMode && bayer == BayerPattern.None)
+        {
+            return new Selected(ViewportDisplayMode.Raw, Refusal.NoBayer);
+        }
+
+        return bayerMode && bayerPhaseMismatch
+            ? new Selected(ViewportDisplayMode.Raw, Refusal.HdrBayerPhase)
             : new Selected(ModeOf(selectedIndex), Refusal.None);
     }
 
@@ -153,6 +176,7 @@ internal static class DisplayModeSelection
         Refusal.NoBayer =>
             "この表示モードにはBayerパターンの指定が必要です。\n" +
             "右パネルの「フォーマット」→「Bayer」でパターン(RGGB等)を選択してください。",
+        Refusal.HdrBayerPhase => HdrExposureMix.BayerDisplayRefusal(bayerPhaseMismatch: true)!,
         Refusal.NoHdr => "この表示モードにはHDR方式の指定が必要です(フォーマット変更…から設定)。",
         Refusal.HdrOnImageFile =>
             "画像ファイル(TIFF等)にはHDR方式を指定できません。\n" +

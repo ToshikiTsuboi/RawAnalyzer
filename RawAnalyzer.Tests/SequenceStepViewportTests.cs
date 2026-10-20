@@ -106,7 +106,7 @@ public class SequenceStepViewportTests
     {
         Task<RawImage?> pending = viewport.ReplaceImageAsync(next, next.Format, color: color);
         DisplayModeSelection.Choice choice = DisplayModeSelection.ForSequenceImage(
-            selectedIndex, color is not null, next.Format.Bayer);
+            selectedIndex, color is not null, next.Format.Bayer, HdrExposureMix.BayerPhaseMismatch(next.Format));
         if (viewport.DisplayMode != choice.ViewportMode)
         {
             viewport.SetDisplayMode(choice.ViewportMode);

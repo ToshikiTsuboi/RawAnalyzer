@@ -97,13 +97,13 @@
             </StackPanel>
             <StackPanel Grid.Row="5" Grid.Column="2" Margin="0,0,0,8">
                 <TextBlock Text="ライン単位 (行/露光, 0=自動)"
-                           ToolTip="ライン交互で1露光あたりに連続する行数。&#x0a;物理ライン1本ごとに長秒/短秒を読むセンサは 1、&#x0a;色ペア単位のセンサは 2。0でBayer有無から自動判定。" />
+                           ToolTip="ライン交互で1露光あたりに連続する行数。&#x0a;物理ライン1本ごとに長秒/短秒を読むセンサは 1、&#x0a;色ペア単位のセンサは 2。0でBayer有無から自動判定。&#x0a;Bayerありで奇数にすると、Raw表示ではBayerの並びがずれるため&#x0a;Bayer系の表示・チャネル別の集計はHDR分割・合成ビューで行う。" />
                 <TextBox x:Name="HdrLineBlockBox" TextChanged="OnFieldChanged" />
             </StackPanel>
 
             <StackPanel Grid.Row="6" Grid.Column="0" Margin="0,0,0,8">
                 <TextBlock Text="行オフセット (段あたり)"
-                           ToolTip="短秒側が縦にずれて格納されている場合の補正量。&#x0a;分割・合成の前に段ごとに行を揃えて切り出す。" />
+                           ToolTip="短秒側が縦にずれて格納されている場合の補正量。&#x0a;分割・合成の前に段ごとに行を揃えて切り出す。&#x0a;Bayerありで奇数にすると、Raw表示ではBayerの並びがずれるため&#x0a;Bayer系の表示・チャネル別の集計はHDR分割・合成ビューで行う。" />
                 <TextBox x:Name="HdrRowOffsetBox" TextChanged="OnFieldChanged" />
             </StackPanel>
         </Grid>
