@@ -150,6 +150,28 @@ public sealed record RawFormat
             throw new ArgumentException($"サポートされないビット深度です: {BitDepth}");
         }
 
+        // 手で編集した・壊れた記憶の JSON からは未定義の列挙値が入りうる。そのまま通すと
+        // 読み込み・保存・表示で解釈が食い違うので、ここで弾く(記憶の読み込みはその記憶を捨てる)
+        if (!Enum.IsDefined(Packing))
+        {
+            throw new ArgumentException($"詰め方向の値が不正です: {(int)Packing}");
+        }
+
+        if (!Enum.IsDefined(Endianness))
+        {
+            throw new ArgumentException($"エンディアンの値が不正です: {(int)Endianness}");
+        }
+
+        if (!Enum.IsDefined(Bayer))
+        {
+            throw new ArgumentException($"Bayerパターンの値が不正です: {(int)Bayer}");
+        }
+
+        if (!Enum.IsDefined(Hdr))
+        {
+            throw new ArgumentException($"HDR方式の値が不正です: {(int)Hdr}");
+        }
+
         if (HeaderOffset < 0)
         {
             throw new ArgumentException($"ヘッダオフセットは非負である必要があります: {HeaderOffset}");

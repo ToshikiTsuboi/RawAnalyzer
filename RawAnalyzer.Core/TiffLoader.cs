@@ -1573,9 +1573,15 @@ public static unsafe class TiffLoader
                 throw new InvalidDataException("タイルサイズが不正です。");
             }
 
-            long tilesAcross = (page.Width + tileWidth - 1) / tileWidth;
-            long tilesDown = (page.Height + tileHeight - 1) / tileHeight;
+            // タイル寸法は int.MaxValue に丸めて持つので、int のまま足すと 幅(高さ) + タイル寸法 − 1 が
+            // 負へ回ってタイル数が0以下になり、1枚も読まずに全画素0の画像を返してしまう
+            long tilesAcross = ((long)page.Width + tileWidth - 1) / tileWidth;
+            long tilesDown = ((long)page.Height + tileHeight - 1) / tileHeight;
             long tileCount = tilesAcross * tilesDown;
+            if (tileCount <= 0)
+            {
+                throw new InvalidDataException("タイル数が不正です。");
+            }
 
             // プレーン分離では成分ごとに tileCount 枚ずつ並ぶ
             long firstTile = plane * tileCount;
@@ -1606,6 +1612,14 @@ public static unsafe class TiffLoader
 
                 for (int r = 0; r < rows; r++)
                 {
+                    // 画像全体が1タイルのような大きなタイルでも中止でき、進捗が進むように、
+                    // ストリップ経路と同じく64行ごとにキャンセルを見て、タイル内の行の進みを報告する
+                    if (r > 0 && (r & 63) == 0)
+                    {
+                        ct.ThrowIfCancellationRequested();
+                        progress?.Report(progressStart + (progressSpan * (t + ((double)r / rows)) / tileCount));
+                    }
+
                     handler(y0 + r, x0, columns, data.Slice(offsets[tile] + (r * tileRowBytes), (int)tileRowBytes));
                 }
 
@@ -1941,6 +1955,7 @@ public static unsafe class TiffLoader
         long rowsPerStrip = GetScalar(entries, data, TagRowsPerStrip, header) ?? height;
         long photometric = GetScalar(entries, data, TagPhotometric, header) ?? 1;
         long sampleFormat = GetScalar(entries, data, TagSampleFormat, header) ?? 1;
+        long fillOrder = GetScalar(entries, data, TagFillOrder, header) ?? 1;
 
         if (compression != 1)
         {
@@ -1970,6 +1985,12 @@ public static unsafe class TiffLoader
         {
             throw new InvalidDataException(
                 $"符号なし整数のTIFFのみサポートします(SampleFormat={sampleFormat})。");
+        }
+
+        // FillOrder=2 はバイト内のビット順が逆なので、そのまま読むとビット反転前の値を黙って返してしまう
+        if (fillOrder != 1)
+        {
+            throw new InvalidDataException($"FillOrder={fillOrder} は未対応です。");
         }
 
         if (width <= 0 || height <= 0 || width > int.MaxValue || height > int.MaxValue)

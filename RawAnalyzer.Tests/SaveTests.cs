@@ -84,6 +84,29 @@ public class SaveTests
     }
 
     [Fact]
+    public void RawSaver_UndefinedEndianness_WritesLittleLikeTheReader()
+    {
+        // 回帰テスト: 読み込み(PixelNormalizer)は Big 以外を Little とみなすのに、保存は Little 以外を Big とみなして
+        // いたため、未定義の Endianness(壊れた記憶の 5 など)では同じ値で読みと書きのバイト順が逆になっていた
+        ushort[] codes = { 0x0102, 0x0F34 };
+        using RawImage image = LoadImage(codes, 2, 1);
+        string little = TempPath(".raw");
+        string undefined = TempPath(".raw");
+        try
+        {
+            RawSaver.Save(image, little, BitPacking.Lsb, Endianness.Little);
+            RawSaver.Save(image, undefined, BitPacking.Lsb, (Endianness)5);
+
+            Assert.Equal(File.ReadAllBytes(little), File.ReadAllBytes(undefined));
+        }
+        finally
+        {
+            File.Delete(little);
+            File.Delete(undefined);
+        }
+    }
+
+    [Fact]
     public void RawSaver_MultiFrame_RoundTrips()
     {
         const int width = 6;

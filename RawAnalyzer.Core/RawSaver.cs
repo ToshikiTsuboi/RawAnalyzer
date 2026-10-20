@@ -84,13 +84,14 @@ public static class RawSaver
             ushort container = packing == BitPacking.Lsb
                 ? (ushort)(pixels[i] >> shift)
                 : (ushort)(pixels[i] & mask);
-            if (endianness == Endianness.Little)
+            // 読み込み(PixelNormalizer)と同じく Big 以外を Little とみなす
+            if (endianness == Endianness.Big)
             {
-                BinaryPrimitives.WriteUInt16LittleEndian(destination.Slice(i * 2, 2), container);
+                BinaryPrimitives.WriteUInt16BigEndian(destination.Slice(i * 2, 2), container);
             }
             else
             {
-                BinaryPrimitives.WriteUInt16BigEndian(destination.Slice(i * 2, 2), container);
+                BinaryPrimitives.WriteUInt16LittleEndian(destination.Slice(i * 2, 2), container);
             }
         }
     }

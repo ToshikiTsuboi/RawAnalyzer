@@ -84,6 +84,38 @@ public class TiffLoaderTests
         Assert.Throws<InvalidDataException>(() => TiffLoader.Load(tiff));
     }
 
+    [Theory]
+    [InlineData(8)]
+    [InlineData(16)]
+    public void Load_FillOrder2_Throws(int bits)
+    {
+        // 回帰テスト: Load は FillOrder タグを読まず、バイト内のビット順を反転しないまま FillOrder=1 と同じ値を
+        // 黙って返していた。プローブ(「直接読み出せません」)・自前復号(「未対応です」)と同じく断る
+        ushort[] pixels = { 1, 2, 3, 0x80, 0xF0, 0x0F };
+        var page = TiffBuilder.GrayPage(3, 2, bits, TiffBuilder.SampleBytes(pixels, bits));
+        page.Tags[266] = (3, new long[] { 2 });
+        byte[] tiff = new TiffBuilder().Build(page);
+
+        var ex = Assert.Throws<InvalidDataException>(() => TiffLoader.Load(tiff));
+        Assert.Contains("FillOrder", ex.Message);
+    }
+
+    [Fact]
+    public void Load_FillOrder1Explicit_ReadsValues()
+    {
+        // FillOrder=1(既定値)を明示したファイルは従来どおり読む
+        ushort[] pixels = { 1, 2, 3, 0x80, 0xF0, 0x0F };
+        var page = TiffBuilder.GrayPage(3, 2, 16, TiffBuilder.SampleBytes(pixels, 16));
+        page.Tags[266] = (3, new long[] { 1 });
+        byte[] tiff = new TiffBuilder().Build(page);
+
+        using RawImage image = TiffLoader.Load(tiff);
+        for (int i = 0; i < pixels.Length; i++)
+        {
+            Assert.Equal(pixels[i], image.GetPixel(i % 3, i / 3));
+        }
+    }
+
     [Fact]
     public void Load_BadByteOrderMarkOrMagicNumber_Throws()
     {
