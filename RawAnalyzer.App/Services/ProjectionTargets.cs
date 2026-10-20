@@ -283,7 +283,7 @@ internal static class ProjectionTargets
     /// <param name="target">対象(求められるもの)。</param>
     /// <param name="axes">求める向き。</param>
     /// <param name="cancellationToken">キャンセルトークン。</param>
-    /// <param name="progress">進み具合(0〜1)。</param>
+    /// <param name="progress">進み具合(0〜1。報告する順に単調に増える)。</param>
     /// <returns>射影。</returns>
     /// <exception cref="InvalidOperationException">求められない対象の場合(別の画素で代用しない)。</exception>
     internal static ProjectionResult Compute(

@@ -21,7 +21,8 @@ internal sealed record ProfileSeries(double[] Values, Color Stroke);
 /// <param name="MaxCode">ビット深度の最大 raw code(縦軸の全範囲)。</param>
 /// <param name="CoordinateOffset">位置 0 の横軸の座標(ROI の左端・上端など)。</param>
 /// <param name="IntegerValues">
-/// 値が整数の raw code か(統計の最小・最大・P-P を整数で出す)。射影(平均)は false で、小数2桁で出す。
+/// 値が整数の raw code か(統計の最小・最大・P-P を整数、中央値を小数1桁で出す)。射影(平均)は false で、
+/// 平均・σ と同じ小数2桁で出す。
 /// </param>
 /// <param name="MarkerIndex">縦線で示す位置(断面の基準点。なければ null)。</param>
 /// <param name="ExtraSeries">重ねて描く線(なければ null)。</param>
@@ -342,13 +343,15 @@ public partial class ProfilePlotView : UserControl
         MinLabel.ToolTip = _axisRange.Minimum.ToString("G17", CultureInfo.CurrentCulture) + axisHint;
 
         // 断面は整数の raw code なので最小・最大・P-P は整数で出す。射影は直交方向の平均(実数)で 1 code 未満の
-        // 列ムラを見るための値なので、整数に丸めず平均・σ と同じ小数2桁で出す
+        // 列ムラを見るための値なので、整数に丸めず平均・σ と同じ小数2桁で出す。中央値は、断面では整数か中央2個の
+        // 平均(.5)なので小数1桁、射影では平均と比べられるよう小数2桁
         string extremeFormat = _data.IntegerValues ? "F0" : "F2";
+        string medianFormat = _data.IntegerValues ? "F1" : "F2";
         string? busy = _busyShown ? _busyMessage : null;
         StatsText.Text = busy ?? _statsMessage ?? (stats.Count == 0
             ? "—"
             : $"N={stats.Count}   平均 {stats.Mean:F2}   最小 {stats.Min.ToString(extremeFormat)}   " +
-              $"最大 {stats.Max.ToString(extremeFormat)}   中央値 {stats.Median:F1}   σ {stats.Sigma:F2}   " +
+              $"最大 {stats.Max.ToString(extremeFormat)}   中央値 {stats.Median.ToString(medianFormat)}   σ {stats.Sigma:F2}   " +
               $"P-P {(stats.Max - stats.Min).ToString(extremeFormat)}");
 
         // 計算中は前のデータを薄く残し、上に知らせを出す。断る理由などもグラフの上に出す

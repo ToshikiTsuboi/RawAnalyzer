@@ -198,6 +198,44 @@ public class ProfileAndMetricsTests
         Assert.Equal(0, stats.Mean);
     }
 
+    [Theory]
+    [InlineData(32768, 60000)]
+    [InlineData(100000, 65000)]
+    public void ComputeProfileStatistics_HighLevelSubCodeRipple_SigmaIsAccurate(int count, int level)
+    {
+        // 回帰テスト: 射影の平均の線(16bit の高いレベル + 1 code 未満のムラ)の σ を Σv²/N − mean² で求めており、
+        // Σv² ≈ 1e14 の丸め誤差で σ が真値の 0.2〜5 倍になっていた。ムラ d は level を足しても丸めが起きない
+        // 1/2048 の倍数にしておき、真の σ はレベルを引いた d だけから(桁落ちのない大きさで)求める
+        var random = new Random(12345);
+        var values = new double[count];
+        var ripple = new double[count];
+        for (int i = 0; i < count; i++)
+        {
+            ripple[i] = random.Next(-40, 41) / 2048.0;
+            values[i] = level + ripple[i];
+        }
+
+        double rippleMean = ripple.Average();
+        double expectedSigma = Math.Sqrt(ripple.Sum(d => (d - rippleMean) * (d - rippleMean)) / count);
+
+        ProfileStatistics stats = ImageAnalysis.ComputeProfileStatistics(values);
+
+        Assert.InRange(expectedSigma, 0.005, 0.03);
+        Assert.Equal(1.0, stats.Sigma / expectedSigma, 9);
+        Assert.Equal(level + rippleMean, stats.Mean, 9);
+    }
+
+    [Fact]
+    public void ComputeProfileStatistics_ConstantHighLevel_SigmaIsZero()
+    {
+        // 一定値の線の σ は丸めの残りでなく厳密に 0(σ のガイド線・統計のコピーに 1e-4 などを出さない)
+        var values = Enumerable.Repeat(65000.123, 50000).ToArray();
+
+        ProfileStatistics stats = ImageAnalysis.ComputeProfileStatistics(values);
+
+        Assert.Equal(0, stats.Sigma);
+    }
+
     [Fact]
     public void ComputeHistogramMetrics_DerivesMedianModeAndPercentiles()
     {
