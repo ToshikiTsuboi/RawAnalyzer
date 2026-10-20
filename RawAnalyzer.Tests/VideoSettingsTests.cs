@@ -129,6 +129,22 @@ public class VideoSettingsTests
     }
 
     /// <summary>
+    /// 説明には打った値を丸めずに出す。以前は小数3桁に丸めたので、240.0001 を「240 fps は範囲 0.1〜240 fps の外」、
+    /// 0.0999 を「0.1 fps は範囲 0.1〜240 fps の外」と、範囲内の数を範囲外と示す矛盾した説明になった。
+    /// </summary>
+    [Theory]
+    [InlineData("240.0001", 240, "240.0001 fps は範囲 0.1〜240 fps の外のため、240 fps を使います")]
+    [InlineData("0.0999", 0.1, "0.0999 fps は範囲 0.1〜240 fps の外のため、0.1 fps を使います")]
+    [InlineData("0.00001", 0.1, "1E-05 fps は範囲 0.1〜240 fps の外のため、0.1 fps を使います")] // 以前は「0 fps は範囲…の外」
+    [InlineData("-0.0001", 15, "-0.0001 fps は使えない")] // 以前は「-0 fps は使えない」
+    public void Parse_NoticeShowsTypedValueUnrounded(string text, double expected, string expectedNotice)
+    {
+        Assert.Equal(expected, FpsInput.Parse(text, fallback: 15, out string? notice), 10);
+        Assert.NotNull(notice);
+        Assert.Contains(expectedNotice, notice);
+    }
+
+    /// <summary>
     /// 対になっていないサロゲートを含む入力は、例外を投げずに読めない入力として既定値へ落とす(以前は NFKC の
     /// 正規化が ArgumentException を投げた)。単独サロゲートは InlineData の直列化で U+FFFD に置き換わるので、
     /// テストの中で組み立てる。
@@ -162,6 +178,8 @@ public class VideoSettingsTests
     [InlineData("abc", 15, "既定の 15 fps を使います")]
     [InlineData(".5", 1, "0.5 fps は範囲 1〜240 fps の外のため、1 fps を使います")] // 以前は黙って 5 fps(F1)
     [InlineData("-.5", 15, "-0.5 fps は使えない")]
+    [InlineData("0.9999", 1, "0.9999 fps は範囲 1〜240 fps の外のため、1 fps を使います")] // 以前は「1 fps は範囲 1〜240 fps の外」
+    [InlineData("0.4999", 1, "0.4999 fps は範囲 1〜240 fps の外")] // 以前は「0.5 fps は…」
     [InlineData("29.97", 30, null)] // 整数への丸めは知らせない(書き出しの仕様)
     [InlineData("1", 1, null)]
     public void ParseInteger_ReportsFallbackAndClampingButNotRounding(
