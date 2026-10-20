@@ -300,6 +300,81 @@ public class ColorPipelineTests
         Assert.Equal(255, b);
     }
 
+    public static IEnumerable<object[]> SaturatedGainBelowOneCases()
+    {
+        // WB R・G・B と全体ゲイン。どれかのチャネルで WB×全体ゲイン < 1 になる組み合わせ
+        yield return new object[] { 2.0, 1.0, 1.5, Math.Pow(10, -3.0 / 20) };   // −3dB
+        yield return new object[] { 2.0, 1.0, 1.5, Math.Pow(10, -6.0 / 20) };   // −6dB
+        yield return new object[] { 2.0, 1.0, 1.5, Math.Pow(10, -12.0 / 20) };  // −12dB
+        yield return new object[] { 0.8, 1.0, 1.5, 1.0 };                       // WB R<1
+        yield return new object[] { 0.5, 2.0, 4.0, 1.5 };                       // WB の下限・上限
+    }
+
+    [Theory]
+    [MemberData(nameof(SaturatedGainBelowOneCases))]
+    public void DevelopLuts_SaturatedPixel_GainBelowOne_StaysNeutral(
+        double gainR, double gainG, double gainB, double gain)
+    {
+        // 検証 color-sat-1。飽和画素の切り詰めの上限が1固定だったため、WB×全体ゲイン < 1 のチャネルが
+        // あると白飛びの比 (2,1,1.5)×Gain がそのまま行列へ入り、マゼンタ(WB R<1 ではシアン)にかぶっていた。
+        // 白点に達した画素は、最も小さい実効ゲインのチャネルの白の明るさで中性に揃える
+        // (= 同じ明るさに WB=1 で現像したときと同じ値)
+        const ushort saturated = 4095 << 4;   // 12bit の白レベルcode(白点65535)
+        var parameters = new DevelopParameters(
+            GainR: gainR, GainG: gainG, GainB: gainB, Gamma: 2.2, Matrix: TypicalCcm,
+            Gain: gain, SourceBitDepth: 12);
+        var luts = DevelopLuts.Create(parameters);
+        var neutral = DevelopLuts.Create(parameters with
+        {
+            GainR = 1.0, GainG = 1.0, GainB = 1.0,
+            Gain = Math.Min(gainR, Math.Min(gainG, gainB)) * gain,
+        });
+
+        luts.Convert(saturated, saturated, saturated, out byte r, out byte g, out byte b);
+        neutral.Convert(saturated, saturated, saturated, out byte nr, out byte ng, out byte nb);
+
+        Assert.Equal(nr, ng);
+        Assert.Equal(ng, nb);
+        Assert.Equal((nr, ng, nb), (r, g, b));
+    }
+
+    [Fact]
+    public void DevelopLuts_SaturatedPixel_GainBelowOne_DisplayAndExportStayNeutral()
+    {
+        // 検証 color-sat-1 の再現条件(12bit・白レベルcode 4095・WB(2,1,1.5)・典型的なCCM・γ2.2・−6dB)。
+        // 表示(ViewportRenderer)と現像保存(ImageExport.DevelopRgb24)は同じ Convert を通るが、両方で確かめる。
+        // 修正前は (255,158,240) のマゼンタ。WB=1 で同じゲインにしたときの (186,186,186) になるはず
+        const int size = 8;
+        var codes = new ushort[size * size];
+        Array.Fill(codes, (ushort)4095);
+        using RawImage image = TestImages.FromCodes(codes, size, size, bitDepth: 12, bayer: BayerPattern.Rggb);
+        var luts = DevelopLuts.Create(new DevelopParameters(
+            GainR: 2.0, GainB: 1.5, Gamma: 2.2, Matrix: TypicalCcm, Gain: Math.Pow(10, -6.0 / 20),
+            SourceBitDepth: 12));
+
+        byte[] exported = ImageExport.DevelopRgb24(image, 0, BayerPattern.Rggb, luts);
+
+        var request = new RenderRequest
+        {
+            Source = new RawImageRenderSource(image, 0),
+            Lut = DisplayLut.Create(new DisplayParameters()),
+            Mode = ViewportDisplayMode.ColorDevelop,
+            Pattern = BayerPattern.Rggb,
+            DevelopLuts = luts,
+        };
+        var displayed = new byte[size * size * 4];
+        ViewportRenderer.Render(
+            request, zoom: 1.0, originX: 0, originY: 0, size, size, displayed, default);
+
+        for (int i = 0; i < size * size; i++)
+        {
+            Assert.Equal((186, 186, 186), (exported[i * 3], exported[i * 3 + 1], exported[i * 3 + 2]));
+
+            // 表示バッファは BGRA
+            Assert.Equal((186, 186, 186), (displayed[i * 4 + 2], displayed[i * 4 + 1], displayed[i * 4]));
+        }
+    }
+
     [Fact]
     public void DevelopLuts_DegenerateWhitePoint_TreatsAboveBlackAsSaturated()
     {
