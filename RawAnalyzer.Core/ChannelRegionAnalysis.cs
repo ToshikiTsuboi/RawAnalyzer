@@ -88,15 +88,14 @@ public static class ChannelRegionAnalysis
         }
 
         double mean = (double)sum / count;
-        double variance = (double)sumSq / count - mean * mean;
+        double variance = Moments.PopulationVariance(count, sum, sumSq);
         return new HistogramResult
         {
             Bins = bins,
             BitDepth = bitDepth,
             IsSampled = stride > 1,
             SampleCount = count,
-            Statistics = new RegionStatistics(
-                mean, Math.Sqrt(Math.Max(0, variance)), min, max, count),
+            Statistics = new RegionStatistics(mean, Math.Sqrt(variance), min, max, count),
         };
     }
 

@@ -245,9 +245,8 @@ public static class ImageAnalysis
         }
 
         double mean = (double)totalSum / totalCount;
-        double variance = (double)totalSumSq / totalCount - mean * mean;
-        return new RegionStatistics(
-            mean, Math.Sqrt(Math.Max(0, variance)), totalMin, totalMax, totalCount);
+        double variance = Moments.PopulationVariance(totalCount, totalSum, totalSumSq);
+        return new RegionStatistics(mean, Math.Sqrt(variance), totalMin, totalMax, totalCount);
     }
 
     /// <summary>
@@ -328,7 +327,7 @@ public static class ImageAnalysis
         }
 
         double mean = count > 0 ? (double)sum / count : 0;
-        double variance = count > 0 ? (double)sumSq / count - mean * mean : 0;
+        double variance = Moments.PopulationVariance(count, sum, sumSq);
         return new HistogramResult
         {
             Bins = bins,
@@ -336,7 +335,7 @@ public static class ImageAnalysis
             IsSampled = sampled,
             SampleCount = count,
             Statistics = new RegionStatistics(
-                mean, Math.Sqrt(Math.Max(0, variance)), min, max, count),
+                mean, Math.Sqrt(variance), min, max, count),
         };
     }
 
@@ -565,7 +564,7 @@ public static class ImageAnalysis
         }
 
         double totalMean = totalCount > 0 ? (double)totalSum / totalCount : 0;
-        double totalVar = totalCount > 0 ? (double)totalSumSq / totalCount - totalMean * totalMean : 0;
+        double totalVar = Moments.PopulationVariance(totalCount, totalSum, totalSumSq);
         var total = new HistogramResult
         {
             Bins = totalBins,
@@ -573,7 +572,7 @@ public static class ImageAnalysis
             IsSampled = sampled,
             SampleCount = totalCount,
             Statistics = new RegionStatistics(
-                totalMean, Math.Sqrt(Math.Max(0, totalVar)),
+                totalMean, Math.Sqrt(totalVar),
                 totalCount > 0 ? mins.Where((_, i) => counts[i] > 0).Min() : 0,
                 totalCount > 0 ? maxs.Where((_, i) => counts[i] > 0).Max() : 0,
                 totalCount),
@@ -596,15 +595,13 @@ public static class ImageAnalysis
         for (int i = 0; i < 4; i++)
         {
             double mean = counts[i] > 0 ? (double)sums[i] / counts[i] : 0;
-            double variance = counts[i] > 0
-                ? (double)sumSqs[i] / counts[i] - mean * mean
-                : 0;
+            double variance = Moments.PopulationVariance(counts[i], sums[i], sumSqs[i]);
             channels[i] = new ChannelHistogram
             {
                 Channel = channelOrder[i],
                 Bins = channelBins[i],
                 Statistics = new RegionStatistics(
-                    mean, Math.Sqrt(Math.Max(0, variance)),
+                    mean, Math.Sqrt(variance),
                     counts[i] > 0 ? mins[i] : 0,
                     counts[i] > 0 ? maxs[i] : 0,
                     counts[i]),

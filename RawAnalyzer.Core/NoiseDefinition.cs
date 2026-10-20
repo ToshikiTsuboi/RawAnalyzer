@@ -125,15 +125,10 @@ internal static class NoiseDefinition
             : max;
     }
 
-    /// <summary>母分散 Σx²/n − μ²。丸めで負になった分は0、画素0個も0。</summary>
-    private static double Variance(in NoiseMoments moments)
-    {
-        if (moments.Count == 0)
-        {
-            return 0;
-        }
-
-        double mean = (double)moments.Sum / moments.Count;
-        return Math.Max(0, (double)moments.SumOfSquares / moments.Count - mean * mean);
-    }
+    /// <summary>
+    /// 母分散 (n·Σx² − (Σx)²) / n²(<see cref="Moments.PopulationVariance"/>。整数のまま求めるので、一定値なら厳密に0)。
+    /// 画素0個は0。
+    /// </summary>
+    private static double Variance(in NoiseMoments moments) =>
+        Moments.PopulationVariance(moments.Count, moments.Sum, moments.SumOfSquares);
 }
