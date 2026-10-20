@@ -296,6 +296,19 @@ public class NaturalOrderComparerTests
         }
     }
 
+    /// <summary>
+    /// 戻り値は IComparer の慣例どおり符号だけが意味を持つ(XML ドキュメントのとおり -1/1 とは限らない)。
+    /// </summary>
+    [Theory]
+    [InlineData("a1", "a_")]               // 文字コードの差(-46)を返す
+    [InlineData("x", "xyzzzzzzzzzzzzzzz")] // 残りの長さの差(-16)を返す
+    [InlineData("img2", "img10")]
+    public void Compare_SignTellsOrder(string x, string y)
+    {
+        Assert.True(NaturalOrderComparer.Instance.Compare(x, y) < 0);
+        Assert.True(NaturalOrderComparer.Instance.Compare(y, x) > 0);
+    }
+
     internal static string ToFullWidth(int number)
     {
         return new string(number.ToString(System.Globalization.CultureInfo.InvariantCulture)

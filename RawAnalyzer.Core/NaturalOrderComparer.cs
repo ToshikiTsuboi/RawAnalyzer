@@ -17,7 +17,10 @@ public sealed class NaturalOrderComparer : IComparer<string>
     /// </summary>
     /// <param name="x">左辺。</param>
     /// <param name="y">右辺。</param>
-    /// <returns>比較結果(-1/0/1)。</returns>
+    /// <returns>
+    /// <paramref name="x"/> が <paramref name="y"/> より前なら負、同順なら 0、後なら正。
+    /// <see cref="IComparer{T}"/> の慣例どおり符号だけが意味を持ち、-1/1 とは限らない(桁数や文字コードの差を返す)。
+    /// </returns>
     public int Compare(string? x, string? y)
     {
         if (x is null || y is null)
