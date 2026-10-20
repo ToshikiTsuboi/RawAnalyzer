@@ -35,6 +35,8 @@ public class NumericInputTests
     [InlineData("−0.25", -0.25)] // U+2212 MINUS SIGN
     [InlineData("4,095", 4095)] // 3桁区切り
     [InlineData("１，０００", 1000)]
+    [InlineData("１、０００", 1000)] // かな入力で "," キーは読点「、」になる
+    [InlineData("1､000", 1000)] // 半角の読点(NFKC で「、」になる)
     [InlineData("-1,234,567.5", -1234567.5)]
     public void TryParseFinite_AcceptsFullWidthAndThousandsSeparators(string text, double expected)
     {
@@ -47,6 +49,13 @@ public class NumericInputTests
     [InlineData("12,34")]
     [InlineData("1,0000")]
     [InlineData(",100")]
+    [InlineData("１、５")]    // かな入力の読点も、3桁区切りの位置になければ失敗のまま
+    [InlineData("12、34")]
+    [InlineData("0,125")]  // 3桁区切りの数は "0," で始まらない。小数点のつもりのカンマとみなし 125 と誤読しない
+    [InlineData("0,001")]
+    [InlineData("-0,250")]
+    [InlineData("000,123")]
+    [InlineData("０，１２５")]
     public void TryParseFinite_RejectsMisplacedSeparators(string text)
     {
         Assert.False(NumericInput.TryParseFinite(text, out _));
@@ -55,6 +64,7 @@ public class NumericInputTests
     [Theory]
     [InlineData("６４０", 640)]
     [InlineData("１，９２０", 1920)]
+    [InlineData("１、９２０", 1920)] // かな入力の読点
     [InlineData("ー２", -2)]
     [InlineData(" 12 ", 12)]
     public void TryParseInteger_AcceptsFullWidthAndThousandsSeparators(string text, long expected)
@@ -68,6 +78,9 @@ public class NumericInputTests
     [Theory]
     [InlineData("1.5")]   // 整数でない
     [InlineData("1,5")]   // 3桁区切りでないカンマ
+    [InlineData("0,125")] // 先頭の群が 0 の3桁区切りはない(125 と誤読しない)
+    [InlineData("000,123")]
+    [InlineData("-0,250")]
     [InlineData("1e3")]
     [InlineData("abc")]
     [InlineData("")]
@@ -84,6 +97,35 @@ public class NumericInputTests
         Assert.True(NumericInput.TryParseInteger("3,000,000,000", out long wide));
         Assert.Equal(3_000_000_000L, wide);
     }
+
+    /// <summary>
+    /// 対になっていないサロゲートを含む文字列(壊れた UTF-16 のクリップボードの内容など)は、"abc" と同じく
+    /// 読めない入力として false を返す。以前は NFKC の正規化が ArgumentException を投げ、TextChanged から
+    /// 「予期しないエラー」のダイアログまで漏れた。
+    /// </summary>
+    /// <remarks>
+    /// InlineData に書くとテストの列挙で文字列が直列化され、単独サロゲートが U+FFFD に置き換わって再現しないので、
+    /// テストの中で組み立てる。
+    /// </remarks>
+    [Fact]
+    public void TryParse_LoneSurrogate_ReturnsFalse()
+    {
+        foreach (string text in LoneSurrogateTexts)
+        {
+            Assert.False(NumericInput.TryParseFinite(text, out _));
+            Assert.False(NumericInput.TryParsePositive(text, out _));
+            Assert.False(NumericInput.TryParseInteger(text, out long _));
+            Assert.False(NumericInput.TryParseInteger(text, out int _));
+        }
+    }
+
+    /// <summary>対になっていないサロゲートを含む文字列("1"+U+D800、U+DC00 単体、"12"+U+D83D)。</summary>
+    internal static readonly string[] LoneSurrogateTexts =
+    {
+        "1" + (char)0xD800,
+        ((char)0xDC00).ToString(),
+        "12" + (char)0xD83D,
+    };
 
     [Fact]
     public void TryParseFinite_AcceptsNegativeMatrixCoefficients()

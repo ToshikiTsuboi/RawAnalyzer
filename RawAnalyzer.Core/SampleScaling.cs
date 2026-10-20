@@ -66,11 +66,14 @@ public struct SampleRangeAccumulator
         }
     }
 
-    /// <summary>集計結果。有限値が1つもなければ 0〜0。</summary>
+    /// <summary>集計結果。有限値が1つもなければ 0〜0。-0.0 は +0 として返す。</summary>
     /// <returns>値域。</returns>
     public readonly SampleRange ToRange()
     {
-        return _any ? new SampleRange(_min, _max, _nonFinite) : new SampleRange(0, 0, _nonFinite);
+        // 大小比較では -0.0 と +0 が等しく、最初に出た方の符号が残る。並びで値域の表示が変わらないよう +0 へそろえる
+        return _any
+            ? new SampleRange(_min + 0.0, _max + 0.0, _nonFinite)
+            : new SampleRange(0, 0, _nonFinite);
     }
 }
 
@@ -99,8 +102,13 @@ public sealed record SampleScaling(double Offset, double Upper, SampleRange Rang
     /// <summary>1コードが表す元の値の刻み。幅が double の範囲を超える値域でも有限。</summary>
     public double ValuePerCode => HalfSpan / (65535.0 * 0.5);
 
-    /// <summary>正規化(0〜1)の慣習として扱ったか。</summary>
-    public bool IsNormalized => Offset == 0 && Upper == 1;
+    /// <summary>
+    /// 元データが実数(浮動小数点)か。<see cref="FromRange(SampleRange, SampleInterpretation)"/> で整数を指定したときだけ false。
+    /// </summary>
+    public bool IsFloatingPoint { get; init; } = true;
+
+    /// <summary>正規化(0〜1)の慣習として扱ったか。実数のデータだけが該当する。</summary>
+    public bool IsNormalized => IsFloatingPoint && Offset == 0 && Upper == 1;
 
     /// <summary>
     /// 幅の半分。両端を半分にしてから差を取るので桁あふれしない。2倍・半分は誤差なしのため、
@@ -225,8 +233,10 @@ public sealed record SampleScaling(double Offset, double Upper, SampleRange Rang
             });
 
         cancellationToken.ThrowIfCancellationRequested();
+
+        // -0.0 と +0 は大小比較で等しく、区画内で最初に出た方の符号が残る。並びで値域が変わらないよう +0 へそろえる
         return double.IsFinite(totalMin) && double.IsFinite(totalMax)
-            ? new SampleRange(totalMin, totalMax, totalNonFinite)
+            ? new SampleRange(totalMin + 0.0, totalMax + 0.0, totalNonFinite)
             : new SampleRange(0, 0, totalNonFinite);
     }
 
@@ -234,31 +244,40 @@ public sealed record SampleScaling(double Offset, double Upper, SampleRange Rang
     /// 値域から対応関係を決める。
     /// </summary>
     /// <remarks>
-    /// 最大値が1以下なら0〜1の正規化データとみなす(実数TIFFの一般的な慣習)。
+    /// 実数のデータで最大値が1以下なら0〜1の正規化データとみなす(実数TIFFの一般的な慣習)。
     /// それ以外は実データの最大までを使い切る。負値があるとコード0が0を指さなく
     /// なるが、暗電流減算後の負のすそを切り捨てるとノイズ評価が狂うため残す。
+    /// 整数のデータは値域が 0〜1 に収まっても(二値マスク・全画素0)正規化とはみなさず、説明に「実数」と書かない。
+    /// 写し方は同じになる(0〜1 の整数は 1 → 65535、全画素0は幅1にして 0 → 0)。
     /// </remarks>
     /// <param name="range">値域。</param>
+    /// <param name="interpretation">
+    /// サンプルの解釈。整数(<see cref="SampleInterpretation.UnsignedInteger"/>・<see cref="SampleInterpretation.SignedInteger"/>)
+    /// なら正規化の慣習を当てない。省略時は実数として扱う。
+    /// </param>
     /// <returns>対応関係。</returns>
-    public static SampleScaling FromRange(SampleRange range)
+    public static SampleScaling FromRange(
+        SampleRange range, SampleInterpretation interpretation = SampleInterpretation.Float)
     {
+        bool isFloatingPoint = interpretation is SampleInterpretation.Float or SampleInterpretation.HalfFloat;
         double minimum = double.IsFinite(range.Minimum) ? range.Minimum : 0;
         double maximum = double.IsFinite(range.Maximum) ? range.Maximum : 0;
-        double offset = Math.Min(0, minimum);
+        // Math.Min(0, -0.0) は -0.0 を返し、説明が「-0〜」になる。負値があるときだけ下端へ寄せる
+        double offset = minimum < 0 ? minimum : 0;
         double upper = maximum;
-        if (offset == 0 && upper <= 1)
+        if (isFloatingPoint && offset == 0 && upper <= 1)
         {
             upper = 1; // 0〜1の正規化データ(非有限のみ・全画素0も含む)
         }
 
         if (upper <= offset)
         {
-            // 全画素が同じ負値。幅1にして破綻させない。桁落ちで offset+1 が同じ値に
+            // 全画素が同じ負値(整数では全画素0も)。幅1にして破綻させない。桁落ちで offset+1 が同じ値に
             // なるほど大きい値なら、次に大きい表現可能な値を上端にする
             upper = offset + 1 > offset ? offset + 1 : Math.BitIncrement(offset);
         }
 
-        return new SampleScaling(offset, upper, range);
+        return new SampleScaling(offset, upper, range) { IsFloatingPoint = isFloatingPoint };
     }
 
     /// <summary>

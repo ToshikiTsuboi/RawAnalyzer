@@ -1764,6 +1764,14 @@ public static unsafe class TiffLoader
         };
     }
 
+    /// <summary>ページのサンプルの解釈(整数のページは値域が 0〜1 でも正規化の慣習を当てない)。</summary>
+    private static SampleInterpretation InterpretationOf(PageLayout page) => page.Format switch
+    {
+        2 => SampleInterpretation.SignedInteger,
+        3 => page.Bits == 16 ? SampleInterpretation.HalfFloat : SampleInterpretation.Float,
+        _ => SampleInterpretation.UnsignedInteger,
+    };
+
     private static RawImage DecodePage(
         TiffBytes data, TiffHeader header, PageLayout page, CancellationToken ct,
         IProgress<double>? progress, out SampleScaling? scaling)
@@ -1825,7 +1833,7 @@ public static unsafe class TiffLoader
             }
         }, ct, progress, 0, 0.5, stride);
 
-        SampleScaling result = SampleScaling.FromRange(accumulator.ToRange());
+        SampleScaling result = SampleScaling.FromRange(accumulator.ToRange(), InterpretationOf(page));
         ForEachRow(data, page, (y, x0, count, bytes) =>
         {
             UnpackRow(bytes, count * stride, page.Bits, bigEndian, values);
@@ -1908,7 +1916,8 @@ public static unsafe class TiffLoader
         }
 
         // 2パス目: 16bitコードへ写してRGBのインターリーブへ置く
-        SampleScaling result = SampleScaling.FromRange(accumulator.ToRange() with { NonFiniteCount = nonFinitePixels });
+        SampleScaling result = SampleScaling.FromRange(
+            accumulator.ToRange() with { NonFiniteCount = nonFinitePixels }, InterpretationOf(page));
         var codes = new ushort[(long)width * height * 3];
         for (int plane = 0; plane < planes; plane++)
         {

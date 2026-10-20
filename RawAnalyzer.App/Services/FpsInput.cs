@@ -1,5 +1,4 @@
 using System.Globalization;
-using System.Text;
 using System.Text.RegularExpressions;
 
 namespace RawAnalyzer.App.Services;
@@ -65,8 +64,9 @@ internal static partial class FpsInput
 
         // NFKC で全角の単位(ｆｐｓ)を半角へ寄せてから単位を除き、残りの全体を NumericInput に読ませる(全角の数字・
         // 記号、かな入力の「ー」(負号)と「。」(小数点)、3桁区切りはそちらで読む)。小数点のつもりかもしれない
-        // カンマ("7,5")や数の後ろの余計な文字("7.5.3"、"30x")を含む入力は、手前の数だけを読まずに読めない入力とする
-        string number = UnitSuffix().Replace(text.Normalize(NormalizationForm.FormKC), "");
+        // カンマ("7,5")や数の後ろの余計な文字("7.5.3"、"30x")を含む入力は、手前の数だけを読まずに読めない入力とする。
+        // 対になっていないサロゲートを含む入力は寄せずに渡し、読めない入力とする(NFKC が例外を投げるため)
+        string number = UnitSuffix().Replace(NumericInput.ToHalfWidth(text), "");
         if (!NumericInput.TryParseFinite(number, out double value))
         {
             notice = $"「{text.Trim()}」からフレームレートを読めないため、{fallbackText}";
@@ -75,14 +75,14 @@ internal static partial class FpsInput
 
         if (value <= 0)
         {
-            notice = $"{Format(value)} fps は使えない(0 より大きい値が必要な)ため、{fallbackText}";
+            notice = $"{FormatInput(value)} fps は使えない(0 より大きい値が必要な)ため、{fallbackText}";
             return fallback;
         }
 
         double clamped = Math.Clamp(value, minimum, MaxFps);
         if (clamped != value)
         {
-            notice = $"{Format(value)} fps は範囲 {Format(minimum)}〜{Format(MaxFps)} fps の外のため、"
+            notice = $"{FormatInput(value)} fps は範囲 {Format(minimum)}〜{Format(MaxFps)} fps の外のため、"
                 + $"{Format(clamped)} fps を使います";
         }
 
@@ -90,6 +90,21 @@ internal static partial class FpsInput
     }
 
     private static string Format(double fps) => fps.ToString("0.###", CultureInfo.InvariantCulture);
+
+    /// <summary>
+    /// 説明に出す打った値。判定に使った値を丸めずに示す(小数3桁で表せる値は <see cref="Format"/> と同じ表示)。
+    /// </summary>
+    /// <remarks>
+    /// 以前は打った値も <see cref="Format"/> で小数3桁に丸めたので、240.0001 を「240 fps は範囲 0.1〜240 fps の外」、
+    /// -0.0001 を「-0 fps は使えない」と、判定した値と違う数で矛盾した説明をした。
+    /// </remarks>
+    private static string FormatInput(double fps)
+    {
+        string text = Format(fps);
+        return double.Parse(text, CultureInfo.InvariantCulture) == fps
+            ? text
+            : fps.ToString("R", CultureInfo.InvariantCulture);
+    }
 
     /// <summary>
     /// 動画書き出し用に整数のフレームレートを取り出す(ライタが整数を要求するため)。

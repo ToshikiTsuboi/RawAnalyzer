@@ -109,4 +109,28 @@ public class SequenceScannerNumberedTests
         Assert.Equal(
             new[] { @"C:\dir\img1.tif", @"C:\dir\img2.tif", @"C:\dir\img10.tif" }, stack);
     }
+
+    /// <summary>
+    /// IME がオンのまま付けた全角数字の連番名も連番として認識し、数値の順に並べる。以前は全角数字を数字とみなさず、
+    /// 「暗室１.tif」は連番でない(空)とされた。
+    /// </summary>
+    [Fact]
+    public void FindNumberedStack_FullWidthDigits_AreRecognizedAndSortedNaturally()
+    {
+        IReadOnlyList<string> stack = SequenceScanner.FindNumberedStack(
+            @"C:\dir\暗室１.tif", Files("暗室１０.tif", "暗室２.tif", "暗室１.tif", "明室１.tif"));
+
+        Assert.Equal(
+            new[] { @"C:\dir\暗室１.tif", @"C:\dir\暗室２.tif", @"C:\dir\暗室１０.tif" }, stack);
+    }
+
+    [Fact]
+    public void FindNumberedStack_FullWidthNumberAfterAsciiDigits_UsesWholeRun()
+    {
+        // 末尾側の数字の並びは全角・半角をまたいで1つの連番とみなす(接頭辞が "IMG_" で揃う)
+        IReadOnlyList<string> stack = SequenceScanner.FindNumberedStack(
+            @"C:\dir\IMG_00１.tif", Files("IMG_00１.tif", "IMG_002.tif"));
+
+        Assert.Equal(new[] { @"C:\dir\IMG_00１.tif", @"C:\dir\IMG_002.tif" }, stack);
+    }
 }

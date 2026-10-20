@@ -702,7 +702,7 @@ internal static class ImageFileLoader
 
         long samples = pixels * outputChannels;
         SampleRange range = SampleScaling.Scan(bits, samples, interpretation, outputChannels, ct);
-        SampleScaling scaling = SampleScaling.FromRange(range);
+        SampleScaling scaling = SampleScaling.FromRange(range, interpretation);
         progress?.Report(0.85);
 
         var codes = new ushort[samples];
