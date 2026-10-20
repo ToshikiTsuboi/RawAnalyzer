@@ -71,7 +71,10 @@ public static class ViewportRenderer
     /// <summary>画像外領域の背景グレー値(キャンバス色相当)。</summary>
     public const byte BackgroundGray = 22;
 
-    /// <summary>この画素数以下の可視領域はバイリニアデモザイクで現像する。</summary>
+    /// <summary>
+    /// この画素数以下の可視領域はバイリニアデモザイクで現像する(超えると2×2ブロックの簡易現像)。
+    /// 幅1・高さ1の画像は2×2ブロックがとれないので、可視領域によらずバイリニアで現像する。
+    /// </summary>
     public const long BilinearRegionBudget = 6_000_000;
 
     /// <summary>ゼブラの飽和閾値(フルスケールの98%)。</summary>
@@ -482,7 +485,10 @@ public static class ViewportRenderer
         int sy1 = Math.Clamp((int)(originY + destHeight * invZoom) + 2, 0, source.SourceHeight - 1);
         long regionPixels = (long)(sx1 - sx0 + 1) * (sy1 - sy0 + 1);
 
-        if (regionPixels <= BilinearRegionBudget)
+        // ブロック経路は 2×2 ブロックの2行目・2列目を常に読むので、幅1・高さ1の画像では範囲外になる。
+        // 細い画像の可視矩形は長辺が出力の辺×1/最小ズーム程度・短辺が1なので、バイリニアで十分扱える
+        bool thin = source.SourceWidth < 2 || source.SourceHeight < 2;
+        if (regionPixels <= BilinearRegionBudget || thin)
         {
             RenderDevelopBilinear(
                 request, zoom, originX, originY, destWidth, destHeight,

@@ -414,4 +414,42 @@ public class ColorPipelineTests
             Assert.Equal(191, displayed[i * 4 + 2]);
         }
     }
+
+    [Theory]
+    [InlineData(6_200_000, 1)]
+    [InlineData(1, 6_200_000)]
+    public void Render_ColorDevelopOneRowOrColumnBayer_OverBilinearBudget_DoesNotThrow(int width, int height)
+    {
+        // 回帰テスト: 可視矩形が BilinearRegionBudget(600万画素)を超えるとブロック経路に入り、2×2 ブロックの
+        // 2行目・2列目を常に読むため、高さ1・幅1の Bayer 画像では範囲外読み出しの例外になっていた。
+        // 最小ズーム 1/512 で、画像の1行(1列)がビューポートの中段に来るように描く
+        const double zoom = 1.0 / 512;
+        bool wide = width > height;
+        int destWidth = wide ? 12_000 : 3;
+        int destHeight = wide ? 3 : 12_000;
+        var codes = new ushort[(long)width * height];
+        Array.Fill(codes, (ushort)30_000);
+        using RawImage image = TestImages.FromCodes(codes, width, height, bayer: BayerPattern.Rggb);
+        var request = new RenderRequest
+        {
+            Source = new RawImageRenderSource(image, 0),
+            Lut = DisplayLut.Create(new DisplayParameters()),
+            Mode = ViewportDisplayMode.ColorDevelop,
+            Pattern = BayerPattern.Rggb,
+            DevelopLuts = DevelopLuts.Create(new DevelopParameters()),
+        };
+        Assert.True((long)width * height > ViewportRenderer.BilinearRegionBudget);
+        double originX = wide ? 0 : 0.5 - (1.5 * 512);
+        double originY = wide ? 0.5 - (1.5 * 512) : 0;
+        var destination = new byte[destWidth * destHeight * 4];
+
+        ViewportRenderer.Render(
+            request, zoom, originX, originY, destWidth, destHeight, destination, default);
+
+        // 中段(画像の行・列が来る位置)は現像した色で、背景のグレーではない
+        int o = wide ? (destWidth * 4) : 4;
+        Assert.NotEqual(
+            (ViewportRenderer.BackgroundGray, ViewportRenderer.BackgroundGray, ViewportRenderer.BackgroundGray),
+            (destination[o], destination[o + 1], destination[o + 2]));
+    }
 }
