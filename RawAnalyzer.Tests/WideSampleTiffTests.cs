@@ -1008,6 +1008,60 @@ public class WideSampleTiffTests
     }
 
     /// <summary>単一ページのリトルエンディアンTIFFを一時ファイルに書き、本番経路で読み込む。</summary>
+    /// <summary>
+    /// 整数のページ(SampleFormat=1/2)の画素が 0〜1 に収まっても、換算の説明に「実数」と書かない。以前は値域だけで
+    /// 0〜1 の正規化(実数TIFFの慣習)とみなし、二値マスク(0/1)や全画素0の整数ページを「24bit実数 0〜1 → 16bit」と
+    /// 示した(最大が2になるだけで「値」の表示に変わった)。コードの割り当て(1 → 65535)は変わらない。
+    /// </summary>
+    [Theory]
+    [InlineData(24, 1, 1, false, 1)] // 自前復号(DecodePage)
+    [InlineData(24, 1, 1, false, 0)] // 全画素0
+    [InlineData(32, 1, 1, false, 1)] // WIC が生のビット列を返す経路(TryDecodeWideSamples)
+    [InlineData(32, 1, 1, true, 1)]  // BigTIFF は自前復号
+    [InlineData(8, 2, 1, false, 1)]  // 符号あり8bit
+    [InlineData(16, 2, 1, true, 1)]  // 符号あり16bit の BigTIFF
+    [InlineData(64, 1, 1, false, 1)]
+    [InlineData(24, 1, 3, false, 1)] // 整数RGB(DecodeRgbPage)
+    [InlineData(32, 2, 3, false, 1)] // 整数RGB(TryDecodeWideSamples)
+    public void IntegerPage_WithinZeroToOne_IsNotDescribedAsFloat(
+        int bits, int sampleFormat, int samplesPerPixel, bool bigTiff, long maximum)
+    {
+        long[] values = Enumerable.Range(0, 2 * samplesPerPixel).Select(i => i == 1 ? maximum : 0).ToArray();
+        var page = TiffBuilder.GrayPage(2, 1, bits, IntegerSamples(bits, values),
+            photometric: samplesPerPixel == 3 ? 2 : 1, sampleFormat: sampleFormat, samplesPerPixel: samplesPerPixel);
+        using var file = TempTiff.Write(new TiffBuilder(bigTiff: bigTiff).Build(page));
+        DecodedImage decoded = ImageFileLoader.Load(file.Path);
+        using RawImage owned = decoded.Luminance;
+
+        Assert.Equal($"{bits}bit値 0〜1 → 16bit (1code≈1.53E-05)", decoded.ValueNote);
+        if (maximum == 1)
+        {
+            // 2番目のサンプル(グレーは2画素目、RGBは1画素目のG)が 1
+            ushort code = samplesPerPixel == 3 ? Green(decoded) : decoded.Luminance.GetPixel(1, 0);
+            Assert.Equal(65535, code);
+        }
+    }
+
+    [Theory]
+    [InlineData(16)]
+    [InlineData(32)]
+    [InlineData(64)]
+    public void FloatPage_WithinZeroToOne_IsStillDescribedAsNormalized(int bits)
+    {
+        // 実数の 0〜1 は従来どおり正規化の慣習として示す
+        DecodedImage decoded = Load(TiffBuilder.GrayPage(
+            2, 1, bits, TypedSamples(bits, 3, 0f, 0.5f), sampleFormat: 3));
+        using RawImage owned = decoded.Luminance;
+
+        Assert.Equal($"{bits}bit実数 0〜1 → 16bit", decoded.ValueNote);
+    }
+
+    private static ushort Green(DecodedImage decoded)
+    {
+        decoded.Color!.GetPixel(0, 0, out _, out ushort g, out _);
+        return g;
+    }
+
     private static DecodedImage Load(TiffBuilder.Page page)
     {
         using var file = TempTiff.Write(new TiffBuilder().Build(page));

@@ -62,6 +62,22 @@ public class SampleScalingTests
         Assert.Contains("0〜1", scaling.Describe());
     }
 
+    [Theory]
+    [InlineData(SampleInterpretation.UnsignedInteger, 1)]
+    [InlineData(SampleInterpretation.SignedInteger, 1)]
+    [InlineData(SampleInterpretation.UnsignedInteger, 0)] // 全画素0
+    public void IntegerWithinZeroToOne_IsNotNormalized(SampleInterpretation interpretation, double maximum)
+    {
+        // 整数の二値マスク(0/1)・全画素0は正規化(実数の慣習)とみなさない。写し方は同じ(1 → 65535)
+        SampleScaling scaling = SampleScaling.FromRange(new SampleRange(0, maximum, 0), interpretation);
+
+        Assert.False(scaling.IsNormalized);
+        Assert.False(scaling.IsFloatingPoint);
+        Assert.Equal(0, scaling.ToCode(0));
+        Assert.Equal(65535, scaling.ToCode(1));
+        Assert.Equal("24bit値 0〜1 → 16bit (1code≈1.53E-05)", DescribeInvariant(scaling, 24));
+    }
+
     [Fact]
     public void AduScale_UsesActualMaximum()
     {
