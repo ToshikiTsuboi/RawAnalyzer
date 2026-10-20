@@ -145,7 +145,7 @@ public static class ImageAnalysis
     /// <summary>
     /// 領域の統計値(mean/σ/min/max)を計算する。
     /// 領域画素数が <paramref name="maxSamples"/> を超える場合は行・列の等間隔
-    /// サンプリングで計算する(ヒストグラムと同じ基準)。
+    /// サンプリングで計算する(ヒストグラムと同じ基準。細長い領域の短い軸は間引かずに全部読む)。
     /// </summary>
     /// <param name="image">対象画像。</param>
     /// <param name="frame">フレーム番号。</param>
@@ -166,14 +166,15 @@ public static class ImageAnalysis
             return new RegionStatistics(0, 0, 0, 0, 0);
         }
 
-        int stride = 1;
+        int columnStride = 1;
+        int rowStride = 1;
         if (maxSamples > 0 && roi.PixelCount > maxSamples)
         {
-            stride = Math.Max(1, (int)Math.Ceiling(Math.Sqrt((double)roi.PixelCount / maxSamples)));
-
-            // ヒストグラムと同じ理由でstrideは奇数にし、HDR行交互の周期とも互いに素にする。
+            // ヒストグラムと同じ基準で間引く(短い軸は全部読み、刻みは奇数でHDR行交互の周期とも互いに素)。
             // 偶数だと走査位置のx/y偶奇が固定され、BayerではRだけの統計になる
-            stride = SamplingStride(stride, image.Format);
+            (columnStride, rowStride) = SamplingStrides(
+                Math.Max(1, (int)Math.Ceiling(Math.Sqrt((double)roi.PixelCount / maxSamples))),
+                roi.Width, roi.Height, image.Format);
         }
 
         int shift = 16 - image.Format.BitDepth;
@@ -186,8 +187,8 @@ public static class ImageAnalysis
         long totalCount = 0;
         int totalMin = int.MaxValue;
         int totalMax = int.MinValue;
-        int rowCount = (roi.Height + stride - 1) / stride;
-        int sampleStride = stride;
+        int rowCount = (int)((roi.Height + (long)rowStride - 1) / rowStride);
+        int sampleStride = columnStride;
 
         Parallel.For(
             0,
@@ -198,7 +199,7 @@ public static class ImageAnalysis
             (rowIndex, _, local) =>
             {
                 image.CopyRegion(
-                    frame, roi.X, roi.Y + rowIndex * sampleStride, roi.Width, 1, local.Buffer);
+                    frame, roi.X, roi.Y + rowIndex * rowStride, roi.Width, 1, local.Buffer);
                 long sum = local.Sum;
 
                 // スレッドローカルも UInt128 で持つ。1スレッドが担当する行数だけでも
@@ -251,7 +252,8 @@ public static class ImageAnalysis
 
     /// <summary>
     /// 領域のヒストグラムを計算する。領域画素数がmaxSamplesを超える場合は
-    /// 行・列の等間隔サンプリングで計算し、IsSampled=true を返す。
+    /// 行・列の等間隔サンプリングで計算し、IsSampled=true を返す。刻みは奇数で、細長い領域の短い軸は間引かずに全部読む
+    /// (Bayer の4チャネルが画素数に比例して入る)。
     /// </summary>
     /// <param name="image">対象画像。</param>
     /// <param name="frame">フレーム番号。</param>
@@ -290,10 +292,11 @@ public static class ImageAnalysis
         // 4チャネルのうち1つ(例: Rのみ)しかサンプリングされず統計値が別物になる。
         // 奇数にすると行・列とも偶奇が交互に進み、4チャネルが均等に含まれる。
         // HDR行交互の周期(段数×ライン単位)と公約数を持つと特定の段(露光)の行しか読まないので、
-        // 周期とも互いに素にする
-        stride = SamplingStride(stride, image.Format);
+        // 周期とも互いに素にする。幅(高さ)が刻みの数倍に満たない軸は、刻みで読むと片方の位相を丸ごと
+        // 落とすか偏って読むので、間引かずに全部読む(SamplingStrides)
+        (int columnStride, int rowStride) = SamplingStrides(stride, roi.Width, roi.Height, image.Format);
 
-        bool sampled = stride > 1;
+        bool sampled = columnStride > 1 || rowStride > 1;
 
         var buffer = new ushort[roi.Width];
         long sum = 0;
@@ -302,11 +305,11 @@ public static class ImageAnalysis
         int max = int.MinValue;
         long count = 0;
 
-        for (int row = 0; row < roi.Height; row += stride)
+        for (int row = 0; row < roi.Height; row += rowStride)
         {
             cancellationToken.ThrowIfCancellationRequested();
             image.CopyRegion(frame, roi.X, roi.Y + row, roi.Width, 1, buffer);
-            for (int x = 0; x < roi.Width; x += stride)
+            for (int x = 0; x < roi.Width; x += columnStride)
             {
                 int code = buffer[x] >> shift;
                 bins[code]++;
@@ -340,7 +343,62 @@ public static class ImageAnalysis
     }
 
     /// <summary>
-    /// 行・列を同じ刻みで間引くときの刻み。Bayer の偶奇(2)とHDR行交互の周期のどちらとも互いに素になるまで切り上げる。
+    /// 間引きで1つの軸から読む標本(画素)がこれより少なくなるなら、その軸は間引かずに全部読む。
+    /// </summary>
+    /// <remarks>
+    /// 刻み s で長さ L の軸を読むと標本は ceil(L/s) 個で、Bayer の2つの位相は交互に入るため、個数の差1が割合を
+    /// 最大 1/ceil(L/s) 偏らせる。L ≤ s なら位置0の1列(1行)しか読まず、片方の位相が丸ごと抜ける。
+    /// </remarks>
+    internal const int MinSampledPixelsPerAxis = 16;
+
+    /// <summary>
+    /// 行・列の素の刻みを軸ごとに決める。標本が <paramref name="minPerAxis"/> 個に満たない短い軸(細長い ROI・画像)は
+    /// 刻み1で全部読み、もう一方の軸の刻みを stride² にして、全体の標本数を両軸 stride のときと同じ目安に保つ。
+    /// 両軸とも短い(閾値がごく小さい)ときと、どちらも短くないときは両軸 stride。
+    /// </summary>
+    /// <param name="stride">両軸に同じ刻みを使うときの素の刻み(1以上)。</param>
+    /// <param name="columns">列の数(間引きの単位で数える)。</param>
+    /// <param name="rows">行の数(間引きの単位で数える)。</param>
+    /// <param name="minPerAxis">これより標本が少なくなる軸は全部読む。</param>
+    /// <returns>列・行の素の刻み(それぞれ軸の長さ以下。1以上)。</returns>
+    internal static (int Column, int Row) AxisStrides(int stride, long columns, long rows, int minPerAxis)
+    {
+        if (stride <= 1)
+        {
+            return (1, 1);
+        }
+
+        bool narrowColumns = (columns + stride - 1) / stride < minPerAxis;
+        bool narrowRows = (rows + stride - 1) / stride < minPerAxis;
+        if (narrowColumns == narrowRows)
+        {
+            return (stride, stride);
+        }
+
+        // 刻みは軸の長さで頭打ちにする(読む位置 + 刻み が int を超えないように)
+        long squared = (long)stride * stride;
+        return narrowColumns
+            ? (1, (int)Math.Clamp(squared, 1, Math.Max(1, rows)))
+            : ((int)Math.Clamp(squared, 1, Math.Max(1, columns)), 1);
+    }
+
+    /// <summary>
+    /// 画素単位で行・列を間引くときの列・行の刻み。短い軸は全部読み(<see cref="AxisStrides"/>)、刻みは
+    /// <see cref="SamplingStride"/> で奇数かつHDR行交互の周期と互いに素にする。
+    /// </summary>
+    /// <param name="stride">両軸に同じ刻みを使うときの素の刻み(1以上)。</param>
+    /// <param name="width">領域の幅。</param>
+    /// <param name="height">領域の高さ。</param>
+    /// <param name="format">画像のフォーマット(HDR行交互の周期を決める)。</param>
+    /// <returns>列・行の刻み。</returns>
+    internal static (int Column, int Row) SamplingStrides(int stride, int width, int height, RawFormat format)
+    {
+        (int column, int row) = AxisStrides(stride, width, height, MinSampledPixelsPerAxis);
+        return (SamplingStride(column, format), SamplingStride(row, format));
+    }
+
+    /// <summary>
+    /// 行・列を間引くときの刻み。Bayer の偶奇(2)とHDR行交互の周期のどちらとも互いに素になるまで切り上げる。
     /// </summary>
     /// <param name="stride">素の刻み(1以上)。</param>
     /// <param name="format">画像のフォーマット(HDR行交互の周期を決める)。</param>
@@ -426,7 +484,7 @@ public static class ImageAnalysis
     /// Bayerチャネル別のヒストグラムと統計を計算する(全体分も同時に返す)。
     /// 領域の画素だけを、画素の絶対座標の偶奇でチャネルへ振り分ける(2x2境界へ広げも削りもしない)。
     /// 並置画像(<see cref="RawImage.SegmentWidth"/>)では、画素を含む区画の左端から数えた座標の偶奇で振り分ける。
-    /// サンプリング時は絶対座標の2x2ブロック単位で間引き、全チャネルを均等に含める。
+    /// サンプリング時は絶対座標の2x2ブロック単位で間引き、全チャネルを均等に含める(細長い領域の短い軸は間引かずに全部読む)。
     /// </summary>
     /// <param name="image">対象画像。</param>
     /// <param name="frame">フレーム番号。</param>
@@ -481,16 +539,25 @@ public static class ImageAnalysis
 
         var totalBins = new long[binCount];
 
-        // 間引きの刻みはブロック単位(各軸 strideBlocks ブロックごとに1ブロック)。
-        // 集計数は領域の画素数の約 1/strideBlocks² になる。
-        // 読む行はブロックの上下2行(2·k·strideBlocks と +1)なので、刻みがHDR行交互の周期と公約数を
+        // 間引きの刻みはブロック単位(列は columnBlocks、行は rowBlocks ブロックごとに1ブロック)。
+        // 集計数は領域の画素数の約 1/(columnBlocks·rowBlocks) になる。
+        // 読む行はブロックの上下2行(2·k·rowBlocks と +1)なので、刻みがHDR行交互の周期と公約数を
         // 持つと特定の段(露光)の行しか読まない(2段・ライン単位2で刻み2なら長秒だけ)。周期と互いに素にする
-        int strideBlocks = maxSamples > 0 && roi.PixelCount > maxSamples
-            ? CoprimeStride(
+        // 幅(高さ)が刻みの数倍に満たない軸は、刻みで読むと端のブロック(幅3の画像の列2など)を一度も読まないので、
+        // 画素と同じ基準(ブロックは2画素)で短い軸を間引かずに全部読む
+        int columnBlocks = 1;
+        int rowBlocks = 1;
+        if (maxSamples > 0 && roi.PixelCount > maxSamples)
+        {
+            int period = HdrRowPeriod(image.Format);
+            (columnBlocks, rowBlocks) = AxisStrides(
                 (int)Math.Ceiling(Math.Sqrt((double)roi.PixelCount / maxSamples)),
-                HdrRowPeriod(image.Format))
-            : 1;
-        bool sampled = strideBlocks > 1;
+                blocksX, blocksY, MinSampledPixelsPerAxis / 2);
+            columnBlocks = CoprimeStride(columnBlocks, period);
+            rowBlocks = CoprimeStride(rowBlocks, period);
+        }
+
+        bool sampled = columnBlocks > 1 || rowBlocks > 1;
 
         // チャネルインデックス: 0=R, 1=Gr, 2=Gb, 3=B
         var parityToChannel = new int[4];
@@ -516,7 +583,7 @@ public static class ImageAnalysis
         if (blocksX > 0 && blocksY > 0)
         {
             int roiBottom = roi.Y + roi.Height;
-            int rowSteps = (blocksY + strideBlocks - 1) / strideBlocks;
+            int rowSteps = (int)((blocksY + (long)rowBlocks - 1) / rowBlocks);
 
             // ブロック行単位で並列化する。チャネル別ビンはスレッドごとに要るので
             // (16bitでは1区画あたり数MB)、区画数をコア数で頭打ちにして確保を抑える
@@ -533,14 +600,14 @@ public static class ImageAnalysis
                     for (int step = partition; step < rowSteps; step += partitions)
                     {
                         cancellationToken.ThrowIfCancellationRequested();
-                        int top = blockTop + (step * strideBlocks * 2);
+                        int top = blockTop + (int)((long)step * rowBlocks * 2);
 
                         // ブロックの上下2行のうち領域内の行だけ読む(領域の上端・下端が奇数なら片方)
                         for (int y = Math.Max(top, roi.Y); y < Math.Min(top + 2, roiBottom); y++)
                         {
                             image.CopyRegion(frame, roi.X, y, roi.Width, 1, row);
                             local.AddBlockRow(
-                                row, firstEvenColumn, blocksX, strideBlocks, shift,
+                                row, firstEvenColumn, blocksX, columnBlocks, shift,
                                 parityToChannel[(y & 1) * 2], parityToChannel[((y & 1) * 2) + 1], columnFlips);
                         }
                     }
@@ -870,7 +937,7 @@ public static class ImageAnalysis
         /// 先頭ブロックの左(偶数X)の画素の、<paramref name="row"/> 上の位置(領域外なら-1)。
         /// </param>
         /// <param name="blocksX">領域にかかるブロックの列数。</param>
-        /// <param name="strideBlocks">間引きの刻み(ブロック数。1なら全ブロック)。</param>
+        /// <param name="strideBlocks">列の間引きの刻み(ブロック数。1なら全ブロック)。</param>
         /// <param name="shift">16bit正規化値を raw code へ戻す右シフト量。</param>
         /// <param name="evenChannel">この行の偶数Xの画素のチャネル番号(区画の左端から数えた偶奇)。</param>
         /// <param name="oddChannel">この行の奇数Xの画素のチャネル番号。</param>

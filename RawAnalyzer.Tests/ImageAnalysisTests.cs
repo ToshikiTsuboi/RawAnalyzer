@@ -176,6 +176,82 @@ public class ImageAnalysisTests
         }
     }
 
+    /// <summary>
+    /// RGGB で R=1000, Gr=2000, Gb=3000, B=4000、ただし列 <paramref name="markedColumn"/> の R だけ 1500 の画像。
+    /// </summary>
+    private static RawImage MakeChannelCodedMosaic(int width, int height, int markedColumn = -1)
+    {
+        var codes = new ushort[width * height];
+        for (int y = 0; y < height; y++)
+        {
+            for (int x = 0; x < width; x++)
+            {
+                codes[(y * width) + x] = (ushort)((y & 1) == 0
+                    ? ((x & 1) == 0 ? (x == markedColumn ? 1500 : 1000) : 2000)
+                    : ((x & 1) == 0 ? 3000 : 4000));
+            }
+        }
+
+        return TestImages.FromCodes(codes, width, height, bitDepth: 12, bayer: BayerPattern.Rggb);
+    }
+
+    [Theory]
+    [InlineData(3, 4000, 10_000)] // 素の刻み2→3。幅3以下なので列0しか読まず、Gr と B が丸ごと抜けていた
+    [InlineData(2, 5000, 8_000)]
+    [InlineData(7, 4000, 20_000)] // 幅が刻みの2倍余り: 列 0,3,6 で R:Gr = 2:1(真は 4:3)に偏っていた
+    [InlineData(4000, 2, 6_000)] // 横長: 行0しか読まず Gb と B が抜けていた
+    [InlineData(4000, 3, 8_000)]
+    public void ComputeHistogram_SampledNarrowRegion_KeepsChannelProportions(int width, int height, long maxSamples)
+    {
+        // 回帰テスト: 行と列に同じ刻みを使っており、幅(高さ)が刻みの数倍に満たない軸では Bayer の片方の位相を
+        // 丸ごと落とすか偏って読んでいた(3×4,000,000 の raw で平均 1750、真値 1916.67)。短い軸は間引かずに全部読む
+        using RawImage image = MakeChannelCodedMosaic(width, height);
+        long[] expected = new long[4096];
+        for (int y = 0; y < height; y++)
+        {
+            for (int x = 0; x < width; x++)
+            {
+                expected[(y & 1) == 0 ? ((x & 1) == 0 ? 1000 : 2000) : ((x & 1) == 0 ? 3000 : 4000)]++;
+            }
+        }
+
+        HistogramResult result = ImageAnalysis.ComputeHistogram(image, 0, maxSamples: maxSamples);
+
+        Assert.True(result.IsSampled);
+        Assert.True(result.SampleCount <= maxSamples);
+        long total = (long)width * height;
+        foreach (int code in new[] { 1000, 2000, 3000, 4000 })
+        {
+            // 各位相の割合が画素数の割合に一致する(間引きの刻みは奇数なので、行・列とも位相が交互に入る)
+            Assert.Equal(
+                (double)expected[code] / total, (double)result.Bins[code] / result.SampleCount, 2);
+        }
+
+        double expectedMean = (1000.0 * expected[1000] + 2000.0 * expected[2000]
+            + 3000.0 * expected[3000] + 4000.0 * expected[4000]) / total;
+        Assert.Equal(expectedMean, result.Statistics.Mean, 0);
+        RegionStatistics stats = ImageAnalysis.ComputeStatistics(
+            image, 0, new RegionOfInterest(0, 0, width, height), maxSamples);
+        Assert.Equal(result.Statistics, stats);
+    }
+
+    [Fact]
+    public void ComputeChannelAnalysis_SampledNarrowImage_ReadsEveryColumn()
+    {
+        // 回帰テスト: チャネル別の間引きも行・列に同じブロック刻みを使っており、幅3の画像では2つ目のブロック
+        // (列2)を一度も読まなかった。短い軸は間引かずに全部読む
+        using RawImage image = MakeChannelCodedMosaic(3, 4000, markedColumn: 2);
+
+        ChannelAnalysisResult result = ImageAnalysis.ComputeChannelAnalysis(
+            image, 0, BayerPattern.Rggb, maxSamples: 10_000);
+
+        Assert.True(result.Total.IsSampled);
+        Assert.True(result.Total.SampleCount <= 10_000);
+        ChannelHistogram r = result.Channels.First(c => c.Channel == BayerChannel.R);
+        Assert.True(r.Bins[1500] > 0, "列2の R が集計されていない");
+        Assert.Equal(r.Bins[1000], r.Bins[1500]);
+    }
+
     [Fact]
     public void RegionOfInterest_Clamp_LimitsToImageBounds()
     {
