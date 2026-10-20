@@ -1,5 +1,4 @@
 using System.Globalization;
-using System.Text;
 using System.Text.RegularExpressions;
 
 namespace RawAnalyzer.App.Services;
@@ -65,8 +64,9 @@ internal static partial class FpsInput
 
         // NFKC で全角の単位(ｆｐｓ)を半角へ寄せてから単位を除き、残りの全体を NumericInput に読ませる(全角の数字・
         // 記号、かな入力の「ー」(負号)と「。」(小数点)、3桁区切りはそちらで読む)。小数点のつもりかもしれない
-        // カンマ("7,5")や数の後ろの余計な文字("7.5.3"、"30x")を含む入力は、手前の数だけを読まずに読めない入力とする
-        string number = UnitSuffix().Replace(text.Normalize(NormalizationForm.FormKC), "");
+        // カンマ("7,5")や数の後ろの余計な文字("7.5.3"、"30x")を含む入力は、手前の数だけを読まずに読めない入力とする。
+        // 対になっていないサロゲートを含む入力は寄せずに渡し、読めない入力とする(NFKC が例外を投げるため)
+        string number = UnitSuffix().Replace(NumericInput.ToHalfWidth(text), "");
         if (!NumericInput.TryParseFinite(number, out double value))
         {
             notice = $"「{text.Trim()}」からフレームレートを読めないため、{fallbackText}";

@@ -85,6 +85,35 @@ public class NumericInputTests
         Assert.Equal(3_000_000_000L, wide);
     }
 
+    /// <summary>
+    /// 対になっていないサロゲートを含む文字列(壊れた UTF-16 のクリップボードの内容など)は、"abc" と同じく
+    /// 読めない入力として false を返す。以前は NFKC の正規化が ArgumentException を投げ、TextChanged から
+    /// 「予期しないエラー」のダイアログまで漏れた。
+    /// </summary>
+    /// <remarks>
+    /// InlineData に書くとテストの列挙で文字列が直列化され、単独サロゲートが U+FFFD に置き換わって再現しないので、
+    /// テストの中で組み立てる。
+    /// </remarks>
+    [Fact]
+    public void TryParse_LoneSurrogate_ReturnsFalse()
+    {
+        foreach (string text in LoneSurrogateTexts)
+        {
+            Assert.False(NumericInput.TryParseFinite(text, out _));
+            Assert.False(NumericInput.TryParsePositive(text, out _));
+            Assert.False(NumericInput.TryParseInteger(text, out long _));
+            Assert.False(NumericInput.TryParseInteger(text, out int _));
+        }
+    }
+
+    /// <summary>対になっていないサロゲートを含む文字列("1"+U+D800、U+DC00 単体、"12"+U+D83D)。</summary>
+    internal static readonly string[] LoneSurrogateTexts =
+    {
+        "1" + (char)0xD800,
+        ((char)0xDC00).ToString(),
+        "12" + (char)0xD83D,
+    };
+
     [Fact]
     public void TryParseFinite_AcceptsNegativeMatrixCoefficients()
     {

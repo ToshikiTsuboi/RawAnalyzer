@@ -126,6 +126,22 @@ public class VideoSettingsTests
         Assert.Contains(expectedNotice, notice);
     }
 
+    /// <summary>
+    /// 対になっていないサロゲートを含む入力は、例外を投げずに読めない入力として既定値へ落とす(以前は NFKC の
+    /// 正規化が ArgumentException を投げた)。単独サロゲートは InlineData の直列化で U+FFFD に置き換わるので、
+    /// テストの中で組み立てる。
+    /// </summary>
+    [Fact]
+    public void Parse_LoneSurrogate_FallsBack()
+    {
+        foreach (string text in NumericInputTests.LoneSurrogateTexts.Append((char)0xDC00 + " fps"))
+        {
+            Assert.Equal(15, FpsInput.Parse(text, fallback: 15, out string? notice), 10);
+            Assert.Contains("読めない", notice);
+            Assert.Equal(15, FpsInput.ParseInteger(text, fallback: 15));
+        }
+    }
+
     [Theory]
     [InlineData("15 fps")]
     [InlineData("7.5")]

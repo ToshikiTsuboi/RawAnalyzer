@@ -43,11 +43,33 @@ internal static partial class NumericInput
         }
 
         // NFKC は全角英数・記号・スペースを半角へ寄せる(－ → -、． → .、，→ ,)
-        string normalized = text.Normalize(NormalizationForm.FormKC)
+        string normalized = ToHalfWidth(text)
             .Replace('\u2212', '-') // MINUS SIGN(−)
             .Replace('ー', '-')
             .Replace('。', '.');
         return GroupedThousands().IsMatch(normalized) ? normalized.Replace(",", "") : normalized;
+    }
+
+    /// <summary>
+    /// NFKC で全角の英数・記号・スペースを半角へ寄せる。
+    /// </summary>
+    /// <remarks>
+    /// 対になっていないサロゲートを含む(壊れた UTF-16 の)文字列では <see cref="string.Normalize(NormalizationForm)"/> が
+    /// ArgumentException を投げる。以前はそれが Try の解釈から漏れ、貼り付けた入力で「予期しないエラー」になった。
+    /// そうした文字列は寄せずにそのまま返す(どの数値の解釈も読めないので、"abc" と同じく解釈失敗になる)。
+    /// </remarks>
+    /// <param name="text">入力文字列。</param>
+    /// <returns>寄せた文字列。不正な UTF-16 ならそのまま。</returns>
+    internal static string ToHalfWidth(string text)
+    {
+        try
+        {
+            return text.Normalize(NormalizationForm.FormKC);
+        }
+        catch (ArgumentException)
+        {
+            return text;
+        }
     }
 
     [GeneratedRegex(@"^\s*[+-]?[0-9]{1,3}(,[0-9]{3})+(\.[0-9]*)?\s*$")]
