@@ -12,12 +12,13 @@ public class DisplaySettingsTests
     public void ToDisplayParameters_UsesLevelCodeConvention()
     {
         // メインビューのApplyLevelCodesと同じ規約:
-        // 黒は下端 code<<shift、白は区間上端 (code<<shift)|(2^shift-1)
+        // 黒・白とも、そのコードの画素と同じ値(区間の下端 code<<shift)。白を区間の上端に置くと
+        // 白レベルのコードの画素が255に届かなかった
         var settings = new DisplaySettings { BlackCode = 137, WhiteCode = 4000 };
         DisplayParameters parameters = settings.ToDisplayParameters(12);
 
         Assert.Equal(137 << 4, parameters.BlackPoint);
-        Assert.Equal((4000 << 4) | 15, parameters.WhitePoint);
+        Assert.Equal(4000 << 4, parameters.WhitePoint);
     }
 
     [Fact]

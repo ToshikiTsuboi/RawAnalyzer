@@ -1713,7 +1713,7 @@ public partial class MainWindow : Window
     private DevelopParameters CurrentDevelopParameters()
     {
         double gamma = _vm.Gamma > 0 ? _vm.Gamma : 1.0;
-        // 白点(_whitePoint)は CurrentShift と同じビット深度で白レベルcodeの上端に置いている。
+        // 白点(_whitePoint)は CurrentShift と同じビット深度で白レベルcodeの画素と同じ値(code<<(16−N))に置いている。
         // 白飛び(白レベルのcode以上)の判定を code で行えるよう、同じビット深度を渡す
         return new DevelopParameters(
             _blackPoint, _vm.WbGainR, _vm.WbGainG, _vm.WbGainB, gamma,
@@ -2300,10 +2300,12 @@ public partial class MainWindow : Window
         // 表示中のフレームを保存する(rawは全フレーム出力なので対象外)
         int frame = Math.Clamp(Viewport.Frame, 0, image.FrameCount - 1);
 
-        // チェック状態に応じて、適用しない処理は恒等パラメータへ落とす
+        // チェック状態に応じて、適用しない処理は恒等パラメータへ落とす。表示調整の恒等は表示中の画像の
+        // ビット深度の既定(白=最大コード<<(16−N))で、8bit は各コードをそのまま書く
+        int saveBitDepth = ActiveFormat?.BitDepth ?? 16;
         DisplayLut lut = choice.ApplyDisplayLut
             ? BuildLut()
-            : DisplayLut.Create(new DisplayParameters());
+            : DisplayLut.Create(DisplayLevels.IdentityParameters(saveBitDepth));
         DevelopParameters developParameters = CurrentDevelopParameters();
         if (!choice.ApplyDisplayLut)
         {
@@ -2311,7 +2313,7 @@ public partial class MainWindow : Window
             {
                 BlackLevel = 0,
                 Gamma = 1.0,
-                WhitePoint = 65535,
+                WhitePoint = DisplayLevels.DefaultPoints(saveBitDepth).WhitePoint,
                 Gain = 1.0,
                 Contrast = 1.0,
             };
@@ -2341,7 +2343,7 @@ public partial class MainWindow : Window
         // 各段をその段の表示調整で焼き込む(スライダーの値は最後に調整した段のもの)。焼き込まないときも各段は
         // 別の画像として焼き込む。段ごとの値はここで控え、付随テキストにも同じ値を書く
         HdrSplitAdjustments? split = HdrSplitAdjustments.ForSave(
-            _hdrFrameParams, _hdrSegmentWidth, choice.ApplyDisplayLut);
+            _hdrFrameParams, _hdrSegmentWidth, choice.ApplyDisplayLut, saveBitDepth);
 
         ProgressWindow result = ProgressWindow.Run(
             this,
@@ -2946,17 +2948,15 @@ public partial class MainWindow : Window
     {
         // 「表示調整を焼き込む」オフなら黒/白点・ゲイン・ガンマ・コントラストを
         // ニュートラルにする。WB・マトリクス・デモザイクの現像段は残す
-        // (どう写っているかの色は保ちつつ、見え方の調整だけ外す)
-        DisplayLut lut = choice.ApplyDisplayLut
-            ? BuildLut()
-            : DisplayLut.Create(new DisplayParameters());
+        // (どう写っているかの色は保ちつつ、見え方の調整だけ外す)。既定の白点はファイル・ページの
+        // ビット深度で決まるので、表示LUTと現像の白点は BatchFrameRenderer が1枚ごとに選ぶ(lut = null)
+        DisplayLut? lut = choice.ApplyDisplayLut ? BuildLut() : null;
         DevelopParameters developParameters = CurrentDevelopParameters();
         if (!choice.ApplyDisplayLut)
         {
             developParameters = developParameters with
             {
                 BlackLevel = 0,
-                WhitePoint = 65535,
                 Gain = 1.0,
                 Gamma = 1.0,
                 Contrast = 1.0,
@@ -3964,7 +3964,7 @@ public partial class MainWindow : Window
     /// <summary>raw code の黒/白レベルを16bitフルスケールの内部値へ反映する。</summary>
     private void ApplyLevelCodes(double blackCode, double whiteCode)
     {
-        // 白点はそのcodeの上端まで含める(下位ビットを立てる)
+        // 黒点・白点はそのcodeの画素と同じ値(code<<(16−N)、区間の下端)に置く。白レベルのcodeの画素が255になる
         (_blackPoint, _whitePoint) = DisplayLevels.ToPoints(
             blackCode, whiteCode, ActiveFormat?.BitDepth ?? 16);
     }
@@ -3998,8 +3998,9 @@ public partial class MainWindow : Window
         _vm.BlackLevel = 0;
         _vm.WhiteLevel = _vm.BlackLevelMax;
         _updatingSliders = false;
-        _blackPoint = 0;
-        _whitePoint = 65535;
+
+        // 白点は最大コードの画素と同じ値(最大code<<(16−N))。65535 のままだと 8bit の 255(65280)が 254 になる
+        (_blackPoint, _whitePoint) = DisplayLevels.DefaultPoints(ActiveFormat?.BitDepth ?? 16);
     }
 
     private void OnResetDisplayClick(object sender, RoutedEventArgs e)

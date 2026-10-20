@@ -226,9 +226,9 @@ public sealed class DevelopLuts
             return p.BlackLevel + 1;
         }
 
-        // 通常は白点以上(x ≥ 1)。ただし Nbit 素材の画素は code<<(16−N) で下位ビットが0、
-        // 白点はUIで白レベルcodeの上端(下位ビットを1で埋めた値)に置かれるため、16bit値のまま
-        // 比べると白レベルのcodeの画素(12bitの既定なら 4095<<4 = 65520 < 65535)が漏れる。
+        // 通常は白点以上(x ≥ 1)。Nbit 素材の画素は code<<(16−N) で下位ビットが0。UIは白点を白レベルcodeの
+        // 画素と同じ値に置くが、下位ビットの立った白点(既定の DevelopParameters の 65535 など)と16bit値のまま
+        // 比べると白レベルのcodeの画素(12bit なら 4095<<4 = 65520 < 65535)が漏れる。
         // 下位の量子化余白を落とし、code で比べる
         int padding = (1 << (16 - p.SourceBitDepth)) - 1;
         return p.WhitePoint & ~padding;
