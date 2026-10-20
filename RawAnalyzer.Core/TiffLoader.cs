@@ -1955,6 +1955,7 @@ public static unsafe class TiffLoader
         long rowsPerStrip = GetScalar(entries, data, TagRowsPerStrip, header) ?? height;
         long photometric = GetScalar(entries, data, TagPhotometric, header) ?? 1;
         long sampleFormat = GetScalar(entries, data, TagSampleFormat, header) ?? 1;
+        long fillOrder = GetScalar(entries, data, TagFillOrder, header) ?? 1;
 
         if (compression != 1)
         {
@@ -1984,6 +1985,12 @@ public static unsafe class TiffLoader
         {
             throw new InvalidDataException(
                 $"符号なし整数のTIFFのみサポートします(SampleFormat={sampleFormat})。");
+        }
+
+        // FillOrder=2 はバイト内のビット順が逆なので、そのまま読むとビット反転前の値を黙って返してしまう
+        if (fillOrder != 1)
+        {
+            throw new InvalidDataException($"FillOrder={fillOrder} は未対応です。");
         }
 
         if (width <= 0 || height <= 0 || width > int.MaxValue || height > int.MaxValue)
