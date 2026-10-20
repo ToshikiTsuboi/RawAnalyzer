@@ -617,6 +617,10 @@ public static class ImageAnalysis
     /// <summary>
     /// プロファイル配列の統計値(平均/最小/最大/中央値/標準偏差)を計算する。
     /// </summary>
+    /// <remarks>
+    /// 標準偏差は母標準偏差で、平均を求めてから偏差の二乗を足す2段の計算で求める(射影の平均の線のように
+    /// 高いレベルに 1 code 未満のムラが乗った値でも桁落ちしない)。全ての値が同じなら厳密に0。
+    /// </remarks>
     /// <param name="values">プロファイル値。</param>
     /// <returns>統計値。空配列なら全て0。</returns>
     public static ProfileStatistics ComputeProfileStatistics(ReadOnlySpan<double> values)
@@ -627,13 +631,11 @@ public static class ImageAnalysis
         }
 
         double sum = 0;
-        double sumSq = 0;
         double min = double.MaxValue;
         double max = double.MinValue;
         foreach (double v in values)
         {
             sum += v;
-            sumSq += v * v;
             if (v < min)
             {
                 min = v;
@@ -646,7 +648,28 @@ public static class ImageAnalysis
         }
 
         double mean = sum / values.Length;
-        double variance = sumSq / values.Length - mean * mean;
+        double variance = 0;
+        if (min == max)
+        {
+            // 一定値。和の丸めで平均が値から1 ulp ずれても、σ に丸めの残りを出さない
+            mean = min;
+        }
+        else
+        {
+            // Σv²/N − mean² は、16bit の高いレベル(Σv² ≈ 1e14)で Σv² の丸め誤差が 1 code 未満のムラの
+            // 分散を上回り、σ が真値の 0.2〜5 倍になった。偏差を足し、平均の丸めの残りを差し引いて補正する
+            // (corrected two-pass)
+            double squares = 0;
+            double deviations = 0;
+            foreach (double v in values)
+            {
+                double d = v - mean;
+                squares += d * d;
+                deviations += d;
+            }
+
+            variance = Math.Max(0, (squares - deviations * deviations / values.Length) / values.Length);
+        }
 
         var sorted = values.ToArray();
         Array.Sort(sorted);
@@ -654,8 +677,7 @@ public static class ImageAnalysis
             ? sorted[sorted.Length / 2]
             : (sorted[sorted.Length / 2 - 1] + sorted[sorted.Length / 2]) / 2.0;
 
-        return new ProfileStatistics(
-            values.Length, mean, min, max, median, Math.Sqrt(Math.Max(0, variance)));
+        return new ProfileStatistics(values.Length, mean, min, max, median, Math.Sqrt(variance));
     }
 
     /// <summary>
