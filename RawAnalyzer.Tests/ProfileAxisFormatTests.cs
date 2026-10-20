@@ -179,9 +179,12 @@ public class ProfileAxisFormatTests
         mode.SelectedIndex = 1;
         Assert.Equal(zoomed, plot.HorizontalRange);
 
-        // 向きの切り替え(同じ長さでも別の座標)では手動の範囲を使わない
+        // 向きの切り替え(同じ長さでも別の座標)では手動の範囲を使わない。そのあと手動へ切り替えても、
+        // 前の向きの座標の範囲へは戻らず、表示中の範囲で固定する
         plot.ResetHorizontalRange();
         Assert.Equal(0, mode.SelectedIndex);
+        Assert.Equal(new ProfileAxisRange(0, 999), plot.HorizontalRange);
+        mode.SelectedIndex = 1;
         Assert.Equal(new ProfileAxisRange(0, 999), plot.HorizontalRange);
     });
 

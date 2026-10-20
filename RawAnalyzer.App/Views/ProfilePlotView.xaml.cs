@@ -229,12 +229,13 @@ public partial class ProfilePlotView : UserControl
 
     /// <summary>
     /// 横軸を自動(データ全体)へ戻す(向きの切り替えなど、同じ長さでも別の座標になったとき。手動の範囲も
-    /// 別の座標の値なので使わない)。
+    /// 別の座標の値なので捨てる。次に手動へ切り替えたときは表示中の範囲で固定する)。
     /// </summary>
     internal void ResetHorizontalRange()
     {
         EndPan();
         _horizontalRange = null;
+        _manualHorizontal = null;
         SetHorizontalMode(manual: false);
         Redraw();
     }
