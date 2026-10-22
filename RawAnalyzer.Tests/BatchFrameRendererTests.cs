@@ -151,6 +151,49 @@ public class BatchFrameRendererTests
         }
     }
 
+    [Theory]
+    [InlineData(Output.Png, 1, 0)]
+    [InlineData(Output.AviJpeg, 3, 0)]
+    [InlineData(Output.Mp4Rgb24, 2, 1)]
+    [InlineData(Output.Mp4Rgb24, 2, -1)]
+    public void InterleavedHdrWithMismatchedBayerPhase_RefusesDevelopment(
+        Output output, int lineBlock, int rowOffset)
+    {
+        // 一括出力は表示モードを経由しないため、実際に焼き込む各入力で位相を検査する必要がある。
+        // Bayer は読み込み時の None から一括出力の設定で指定される場合もある。
+        var format = new RawFormat
+        {
+            Width = 8, Height = 24, BitDepth = 12, Bayer = BayerPattern.None,
+            Hdr = HdrMode.LineInterleaved, HdrStages = 2,
+            HdrLineBlock = lineBlock, HdrRowOffset = rowOffset,
+        };
+        using RawImage image = TestImages.FromCodes(new ushort[8 * 24], format);
+        var entry = new FileFrame(image, null, 0, 0, 1, false, "hdr.raw");
+        var renderer = new BatchFrameRenderer(BayerPattern.Rggb, new DevelopParameters(), lut: null);
+
+        NotSupportedException error = Assert.Throws<NotSupportedException>(() => Render(renderer, entry, output));
+        Assert.Contains("行交互HDR", error.Message);
+        Assert.Contains("保存", error.Message);
+    }
+
+    [Theory]
+    [InlineData(HdrMode.LineInterleaved, 2, BayerPattern.Rggb)]
+    [InlineData(HdrMode.LineInterleaved, 1, BayerPattern.None)]
+    [InlineData(HdrMode.None, 1, BayerPattern.Rggb)]
+    public void PhaseCompatibleOrMonochromeInput_CanStillBeExported(
+        HdrMode hdr, int lineBlock, BayerPattern pattern)
+    {
+        var format = new RawFormat
+        {
+            Width = 8, Height = 8, BitDepth = 12, Bayer = pattern,
+            Hdr = hdr, HdrStages = 2, HdrLineBlock = lineBlock,
+        };
+        using RawImage image = TestImages.FromCodes(Enumerable.Repeat((ushort)4095, 64).ToArray(), format);
+        var renderer = new BatchFrameRenderer(pattern, new DevelopParameters(Gamma: 1), lut: null);
+        byte[] rgb = renderer.RenderRgb24(new FileFrame(image, null, 0, 0, 1, false, "input.raw"), default);
+        Assert.All(rgb, value => Assert.Equal(255, value));
+    }
+
     private static byte[] Render(BatchFrameRenderer renderer, FileFrame entry, Output output)
     {
         switch (output)

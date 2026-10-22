@@ -105,6 +105,21 @@ public class SixteenBitSaturationTests
         Assert.Equal(30001, binned.GetPixel(0, binned.Height - 1));
     }
 
+    [Theory]
+    [InlineData(8, 65280)]
+    [InlineData(8, 65535)]
+    [InlineData(12, 65520)]
+    [InlineData(12, 65535)]
+    [InlineData(16, 65535)]
+    public void HdrMerge_BlackAtOrAboveSourceMaximum_IsRejected(int bitDepth, int black)
+    {
+        ushort maxCode = (ushort)((1 << bitDepth) - 1);
+        using RawImage first = TestImages.FromCodes([maxCode], 1, 1, bitDepth);
+        using RawImage second = TestImages.FromCodes([maxCode], 1, 1, bitDepth);
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            HdrMerger.Merge([first, second], new HdrMergeParameters(BlackLevel: (ushort)black)));
+    }
+
     private static RawImage Process(RawImage source, string process) => process switch
     {
         "binning" => ImageBinning.Apply(source, 2),

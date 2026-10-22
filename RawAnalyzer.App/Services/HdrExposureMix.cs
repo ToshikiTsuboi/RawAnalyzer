@@ -73,6 +73,14 @@ internal static class HdrExposureMix
 
     private const string PhaseMismatchCause =
         "(ファイル上の行の偶奇がセンサのBayerの位相と一致せず、短秒の行などで R↔Gb・Gr↔B を取り違えます)。";
+
+    /// <summary>行位相が一致しない raw の自動WB・スポイトを断る理由。分割・合成後は推定できる。</summary>
+    internal static string? WhiteBalanceRefusal(bool bayerPhaseMismatch) => bayerPhaseMismatch
+        ? "行交互HDRのrawは、ライン単位か行オフセットが奇数のため、Raw表示のままでは" +
+          "自動WB・ホワイトバランスのスポイトを使えません" + PhaseMismatchCause + "\n" +
+          "HDR分割ビュー(Ctrl+5)またはHDR合成ビュー(Ctrl+6)に切り替えてから推定してください。"
+        : null;
+
     /// <summary>Raw表示で、1フレームの中に露光の違う行が並ぶ(行交互HDR)か。</summary>
     /// <remarks>
     /// レイアウトを決められない指定(Auto でフレーム数が1でも段数でもない)は分割もできないので、従来どおり扱う。

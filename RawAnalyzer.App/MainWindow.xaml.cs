@@ -3920,7 +3920,7 @@ public partial class MainWindow : Window
     private async void OnGrayWorldClick(object sender, RoutedEventArgs e)
     {
         if (ActiveImage is null || ActiveFormat is null
-            || ActiveFormat.Bayer == BayerPattern.None)
+            || ActiveFormat.Bayer == BayerPattern.None || RefuseWhiteBalanceForHdr())
         {
             return;
         }
@@ -3951,7 +3951,7 @@ public partial class MainWindow : Window
         // 推定中に WB のゲインを変えた(スポイト・スライダー)ときも、後からの変更を残して推定は捨てる
         // (以前はゲインを照合せず、後から終わった推定がスポイトで合わせたゲインを上書きした)
         if (!ReferenceEquals(image, ActiveImage) || frame != Viewport.Frame
-            || pattern != ActiveFormat?.Bayer || blackLevel != _blackPoint
+            || pattern != ActiveFormat?.Bayer || blackLevel != _blackPoint || BayerPhaseMismatchShown
             || requestedGains != (_vm.WbGainR, _vm.WbGainG, _vm.WbGainB))
         {
             return;
@@ -3966,6 +3966,12 @@ public partial class MainWindow : Window
     {
         if (WbPickToggle.IsChecked == true)
         {
+            if (RefuseWhiteBalanceForHdr())
+            {
+                WbPickToggle.IsChecked = false;
+                return;
+            }
+
             RoiToggle.IsChecked = false;
             ProfileToggle.IsChecked = false;
             Viewport.InteractionMode = ViewportInteractionMode.WhiteBalancePick;
@@ -3979,7 +3985,7 @@ public partial class MainWindow : Window
     private void OnWhiteBalancePicked(object? sender, CursorPixelEventArgs e)
     {
         if (ActiveImage is null || ActiveFormat is null
-            || ActiveFormat.Bayer == BayerPattern.None)
+            || ActiveFormat.Bayer == BayerPattern.None || RefuseWhiteBalanceForHdr())
         {
             return;
         }
@@ -3996,6 +4002,17 @@ public partial class MainWindow : Window
         _vm.WbGainG = 1.0;
         _vm.WbGainR = Math.Clamp(gains.GainR, 0.5, 4.0);
         _vm.WbGainB = Math.Clamp(gains.GainB, 0.5, 4.0);
+    }
+
+    private bool RefuseWhiteBalanceForHdr()
+    {
+        if (HdrExposureMix.WhiteBalanceRefusal(BayerPhaseMismatchShown) is not { } reason)
+        {
+            return false;
+        }
+
+        MessageBox.Show(this, reason, "ホワイトバランス", MessageBoxButton.OK, MessageBoxImage.Information);
+        return true;
     }
 
     private DisplayLut BuildLut()
@@ -4533,6 +4550,8 @@ public partial class MainWindow : Window
                 ReplaceLoadCts(new CancellationTokenSource());
                 RawImage? oldImage = _currentImage;
                 BayerPyramid? oldBayer = _mainBayerPyramid;
+                (_blackPoint, _whitePoint) = DisplayLevels.ForNextImage(
+                    _blackPoint, _whitePoint, _currentFormat!.BitDepth, format.BitDepth);
                 _currentImage = image;
                 _currentFormat = format;
                 _currentPath = path;
@@ -4570,6 +4589,7 @@ public partial class MainWindow : Window
                 // (SetColorImage は選択を見ずに Raw/カラー表示へ戻すので、表示と選択が食い違う)。
                 // 選択の変更は OnDisplayModeChanged を通るので状態の交換後に行う
                 ApplyDisplayModeToNewImage(color is not null, format);
+                Viewport.SetLut(BuildLut());
 
                 Title = $"RawAnalyzer — {Path.GetFileName(path)}{TiffPageNote}";
                 if (layoutChanged)

@@ -251,7 +251,7 @@ public class NaturalOrderComparerTests
     public void Sort_FullWidthNumberedSequence_IsInNumericOrder()
     {
         string[] expected = Enumerable.Range(1, 12).Select(i => "暗室" + ToFullWidth(i) + ".raw").ToArray();
-        var files = expected.Reverse().ToList();
+        var files = Enumerable.Reverse(expected).ToList();
         files.Sort(NaturalOrderComparer.Instance);
         Assert.Equal(expected, files);
     }

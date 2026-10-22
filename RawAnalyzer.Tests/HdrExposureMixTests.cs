@@ -149,6 +149,29 @@ public class HdrExposureMixTests
     }
 
     [Fact]
+    public void WhiteBalance_MismatchedPhaseIsRefused_ButSplitFramesAreUsable()
+    {
+        RawFormat format = Format(HdrMode.LineInterleaved) with { HdrLineBlock = 1 };
+        using RawImage source = TestImages.FromCodes(new ushort[format.Width * format.Height], format);
+        string? reason = HdrExposureMix.WhiteBalanceRefusal(HdrExposureMix.BayerPhaseMismatch(format));
+        Assert.NotNull(reason);
+        Assert.Contains("自動WB", reason);
+        Assert.Contains("スポイト", reason);
+        Assert.Contains("Ctrl+5", reason);
+
+        IReadOnlyList<RawImage> frames = HdrSplitter.Split(source);
+        try
+        {
+            Assert.All(frames, frame => Assert.Null(
+                HdrExposureMix.WhiteBalanceRefusal(HdrExposureMix.BayerPhaseMismatch(frame.Format))));
+        }
+        finally
+        {
+            foreach (RawImage frame in frames) frame.Dispose();
+        }
+    }
+
+    [Fact]
     public void DefectDetection_LineInterleavedRawView_IsRefusedAndGuidedToSplitView()
     {
         // 行交互HDRの Raw 表示では同じ Bayer チャネルに長秒と短秒の行が交互に入り、チャネル別の mean±Nσ が

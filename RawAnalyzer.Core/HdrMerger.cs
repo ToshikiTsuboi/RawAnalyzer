@@ -178,6 +178,7 @@ public static class HdrMerger
     /// <param name="cancellationToken">キャンセルトークン。</param>
     /// <returns>float32の合成画像。</returns>
     /// <exception cref="ArgumentException">フレーム数・サイズが不正な場合。</exception>
+    /// <exception cref="ArgumentOutOfRangeException">黒レベルが元素材の最大コード値以上の場合。</exception>
     public static HdrImage Merge(
         IReadOnlyList<RawImage> frames,
         HdrMergeParameters parameters,
@@ -203,6 +204,10 @@ public static class HdrMerger
         // 飽和画素がフルスケールに届かず、16bit の合成画像で 65520 になって飽和率・現像の白飛びの判定から漏れる
         int sourceBitDepth = frames[0].Format.BitDepth;
         float linearFullScale = (((1 << sourceBitDepth) - 1) << (16 - sourceBitDepth)) - black;
+        if (linearFullScale <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(parameters), "黒レベルは元素材の最大コード値より小さくしてください。");
+        }
 
         // 長秒フレームを線形化して初期値とする
         float[] current = ToLinear(frames[0], black, cancellationToken);

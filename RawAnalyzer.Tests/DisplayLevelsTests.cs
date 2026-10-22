@@ -12,6 +12,34 @@ namespace RawAnalyzer.Tests;
 public class DisplayLevelsTests
 {
     [Fact]
+    public void Sequence_DefaultLevelsFollowBitDepthWithoutClippingHighlights()
+    {
+        (ushort black, ushort white) = DisplayLevels.DefaultPoints(8);
+        (black, white) = DisplayLevels.ForNextImage(black, white, 8, 16);
+        Assert.Equal((0, 65535), ((int)black, (int)white));
+        DisplayLut sixteen = DisplayLut.Create(new DisplayParameters(black, white));
+        Assert.Equal(254, sixteen.Map(65280)); // 8bit の旧白点で16bitのハイライトを切り詰めない
+        Assert.Equal(255, sixteen.Map(65535));
+
+        (black, white) = DisplayLevels.ForNextImage(black, white, 16, 8);
+        DisplayLut eight = DisplayLut.Create(new DisplayParameters(black, white));
+        for (int code = 0; code < 256; code++)
+            Assert.Equal(code, eight.Map((ushort)(code << 8)));
+    }
+
+    [Theory]
+    [InlineData(0, 40000)]
+    [InlineData(1024, 65280)]
+    [InlineData(4096, 50000)]
+    public void Sequence_AdjustedLevelsKeepTheirInternalValues(int black, int white)
+    {
+        Assert.Equal(((ushort)black, (ushort)white),
+            DisplayLevels.ForNextImage((ushort)black, (ushort)white, 8, 16));
+        Assert.Equal(((ushort)black, (ushort)white),
+            DisplayLevels.ForNextImage((ushort)black, (ushort)white, 16, 12));
+    }
+
+    [Fact]
     public void HdrMerge12To16Bit_RebasedCodesKeepWhitePoint()
     {
         // 12bit素材を開いた直後(白=4095 → 内部 4095<<4 = 65520。最大コードの画素と同じ値)に16bitの画像へ切り替える

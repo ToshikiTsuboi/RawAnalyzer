@@ -122,6 +122,8 @@ public partial class MainWindow
         BayerPyramid? oldBayer = _mainBayerPyramid;
         bool sizeChanged = oldImage?.Width != image.Width || oldImage?.Height != image.Height;
         RawFormat format = stack.GetPageFormat(decoded);
+        (_blackPoint, _whitePoint) = DisplayLevels.ForNextImage(
+            _blackPoint, _whitePoint, _currentFormat?.BitDepth ?? format.BitDepth, format.BitDepth);
         CancelAnalysis();
         // 読込済みページの所有権を移す時点で、元ページの縮小/Bayer計算も打ち切る。
         // 読込要求は完了済みなので、次のページ用のライフタイムへ更新できる。

@@ -94,6 +94,15 @@ internal static class DisplayLevels
         ToPoints(0, MaxCode(bitDepth), bitDepth);
 
     /// <summary>
+    /// ページ・ファイル送りの表示レベル。既定の黒0・白最大なら送り先の既定値に合わせ、調整済みなら内部値を保持する。
+    /// </summary>
+    internal static (ushort BlackPoint, ushort WhitePoint) ForNextImage(
+        ushort blackPoint, ushort whitePoint, int previousBitDepth, int nextBitDepth) =>
+        (blackPoint, whitePoint) == DefaultPoints(previousBitDepth)
+            ? DefaultPoints(nextBitDepth)
+            : (blackPoint, whitePoint);
+
+    /// <summary>
     /// 表示調整をしない(既定の黒点・白点、ゲイン・ガンマ・コントラストが等倍の)表示パラメータ。
     /// </summary>
     /// <param name="bitDepth">表示中の画像のビット深度。</param>

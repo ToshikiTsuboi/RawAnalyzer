@@ -165,6 +165,16 @@ internal sealed class BatchFrameRenderer
     /// <summary>画像のビット深度に合わせた現像LUT。65536×3 の計算なのでビット深度ごとに1回だけ作る。</summary>
     private DevelopLuts DevelopLutsFor(RawImage image)
     {
+        // 一括出力は表示モードや保存ダイアログを経由しない。表示用の制限だけでは、
+        // センサと異なる行位相で PNG/JPEG・動画を現像してしまう。Bayer の上書き指定も含めて照合する。
+        if (HdrExposureMix.BayerPhaseMismatch(image.Format with { Bayer = _pattern }))
+        {
+            throw new NotSupportedException(
+                "ライン単位か行オフセットが奇数の行交互HDRは、元のrawのまま一括カラー現像できません" +
+                "(センサのBayerの並びとファイル上の行が一致しません)。" +
+                "HDR分割・合成画像を保存してから書き出してください。元のrawの値は16bit TIFFで書き出せます。");
+        }
+
         int bitDepth = image.Format.BitDepth;
         if (!_developLuts.TryGetValue(bitDepth, out DevelopLuts? luts))
         {

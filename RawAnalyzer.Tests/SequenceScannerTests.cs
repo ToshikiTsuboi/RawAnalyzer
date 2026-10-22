@@ -34,7 +34,7 @@ public class SequenceScannerTests
             .Select(i => @"C:\d\暗室" + NaturalOrderComparerTests.ToFullWidth(i) + ".raw").ToArray();
 
         IReadOnlyList<string> stack = SequenceScanner.FindStack(
-            names[0], 1000, names.Reverse().Select(n => new SequenceFile(n, 1000)));
+            names[0], 1000, Enumerable.Reverse(names).Select(n => new SequenceFile(n, 1000)));
 
         Assert.Equal(names, stack);
     }
