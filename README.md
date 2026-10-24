@@ -557,7 +557,30 @@ dotnet test RawAnalyzer.sln
 |---|---|
 | `RawAnalyzer.Core` | 画像処理・解析。UI 非依存(`System.Windows` を参照しない) |
 | `RawAnalyzer.App` | WPF 本体。MVVM は自前実装 |
-| `RawAnalyzer.Tests` | xUnit。370+ テスト |
+| `RawAnalyzer.Tests` | xUnit。1,900+ テスト |
+
+### メインウィンドウの構成
+
+`MainWindow` は機能ごとの partial クラスで構成しています。各機能に固有の状態は、その機能のファイルに置きます。
+
+| ファイル (`RawAnalyzer.App/`) | 担当 |
+|---|---|
+| `MainWindow.xaml.cs` | 初期化・イベント接続・各機能で共有する表示画像の状態 |
+| `MainWindow.Files.cs` / `MainWindow.FileBrowser.cs` | 画像読込・形式の記憶 / フォルダ一覧・ツリー・最近使ったファイル |
+| `MainWindow.Analysis.cs` / `MainWindow.Projection.cs` | ヒストグラム・ROI・ラインプロファイル / 射影 |
+| `MainWindow.Display.cs` / `MainWindow.Hdr.cs` | 表示調整・WB・マトリクス / HDR派生ビュー |
+| `MainWindow.Sequence.cs` / `MainWindow.TiffStack.cs` | フレーム・連番再生 / TIFFページ送り |
+| `MainWindow.ImageProcessing.cs` / `MainWindow.Measurements.cs` | 画像演算・ビニング・フィルタ / 欠陥検出・補正・ノイズ測定 |
+| `MainWindow.Export.cs` | 画像保存・付随テキスト・一括現像・動画出力 |
+| `MainWindow.Pyramids.cs` / `MainWindow.Operations.cs` | 縮小表示の生成 / 画像操作の排他・実行中の通知 |
+| `MainWindow.Viewport.cs` / `MainWindow.WindowLayout.cs` | カーソル・ズーム / ウィンドウ配置・パネル・全画面 |
+| `MainWindow.Compare.cs` / `MainWindow.Commands.cs` | 比較表示 / コマンド・ショートカット |
+
+UIを必要としない判定は `Services/`、画像処理・解析は `RawAnalyzer.Core`、描画は `Rendering/` に置きます。
+ヒストグラムの画像化も `Rendering/HistogramRenderer.cs` が担当し、メインウィンドウを生成せずに検証できます。
+
+画像の差し替え時には、解析のキャンセル、画像と表示状態の同一UIターンでの交換、描画停止後の旧画像の破棄が必要です。
+分割先からも `ImageOperationGate` と既存のキャンセル・世代照合を使い、この順序を保ちます。
 
 `tools/` に検証用の合成 Raw を生成する PowerShell スクリプトがあります。
 
