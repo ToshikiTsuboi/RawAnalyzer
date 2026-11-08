@@ -2,9 +2,7 @@
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
-using RawAnalyzer.App.Rendering;
 using RawAnalyzer.App.Services;
-using RawAnalyzer.App.ViewModels;
 using RawAnalyzer.App.Views;
 
 namespace RawAnalyzer.App;

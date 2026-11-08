@@ -2,11 +2,9 @@ using System.Globalization;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
-using System.Windows.Media;
 using System.Windows.Shapes;
 using RawAnalyzer.App.Services;
 using RawAnalyzer.App.Views;
-using RawAnalyzer.Core;
 using Xunit;
 
 namespace RawAnalyzer.Tests;

@@ -1,5 +1,4 @@
 using System.Runtime.InteropServices;
-using System.Windows;
 using RawAnalyzer.App.Services;
 using Xunit;
 

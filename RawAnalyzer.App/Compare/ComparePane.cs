@@ -1,5 +1,4 @@
-﻿using System.IO;
-using RawAnalyzer.App.Services;
+﻿using RawAnalyzer.App.Services;
 using RawAnalyzer.Core;
 
 namespace RawAnalyzer.App.Compare;
