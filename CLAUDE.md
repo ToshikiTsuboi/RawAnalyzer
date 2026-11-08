@@ -31,6 +31,8 @@
 - 各フェーズ完了時: dotnet build が警告ゼロ、dotnet test 全パス
 - Coreのpublic APIにはXMLドキュメントコメント
 - コミットはフェーズ単位で意味のあるメッセージ
+- ドキュメント: README は利用者向けの概要のみ。細かな挙動は docs/reference.md、検証記録は docs/verification-*.md
+- 検証用スクリプト・スナップショット・trx などの一時出力は artifacts/(git 無視)に置き、作業後に消す
 
 ## ビルド環境メモ
 - .NET 8 SDK はユーザーローカル `%LOCALAPPDATA%\Microsoft\dotnet` にインストール済み
