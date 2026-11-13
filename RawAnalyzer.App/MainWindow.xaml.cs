@@ -117,7 +117,7 @@ public partial class MainWindow : Window
         CompareArea.StatusChanged += () => _vm.UpdateCompareStatus(CompareArea.PaneCount, CompareArea.ActivePaneStatus);
         CompareArea.ExitRequested += async (_, _) => await ExitCompareModeAsync();
         CompareArea.AddRefused += reason =>
-            MessageBox.Show(this, reason, "比較モード", MessageBoxButton.OK, MessageBoxImage.Information);
+            AppMessage.Show(this, reason, "比較モード", MessageBoxButton.OK, MessageBoxImage.Information);
         Loaded += async (_, _) =>
         {
             // 起動時に構築してショートカット重複を早期に検出する

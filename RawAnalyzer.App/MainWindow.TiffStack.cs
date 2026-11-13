@@ -84,7 +84,7 @@ public partial class MainWindow
                 && generation == _openGeneration)
             {
                 StopPlayback();
-                MessageBox.Show(this, $"TIFFの{index + 1}ページ目を読み込めません: {ex.Message}",
+                AppMessage.Show(this, $"TIFFの{index + 1}ページ目を読み込めません: {ex.Message}",
                     "TIFFスタック", MessageBoxButton.OK, MessageBoxImage.Warning);
             }
         }

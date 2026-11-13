@@ -6,6 +6,7 @@ using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using RawAnalyzer.App.Rendering;
 using RawAnalyzer.Core;
+using RawAnalyzer.App.Themes;
 
 namespace RawAnalyzer.App.Controls;
 
@@ -68,7 +69,7 @@ public sealed partial class ImageViewport : FrameworkElement
     private const int MaxOverlayCells = 8192;
 
     private static readonly Brush CanvasBrush =
-        new SolidColorBrush(Color.FromRgb(0x16, 0x16, 0x18));
+        ThemeColors.Brush(ThemeColors.Canvas);
 
     private readonly DispatcherTimer _idleTimer;
 

@@ -1,5 +1,7 @@
+using System.Windows.Automation;
 using System.Windows.Controls;
 using RawAnalyzer.App.Services;
+using RawAnalyzer.App.Themes;
 using Xunit;
 
 namespace RawAnalyzer.Tests;
@@ -29,7 +31,7 @@ public class FolderTreeNavigatorTests
             gate.Wait(TimeSpan.FromSeconds(10));
             return [Entry(@"Z:\proj\a10"), Entry(@"Z:\proj\a2")];
         });
-        TreeViewItem item = FolderTreeNavigator.CreateItem("📁 proj", @"Z:\proj");
+        TreeViewItem item = FolderTreeNavigator.CreateItem("proj", @"Z:\proj");
 
         Task populate = navigator.PopulateAsync(item);
 
@@ -46,7 +48,13 @@ public class FolderTreeNavigatorTests
         // 子は列挙の順に並び、それぞれ展開できる(ダミーの子を持つ)
         Assert.Equal([@"Z:\proj\a10", @"Z:\proj\a2"], ChildPaths(item));
         Assert.All(item.Items.OfType<TreeViewItem>(), child =>
-            Assert.Equal(FolderTreeNavigator.Placeholder, Assert.Single(child.Items.Cast<object>())));
+        {
+            Assert.Equal(FolderTreeNavigator.Placeholder, Assert.Single(child.Items.Cast<object>()));
+            var header = Assert.IsType<FolderTreeHeader>(child.Header);
+            Assert.Equal(Path.GetFileName((string)child.Tag), header.Name);
+            Assert.Equal(IconGlyphs.Folder, header.Glyph);
+            Assert.Equal(header.Name, AutomationProperties.GetName(child));
+        });
     });
 
     [Fact]
@@ -61,7 +69,7 @@ public class FolderTreeNavigatorTests
             gate.Wait(TimeSpan.FromSeconds(10));
             return [Entry(@"Z:\proj\run03")];
         });
-        TreeViewItem item = FolderTreeNavigator.CreateItem("📁 proj", @"Z:\proj");
+        TreeViewItem item = FolderTreeNavigator.CreateItem("proj", @"Z:\proj");
 
         Task first = navigator.PopulateAsync(item);
         Task second = navigator.PopulateAsync(item);
@@ -92,7 +100,7 @@ public class FolderTreeNavigatorTests
 
             return [Entry(@"Z:\proj\new")];
         });
-        TreeViewItem item = FolderTreeNavigator.CreateItem("📁 proj", @"Z:\proj");
+        TreeViewItem item = FolderTreeNavigator.CreateItem("proj", @"Z:\proj");
         item.IsExpanded = true;
 
         Task first = navigator.PopulateAsync(item);
@@ -113,7 +121,7 @@ public class FolderTreeNavigatorTests
             Interlocked.Increment(ref calls);
             return [Entry(@"Z:\proj\run03")];
         });
-        TreeViewItem item = FolderTreeNavigator.CreateItem("📁 proj", @"Z:\proj");
+        TreeViewItem item = FolderTreeNavigator.CreateItem("proj", @"Z:\proj");
         await navigator.PopulateAsync(item);
 
         await navigator.RefreshAsync(item);
@@ -136,7 +144,7 @@ public class FolderTreeNavigatorTests
 
             return [Entry(@"Z:\proj\run03")];
         });
-        TreeViewItem item = FolderTreeNavigator.CreateItem("📁 proj", @"Z:\proj");
+        TreeViewItem item = FolderTreeNavigator.CreateItem("proj", @"Z:\proj");
 
         await Assert.ThrowsAsync<InvalidOperationException>(() => navigator.PopulateAsync(item));
         Assert.Equal(FolderTreeNavigator.Placeholder, Assert.Single(item.Items.Cast<object>()));
@@ -171,7 +179,7 @@ public class FolderTreeNavigatorTests
             return children[path];
         });
         var tree = new TreeView();
-        tree.Items.Add(FolderTreeNavigator.CreateItem("💽 Z:", @"Z:\"));
+        tree.Items.Add(FolderTreeNavigator.CreateItem("Z:", @"Z:\"));
         var selectionWhileSyncing = new List<bool>();
         tree.SelectedItemChanged += (_, _) => selectionWhileSyncing.Add(navigator.IsSyncingSelection);
 
@@ -206,7 +214,7 @@ public class FolderTreeNavigatorTests
                 : [];
         });
         var tree = new TreeView();
-        tree.Items.Add(FolderTreeNavigator.CreateItem("💽 Z:", @"Z:\"));
+        tree.Items.Add(FolderTreeNavigator.CreateItem("Z:", @"Z:\"));
 
         Task slow = navigator.SyncToFolderAsync(tree, @"Z:\slow\deep");
 
@@ -243,7 +251,7 @@ public class FolderTreeNavigatorTests
                 : [];
         });
         var tree = new TreeView();
-        TreeViewItem root = FolderTreeNavigator.CreateItem("💽 Z:", @"Z:\");
+        TreeViewItem root = FolderTreeNavigator.CreateItem("Z:", @"Z:\");
         tree.Items.Add(root);
         await navigator.PopulateAsync(root);
         TreeViewItem b = root.Items.OfType<TreeViewItem>().Single(i => (string)i.Tag == @"Z:\B");
@@ -282,7 +290,7 @@ public class FolderTreeNavigatorTests
         var navigator = new FolderTreeNavigator(path =>
             path.Equals(@"Z:\", StringComparison.OrdinalIgnoreCase) ? [Entry(@"Z:\x")] : []);
         var tree = new TreeView();
-        tree.Items.Add(FolderTreeNavigator.CreateItem("💽 Z:", @"Z:\"));
+        tree.Items.Add(FolderTreeNavigator.CreateItem("Z:", @"Z:\"));
         await navigator.SyncToFolderAsync(tree, @"Z:\x");
         TreeViewItem x = Assert.IsType<TreeViewItem>(tree.SelectedItem);
         var changes = new List<(object? NewValue, bool Syncing)>();

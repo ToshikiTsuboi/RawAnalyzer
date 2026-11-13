@@ -1,0 +1,30 @@
+<Window x:Class="RawAnalyzer.App.Views.MessageDialog" x:ClassModifier="internal"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:themes="clr-namespace:RawAnalyzer.App.Themes"
+        Background="{StaticResource PanelBrush}" Foreground="{StaticResource TextBrush}"
+        Width="460" SizeToContent="Height" ResizeMode="NoResize" ShowInTaskbar="False">
+    <DockPanel Margin="20,16" KeyboardNavigation.TabNavigation="Cycle">
+        <Grid DockPanel.Dock="Bottom" Margin="0,16,0,0">
+            <Button x:Name="CopyButton" Content="本文をコピー" HorizontalAlignment="Left" Click="OnCopyClick" />
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button x:Name="CancelButton" Content="キャンセル" MinWidth="80" Margin="0,0,8,0"
+                        IsCancel="True" Click="OnCancelClick" />
+                <Button x:Name="OkButton" Content="OK" MinWidth="80" IsDefault="True"
+                        Style="{StaticResource PrimaryButton}" Click="OnOkClick" />
+            </StackPanel>
+        </Grid>
+        <TextBlock x:Name="CopyResultText" DockPanel.Dock="Bottom" Margin="0,6,0,0"
+                   Foreground="{StaticResource TextDim}" FontSize="{x:Static themes:ThemeTypography.FontSizeCaption}"
+                   AutomationProperties.LiveSetting="Polite" />
+        <DockPanel>
+            <TextBlock x:Name="KindIcon" Style="{StaticResource IconText}" DockPanel.Dock="Left"
+                       FontSize="{x:Static themes:ThemeTypography.FontSizeTitle}" Margin="0,1,12,0"
+                       VerticalAlignment="Top" />
+            <ScrollViewer VerticalScrollBarVisibility="Auto" MaxHeight="360" Focusable="False">
+                <TextBlock x:Name="MessageText" TextWrapping="Wrap"
+                           FontSize="{x:Static themes:ThemeTypography.FontSizeBody}" />
+            </ScrollViewer>
+        </DockPanel>
+    </DockPanel>
+</Window>

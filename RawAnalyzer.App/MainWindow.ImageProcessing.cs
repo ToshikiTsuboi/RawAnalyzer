@@ -31,7 +31,7 @@ public partial class MainWindow
         if (ImageCalculationAvailability.Refusal(_compareMode, _derivedImage is not null, _colorImage is not null)
             is { } refusal)
         {
-            MessageBox.Show(this, refusal, "画像演算", MessageBoxButton.OK, MessageBoxImage.Information);
+            AppMessage.Show(this, refusal, "画像演算", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
 
@@ -39,7 +39,7 @@ public partial class MainWindow
         if ((long)_currentFormat.Width * _currentFormat.Height
             > RawLoader.DefaultInMemoryPixelThreshold)
         {
-            MessageBox.Show(this, "1億画素を超える画像の演算はサポートされていません。",
+            AppMessage.Show(this, "1億画素を超える画像の演算はサポートされていません。",
                 "画像演算", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
@@ -94,7 +94,7 @@ public partial class MainWindow
         if (result.Error is not null)
         {
             corrected?.Dispose();
-            MessageBox.Show(this, $"画像演算に失敗しました: {result.Error.Message}", "画像演算",
+            AppMessage.Show(this, $"画像演算に失敗しました: {result.Error.Message}", "画像演算",
                 MessageBoxButton.OK, MessageBoxImage.Error);
             return;
         }
@@ -279,7 +279,7 @@ public partial class MainWindow
         }
 
         processed.Dispose();
-        MessageBox.Show(this, ProcessedImageReplacement.Explain(refusal, label),
+        AppMessage.Show(this, ProcessedImageReplacement.Explain(refusal, label),
             "RawAnalyzer", MessageBoxButton.OK, MessageBoxImage.Information);
         return true;
     }
@@ -336,7 +336,7 @@ public partial class MainWindow
 
         if (_compareMode || _derivedImage is not null || _currentFormat.Hdr != HdrMode.None)
         {
-            MessageBox.Show(this,
+            AppMessage.Show(this,
                 "通常の単画像表示で実行してください。HDR素材は先に露光ごとに分割し、" +
                 "単独の画像として開いてください。比較表示とHDR表示は直接処理できません。",
                 "ビニング・フィルタ", MessageBoxButton.OK, MessageBoxImage.Information);
@@ -386,7 +386,7 @@ public partial class MainWindow
             processed?.Dispose();
             if (result.Error is not null)
             {
-                MessageBox.Show(this, $"画像処理に失敗しました: {result.Error.Message}", "ビニング・フィルタ",
+                AppMessage.Show(this, $"画像処理に失敗しました: {result.Error.Message}", "ビニング・フィルタ",
                     MessageBoxButton.OK, MessageBoxImage.Error);
             }
 
@@ -407,7 +407,7 @@ public partial class MainWindow
                 processed.Dispose();
             }
 
-            MessageBox.Show(this, $"処理結果の表示更新に失敗しました: {ex.Message}", "ビニング・フィルタ",
+            AppMessage.Show(this, $"処理結果の表示更新に失敗しました: {ex.Message}", "ビニング・フィルタ",
                 MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }

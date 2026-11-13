@@ -4,6 +4,7 @@ using System.Windows.Input;
 using Microsoft.Win32;
 using System.Windows.Threading;
 using RawAnalyzer.App.Services;
+using RawAnalyzer.App.Themes;
 using RawAnalyzer.App.ViewModels;
 using RawAnalyzer.Core;
 
@@ -70,7 +71,7 @@ public partial class MainWindow
                 return false;
             }
 
-            MessageBox.Show(this, $"フォルダを読み込めません: {ex.Message}", "RawAnalyzer",
+            AppMessage.Show(this, $"フォルダを読み込めません: {ex.Message}", "RawAnalyzer",
                 MessageBoxButton.OK, MessageBoxImage.Warning);
             return true;
         }
@@ -81,7 +82,7 @@ public partial class MainWindow
         }
 
         _currentFolder = folder;
-        _vm.FolderPath = $"📂 {folder}";
+        _vm.FolderPath = folder;
         _vm.ReplaceFiles(entries);
 
         // 祖先の各階層の初回の列挙は UI スレッドの外で行い、待たずに一覧の続きへ進む(別のフォルダを開いたら
@@ -197,7 +198,7 @@ public partial class MainWindow
 
                 if (!exists)
                 {
-                    MessageBox.Show(this,
+                    AppMessage.Show(this,
                         $"ファイルが見つかりません(移動・削除されたか、ネットワークに接続できません)。\n{captured}",
                         "最近使ったファイル", MessageBoxButton.OK, MessageBoxImage.Warning);
                     RemoveRecentMenuItems(new[] { captured });
@@ -279,7 +280,7 @@ public partial class MainWindow
         foreach (DriveInfo drive in DriveInfo.GetDrives())
         {
             System.Windows.Controls.TreeViewItem item = FolderTreeNavigator.CreateItem(
-                $"💽 {drive.Name.TrimEnd('\\')}", drive.RootDirectory.FullName);
+                drive.Name.TrimEnd('\\'), drive.RootDirectory.FullName, IconGlyphs.Drive);
             FolderTree.Items.Add(item);
             items.Add((item, drive));
         }
@@ -309,7 +310,7 @@ public partial class MainWindow
 
             if (!string.IsNullOrEmpty(label))
             {
-                item.Header = $"{item.Header} ({label})";
+                FolderTreeNavigator.SetHeader(item, $"{drive.Name.TrimEnd('\\')} ({label})", IconGlyphs.Drive);
             }
         }
     }

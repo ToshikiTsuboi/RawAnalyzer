@@ -153,7 +153,7 @@ public partial class MainWindow
         }
         catch (Exception ex)
         {
-            MessageBox.Show(this, $"読み込みに失敗しました: {ex.Message}", "比較モード",
+            AppMessage.Show(this, $"読み込みに失敗しました: {ex.Message}", "比較モード",
                 MessageBoxButton.OK, MessageBoxImage.Warning);
             return null;
         }

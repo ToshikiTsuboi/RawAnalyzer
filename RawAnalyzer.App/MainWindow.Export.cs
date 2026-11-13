@@ -73,7 +73,7 @@ public partial class MainWindow
         // 保存することになる(替える処理の途中は上で断っているが、保存する直前にも確かめる)
         if (!ReferenceEquals(target, ActiveImage) || !ReferenceEquals(targetFloat, _hdrFloatImage))
         {
-            MessageBox.Show(this, "保存の準備中に表示中の画像が替わったため、保存を中止しました。" +
+            AppMessage.Show(this, "保存の準備中に表示中の画像が替わったため、保存を中止しました。" +
                 "表示中の画像を確かめてから、もう一度保存してください。", "RawAnalyzer",
                 MessageBoxButton.OK, MessageBoxImage.Information);
             return;
@@ -87,7 +87,7 @@ public partial class MainWindow
     {
         if (_tiffStack?.IsSourcePath(path) == true)
         {
-            MessageBox.Show(this, "これは現在の1ページだけの保存です。スタック全体を失わないよう、" +
+            AppMessage.Show(this, "これは現在の1ページだけの保存です。スタック全体を失わないよう、" +
                 "元TIFFとは別の名前で保存してください。", "TIFFスタックの保存",
                 MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
@@ -171,7 +171,7 @@ public partial class MainWindow
 
         if (result.Error is not null)
         {
-            MessageBox.Show(this, $"保存に失敗しました: {result.Error.Message}", "RawAnalyzer",
+            AppMessage.Show(this, $"保存に失敗しました: {result.Error.Message}", "RawAnalyzer",
                 MessageBoxButton.OK, MessageBoxImage.Error);
         }
         else if (!result.WasCanceled)
@@ -392,7 +392,7 @@ public partial class MainWindow
         // ファイル単位で読み直すバッチの対象にしない
         if (_derivedImage is not null || _correctionLabel is not null)
         {
-            MessageBox.Show(this,
+            AppMessage.Show(this,
                 "補正・HDR表示を適用中はバッチ書き出しできません。元のファイルを開き直してください。",
                 "バッチ書き出し", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
@@ -413,7 +413,7 @@ public partial class MainWindow
             long size = _currentFileSize;
             if (size <= 0)
             {
-                MessageBox.Show(this, "対象ファイルのサイズを取得できませんでした。",
+                AppMessage.Show(this, "対象ファイルのサイズを取得できませんでした。",
                     "バッチ書き出し", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
@@ -466,7 +466,7 @@ public partial class MainWindow
         if (!BatchTiffOutput.IsTiff(choice.Format)
             && (long)format.Width * format.Height > RawLoader.DefaultInMemoryPixelThreshold)
         {
-            MessageBox.Show(this, "1億画素を超える画像の現像バッチはサポートされていません(TIFF16は可)。",
+            AppMessage.Show(this, "1億画素を超える画像の現像バッチはサポートされていません(TIFF16は可)。",
                 "バッチ書き出し", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
@@ -621,7 +621,7 @@ public partial class MainWindow
 
         if (result.Error is not null)
         {
-            MessageBox.Show(this, $"バッチ書き出しに失敗しました: {result.Error.Message}",
+            AppMessage.Show(this, $"バッチ書き出しに失敗しました: {result.Error.Message}",
                 "バッチ書き出し", MessageBoxButton.OK, MessageBoxImage.Error);
         }
         else if (!result.WasCanceled)

@@ -78,7 +78,7 @@ public partial class MainWindow
         catch (Exception ex)
         {
             AppLog.Error($"コマンド実行に失敗: {command.Id}", ex);
-            MessageBox.Show(this, $"コマンドの実行に失敗しました: {ex.Message}", "RawAnalyzer",
+            AppMessage.Show(this, $"コマンドの実行に失敗しました: {ex.Message}", "RawAnalyzer",
                 MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }
@@ -803,7 +803,7 @@ public partial class MainWindow
         // 必ず別チャネルの画素にまたがり解析できない。作ってから断るより先に知らせる
         if (Viewport.IsChannelSplitLayout)
         {
-            MessageBox.Show(this,
+            AppMessage.Show(this,
                 "チャネル分割表示では中央にROIを設定できません(4つの象限の境目になるため)。\n" +
                 "ROI選択モードで、1つの象限の中をドラッグして選択してください。",
                 "ROI", MessageBoxButton.OK, MessageBoxImage.Information);

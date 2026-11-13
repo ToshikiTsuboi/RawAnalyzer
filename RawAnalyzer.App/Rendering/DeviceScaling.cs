@@ -1,4 +1,6 @@
-﻿namespace RawAnalyzer.App.Rendering;
+﻿using RawAnalyzer.App.Themes;
+
+namespace RawAnalyzer.App.Rendering;
 
 /// <summary>
 /// 表示倍率(Windows の表示スケール。1 DIP あたりのデバイス画素数)とビューポートのズームの換算(純関数)。
@@ -104,7 +106,9 @@ public static class DeviceScaling
     /// </remarks>
     /// <param name="zoom">DIP 基準のズーム。</param>
     /// <returns>文字の大きさ(DIP)。</returns>
-    public static double RawOverlayFontSize(double zoom) => Math.Clamp(zoom / 4.5, Math.Min(9, zoom / 3.2), 15);
+    public static double RawOverlayFontSize(double zoom) =>
+        Math.Clamp(zoom / 4.5, Math.Min(ThemeTypography.RawValueMinSize, zoom / 3.2),
+            ThemeTypography.RawValueMaxSize);
 
     /// <summary>描画に使う縮小レベルの縮小率を選ぶ。</summary>
     /// <remarks>

@@ -6,6 +6,7 @@ using System.Windows.Media;
 using RawAnalyzer.App.Controls;
 using RawAnalyzer.App.Services;
 using RawAnalyzer.Core;
+using RawAnalyzer.App.Themes;
 
 namespace RawAnalyzer.App.Views;
 
@@ -17,8 +18,8 @@ namespace RawAnalyzer.App.Views;
 public partial class RawImportDialog : Window
 {
     private static readonly int[] BitDepths = { 12, 10, 14, 16, 8 };
-    private static readonly Brush OkBrush = new SolidColorBrush(Color.FromRgb(0x7F, 0xBF, 0x7F));
-    private static readonly Brush WarnBrush = new SolidColorBrush(Color.FromRgb(0xD9, 0x9B, 0x5B));
+    private static readonly Brush OkBrush = ThemeColors.Brush(ThemeColors.Success);
+    private static readonly Brush WarnBrush = ThemeColors.Brush(ThemeColors.Warning);
 
     private readonly string _filePath;
     private readonly long _fileSize;
@@ -127,7 +128,7 @@ public partial class RawImportDialog : Window
             // ロック・共有違反などで読めないだけなら、ファイルは退避も上書きもしない(保存は最新を読み直してから当てる)。
             // 一覧が空の理由を知らせる
             AppLog.Warn($"プリセットファイルを読み込めませんでした: {ex.Message}");
-            MessageBox.Show(
+            AppMessage.Show(
                 this,
                 "プリセットファイルを読み込めませんでした(ほかのアプリが使用中の可能性があります)。" +
                 $"ファイルはそのまま残しています。{Environment.NewLine}{ex.Message}",
@@ -140,7 +141,7 @@ public partial class RawImportDialog : Window
         if (corrupted)
         {
             AppLog.Warn($"プリセットファイルが破損していたため退避: {_presetStore.BackupPath}");
-            MessageBox.Show(
+            AppMessage.Show(
                 this,
                 "プリセットファイルが読み込めなかったため退避しました。" +
                 $"{Environment.NewLine}{_presetStore.BackupPath}",
@@ -513,7 +514,7 @@ public partial class RawImportDialog : Window
         RawFormat? format = TryBuildFormat(out string error);
         if (format is null)
         {
-            MessageBox.Show(this, error, "プリセット保存", MessageBoxButton.OK, MessageBoxImage.Warning);
+            AppMessage.Show(this, error, "プリセット保存", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
 
@@ -544,7 +545,7 @@ public partial class RawImportDialog : Window
         }
         catch (Exception ex)
         {
-            MessageBox.Show(this, $"保存に失敗しました: {ex.Message}", "プリセット保存",
+            AppMessage.Show(this, $"保存に失敗しました: {ex.Message}", "プリセット保存",
                 MessageBoxButton.OK, MessageBoxImage.Error);
             return;
         }
@@ -607,7 +608,7 @@ public partial class RawImportDialog : Window
         RawFormat? format = TryBuildFormat(out string error);
         if (format is null)
         {
-            MessageBox.Show(this, error, "Rawファイルを開く", MessageBoxButton.OK, MessageBoxImage.Warning);
+            AppMessage.Show(this, error, "Rawファイルを開く", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
 

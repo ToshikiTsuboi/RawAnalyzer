@@ -44,7 +44,7 @@ public partial class MainWindow
         {
             // 表示モードの選択は分割・合成のまま、表示は計算前のまま残っている。そろえて Raw 表示へ戻す
             string operation = expectedModeIndex == 4 ? "HDR分割" : "HDR合成";
-            MessageBox.Show(this, HdrViewReplacement.Explain(refusal, operation),
+            AppMessage.Show(this, HdrViewReplacement.Explain(refusal, operation),
                 operation, MessageBoxButton.OK, MessageBoxImage.Information);
             DisplayModeCombo.SelectedIndex = 0;
         }
@@ -179,7 +179,7 @@ public partial class MainWindow
         }
         catch (InvalidOperationException ex)
         {
-            MessageBox.Show(this, ex.Message, "HDR分割", MessageBoxButton.OK, MessageBoxImage.Warning);
+            AppMessage.Show(this, ex.Message, "HDR分割", MessageBoxButton.OK, MessageBoxImage.Warning);
             DisplayModeCombo.SelectedIndex = 0;
             return;
         }
@@ -316,7 +316,7 @@ public partial class MainWindow
         }
         catch (InvalidOperationException ex)
         {
-            MessageBox.Show(this, ex.Message, "HDR合成", MessageBoxButton.OK, MessageBoxImage.Warning);
+            AppMessage.Show(this, ex.Message, "HDR合成", MessageBoxButton.OK, MessageBoxImage.Warning);
             DisplayModeCombo.SelectedIndex = 0;
             return;
         }

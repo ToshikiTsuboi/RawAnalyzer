@@ -54,7 +54,7 @@ public partial class MainWindow
             {
                 _ = Dispatcher.InvokeAsync(() =>
                 {
-                    MessageBox.Show(this, refusal, "ヒストグラム", MessageBoxButton.OK, MessageBoxImage.Information);
+                    AppMessage.Show(this, refusal, "ヒストグラム", MessageBoxButton.OK, MessageBoxImage.Information);
                     _vm.HistogramByChannel = false;
                 });
                 return;
@@ -294,7 +294,7 @@ public partial class MainWindow
                 isRawFile: _currentPath is not null && IsRawFile(_currentPath));
             if (hdrRefusal != DisplayModeSelection.Refusal.None)
             {
-                MessageBox.Show(this, DisplayModeSelection.Explain(hdrRefusal),
+                AppMessage.Show(this, DisplayModeSelection.Explain(hdrRefusal),
                     "RawAnalyzer", MessageBoxButton.OK, MessageBoxImage.Information);
                 DisplayModeCombo.SelectedIndex = 0;
                 return;
@@ -317,7 +317,7 @@ public partial class MainWindow
         {
             if (ActiveFormat?.Bayer is null or BayerPattern.None)
             {
-                MessageBox.Show(this,
+                AppMessage.Show(this,
                     "HDR合成結果にBayerパターンがありません。\n" +
                     "元rawのフォーマットでBayerパターンを指定してからHDR合成してください。",
                     "RawAnalyzer", MessageBoxButton.OK, MessageBoxImage.Information);
@@ -355,7 +355,7 @@ public partial class MainWindow
             HdrExposureMix.BayerPhaseMismatch(_currentFormat));
         if (selected.Refusal != DisplayModeSelection.Refusal.None)
         {
-            MessageBox.Show(this, DisplayModeSelection.Explain(selected.Refusal),
+            AppMessage.Show(this, DisplayModeSelection.Explain(selected.Refusal),
                 "RawAnalyzer", MessageBoxButton.OK, MessageBoxImage.Information);
             DisplayModeCombo.SelectedIndex = 0;
             return;
@@ -534,7 +534,7 @@ public partial class MainWindow
             return false;
         }
 
-        MessageBox.Show(this, reason, "ホワイトバランス", MessageBoxButton.OK, MessageBoxImage.Information);
+        AppMessage.Show(this, reason, "ホワイトバランス", MessageBoxButton.OK, MessageBoxImage.Information);
         return true;
     }
 

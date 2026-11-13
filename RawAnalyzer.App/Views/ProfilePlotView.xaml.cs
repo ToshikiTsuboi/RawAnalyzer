@@ -8,6 +8,7 @@ using System.Windows.Threading;
 using Microsoft.Win32;
 using RawAnalyzer.App.Services;
 using RawAnalyzer.Core;
+using RawAnalyzer.App.Themes;
 
 namespace RawAnalyzer.App.Views;
 
@@ -44,7 +45,7 @@ internal sealed record ProfilePlotData(
 /// </remarks>
 public partial class ProfilePlotView : UserControl
 {
-    private static readonly Color PrimaryStroke = Color.FromRgb(0x5B, 0x9D, 0xD9);
+    private static readonly Color PrimaryStroke = ThemeColors.Accent;
 
     private ProfilePlotData _data = new(Array.Empty<double>(), 65535);
 
@@ -377,11 +378,11 @@ public partial class ProfilePlotView : UserControl
         }
 
         // 平均・±σのガイド線
-        AddGuideLine(stats.Mean, height, width, Color.FromArgb(0x70, 0x7E, 0xCB, 0x72));
+        AddGuideLine(stats.Mean, height, width, ThemeColors.MeanGuide);
         AddGuideLine(stats.Mean + stats.Sigma, height, width,
-            Color.FromArgb(0x40, 0x9A, 0x9A, 0x95));
+            ThemeColors.SpreadGuide);
         AddGuideLine(stats.Mean - stats.Sigma, height, width,
-            Color.FromArgb(0x40, 0x9A, 0x9A, 0x95));
+            ThemeColors.SpreadGuide);
 
         // 重ねる線は主の線の下に描く
         if (_extraSeriesVisible && _data.ExtraSeries is { } extras)
@@ -412,7 +413,7 @@ public partial class ProfilePlotView : UserControl
                 X2 = markerX,
                 Y1 = 0,
                 Y2 = height,
-                Stroke = new SolidColorBrush(Color.FromArgb(0x80, 0xD9, 0x9B, 0x5B)),
+                Stroke = ThemeColors.Brush(ThemeColors.PlotMarker),
                 StrokeThickness = 1,
             });
         }

@@ -8,6 +8,7 @@ using System.Windows.Threading;
 using RawAnalyzer.App.Controls;
 using RawAnalyzer.App.Services;
 using RawAnalyzer.Core;
+using RawAnalyzer.App.Themes;
 
 namespace RawAnalyzer.App.Compare;
 
@@ -197,7 +198,7 @@ public partial class ComparePaneView : UserControl
         Viewport.ClearGhostCursor();
     }
 
-    /// <summary>調整リンク(🔗)がONか。</summary>
+    /// <summary>調整リンクがONか。</summary>
     internal bool IsLinked => LinkToggle.IsChecked == true;
 
     /// <summary>
@@ -217,15 +218,8 @@ public partial class ComparePaneView : UserControl
     }
 
     // 不一致チップの強調色(ゴーストカーソルと同系の暖色)
-    private static readonly Brush ChipDiffForeground = CreateFrozen(0xFF, 0xE8, 0xA3, 0x4B);
-    private static readonly Brush ChipDiffBackground = CreateFrozen(0x28, 0xE8, 0xA3, 0x4B);
-
-    private static Brush CreateFrozen(byte a, byte r, byte g, byte b)
-    {
-        var brush = new SolidColorBrush(Color.FromArgb(a, r, g, b));
-        brush.Freeze();
-        return brush;
-    }
+    private static readonly Brush ChipDiffForeground = ThemeColors.Brush(ThemeColors.Warning);
+    private static readonly Brush ChipDiffBackground = ThemeColors.Brush(ThemeColors.CompareDifferenceFill);
 
     /// <summary>条件チップを表示し直す(不一致判定の計算はCompareView側)。</summary>
     /// <param name="chips">テキストと不一致フラグの列。</param>
@@ -243,7 +237,7 @@ public partial class ComparePaneView : UserControl
                 Child = new TextBlock
                 {
                     Text = text,
-                    FontSize = 11,
+                    FontSize = ThemeTypography.FontSizeCaption,
                     Foreground = differs
                         ? ChipDiffForeground
                         : (Brush)FindResource("TextDim"),

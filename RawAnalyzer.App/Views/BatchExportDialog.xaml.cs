@@ -319,7 +319,7 @@ public partial class BatchExportDialog : Window
         string input = OutputFolderBox.Text.Trim();
         if (string.IsNullOrEmpty(input))
         {
-            MessageBox.Show(this, "出力先フォルダを指定してください。", "バッチ書き出し",
+            AppMessage.Show(this, "出力先フォルダを指定してください。", "バッチ書き出し",
                 MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
@@ -328,7 +328,7 @@ public partial class BatchExportDialog : Window
         // (完了表示にも絶対パスで出す)
         if (!OutputPaths.TryResolveOutputFolder(input, _sourceFolder, out string folder))
         {
-            MessageBox.Show(this, $"出力先フォルダのパスが正しくありません: {input}", "バッチ書き出し",
+            AppMessage.Show(this, $"出力先フォルダのパスが正しくありません: {input}", "バッチ書き出し",
                 MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }

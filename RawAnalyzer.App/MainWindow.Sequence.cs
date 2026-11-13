@@ -4,6 +4,7 @@ using System.Windows.Threading;
 using RawAnalyzer.App.Controls;
 using RawAnalyzer.App.Rendering;
 using RawAnalyzer.App.Services;
+using RawAnalyzer.App.Themes;
 using RawAnalyzer.Core;
 
 namespace RawAnalyzer.App;
@@ -529,7 +530,8 @@ public partial class MainWindow
                 return;
             }
 
-            PlayToggle.Content = "⏸ 停止";
+            PlayToggle.Content = "停止";
+            PlayToggle.Tag = IconGlyphs.Pause;
             _playTimer ??= new DispatcherTimer();
             _playTimer.Tick -= OnPlayTick;
             _playTimer.Tick += OnPlayTick;
@@ -600,7 +602,8 @@ public partial class MainWindow
         if (PlayToggle is not null)
         {
             PlayToggle.IsChecked = false;
-            PlayToggle.Content = "▶ 再生";
+            PlayToggle.Content = "再生";
+            PlayToggle.Tag = IconGlyphs.Play;
         }
 
         if (wasPlaying)

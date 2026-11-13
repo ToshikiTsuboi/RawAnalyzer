@@ -14,6 +14,13 @@ namespace RawAnalyzer.App.Controls;
 /// </summary>
 public partial class NumericSliderRow : UserControl
 {
+    private const double CompactWidth = 196;
+    private static readonly DependencyPropertyKey IsCompactPropertyKey = DependencyProperty.RegisterReadOnly(
+        nameof(IsCompact), typeof(bool), typeof(NumericSliderRow), new PropertyMetadata(false));
+
+    /// <summary>スライダーをラベルと数値入力欄の下に表示するか。</summary>
+    public bool IsCompact => (bool)GetValue(IsCompactPropertyKey.DependencyProperty);
+
     private bool _updating;
 
     // 入力欄がユーザー操作で書き換えられたか(フォーカスが外れただけでの丸めを防ぐ)
@@ -85,6 +92,7 @@ public partial class NumericSliderRow : UserControl
     {
         InitializeComponent();
         Loaded += (_, _) => Refresh();
+        SizeChanged += (_, e) => SetValue(IsCompactPropertyKey, e.NewSize.Width < CompactWidth);
     }
 
     /// <summary>ラベル文字列。</summary>

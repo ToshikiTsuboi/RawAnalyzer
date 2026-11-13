@@ -168,12 +168,8 @@ public partial class SaveDialog : Window
         }
 
         SummaryText.Text = BuildSummary();
-        SummaryText.Foreground = System.Windows.Media.Brushes.LightGreen;
-        if (IsEightBitOutput)
-        {
-            SummaryText.Foreground = new System.Windows.Media.SolidColorBrush(
-                System.Windows.Media.Color.FromRgb(0xD9, 0x9B, 0x5B));
-        }
+        SummaryText.Foreground = (System.Windows.Media.Brush)FindResource(
+            IsEightBitOutput ? "WarningBrush" : "SuccessBrush");
     }
 
     private string BuildSummary()

@@ -1,6 +1,8 @@
 using System.IO;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
+using RawAnalyzer.App.Themes;
 using RawAnalyzer.Core;
 
 namespace RawAnalyzer.App.Services;
@@ -11,6 +13,8 @@ namespace RawAnalyzer.App.Services;
 /// <param name="Name">フォルダ名(見出しに出す)。</param>
 /// <param name="FullPath">フォルダのフルパス。</param>
 internal readonly record struct FolderTreeEntry(string Name, string FullPath);
+
+internal sealed record FolderTreeHeader(string Name, string Glyph);
 
 /// <summary>
 /// 左パネルのフォルダツリー。項目を展開したときに子フォルダを足し、表示中のフォルダまで展開して選択する。
@@ -65,12 +69,21 @@ internal sealed class FolderTreeNavigator
     /// </summary>
     /// <param name="header">見出し。</param>
     /// <param name="path">フォルダのフルパス(Tag に持つ)。</param>
+    /// <param name="glyph">見出しのアイコン。</param>
     /// <returns>作った項目。</returns>
-    internal static TreeViewItem CreateItem(string header, string path)
+    internal static TreeViewItem CreateItem(string header, string path, string glyph = IconGlyphs.Folder)
     {
-        var item = new TreeViewItem { Header = header, Tag = path };
+        var item = new TreeViewItem { Tag = path };
+        item.SetResourceReference(HeaderedItemsControl.HeaderTemplateProperty, "FolderTreeHeader");
+        SetHeader(item, header, glyph);
         item.Items.Add(Placeholder);
         return item;
+    }
+
+    internal static void SetHeader(TreeViewItem item, string name, string glyph)
+    {
+        item.Header = new FolderTreeHeader(name, glyph);
+        AutomationProperties.SetName(item, name);
     }
 
     /// <summary>
@@ -289,7 +302,7 @@ internal sealed class FolderTreeNavigator
                 {
                     foreach (FolderTreeEntry child in children)
                     {
-                        item.Items.Add(CreateItem($"📁 {child.Name}", child.FullPath));
+                        item.Items.Add(CreateItem(child.Name, child.FullPath));
                     }
                 }
             }

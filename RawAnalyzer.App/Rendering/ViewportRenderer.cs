@@ -1,5 +1,6 @@
 ﻿using System.Buffers;
 using RawAnalyzer.Core;
+using RawAnalyzer.App.Themes;
 
 namespace RawAnalyzer.App.Rendering;
 
@@ -75,7 +76,7 @@ public sealed class RenderRequest
 public static class ViewportRenderer
 {
     /// <summary>画像外領域の背景グレー値(キャンバス色相当)。</summary>
-    public const byte BackgroundGray = 22;
+    public const byte BackgroundGray = ThemeColors.CanvasGray;
 
     /// <summary>
     /// この画素数以下の可視領域はバイリニアデモザイクで現像する(超えると2×2ブロックの簡易現像)。
@@ -331,18 +332,18 @@ public static class ViewportRenderer
                     {
                         if (value >= zebraSaturation)
                         {
-                            destRow[o] = 0x3C;
-                            destRow[o + 1] = 0x50;
-                            destRow[o + 2] = 0xE6;
+                            destRow[o] = ThemeColors.HotPixel.B;
+                            destRow[o + 1] = ThemeColors.HotPixel.G;
+                            destRow[o + 2] = ThemeColors.HotPixel.R;
                             destRow[o + 3] = 255;
                             continue;
                         }
 
                         if (value <= zebraBlack)
                         {
-                            destRow[o] = 0xE6;
-                            destRow[o + 1] = 0x78;
-                            destRow[o + 2] = 0x3C;
+                            destRow[o] = ThemeColors.DeadPixel.B;
+                            destRow[o + 1] = ThemeColors.DeadPixel.G;
+                            destRow[o + 2] = ThemeColors.DeadPixel.R;
                             destRow[o + 3] = 255;
                             continue;
                         }
@@ -420,18 +421,18 @@ public static class ViewportRenderer
                         int floorValue = Math.Min(r, Math.Min(g, b));
                         if (peak >= zebraSaturation)
                         {
-                            destRow[o] = 0x3C;
-                            destRow[o + 1] = 0x50;
-                            destRow[o + 2] = 0xE6;
+                            destRow[o] = ThemeColors.HotPixel.B;
+                            destRow[o + 1] = ThemeColors.HotPixel.G;
+                            destRow[o + 2] = ThemeColors.HotPixel.R;
                             destRow[o + 3] = 255;
                             continue;
                         }
 
                         if (floorValue <= zebraBlack)
                         {
-                            destRow[o] = 0xE6;
-                            destRow[o + 1] = 0x78;
-                            destRow[o + 2] = 0x3C;
+                            destRow[o] = ThemeColors.DeadPixel.B;
+                            destRow[o + 1] = ThemeColors.DeadPixel.G;
+                            destRow[o + 2] = ThemeColors.DeadPixel.R;
                             destRow[o + 3] = 255;
                             continue;
                         }

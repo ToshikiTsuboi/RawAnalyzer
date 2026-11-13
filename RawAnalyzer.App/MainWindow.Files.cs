@@ -167,7 +167,7 @@ public partial class MainWindow
         // 黙って何もしないのではなく同じ理由を知らせる
         if (_currentImage is not null)
         {
-            MessageBox.Show(this, FormatChangeAvailability.ExplainUnavailable(_colorImage is not null),
+            AppMessage.Show(this, FormatChangeAvailability.ExplainUnavailable(_colorImage is not null),
                 "フォーマット変更", MessageBoxButton.OK, MessageBoxImage.Information);
         }
     }
@@ -329,7 +329,7 @@ public partial class MainWindow
             // 縮小表示なしで等倍の行を読んで描き、ヒストグラム欄には前に表示していた画像の統計が残る
             // (縮小表示は表示中の画像の世代として、取り消されていないこの読み込みのトークンで作る)
             RefreshAfterSequenceMove();
-            MessageBox.Show(this, $"読み込みに失敗しました: {ex.Message}", "RawAnalyzer",
+            AppMessage.Show(this, $"読み込みに失敗しました: {ex.Message}", "RawAnalyzer",
                 MessageBoxButton.OK, MessageBoxImage.Error);
             return;
         }

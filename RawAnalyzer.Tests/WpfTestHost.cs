@@ -29,23 +29,28 @@ internal static class WpfTestHost
 
     internal static void CaptureIfRequested(FrameworkElement view, string name)
     {
+        CaptureIfRequested(view, name, new Rect(view.RenderSize));
+    }
+
+    internal static void CaptureIfRequested(FrameworkElement view, string name, Rect bounds)
+    {
         string? directory = Environment.GetEnvironmentVariable("RAWANALYZER_UI_SNAPSHOTS");
         if (string.IsNullOrEmpty(directory)) return;
         DpiScale dpi = VisualTreeHelper.GetDpi(view);
-        var bitmap = new RenderTargetBitmap((int)Math.Ceiling(view.ActualWidth * dpi.DpiScaleX),
-            (int)Math.Ceiling(view.ActualHeight * dpi.DpiScaleY), dpi.PixelsPerInchX, dpi.PixelsPerInchY,
+        var bitmap = new RenderTargetBitmap((int)Math.Ceiling(bounds.Width * dpi.DpiScaleX),
+            (int)Math.Ceiling(bounds.Height * dpi.DpiScaleY), dpi.PixelsPerInchX, dpi.PixelsPerInchY,
             PixelFormats.Pbgra32);
         var visual = new DrawingVisual();
         using (DrawingContext dc = visual.RenderOpen())
         {
-            var bounds = new Rect(view.RenderSize);
-            dc.DrawRectangle(Window.GetWindow(view)?.Background, null, bounds);
+            var outputBounds = new Rect(bounds.Size);
+            dc.DrawRectangle(Window.GetWindow(view)?.Background, null, outputBounds);
             dc.DrawRectangle(new VisualBrush(view)
             {
                 Viewbox = bounds,
                 ViewboxUnits = BrushMappingMode.Absolute,
                 Stretch = Stretch.Fill,
-            }, null, bounds);
+            }, null, outputBounds);
         }
         bitmap.Render(visual);
         var encoder = new PngBitmapEncoder();

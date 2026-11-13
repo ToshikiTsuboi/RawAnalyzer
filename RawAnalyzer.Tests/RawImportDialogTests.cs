@@ -1,8 +1,11 @@
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
+using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using System.Windows.Threading;
 using RawAnalyzer.App.Services;
 using RawAnalyzer.App.Views;
 using RawAnalyzer.Core;
@@ -63,6 +66,68 @@ public class RawImportDialogTests : IDisposable
         return new RawImportDialog(
             path, size ?? new FileInfo(path).Length, new FormatPresetStore(Path.Combine(_directory, "settings")),
             initial, memory, displayed);
+    }
+
+    [Fact]
+    public Task InputFields_HaveAccessibleNamesAndFollowVisualTabOrder() => WpfTestHost.Run(async () =>
+    {
+        string path = CreateFile("settings.raw", FileSize);
+        FormatMemory memory = CreateMemory();
+        RawFormat format = Fmt(640, 480) with
+        {
+            Hdr = HdrMode.LineInterleaved,
+            HdrStages = 2,
+        };
+        memory.RememberLoaded(path, FileSize, format, autoOpen: true);
+        RawImportDialog dialog = CreateDialog(path, memory, format);
+        try
+        {
+            dialog.Show();
+            await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+            var fields = LogicalInputs(dialog).ToArray();
+            Assert.Equal(16, fields.Length);
+            Assert.All(fields, field => Assert.True(
+                !string.IsNullOrWhiteSpace(AutomationProperties.GetName(field))
+                    || AutomationProperties.GetLabeledBy(field) is not null, field.Name));
+
+            string[] expected =
+            [
+                "CandidateCombo", "WidthBox", "HeightBox", "BitDepthCombo", "PackingCombo", "EndianCombo",
+                "BayerCombo", "HeaderOffsetBox", "FrameCountBox", "HdrCombo", "HdrStagesCombo",
+                "ExposureRatioBox", "HdrLineBlockBox", "HdrRowOffsetBox", "GuessButton", "AutoOpenCheck",
+                "ForgetSizeButton", "PresetCombo", "SavePresetButton",
+            ];
+            Control start = Find<Control>(dialog, "CandidateCombo");
+            Assert.True(start.Focus());
+            var traversed = new List<string>();
+            for (int step = 0; step < expected.Length; step++)
+            {
+                var focused = Assert.IsAssignableFrom<Control>(Keyboard.FocusedElement);
+                traversed.Add(focused.Name);
+                if (step < expected.Length - 1)
+                {
+                    Assert.True(focused.MoveFocus(new TraversalRequest(FocusNavigationDirection.Next)));
+                }
+            }
+            Assert.Equal(expected, traversed);
+            WpfTestHost.CaptureIfRequested((FrameworkElement)dialog.Content, "raw-import-accessibility");
+        }
+        finally
+        {
+            dialog.Close();
+        }
+    });
+
+    private static IEnumerable<FrameworkElement> LogicalInputs(DependencyObject root)
+    {
+        foreach (DependencyObject child in LogicalTreeHelper.GetChildren(root).OfType<DependencyObject>())
+        {
+            if (child is TextBox or ComboBox or CheckBox)
+            {
+                yield return (FrameworkElement)child;
+            }
+            foreach (FrameworkElement input in LogicalInputs(child)) yield return input;
+        }
     }
 
     [Fact]

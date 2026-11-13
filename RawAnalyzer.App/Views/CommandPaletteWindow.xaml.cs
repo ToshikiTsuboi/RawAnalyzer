@@ -113,7 +113,7 @@ public partial class CommandPaletteWindow : Window
             HintText.Text = reason;
             if (rejected)
             {
-                HintText.Foreground = (Brush)FindResource("RejectBrush");
+                HintText.Foreground = (Brush)FindResource("WarningBrush");
             }
         }
         else

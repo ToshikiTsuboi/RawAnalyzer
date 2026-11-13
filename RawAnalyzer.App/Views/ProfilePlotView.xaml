@@ -1,14 +1,15 @@
 <UserControl x:Class="RawAnalyzer.App.Views.ProfilePlotView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             Foreground="#FFD8D8D4">
+             xmlns:themes="clr-namespace:RawAnalyzer.App.Themes"
+             Foreground="{StaticResource TextBrush}">
     <!-- ラインプロファイル窓と射影の窓で共有するグラフ(統計・縦軸・横軸・拡大・移動・コピー/CSV)。 -->
     <DockPanel>
         <!-- 統計 -->
-        <Border DockPanel.Dock="Top" Background="#FF38383D" CornerRadius="4"
+        <Border DockPanel.Dock="Top" Background="{StaticResource Panel2Brush}" CornerRadius="4"
                 Padding="10,5" Margin="0,0,0,8">
-            <TextBlock x:Name="StatsText" FontFamily="Consolas" FontSize="12"
-                       Foreground="#FFD8D8D4" TextWrapping="Wrap"
+            <TextBlock x:Name="StatsText" FontFamily="Consolas" FontSize="{x:Static themes:ThemeTypography.FontSizeBody}"
+                       Foreground="{StaticResource TextBrush}" TextWrapping="Wrap"
                        Text="—" ToolTip="全プロファイルの統計です。グラフの拡大・移動では変わりません。" />
         </Border>
 
@@ -43,21 +44,21 @@
                         <ColumnDefinition Width="18" />
                         <ColumnDefinition Width="*" />
                     </Grid.ColumnDefinitions>
-                    <TextBlock Text="値 (raw code)" FontSize="11" Foreground="#FF9A9A95"
+                    <TextBlock Text="値 (raw code)" FontSize="{x:Static themes:ThemeTypography.FontSizeCaption}" Foreground="{StaticResource TextDim}"
                                HorizontalAlignment="Center" VerticalAlignment="Center">
                         <TextBlock.LayoutTransform><RotateTransform Angle="-90" /></TextBlock.LayoutTransform>
                     </TextBlock>
                     <!-- 目盛り(グラフと同じ高さ・同じ縦の座標。上下の端は範囲の値のラベルに譲る) -->
                     <Canvas x:Name="YAxisCanvas" Grid.Column="1" Margin="0,1,0,1" ClipToBounds="True" />
                     <TextBlock x:Name="MaxLabel" Grid.Column="1" VerticalAlignment="Top" TextAlignment="Right"
-                               Margin="0,0,6,0" FontFamily="Consolas" FontSize="10" Foreground="#FFAAAAA5"
+                               Margin="0,0,6,0" FontFamily="Consolas" FontSize="{x:Static themes:ThemeTypography.FontSizeCaption}" Foreground="{StaticResource TextDim}"
                                TextTrimming="CharacterEllipsis" />
                     <TextBlock x:Name="MinLabel" Grid.Column="1" VerticalAlignment="Bottom" TextAlignment="Right"
-                               Margin="0,0,6,0" FontFamily="Consolas" FontSize="10" Foreground="#FFAAAAA5"
+                               Margin="0,0,6,0" FontFamily="Consolas" FontSize="{x:Static themes:ThemeTypography.FontSizeCaption}" Foreground="{StaticResource TextDim}"
                                TextTrimming="CharacterEllipsis" />
                 </Grid>
             </Border>
-            <Border x:Name="PlotBorder" Grid.Column="1" Grid.Row="0" Background="#FF161618" BorderBrush="#FF48484E"
+            <Border x:Name="PlotBorder" Grid.Column="1" Grid.Row="0" Background="{StaticResource CanvasBrush}" BorderBrush="{StaticResource BorderBrushDark}"
                     BorderThickness="1">
                 <Canvas x:Name="PlotCanvas" ClipToBounds="True" SizeChanged="OnCanvasSizeChanged"
                         Background="Transparent" MouseWheel="OnPlotMouseWheel"
@@ -80,8 +81,8 @@
             <!-- 計算中・断る理由はグラフの上に出す(マウス操作はグラフへ通す) -->
             <TextBlock x:Name="OverlayText" Grid.Column="1" Grid.Row="0" IsHitTestVisible="False"
                        HorizontalAlignment="Center" VerticalAlignment="Center" Margin="24"
-                       TextWrapping="Wrap" TextAlignment="Center" FontSize="13"
-                       Foreground="#FFE8C88B" Visibility="Collapsed" />
+                       TextWrapping="Wrap" TextAlignment="Center" FontSize="{x:Static themes:ThemeTypography.FontSizeEmphasis}"
+                       Foreground="{StaticResource WarningBrush}" Visibility="Collapsed" />
 
             <Canvas x:Name="XAxisCanvas" Grid.Column="1" Grid.Row="1" Margin="1,0,1,0"
                     Background="Transparent" ClipToBounds="True" MouseWheel="OnXAxisMouseWheel"
@@ -99,20 +100,21 @@
                 </Canvas.ContextMenu>
             </Canvas>
             <TextBlock x:Name="XAxisTitle" Grid.Column="1" Grid.Row="2" TextAlignment="Center"
-                       FontSize="12" Foreground="#FFD8D8D4" Margin="0,0,0,5" />
-            <TextBlock Grid.ColumnSpan="2" Grid.Row="3" FontSize="10" Foreground="#FF9A9A95"
+                       FontSize="{x:Static themes:ThemeTypography.FontSizeBody}" Foreground="{StaticResource TextBrush}" Margin="0,0,0,5" />
+            <TextBlock Grid.ColumnSpan="2" Grid.Row="3" FontSize="{x:Static themes:ThemeTypography.FontSizeCaption}" Foreground="{StaticResource TextDim}"
                        TextWrapping="Wrap" Text="ホイール: 拡大・縮小 (Shift: 横軸 / Ctrl: 縦軸)　ドラッグ: 移動　ダブルクリック: 全体表示　軸を右クリック: 範囲・目盛りの設定" />
 
             <!-- 設定は必要時だけ表示し、通常はグラフの表示領域を確保する。 -->
             <Popup x:Name="AxisFormatPopup" Placement="Right" PlacementTarget="{Binding ElementName=YAxisArea}"
                    StaysOpen="False" AllowsTransparency="True">
-                <Border Background="#FF2E2E32" BorderBrush="#FF5B9DD9" BorderThickness="1"
+                <Border Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource AccentBrush}" BorderThickness="1"
                         CornerRadius="5" Padding="14" Width="460" KeyDown="OnAxisFormatPopupKeyDown">
                     <StackPanel>
                         <DockPanel Margin="0,0,0,10">
-                            <Button DockPanel.Dock="Right" Content="✕" Click="OnCloseAxisFormatClick" Padding="6,1"
+                            <Button DockPanel.Dock="Right" Content="{x:Static themes:IconGlyphs.Close}" ContentTemplate="{StaticResource IconContent}"
+                                    Click="OnCloseAxisFormatClick" ToolTip="軸の書式を閉じる" Padding="6,1"
                                     AutomationProperties.Name="軸の書式を閉じる" />
-                            <TextBlock Text="軸の書式" Foreground="#FFD8D8D4"
+                            <TextBlock Text="軸の書式" Foreground="{StaticResource TextBrush}"
                                        VerticalAlignment="Center" FontWeight="SemiBold" />
                         </DockPanel>
                         <Grid>
@@ -130,8 +132,8 @@
                                 <RowDefinition />
                                 <RowDefinition />
                             </Grid.RowDefinitions>
-                            <TextBlock Grid.Column="1" Text="縦軸 (raw code)" Foreground="#FF9A9A95" Margin="0,0,0,4" />
-                            <TextBlock Grid.Column="3" Text="横軸 (座標)" Foreground="#FF9A9A95" Margin="0,0,0,4" />
+                            <TextBlock Grid.Column="1" Text="縦軸 (raw code)" Foreground="{StaticResource TextDim}" Margin="0,0,0,4" />
+                            <TextBlock Grid.Column="3" Text="横軸 (座標)" Foreground="{StaticResource TextDim}" Margin="0,0,0,4" />
 
                             <TextBlock Grid.Row="1" Text="範囲" VerticalAlignment="Center" Margin="0,0,10,6" />
                             <ComboBox x:Name="YScaleCombo" Grid.Row="1" Grid.Column="1" SelectedIndex="0" Margin="0,0,0,6"
@@ -206,12 +208,12 @@
                             <CheckBox x:Name="MinorGridCheck" Content="補助目盛り" Margin="16,0,0,0" VerticalAlignment="Center"
                                       Click="OnGridCheckClick" AutomationProperties.Name="補助目盛りの目盛線を描く" />
                         </StackPanel>
-                        <TextBlock x:Name="YScaleErrorText" Foreground="#FFE8A34B" FontSize="11"
+                        <TextBlock x:Name="YScaleErrorText" Foreground="{StaticResource WarningBrush}" FontSize="{x:Static themes:ThemeTypography.FontSizeCaption}"
                                    Visibility="Collapsed" Margin="0,8,0,0" TextWrapping="Wrap"
                                    Text="有限の数値で「最小 ＜ 最大」を指定してください。現在の表示範囲は変更していません。" />
-                        <TextBlock x:Name="AxisFormatNote" Foreground="#FFE8C88B" FontSize="11"
+                        <TextBlock x:Name="AxisFormatNote" Foreground="{StaticResource WarningBrush}" FontSize="{x:Static themes:ThemeTypography.FontSizeCaption}"
                                    Visibility="Collapsed" Margin="0,8,0,0" TextWrapping="Wrap" />
-                        <TextBlock Foreground="#FF9A9A95" FontSize="11" Margin="0,8,0,0" TextWrapping="Wrap"
+                        <TextBlock Foreground="{StaticResource TextDim}" FontSize="{x:Static themes:ThemeTypography.FontSizeCaption}" Margin="0,8,0,0" TextWrapping="Wrap"
                                    Text="目盛りは間隔の整数倍の値に置き、ラベルが重なるときは間引きます。指定の間隔が細かすぎて詰まる拡大率では自動の間隔で描きます。" />
                         <Button x:Name="ApplyAxisFormatButton" Content="適用" Padding="12,4" Margin="0,10,0,0"
                                 HorizontalAlignment="Right" Click="OnApplyAxisFormatClick" ToolTip="Enterでも適用" />

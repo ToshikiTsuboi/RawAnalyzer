@@ -1,6 +1,5 @@
 using System.IO;
 using System.Windows;
-using System.Windows.Media;
 using RawAnalyzer.App.Services;
 using RawAnalyzer.App.Views;
 
@@ -99,7 +98,7 @@ public partial class MainWindow
 
     private void OnUsageGuideClick(object sender, RoutedEventArgs e)
     {
-        ShowInfoWindow("操作ガイド",
+        AppMessage.Show(this,
             "キーボード操作\n" +
             "  Ctrl+Shift+P: コマンドパレット(全機能を検索して実行)\n" +
             "  F1: ショートカット一覧\n" +
@@ -117,51 +116,13 @@ public partial class MainWindow
             "  AWB(グレーワールド): 全体平均から自動計算\n" +
             "  スポイト: クリック画素を無彩色として計算\n\n" +
             "HDR\n" +
-            "  フォーマットでHDR方式を指定 → 表示モードで分割/合成");
+            "  フォーマットでHDR方式を指定 → 表示モードで分割/合成",
+            "操作ガイド", MessageBoxButton.OK, MessageBoxImage.Information);
     }
 
     private void OnAboutClick(object sender, RoutedEventArgs e)
     {
         new AboutWindow { Owner = this }.ShowDialog();
-    }
-
-    private void ShowInfoWindow(string title, string message)
-    {
-        var text = new System.Windows.Controls.TextBlock
-        {
-            Text = message,
-            Margin = new Thickness(20, 16, 20, 8),
-            FontSize = 12,
-            LineHeight = 19,
-            TextWrapping = TextWrapping.Wrap,
-        };
-        var ok = new System.Windows.Controls.Button
-        {
-            Content = "OK",
-            IsDefault = true,
-            IsCancel = true,
-            HorizontalAlignment = HorizontalAlignment.Right,
-            Margin = new Thickness(20, 8, 20, 14),
-            MinWidth = 80,
-        };
-        var panel = new System.Windows.Controls.StackPanel();
-        panel.Children.Add(text);
-        panel.Children.Add(ok);
-        var window = new Window
-        {
-            Title = title,
-            Content = panel,
-            Owner = this,
-            Width = 420,
-            SizeToContent = SizeToContent.Height,
-            WindowStartupLocation = WindowStartupLocation.CenterOwner,
-            ResizeMode = ResizeMode.NoResize,
-            ShowInTaskbar = false,
-            Background = (Brush)FindResource("PanelBrush"),
-            Foreground = (Brush)FindResource("TextBrush"),
-        };
-        ok.Click += (_, _) => window.Close();
-        window.ShowDialog();
     }
 
     // ---- フルスクリーン ----

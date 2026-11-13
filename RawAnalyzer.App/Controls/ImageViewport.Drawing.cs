@@ -4,6 +4,7 @@ using System.Windows.Media;
 using RawAnalyzer.App.Rendering;
 using RawAnalyzer.App.Services;
 using RawAnalyzer.Core;
+using RawAnalyzer.App.Themes;
 
 namespace RawAnalyzer.App.Controls;
 
@@ -33,22 +34,15 @@ public sealed partial class ImageViewport
         DrawSplitLabels(dc);
     }
 
-    private static readonly Brush SplitLabelBackground = CreateSplitLabelBrush(0xD9, 0x16, 0x16, 0x18);
-    private static readonly Brush SplitLabelRed = CreateSplitLabelBrush(0xFF, 0xE0, 0x52, 0x4E);
-    private static readonly Brush SplitLabelGr = CreateSplitLabelBrush(0xFF, 0x7E, 0xCB, 0x72);
-    private static readonly Brush SplitLabelGb = CreateSplitLabelBrush(0xFF, 0x4E, 0x9A, 0x4E);
-    private static readonly Brush SplitLabelBlue = CreateSplitLabelBrush(0xFF, 0x5B, 0x9D, 0xD9);
+    private static readonly Brush SplitLabelBackground = ThemeColors.Brush(ThemeColors.SplitLabelBackground);
+    private static readonly Brush SplitLabelRed = ThemeColors.Brush(ThemeColors.ChannelR);
+    private static readonly Brush SplitLabelGr = ThemeColors.Brush(ThemeColors.ChannelGr);
+    private static readonly Brush SplitLabelGb = ThemeColors.Brush(ThemeColors.ChannelGb);
+    private static readonly Brush SplitLabelBlue = ThemeColors.Brush(ThemeColors.ChannelB);
     private static readonly Typeface SplitLabelTypeface = new(new FontFamily("Segoe UI"),
         FontStyles.Normal, FontWeights.SemiBold, FontStretches.Normal);
     private readonly Dictionary<string, FormattedText> _splitLabelText = new();
     private double _splitLabelScale;
-
-    private static Brush CreateSplitLabelBrush(byte a, byte r, byte g, byte b)
-    {
-        var brush = new SolidColorBrush(Color.FromArgb(a, r, g, b));
-        brush.Freeze();
-        return brush;
-    }
 
     private void DrawSplitLabels(DrawingContext dc)
     {
@@ -112,7 +106,7 @@ public sealed partial class ImageViewport
         if (!_splitLabelText.TryGetValue(label, out FormattedText? text))
         {
             text = new FormattedText(label, CultureInfo.CurrentUICulture, FlowDirection.LeftToRight,
-                SplitLabelTypeface, 12, color, pixelsPerDip);
+                SplitLabelTypeface, ThemeTypography.FontSizeBody, color, pixelsPerDip);
             _splitLabelText.Add(label, text);
         }
 
@@ -143,29 +137,18 @@ public sealed partial class ImageViewport
         return guidelines;
     }
 
-    private static readonly Pen KeyCursorPen = CreateKeyCursorPen(0xE6);
-    private static readonly Pen KeyCursorGuidePen = CreateKeyCursorPen(0x50);
+    private static readonly Pen KeyCursorPen = CreateCursorPen(ThemeColors.KeyCursor);
+    private static readonly Pen KeyCursorGuidePen = CreateCursorPen(ThemeColors.KeyCursorGuide);
 
-    private static Pen CreateKeyCursorPen(byte alpha)
+    private static Pen CreateCursorPen(Color color)
     {
-        var brush = new SolidColorBrush(Color.FromArgb(alpha, 0x7E, 0xCB, 0x72));
-        brush.Freeze();
+        var brush = ThemeColors.Brush(color);
         var pen = new Pen(brush, 1.2);
         pen.Freeze();
         return pen;
     }
 
-    private static readonly Pen GhostCursorPen = CreateGhostCursorPen();
-
-    private static Pen CreateGhostCursorPen()
-    {
-        // キーボードカーソル(緑)と区別できる暖色。控えめな太さで実画素を隠さない
-        var brush = new SolidColorBrush(Color.FromArgb(0xC8, 0xE8, 0xA3, 0x4B));
-        brush.Freeze();
-        var pen = new Pen(brush, 1.2);
-        pen.Freeze();
-        return pen;
-    }
+    private static readonly Pen GhostCursorPen = CreateCursorPen(ThemeColors.GhostCursor);
 
     /// <summary>他ペインのカーソル位置を示すクロスヘアを描く(比較モード用)。</summary>
     private void DrawGhostCursor(DrawingContext dc)
@@ -211,9 +194,7 @@ public sealed partial class ImageViewport
 
     private static Pen CreateProfilePen(bool dashed)
     {
-        var brush = new SolidColorBrush(Color.FromArgb(
-            dashed ? (byte)0x60 : (byte)0xE6, 0xD9, 0x9B, 0x5B));
-        brush.Freeze();
+        var brush = ThemeColors.Brush(dashed ? ThemeColors.ProfileInactive : ThemeColors.ProfileActive);
         var pen = new Pen(brush, dashed ? 1.0 : 1.4);
         if (dashed)
         {
@@ -277,8 +258,8 @@ public sealed partial class ImageViewport
         return BayerSplit.TryMapSourceToTiledAxis(source, sourceLength & ~1, out display);
     }
 
-    private static readonly Pen HotMarkerPen = CreateMarkerPen(Color.FromRgb(0xE6, 0x50, 0x3C));
-    private static readonly Pen DeadMarkerPen = CreateMarkerPen(Color.FromRgb(0x3C, 0x78, 0xE6));
+    private static readonly Pen HotMarkerPen = CreateMarkerPen(ThemeColors.HotPixel);
+    private static readonly Pen DeadMarkerPen = CreateMarkerPen(ThemeColors.DeadPixel);
 
     private static Pen CreateMarkerPen(Color color)
     {
@@ -385,16 +366,14 @@ public sealed partial class ImageViewport
 
     private static Pen CreateRoiPen()
     {
-        var pen = new Pen(new SolidColorBrush(Color.FromRgb(0x5B, 0x9D, 0xD9)), 1.5);
+        var pen = new Pen(ThemeColors.Brush(ThemeColors.Accent), 1.5);
         pen.Freeze();
         return pen;
     }
 
     private static Brush CreateRoiFill()
     {
-        var brush = new SolidColorBrush(Color.FromArgb(0x20, 0x5B, 0x9D, 0xD9));
-        brush.Freeze();
-        return brush;
+        return ThemeColors.Brush(ThemeColors.RoiFill);
     }
 
     private void DrawRoi(DrawingContext dc)

@@ -3,6 +3,7 @@ using System.Windows;
 using System.Windows.Media;
 using RawAnalyzer.App.Services;
 using RawAnalyzer.Core;
+using RawAnalyzer.App.Themes;
 
 namespace RawAnalyzer.App.Views;
 
@@ -17,10 +18,10 @@ namespace RawAnalyzer.App.Views;
 public partial class ProjectionWindow : Window
 {
     /// <summary>最大の線の色。</summary>
-    internal static readonly Color MaxStroke = Color.FromRgb(0xE0, 0x88, 0x4E);
+    internal static readonly Color MaxStroke = ThemeColors.PlotMax;
 
     /// <summary>最小の線の色。</summary>
-    internal static readonly Color MinStroke = Color.FromRgb(0x9F, 0x86, 0xE0);
+    internal static readonly Color MinStroke = ThemeColors.PlotMin;
 
     private ProjectionProfile _profile = ProjectionProfile.Empty();
     private ProjectionAxis _axis;

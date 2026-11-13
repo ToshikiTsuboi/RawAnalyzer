@@ -309,7 +309,7 @@ public partial class NoiseMeasureDialog : Window
         RunSettings settings = CaptureRunSettings();
         if (!NumericInput.TryParsePositive(settings.Saturation, out double saturation))
         {
-            MessageBox.Show(this, "飽和信号レベルは正の数値で指定してください。", "ノイズ測定",
+            AppMessage.Show(this, "飽和信号レベルは正の数値で指定してください。", "ノイズ測定",
                 MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
@@ -338,7 +338,7 @@ public partial class NoiseMeasureDialog : Window
 
         if (!exists)
         {
-            MessageBox.Show(this, "2枚目のファイルが見つかりません。", "ノイズ測定",
+            AppMessage.Show(this, "2枚目のファイルが見つかりません。", "ノイズ測定",
                 MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
@@ -360,7 +360,7 @@ public partial class NoiseMeasureDialog : Window
                     $"{Environment.NewLine}{Environment.NewLine}" +
                     "対象Aのフォーマットで強制的に読み込むため、測定値が正しくない可能性があります。" +
                     $"{Environment.NewLine}続行しますか?";
-                if (MessageBox.Show(this, message, "ノイズ測定",
+                if (AppMessage.Show(this, message, "ノイズ測定",
                         MessageBoxButton.OKCancel, MessageBoxImage.Warning) != MessageBoxResult.OK
                     || IsSuperseded(settings))
                 {

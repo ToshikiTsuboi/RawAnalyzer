@@ -2,6 +2,7 @@
 using System.Windows.Controls;
 using System.Windows.Threading;
 using RawAnalyzer.App.Rendering;
+using RawAnalyzer.App.Themes;
 
 namespace RawAnalyzer.App.Compare;
 
@@ -584,7 +585,7 @@ public partial class CompareView : UserControl
 
     private void OnPaneDisplayChanged(ComparePaneView source)
     {
-        // 🔗同士なら操作結果を他ペインへ転写(ApplyDisplayはDisplayChangedを発火しない)
+        // 調整リンクがオンのペイン同士なら操作結果を他ペインへ転写(ApplyDisplayはDisplayChangedを発火しない)
         if (source.IsLinked && source.Pane is not null)
         {
             DisplaySettings settings = source.Pane.Display;
@@ -770,7 +771,8 @@ public partial class CompareView : UserControl
         PaneCountText.Text = $"{_panes.Count} / {MaxPanes}枚";
         AddImageButton.IsEnabled = CanAddPane;
         EmptyAddButton.IsEnabled = CanAddPane;
-        AddImageButton.Content = _loading ? "読込中…" : "＋ 画像を追加";
+        AddImageButton.Content = _loading ? "読込中…" : "画像を追加";
+        AddImageButton.Tag = _loading ? "" : IconGlyphs.Add;
         AddImageButton.ToolTip = AddRefusal
             ?? "画像を選んで比較に追加。比較領域のどこへドロップしても追加できます (最大4枚)。";
         ToolTipService.SetShowOnDisabled(AddImageButton, true);

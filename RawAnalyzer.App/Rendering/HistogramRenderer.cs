@@ -2,6 +2,7 @@ using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using RawAnalyzer.Core;
+using RawAnalyzer.App.Themes;
 
 namespace RawAnalyzer.App.Rendering;
 
@@ -12,10 +13,9 @@ internal static class HistogramRenderer
     private const int Height = 70;
     private const int BytesPerPixel = 4;
 
-    // チャネル色 (BGR順): R, Gr, Gb, B
-    private static readonly (byte B, byte G, byte R)[] ChannelColors =
+    private static readonly Color[] ChannelColors =
     {
-        (0x4E, 0x52, 0xE0), (0x72, 0xCB, 0x7E), (0x4E, 0x9A, 0x4E), (0xD9, 0x9D, 0x5B),
+        ThemeColors.ChannelR, ThemeColors.ChannelGr, ThemeColors.ChannelGb, ThemeColors.ChannelB,
     };
 
     /// <summary>全画素のヒストグラムを棒グラフとして描く。</summary>
@@ -26,16 +26,17 @@ internal static class HistogramRenderer
         double[] columns = HistogramTools.AggregateForDisplay(bins, Width, cumulative);
         double maxScale = Scale(columns.Max(), logScale);
         var pixels = new byte[Width * Height * BytesPerPixel];
+        Color color = cumulative ? ThemeColors.Accent : ThemeColors.Histogram;
         for (int x = 0; x < Width; x++)
         {
             int barHeight = BarHeight(columns[x], maxScale, logScale);
             for (int y = Height - barHeight; y < Height; y++)
             {
                 int offset = (y * Width + x) * BytesPerPixel;
-                pixels[offset] = cumulative ? (byte)0xD9 : (byte)0x85;
-                pixels[offset + 1] = cumulative ? (byte)0x9D : (byte)0x8A;
-                pixels[offset + 2] = cumulative ? (byte)0x5B : (byte)0x8A;
-                pixels[offset + 3] = 0xFF;
+                pixels[offset] = color.B;
+                pixels[offset + 1] = color.G;
+                pixels[offset + 2] = color.R;
+                pixels[offset + 3] = byte.MaxValue;
             }
         }
 
@@ -69,7 +70,7 @@ internal static class HistogramRenderer
                     pixels[offset] = ChannelColors[c].B;
                     pixels[offset + 1] = ChannelColors[c].G;
                     pixels[offset + 2] = ChannelColors[c].R;
-                    pixels[offset + 3] = 0xFF;
+                    pixels[offset + 3] = byte.MaxValue;
                 }
             }
         }

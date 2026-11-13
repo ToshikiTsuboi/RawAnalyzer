@@ -248,7 +248,7 @@ public partial class DefectPixelWindow : Window
     {
         if (!NumericInput.TryParsePositive(SigmaBox.Text, out double sigma))
         {
-            MessageBox.Show(this, InvalidSigmaMessage, "欠陥画素検出",
+            AppMessage.Show(this, InvalidSigmaMessage, "欠陥画素検出",
                 MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
@@ -257,7 +257,7 @@ public partial class DefectPixelWindow : Window
         bool dead = DeadCheck.IsChecked == true;
         if (!hot && !dead)
         {
-            MessageBox.Show(this, "白点・黒点の少なくとも一方を選択してください。", "欠陥画素検出",
+            AppMessage.Show(this, "白点・黒点の少なくとも一方を選択してください。", "欠陥画素検出",
                 MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }

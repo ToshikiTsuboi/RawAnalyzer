@@ -1,26 +1,40 @@
 ﻿<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:themes="clr-namespace:RawAnalyzer.App.Themes"
                     xmlns:controls="clr-namespace:RawAnalyzer.App.Controls">
 
     <!-- ===== カラーパレット ===== -->
-    <SolidColorBrush x:Key="WindowBackgroundBrush" Color="#FF252528" />
-    <SolidColorBrush x:Key="PanelBrush" Color="#FF2E2E32" />
-    <SolidColorBrush x:Key="Panel2Brush" Color="#FF38383D" />
-    <SolidColorBrush x:Key="HoverBrush" Color="#FF45454B" />
-    <SolidColorBrush x:Key="PressedBrush" Color="#FF2A2A2E" />
-    <SolidColorBrush x:Key="BorderBrushDark" Color="#FF48484E" />
-    <SolidColorBrush x:Key="BorderBrushLight" Color="#FF5A5A61" />
-    <SolidColorBrush x:Key="TextBrush" Color="#FFD8D8D4" />
-    <SolidColorBrush x:Key="TextDim" Color="#FF9A9A95" />
-    <!-- PanelBrush 上で 4.5:1 を満たす明るさ(旧 #6E6E69 は 2.64:1 で判読困難) -->
-    <SolidColorBrush x:Key="TextFaint" Color="#FF959590" />
-    <SolidColorBrush x:Key="AccentBrush" Color="#FF5B9DD9" />
-    <SolidColorBrush x:Key="AccentSoftBrush" Color="#335B9DD9" />
-    <SolidColorBrush x:Key="CanvasBrush" Color="#FF161618" />
-    <SolidColorBrush x:Key="ScrollThumbBrush" Color="#FF4A4A50" />
-    <SolidColorBrush x:Key="ScrollThumbHoverBrush" Color="#FF5F5F66" />
+    <SolidColorBrush x:Key="WindowBackgroundBrush" Color="{x:Static themes:ThemeColors.WindowBackground}" />
+    <SolidColorBrush x:Key="PanelBrush" Color="{x:Static themes:ThemeColors.Panel}" />
+    <SolidColorBrush x:Key="Panel2Brush" Color="{x:Static themes:ThemeColors.Panel2}" />
+    <SolidColorBrush x:Key="HoverBrush" Color="{x:Static themes:ThemeColors.Hover}" />
+    <SolidColorBrush x:Key="PressedBrush" Color="{x:Static themes:ThemeColors.Pressed}" />
+    <SolidColorBrush x:Key="BorderBrushDark" Color="{x:Static themes:ThemeColors.BorderDark}" />
+    <SolidColorBrush x:Key="BorderBrushLight" Color="{x:Static themes:ThemeColors.BorderLight}" />
+    <SolidColorBrush x:Key="TextBrush" Color="{x:Static themes:ThemeColors.Text}" />
+    <SolidColorBrush x:Key="TextDim" Color="{x:Static themes:ThemeColors.TextDim}" />
+    <!-- PanelBrush 上で 4.5:1 を満たす明るさ -->
+    <SolidColorBrush x:Key="TextFaint" Color="{x:Static themes:ThemeColors.TextFaint}" />
+    <SolidColorBrush x:Key="AccentBrush" Color="{x:Static themes:ThemeColors.Accent}" />
+    <SolidColorBrush x:Key="AccentSoftBrush" Color="{x:Static themes:ThemeColors.AccentSoft}" />
+    <SolidColorBrush x:Key="CanvasBrush" Color="{x:Static themes:ThemeColors.Canvas}" />
+    <SolidColorBrush x:Key="ScrollThumbBrush" Color="{x:Static themes:ThemeColors.ScrollThumb}" />
+    <SolidColorBrush x:Key="ScrollThumbHoverBrush" Color="{x:Static themes:ThemeColors.ScrollThumbHover}" />
     <!-- 入力欄の「不正」の枠(controls:InputFeedback.Error に理由を入れた欄) -->
-    <SolidColorBrush x:Key="ErrorBrush" Color="#FFD9605B" />
+    <SolidColorBrush x:Key="ErrorBrush" Color="{x:Static themes:ThemeColors.Error}" />
+
+    <SolidColorBrush x:Key="SuccessBrush" Color="{x:Static themes:ThemeColors.Success}" />
+    <SolidColorBrush x:Key="WarningBrush" Color="{x:Static themes:ThemeColors.Warning}" />
+    <SolidColorBrush x:Key="OverlayScrimBrush" Color="{x:Static themes:ThemeColors.OverlayScrim}" />
+    <SolidColorBrush x:Key="OverlayPanelBrush" Color="{x:Static themes:ThemeColors.OverlayPanel}" />
+    <SolidColorBrush x:Key="ChannelRBrush" Color="{x:Static themes:ThemeColors.ChannelR}" />
+    <SolidColorBrush x:Key="ChannelGrBrush" Color="{x:Static themes:ThemeColors.ChannelGr}" />
+    <SolidColorBrush x:Key="ChannelGbBrush" Color="{x:Static themes:ThemeColors.ChannelGb}" />
+    <SolidColorBrush x:Key="ChannelBBrush" Color="{x:Static themes:ThemeColors.ChannelB}" />
+    <SolidColorBrush x:Key="PlotMaxBrush" Color="{x:Static themes:ThemeColors.PlotMax}" />
+    <SolidColorBrush x:Key="PlotMinBrush" Color="{x:Static themes:ThemeColors.PlotMin}" />
+    <SolidColorBrush x:Key="PrimaryHoverBrush" Color="{x:Static themes:ThemeColors.PrimaryHover}" />
+    <SolidColorBrush x:Key="PrimaryPressedBrush" Color="{x:Static themes:ThemeColors.PrimaryPressed}" />
 
     <!-- ===== フォーカス表示 =====
          既定の点線矩形はダーク背景で見えないため x:Null にしていたが、
@@ -40,13 +54,50 @@
         </Setter>
     </Style>
 
+    <!-- ===== アイコン ===== -->
+    <Style x:Key="IconText" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="Segoe Fluent Icons, Segoe MDL2 Assets" />
+        <Setter Property="FontSize" Value="{x:Static themes:ThemeTypography.FontSizeBody}" />
+        <Setter Property="FontWeight" Value="Normal" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+
+    <DataTemplate x:Key="IconContent">
+        <TextBlock Style="{StaticResource IconText}" Text="{Binding}" />
+    </DataTemplate>
+
+    <!-- ボタンの Tag にグリフ、Content に表示と読み上げ用のラベルを持つ。 -->
+    <DataTemplate x:Key="IconLabelContent">
+        <StackPanel Orientation="Horizontal">
+            <TextBlock Text="{Binding Tag, RelativeSource={RelativeSource AncestorType=ButtonBase}}" Margin="0,0,5,0">
+                <TextBlock.Style>
+                    <Style TargetType="TextBlock" BasedOn="{StaticResource IconText}">
+                        <Style.Triggers>
+                            <Trigger Property="Text" Value="">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </Trigger>
+                        </Style.Triggers>
+                    </Style>
+                </TextBlock.Style>
+            </TextBlock>
+            <TextBlock Text="{Binding}" VerticalAlignment="Center" />
+        </StackPanel>
+    </DataTemplate>
+
+    <DataTemplate x:Key="FolderTreeHeader">
+        <StackPanel Orientation="Horizontal">
+            <TextBlock Style="{StaticResource IconText}" Text="{Binding Glyph}" Margin="0,0,5,0" />
+            <TextBlock Text="{Binding Name}" VerticalAlignment="Center" />
+        </StackPanel>
+    </DataTemplate>
+
     <!-- ===== Button ===== -->
     <Style TargetType="Button">
         <Setter Property="Background" Value="{StaticResource Panel2Brush}" />
         <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
         <Setter Property="BorderBrush" Value="{StaticResource BorderBrushDark}" />
         <Setter Property="Padding" Value="12,5" />
-        <Setter Property="FontSize" Value="12" />
+        <Setter Property="FontSize" Value="{x:Static themes:ThemeTypography.FontSizeBody}" />
         <Setter Property="HorizontalContentAlignment" Value="Center" />
         <Setter Property="SnapsToDevicePixels" Value="True" />
         <Setter Property="FocusVisualStyle" Value="{StaticResource AccentFocusVisual}" />
@@ -81,13 +132,63 @@
         </Setter>
     </Style>
 
+    <Style x:Key="PrimaryButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+        <Setter Property="Background" Value="{StaticResource AccentBrush}" />
+        <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+        <Setter Property="Foreground" Value="{StaticResource CanvasBrush}" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Border x:Name="Bd" CornerRadius="4" BorderThickness="1"
+                            Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                            Padding="{TemplateBinding Padding}" SnapsToDevicePixels="True">
+                        <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                          VerticalAlignment="Center" RecognizesAccessKey="True" />
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <MultiTrigger>
+                            <MultiTrigger.Conditions>
+                                <Condition Property="IsEnabled" Value="True" />
+                                <Condition Property="IsMouseOver" Value="True" />
+                            </MultiTrigger.Conditions>
+                            <Setter TargetName="Bd" Property="Background" Value="{StaticResource PrimaryHoverBrush}" />
+                        </MultiTrigger>
+                        <Trigger Property="IsPressed" Value="True">
+                            <Setter TargetName="Bd" Property="Background" Value="{StaticResource PrimaryPressedBrush}" />
+                        </Trigger>
+                        <Trigger Property="IsKeyboardFocused" Value="True">
+                            <Setter TargetName="Bd" Property="BorderBrush" Value="{StaticResource TextBrush}" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+        <Style.Triggers>
+            <Trigger Property="IsEnabled" Value="False">
+                <Setter Property="Background" Value="{StaticResource Panel2Brush}" />
+                <Setter Property="BorderBrush" Value="{StaticResource BorderBrushDark}" />
+                <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+            </Trigger>
+        </Style.Triggers>
+    </Style>
+
+    <Style x:Key="SuccessButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+        <Setter Property="Foreground" Value="{StaticResource SuccessBrush}" />
+        <Setter Property="BorderBrush" Value="{StaticResource SuccessBrush}" />
+    </Style>
+
+    <Style x:Key="ToolButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+        <Setter Property="Padding" Value="10,4" />
+        <Setter Property="Margin" Value="2,0" />
+    </Style>
+
     <!-- ===== ToggleButton ===== -->
     <Style TargetType="ToggleButton">
         <Setter Property="Background" Value="{StaticResource Panel2Brush}" />
         <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
         <Setter Property="BorderBrush" Value="{StaticResource BorderBrushDark}" />
         <Setter Property="Padding" Value="12,5" />
-        <Setter Property="FontSize" Value="12" />
+        <Setter Property="FontSize" Value="{x:Static themes:ThemeTypography.FontSizeBody}" />
         <Setter Property="HorizontalContentAlignment" Value="Center" />
         <Setter Property="SnapsToDevicePixels" Value="True" />
         <Setter Property="FocusVisualStyle" Value="{StaticResource AccentFocusVisual}" />
@@ -125,6 +226,11 @@
         </Setter>
     </Style>
 
+    <Style x:Key="ToolToggle" TargetType="ToggleButton" BasedOn="{StaticResource {x:Type ToggleButton}}">
+        <Setter Property="Padding" Value="10,4" />
+        <Setter Property="Margin" Value="2,0" />
+    </Style>
+
     <!-- ===== TextBox ===== -->
     <Style TargetType="TextBox">
         <Setter Property="Background" Value="{StaticResource Panel2Brush}" />
@@ -136,7 +242,7 @@
         <!-- ComboBox と同じ高さ(24px)に揃える。ComboBox はテンプレートの Border が
              Grid でコンテンツに重なるぶん枠1pxを食わないため、こちらは縦を1px少なくする -->
         <Setter Property="Padding" Value="6,3" />
-        <Setter Property="FontSize" Value="12" />
+        <Setter Property="FontSize" Value="{x:Static themes:ThemeTypography.FontSizeBody}" />
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="TextBox">
@@ -176,7 +282,7 @@
     <!-- ===== ComboBox ===== -->
     <Style TargetType="ComboBoxItem">
         <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
-        <Setter Property="FontSize" Value="12" />
+        <Setter Property="FontSize" Value="{x:Static themes:ThemeTypography.FontSizeBody}" />
         <Setter Property="SnapsToDevicePixels" Value="True" />
         <Setter Property="Template">
             <Setter.Value>
@@ -207,7 +313,7 @@
         <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
         <Setter Property="BorderBrush" Value="{StaticResource BorderBrushDark}" />
         <Setter Property="Padding" Value="8,4" />
-        <Setter Property="FontSize" Value="12" />
+        <Setter Property="FontSize" Value="{x:Static themes:ThemeTypography.FontSizeBody}" />
         <Setter Property="SnapsToDevicePixels" Value="True" />
         <Setter Property="FocusVisualStyle" Value="{StaticResource AccentFocusVisual}" />
         <Setter Property="ScrollViewer.CanContentScroll" Value="True" />
@@ -310,7 +416,7 @@
     <!-- ===== CheckBox ===== -->
     <Style TargetType="CheckBox">
         <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
-        <Setter Property="FontSize" Value="12" />
+        <Setter Property="FontSize" Value="{x:Static themes:ThemeTypography.FontSizeBody}" />
         <Setter Property="FocusVisualStyle" Value="{StaticResource AccentFocusVisual}" />
         <Setter Property="Template">
             <Setter.Value>
@@ -351,7 +457,7 @@
     <!-- ===== RadioButton ===== -->
     <Style TargetType="RadioButton">
         <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
-        <Setter Property="FontSize" Value="12" />
+        <Setter Property="FontSize" Value="{x:Static themes:ThemeTypography.FontSizeBody}" />
         <Setter Property="FocusVisualStyle" Value="{StaticResource AccentFocusVisual}" />
         <Setter Property="Template">
             <Setter.Value>
@@ -421,7 +527,7 @@
             <Setter.Value>
                 <ControlTemplate TargetType="Thumb">
                     <Grid Width="14" Height="14" Background="Transparent">
-                        <Ellipse x:Name="Knob" Fill="#FFD8D8D4" />
+                        <Ellipse x:Name="Knob" Fill="{StaticResource TextBrush}" />
                     </Grid>
                     <ControlTemplate.Triggers>
                         <Trigger Property="IsMouseOver" Value="True">
@@ -570,7 +676,7 @@
     </Style>
     <Style TargetType="ListBoxItem">
         <Setter Property="Foreground" Value="{StaticResource TextDim}" />
-        <Setter Property="FontSize" Value="12" />
+        <Setter Property="FontSize" Value="{x:Static themes:ThemeTypography.FontSizeBody}" />
         <Setter Property="SnapsToDevicePixels" Value="True" />
         <Setter Property="FocusVisualStyle" Value="{StaticResource AccentFocusVisual}" />
         <Setter Property="Template">
@@ -639,7 +745,7 @@
 
     <Style TargetType="TreeViewItem">
         <Setter Property="Foreground" Value="{StaticResource TextDim}" />
-        <Setter Property="FontSize" Value="12" />
+        <Setter Property="FontSize" Value="{x:Static themes:ThemeTypography.FontSizeBody}" />
         <Setter Property="IsExpanded" Value="False" />
         <Setter Property="FocusVisualStyle" Value="{StaticResource AccentFocusVisual}" />
         <Setter Property="Template">
@@ -697,7 +803,7 @@
     </Style>
     <Style TargetType="ListViewItem">
         <Setter Property="Foreground" Value="{StaticResource TextDim}" />
-        <Setter Property="FontSize" Value="12" />
+        <Setter Property="FontSize" Value="{x:Static themes:ThemeTypography.FontSizeBody}" />
         <Setter Property="FontFamily" Value="Consolas" />
         <Setter Property="HorizontalContentAlignment" Value="Stretch" />
         <Setter Property="FocusVisualStyle" Value="{StaticResource AccentFocusVisual}" />
@@ -726,7 +832,7 @@
     <Style TargetType="GridViewColumnHeader">
         <Setter Property="Background" Value="{StaticResource Panel2Brush}" />
         <Setter Property="Foreground" Value="{StaticResource TextDim}" />
-        <Setter Property="FontSize" Value="11" />
+        <Setter Property="FontSize" Value="{x:Static themes:ThemeTypography.FontSizeCaption}" />
         <Setter Property="Padding" Value="6,4" />
         <Setter Property="BorderBrush" Value="{StaticResource BorderBrushDark}" />
         <Setter Property="Template">
@@ -810,7 +916,7 @@
         <Setter Property="Foreground" Value="{StaticResource TextDim}" />
         <Setter Property="BorderThickness" Value="0" />
         <Setter Property="Padding" Value="4,1" />
-        <Setter Property="FontSize" Value="12" />
+        <Setter Property="FontSize" Value="{x:Static themes:ThemeTypography.FontSizeBody}" />
         <Setter Property="FocusVisualStyle" Value="{StaticResource AccentFocusVisual}" />
         <Setter Property="Template">
             <Setter.Value>
@@ -836,7 +942,7 @@
     <Style TargetType="Menu">
         <Setter Property="Background" Value="Transparent" />
         <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
-        <Setter Property="FontSize" Value="12" />
+        <Setter Property="FontSize" Value="{x:Static themes:ThemeTypography.FontSizeBody}" />
     </Style>
 
     <ControlTemplate x:Key="MenuTopLevelHeaderTemplate" TargetType="MenuItem">
@@ -902,7 +1008,7 @@
                 <ContentPresenter Grid.Column="1" ContentSource="Header"
                                   RecognizesAccessKey="True" VerticalAlignment="Center" />
                 <TextBlock Grid.Column="2" Text="{TemplateBinding InputGestureText}"
-                           Foreground="{StaticResource TextFaint}" FontSize="11"
+                           Foreground="{StaticResource TextFaint}" FontSize="{x:Static themes:ThemeTypography.FontSizeCaption}"
                            Margin="28,0,0,0" VerticalAlignment="Center" />
             </Grid>
         </Border>
@@ -955,7 +1061,7 @@
 
     <Style TargetType="MenuItem">
         <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
-        <Setter Property="FontSize" Value="12" />
+        <Setter Property="FontSize" Value="{x:Static themes:ThemeTypography.FontSizeBody}" />
         <Setter Property="Template" Value="{StaticResource MenuSubmenuItemTemplate}" />
         <Style.Triggers>
             <Trigger Property="Role" Value="TopLevelHeader">
@@ -984,7 +1090,7 @@
     <!-- ===== ContextMenu ===== -->
     <Style TargetType="ContextMenu">
         <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
-        <Setter Property="FontSize" Value="12" />
+        <Setter Property="FontSize" Value="{x:Static themes:ThemeTypography.FontSizeBody}" />
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="ContextMenu">
@@ -1025,7 +1131,7 @@
         <Setter Property="Background" Value="{StaticResource PanelBrush}" />
         <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
         <Setter Property="BorderBrush" Value="{StaticResource BorderBrushDark}" />
-        <Setter Property="FontSize" Value="11" />
+        <Setter Property="FontSize" Value="{x:Static themes:ThemeTypography.FontSizeCaption}" />
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="ToolTip">

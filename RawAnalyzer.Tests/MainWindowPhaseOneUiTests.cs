@@ -10,7 +10,9 @@ using System.Windows.Media;
 using System.Windows.Threading;
 using RawAnalyzer.App;
 using RawAnalyzer.App.Compare;
+using RawAnalyzer.App.Controls;
 using RawAnalyzer.App.Services;
+using RawAnalyzer.App.Themes;
 using RawAnalyzer.App.ViewModels;
 using RawAnalyzer.Core;
 using Xunit;
@@ -112,6 +114,56 @@ public class MainWindowPhaseOneUiTests
             window.Close();
         }
     });
+
+    [Fact]
+    public Task RightPanel_ButtonsFitAtMinimumWidth() => WpfTestHost.Run(async () =>
+    {
+        using var settings = new TemporaryDirectory();
+        var window = new MainWindow(settings.Path) { Width = 1000, ShowActivated = false };
+        try
+        {
+            window.Show();
+            ((ColumnDefinition)window.FindName("RightColumn")).Width = new GridLength(190);
+            var vm = (MainViewModel)window.DataContext;
+            vm.HasImage = true;
+            vm.HistogramIsSampled = true;
+            await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+
+            var panel = (Border)window.FindName("RightPanel");
+            var scroll = Descendants<ScrollViewer>(panel).First();
+            var content = (FrameworkElement)scroll.Content;
+            var buttons = Descendants<ButtonBase>(content).Where(button => button.IsVisible
+                && button is not RepeatButton && button.TemplatedParent is null).ToArray();
+            Assert.Equal(190, panel.ActualWidth, 0);
+            Assert.True(buttons.Length >= 8);
+            Assert.All(Descendants<NumericSliderRow>(content), row =>
+            {
+                Assert.True(row.IsCompact);
+                Assert.True(((Slider)row.FindName("ValueSlider")).ActualWidth >= 120);
+            });
+            Assert.All(buttons, button =>
+            {
+                Rect bounds = BoundsIn(button, content);
+                Assert.True(bounds.Left >= 0 && bounds.Right <= content.ActualWidth + 0.01,
+                    $"右パネル: {button.Name} {button.Content} {bounds} / {content.ActualWidth}");
+            });
+            WpfTestHost.CaptureIfRequested((FrameworkElement)window.Content, "right-panel-190");
+        }
+        finally
+        {
+            window.Close();
+        }
+    });
+
+    private static IEnumerable<T> Descendants<T>(DependencyObject parent) where T : DependencyObject
+    {
+        for (int i = 0; i < VisualTreeHelper.GetChildrenCount(parent); i++)
+        {
+            DependencyObject child = VisualTreeHelper.GetChild(parent, i);
+            if (child is T item) yield return item;
+            foreach (T nested in Descendants<T>(child)) yield return nested;
+        }
+    }
 
     [Fact]
     public Task Toolbar_OverflowButtonClosesOnSecondPress() => WpfTestHost.Run(async () =>
@@ -243,9 +295,9 @@ public class MainWindowPhaseOneUiTests
             var previous = (Button)window.FindName("PreviousFrameButton");
             var next = (Button)window.FindName("NextFrameButton");
             var play = (ToggleButton)window.FindName("PlayToggle");
-            Assert.DoesNotContain(previous.Content.ToString()!, play.Content.ToString()!);
-            Assert.DoesNotContain(next.Content.ToString()!, play.Content.ToString()!);
-            Assert.NotEqual(previous.Content, next.Content);
+            Assert.Equal(IconGlyphs.StepBack, previous.Content);
+            Assert.Equal(IconGlyphs.StepForward, next.Content);
+            Assert.Equal(IconGlyphs.Play, play.Tag);
             Assert.Equal("前のフレームへ", AutomationProperties.GetName(previous));
             Assert.Equal("次のフレームへ", AutomationProperties.GetName(next));
             Assert.Contains("Page Up", Assert.IsType<string>(previous.ToolTip));

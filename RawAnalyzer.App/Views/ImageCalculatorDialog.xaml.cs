@@ -220,7 +220,7 @@ public partial class ImageCalculatorDialog : Window
 
         if (!exists)
         {
-            MessageBox.Show(this, "参照画像ファイルを指定してください。", "画像演算",
+            AppMessage.Show(this, "参照画像ファイルを指定してください。", "画像演算",
                 MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
