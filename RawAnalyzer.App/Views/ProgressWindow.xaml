@@ -4,7 +4,7 @@
         Title="処理中" Width="380" SizeToContent="Height"
         Background="#FF2E2E32" Foreground="#FFD8D8D4"
         WindowStartupLocation="CenterOwner" ResizeMode="NoResize"
-        ShowInTaskbar="False" WindowStyle="ToolWindow">
+        ShowInTaskbar="False">
     <StackPanel Margin="16,14">
         <TextBlock x:Name="MessageText" FontSize="12" Margin="0,0,0,10"
                    TextTrimming="CharacterEllipsis" />

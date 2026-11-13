@@ -1,3 +1,4 @@
+using RawAnalyzer.App.Compare;
 using RawAnalyzer.App.Services;
 using RawAnalyzer.App.ViewModels;
 using Xunit;
@@ -13,6 +14,20 @@ namespace RawAnalyzer.Tests;
 /// </remarks>
 public class CompareModeCommandTests
 {
+    [Fact]
+    public void CompareStatus_ReportsActiveImageAndPreservesNormalStatus()
+    {
+        var vm = new MainViewModel { IsCompareMode = true };
+        vm.UpdateCompareStatus(3, new ComparePaneStatus("A", "scene_a.raw", 1920, 1080, 12, 0.5));
+
+        Assert.Equal("比較 3 枚 · A: scene_a.raw · 1920×1080 · 12bit", vm.CompareImageInfoText);
+        Assert.DoesNotContain("画像未読込", vm.CompareImageInfoText);
+        Assert.Equal("Zoom 50%", vm.CompareZoomStatusText);
+
+        vm.IsCompareMode = false;
+        Assert.Equal("画像未読込", vm.ImageInfoText);
+    }
+
     [Fact]
     public void MainView_IsUnavailableWhileComparing()
     {

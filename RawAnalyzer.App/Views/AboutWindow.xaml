@@ -4,7 +4,7 @@
         Title="ソフト情報" Width="520" SizeToContent="Height"
         Background="{StaticResource PanelBrush}" Foreground="{StaticResource TextBrush}"
         WindowStartupLocation="CenterOwner" ResizeMode="NoResize"
-        ShowInTaskbar="False" WindowStyle="ToolWindow">
+        ShowInTaskbar="False">
     <Window.Resources>
         <!-- 項目名の列。値と行位置を揃えるため共通スタイルにする -->
         <Style x:Key="FieldLabel" TargetType="TextBlock">

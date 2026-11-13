@@ -4,7 +4,7 @@
         xmlns:sys="clr-namespace:System;assembly=System.Runtime"
         xmlns:controls="clr-namespace:RawAnalyzer.App.Controls"
         xmlns:compare="clr-namespace:RawAnalyzer.App.Compare"
-        Title="RawAnalyzer" Width="1280" Height="820"
+        Title="RawAnalyzer" Width="1280" Height="820" MinWidth="720" MinHeight="480"
         Background="#FF252528" Foreground="#FFD8D8D4"
         AllowDrop="True" Drop="OnFileDrop" DragOver="OnFileDragOver">
     <Window.Resources>
@@ -23,6 +23,38 @@
                BasedOn="{StaticResource {x:Type ToggleButton}}">
             <Setter Property="Padding" Value="10,4" />
             <Setter Property="Margin" Value="2,0" />
+        </Style>
+        <Style TargetType="ToggleButton" x:Key="OverflowToolToggle" BasedOn="{StaticResource ToolToggle}">
+            <Setter Property="ToolTip" Value="{Binding Tag, RelativeSource={RelativeSource Self}}" />
+            <Setter Property="ToolTipService.ShowOnDisabled" Value="True" />
+            <Style.Triggers>
+                <Trigger Property="IsEnabled" Value="False">
+                    <Setter Property="ToolTip" Value="{Binding MainViewDisabledReason}" />
+                </Trigger>
+                <Trigger Property="ToolBar.IsOverflowItem" Value="True">
+                    <Setter Property="ContentTemplate">
+                        <Setter.Value>
+                            <DataTemplate>
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Width="18" Foreground="{StaticResource AccentBrush}">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Style.Triggers>
+                                                    <DataTrigger Value="True"
+                                                                 Binding="{Binding IsChecked, RelativeSource={RelativeSource AncestorType=ToggleButton}}">
+                                                        <Setter Property="Text" Value="✓" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                    <TextBlock Text="{Binding}" />
+                                </StackPanel>
+                            </DataTemplate>
+                        </Setter.Value>
+                    </Setter>
+                </Trigger>
+            </Style.Triggers>
         </Style>
         <Style TargetType="Border" x:Key="ToolSep">
             <Setter Property="Width" Value="1" />
@@ -50,11 +82,20 @@
             <Setter Property="Background" Value="#99000000" />
             <Setter Property="CornerRadius" Value="4" />
             <Setter Property="Padding" Value="9,3" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding HasImage}" Value="False">
+                    <Setter Property="Visibility" Value="Collapsed" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding Tag, RelativeSource={RelativeSource Self}}" Value="">
+                    <Setter Property="Visibility" Value="Collapsed" />
+                </DataTrigger>
+            </Style.Triggers>
         </Style>
         <Style TargetType="TextBlock" x:Key="OverlayText">
             <Setter Property="FontFamily" Value="Consolas" />
             <Setter Property="FontSize" Value="11" />
             <Setter Property="Foreground" Value="#FFC9C9C4" />
+            <Setter Property="Text" Value="{Binding Tag, RelativeSource={RelativeSource AncestorType=Border}}" />
         </Style>
     </Window.Resources>
 
@@ -173,9 +214,41 @@
         </Menu>
 
         <!-- ツールバー -->
-        <Border x:Name="ToolBarPanel" DockPanel.Dock="Top" Background="{StaticResource PanelBrush}"
-                BorderBrush="{StaticResource BorderBrushDark}" BorderThickness="0,1">
-            <StackPanel Orientation="Horizontal" Margin="10,5">
+        <ToolBar x:Name="ToolBarPanel" DockPanel.Dock="Top" Background="{StaticResource PanelBrush}"
+                 BorderBrush="{StaticResource BorderBrushDark}" BorderThickness="0,1" Padding="10,5">
+            <ToolBar.Template>
+                <ControlTemplate TargetType="ToolBar">
+                    <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="{TemplateBinding BorderThickness}" Padding="{TemplateBinding Padding}">
+                        <DockPanel>
+                            <Grid DockPanel.Dock="Right">
+                                <ToggleButton x:Name="OverflowButton" Content="…" MinWidth="34" Margin="4,0,0,0"
+                                              AutomationProperties.Name="その他のツール"
+                                              ToolTip="その他のツール"
+                                              IsChecked="{Binding IsOverflowOpen, RelativeSource={RelativeSource TemplatedParent}, Mode=TwoWay}" />
+                                <Popup x:Name="OverflowPopup" Placement="Bottom" PlacementTarget="{Binding ElementName=OverflowButton}"
+                                       IsOpen="{Binding IsOverflowOpen, RelativeSource={RelativeSource TemplatedParent}, Mode=TwoWay}"
+                                       StaysOpen="False" AllowsTransparency="True">
+                                    <Border Background="{StaticResource PanelBrush}"
+                                            BorderBrush="{StaticResource BorderBrushDark}" BorderThickness="1"
+                                            CornerRadius="6" Padding="4">
+                                        <ToolBarOverflowPanel x:Name="PART_ToolBarOverflowPanel" WrapWidth="0"
+                                                              Focusable="True" KeyboardNavigation.TabNavigation="Cycle"
+                                                              KeyboardNavigation.DirectionalNavigation="Cycle" />
+                                    </Border>
+                                </Popup>
+                            </Grid>
+                            <ToolBarPanel x:Name="PART_ToolBarPanel" IsItemsHost="True" />
+                        </DockPanel>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="HasOverflowItems" Value="False">
+                            <Setter TargetName="OverflowButton" Property="Visibility" Value="Hidden" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </ToolBar.Template>
+            <StackPanel Orientation="Horizontal" ToolBar.OverflowMode="Never">
                 <Button Style="{StaticResource AccentButton}" Content="📄 開く" Click="OnOpenFileClick" />
                 <Button Style="{StaticResource ToolButton}" Content="📁 フォルダ" Click="OnOpenFolderClick" />
                 <Border Style="{StaticResource ToolSep}" />
@@ -207,41 +280,49 @@
                         IsEnabled="{Binding CanUseMainView}" />
                 <Button Style="{StaticResource ToolButton}" Content="全体" Click="OnFitClick"
                         IsEnabled="{Binding CanUseMainView}" />
-                <ToggleButton x:Name="ZebraToggle" Content="ゼブラ"
-                              Style="{StaticResource ToolToggle}" IsEnabled="{Binding CanUseMainView}"
-                              ToolTip="飽和(≥98%)を赤 / 黒潰れ(≤2%)を青のストライプで警告(Raw・チャネル分割・カラー画像の表示のみ)"
-                              ToolTipOpening="OnZebraToolTipOpening"
-                              IsChecked="{Binding ZebraOn, Mode=TwoWay}" />
                 <Border Style="{StaticResource ToolSep}" />
-                <ToggleButton x:Name="ProfileToggle" Content="ラインプロファイル"
-                              Style="{StaticResource ToolToggle}" IsEnabled="{Binding CanUseMainView}"
-                              Checked="OnProfileToggleChanged" Unchecked="OnProfileToggleChanged" />
-                <!-- 射影の窓(EMVA 1288 方式の向き)。押すとすぐ計算して窓を開き、もう一度押すと閉じる。
-                     ツールチップ(向きと流儀の説明)はコードで設定する(ProjectionText) -->
-                <ToggleButton x:Name="HorizontalProjectionToggle" Content="水平射影"
-                              Style="{StaticResource ToolToggle}" IsEnabled="{Binding CanUseMainView}"
-                              ToolTipService.ShowOnDisabled="True" ToolTipService.ShowDuration="60000"
-                              Checked="OnProjectionToggleChanged" Unchecked="OnProjectionToggleChanged" />
-                <ToggleButton x:Name="VerticalProjectionToggle" Content="垂直射影"
-                              Style="{StaticResource ToolToggle}" IsEnabled="{Binding CanUseMainView}"
-                              ToolTipService.ShowOnDisabled="True" ToolTipService.ShowDuration="60000"
-                              Checked="OnProjectionToggleChanged" Unchecked="OnProjectionToggleChanged" />
-                <ToggleButton x:Name="RoiToggle" Content="ROI"
-                              Style="{StaticResource ToolToggle}" IsEnabled="{Binding CanUseMainView}"
-                              Checked="OnRoiToggleChanged" Unchecked="OnRoiToggleChanged" />
-                <Border Style="{StaticResource ToolSep}" />
-                <Button Style="{StaticResource ToolButton}" Content="💾 保存"
-                        Click="OnSaveClick" IsEnabled="{Binding CanUseMainView}" />
             </StackPanel>
-        </Border>
+            <!-- WPF は AsNeeded の末尾から順にポップアップへ移す。 -->
+            <ToggleButton x:Name="ZebraToggle" Content="ゼブラ" ToolBar.OverflowMode="AsNeeded"
+                          Style="{StaticResource OverflowToolToggle}" IsEnabled="{Binding CanUseMainView}"
+                          ToolTipOpening="OnZebraToolTipOpening" IsChecked="{Binding ZebraOn, Mode=TwoWay}" />
+            <ToggleButton x:Name="ProfileToggle" Content="ラインプロファイル" ToolBar.OverflowMode="AsNeeded"
+                          Style="{StaticResource OverflowToolToggle}" IsEnabled="{Binding CanUseMainView}"
+                          Checked="OnProfileToggleChanged" Unchecked="OnProfileToggleChanged" />
+            <ToggleButton x:Name="RoiToggle" Content="ROI" ToolBar.OverflowMode="AsNeeded"
+                          Style="{StaticResource OverflowToolToggle}" IsEnabled="{Binding CanUseMainView}"
+                          Checked="OnRoiToggleChanged" Unchecked="OnRoiToggleChanged" />
+            <ToggleButton x:Name="HorizontalProjectionToggle" Content="水平射影" ToolBar.OverflowMode="AsNeeded"
+                          Style="{StaticResource OverflowToolToggle}" IsEnabled="{Binding CanUseMainView}"
+                          ToolTipService.ShowDuration="60000"
+                          Checked="OnProjectionToggleChanged" Unchecked="OnProjectionToggleChanged" />
+            <ToggleButton x:Name="VerticalProjectionToggle" Content="垂直射影" ToolBar.OverflowMode="AsNeeded"
+                          Style="{StaticResource OverflowToolToggle}" IsEnabled="{Binding CanUseMainView}"
+                          ToolTipService.ShowDuration="60000"
+                          Checked="OnProjectionToggleChanged" Unchecked="OnProjectionToggleChanged" />
+            <Button x:Name="SaveToolButton" Style="{StaticResource ToolButton}" Content="💾 保存" ToolBar.OverflowMode="AsNeeded"
+                    Click="OnSaveClick" IsEnabled="{Binding CanUseMainView}"
+                    ToolTip="{Binding MainViewDisabledReason}" ToolTipService.ShowOnDisabled="True" />
+        </ToolBar>
 
         <!-- ステータスバー -->
         <Border x:Name="StatusBarPanel" DockPanel.Dock="Bottom"
                 Background="{StaticResource PanelBrush}"
                 BorderBrush="{StaticResource BorderBrushDark}" BorderThickness="0,1,0,0">
             <DockPanel Margin="12,4">
-                <TextBlock DockPanel.Dock="Right" Text="{Binding ZoomStatusText}"
-                           FontFamily="Consolas" FontSize="11" Foreground="{StaticResource TextDim}" />
+                <TextBlock DockPanel.Dock="Right" FontFamily="Consolas" FontSize="11"
+                           Foreground="{StaticResource TextDim}">
+                    <TextBlock.Style>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="Text" Value="{Binding ZoomStatusText}" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding IsCompareMode}" Value="True">
+                                    <Setter Property="Text" Value="{Binding CompareZoomStatusText}" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBlock.Style>
+                </TextBlock>
 
                 <!-- 加工済みかどうかは一時メッセージで上書きされてはいけないので独立させる -->
                 <Border DockPanel.Dock="Right" Margin="12,0,12,0" Padding="6,1"
@@ -254,8 +335,19 @@
                     <TextBlock Text="{Binding ProcessingStateText}" FontFamily="Consolas"
                                FontSize="11" Foreground="{StaticResource AccentBrush}" />
                 </Border>
-                <TextBlock Text="{Binding ImageInfoText}" FontFamily="Consolas" FontSize="11"
-                           Foreground="{StaticResource TextDim}" Margin="0,0,24,0" />
+                <TextBlock FontFamily="Consolas" FontSize="11" TextTrimming="CharacterEllipsis"
+                           Foreground="{StaticResource TextDim}" Margin="0,0,24,0">
+                    <TextBlock.Style>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="Text" Value="{Binding ImageInfoText}" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding IsCompareMode}" Value="True">
+                                    <Setter Property="Text" Value="{Binding CompareImageInfoText}" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBlock.Style>
+                </TextBlock>
 
                 <!-- 同じサイズのファイルの記憶から推定して開いたこと。画像情報は読み込みの後や一時メッセージで
                      書き換わるので別の欄に出し、別のファイルを表示するまで見えるようにする -->
@@ -447,37 +539,45 @@
                         </ContextMenu>
                     </controls:ImageViewport.ContextMenu>
                 </controls:ImageViewport>
-                <Border Style="{StaticResource OverlayBox}" HorizontalAlignment="Left"
-                        VerticalAlignment="Top" Margin="14,12"
-                        Visibility="{Binding HasImage, Converter={StaticResource BoolToVis}}">
-                    <TextBlock Style="{StaticResource OverlayText}" Text="{Binding CursorOverlayText}" />
+                <Border x:Name="CursorOverlayBox" Style="{StaticResource OverlayBox}" HorizontalAlignment="Left"
+                        VerticalAlignment="Top" Margin="14,12" IsHitTestVisible="False" Tag="{Binding CursorOverlayText}">
+                    <TextBlock Style="{StaticResource OverlayText}" />
                 </Border>
-                <Border Style="{StaticResource OverlayBox}" HorizontalAlignment="Right"
-                        VerticalAlignment="Top" Margin="14,12"
-                        Visibility="{Binding HasRoi, Converter={StaticResource BoolToVis}}">
-                    <TextBlock Style="{StaticResource OverlayText}" Text="{Binding RoiOverlayText}" />
+                <Border x:Name="RoiOverlayBox" HorizontalAlignment="Right"
+                        VerticalAlignment="Top" Margin="14,12" IsHitTestVisible="False" Tag="{Binding RoiOverlayText}">
+                    <Border.Style>
+                        <Style TargetType="Border" BasedOn="{StaticResource OverlayBox}">
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding HasRoi}" Value="False">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Border.Style>
+                    <TextBlock Style="{StaticResource OverlayText}" />
                 </Border>
                 <!-- シーケンス再生バー -->
-                <Border VerticalAlignment="Bottom" HorizontalAlignment="Stretch"
+                <Border x:Name="PlaybackBar" VerticalAlignment="Bottom" HorizontalAlignment="Stretch"
                         Background="#E62E2E32" BorderBrush="{StaticResource BorderBrushDark}"
                         BorderThickness="0,1,0,0" Padding="10,6"
                         Visibility="{Binding HasSequence, Converter={StaticResource BoolToVis}}">
                     <DockPanel>
                         <Button Style="{StaticResource ToolButton}" Content="⏮"
                                 Click="OnSeqFirstClick" Padding="8,3"
-                                AutomationProperties.Name="先頭フレームへ" ToolTip="先頭フレームへ" />
-                        <Button Style="{StaticResource ToolButton}" Content="◀"
+                                AutomationProperties.Name="先頭フレームへ" ToolTip="先頭フレームへ (Home)" />
+                        <Button x:Name="PreviousFrameButton" Style="{StaticResource ToolButton}" Content="‹"
                                 Click="OnSeqPrevClick" Padding="8,3"
-                                AutomationProperties.Name="前のフレームへ" ToolTip="前のフレームへ" />
+                                AutomationProperties.Name="前のフレームへ" ToolTip="前のフレームへ (Page Up)" />
                         <ToggleButton x:Name="PlayToggle" Content="▶ 再生"
                                       Style="{StaticResource ToolToggle}" Padding="10,3"
+                                      ToolTip="再生 / 停止 (Space)"
                                       Checked="OnPlayToggleChanged" Unchecked="OnPlayToggleChanged" />
-                        <Button Style="{StaticResource ToolButton}" Content="▶"
+                        <Button x:Name="NextFrameButton" Style="{StaticResource ToolButton}" Content="›"
                                 Click="OnSeqNextClick" Padding="8,3"
-                                AutomationProperties.Name="次のフレームへ" ToolTip="次のフレームへ" />
+                                AutomationProperties.Name="次のフレームへ" ToolTip="次のフレームへ (Page Down)" />
                         <Button Style="{StaticResource ToolButton}" Content="⏭"
                                 Click="OnSeqLastClick" Padding="8,3"
-                                AutomationProperties.Name="最終フレームへ" ToolTip="最終フレームへ" />
+                                AutomationProperties.Name="最終フレームへ" ToolTip="最終フレームへ (End)" />
                         <ComboBox x:Name="FpsCombo" DockPanel.Dock="Right" MinWidth="76"
                                   SelectedIndex="2" FontSize="11" VerticalAlignment="Center"
                                   IsEditable="True" IsTextSearchEnabled="False"
@@ -501,11 +601,19 @@
                                 ValueChanged="OnSeqSliderChanged" />
                     </DockPanel>
                 </Border>
-                <Border Style="{StaticResource OverlayBox}" HorizontalAlignment="Right"
-                        VerticalAlignment="Bottom" Margin="14,44"
-                        Visibility="{Binding HasImage, Converter={StaticResource BoolToVis}}">
-                    <TextBlock Style="{StaticResource OverlayText}" Text="{Binding LevelOverlayText}"
-                               Foreground="#FF8A8A85" />
+                <Border x:Name="LevelOverlayBox" HorizontalAlignment="Right"
+                        VerticalAlignment="Bottom" IsHitTestVisible="False" Tag="{Binding LevelOverlayText}">
+                    <Border.Style>
+                        <Style TargetType="Border" BasedOn="{StaticResource OverlayBox}">
+                            <Setter Property="Margin" Value="14,12" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding Visibility, ElementName=PlaybackBar}" Value="Visible">
+                                    <Setter Property="Margin" Value="14,44" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Border.Style>
+                    <TextBlock Style="{StaticResource OverlayText}" Foreground="#FF8A8A85" />
                 </Border>
 
                 <!-- 比較モード(表示中は通常ビューを覆う) -->

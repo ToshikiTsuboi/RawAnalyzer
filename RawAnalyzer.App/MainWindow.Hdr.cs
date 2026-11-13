@@ -237,13 +237,11 @@ public partial class MainWindow
 
         HdrTargetCombo.Items.Clear();
         HdrTargetCombo.Items.Add("全体");
-        HdrTargetCombo.Items.Add("長秒");
-        if (stages == 3)
+        for (int i = 0; i < stages; i++)
         {
-            HdrTargetCombo.Items.Add("中秒");
+            HdrTargetCombo.Items.Add(HdrFormatText.StageName(i, stages));
         }
 
-        HdrTargetCombo.Items.Add("短秒");
         HdrTargetCombo.SelectedIndex = 0;
         _vm.HdrTargetVisible = true;
         ApplySplitLuts();

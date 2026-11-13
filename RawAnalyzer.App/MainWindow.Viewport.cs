@@ -3,6 +3,7 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Globalization;
 using RawAnalyzer.App.Controls;
+using RawAnalyzer.App.Rendering;
 using RawAnalyzer.App.Services;
 using RawAnalyzer.Core;
 
@@ -19,9 +20,7 @@ public partial class MainWindow
     private void OnViewportStateChanged(object? sender, ViewportStateEventArgs e)
     {
         // 倍率は画面のデバイス画素あたり(等倍で 100%。表示倍率 100% 以外でも元画像 1 画素 = 1 デバイス画素)
-        string percent = e.DeviceZoom >= 0.1
-            ? $"{e.DeviceZoom * 100:F0}%"
-            : $"{e.DeviceZoom * 100:F2}%";
+        string percent = DeviceScaling.FormatZoomPercent(e.DeviceZoom);
         int levelIndex = (int)Math.Round(Math.Log2(e.RenderedFactor));
         _vm.ZoomPercentText = percent;
         _vm.ZoomStatusText = $"Zoom {percent} · L{levelIndex}";

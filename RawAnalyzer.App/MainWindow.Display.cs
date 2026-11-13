@@ -32,7 +32,7 @@ public partial class MainWindow
     /// <remarks>表示モードを変える経路は多いので、変わるたびではなく見せるときに決める。</remarks>
     private void OnZebraToolTipOpening(object sender, System.Windows.Controls.ToolTipEventArgs e)
     {
-        ZebraToggle.ToolTip = ZebraToolTip.For(Viewport.DisplayMode);
+        ZebraToggle.Tag = ZebraToolTip.For(Viewport.DisplayMode);
     }
 
     private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)

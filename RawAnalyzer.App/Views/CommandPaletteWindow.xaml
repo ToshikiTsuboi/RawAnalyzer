@@ -4,7 +4,7 @@
         Title="コマンドパレット" Width="620" Height="420"
         Background="{StaticResource PanelBrush}" Foreground="{StaticResource TextBrush}"
         WindowStartupLocation="CenterOwner" ResizeMode="NoResize"
-        ShowInTaskbar="False" WindowStyle="ToolWindow"
+        ShowInTaskbar="False"
         PreviewKeyDown="OnWindowPreviewKeyDown">
     <Window.Resources>
         <BooleanToVisibilityConverter x:Key="BoolToVis" />

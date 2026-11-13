@@ -4,7 +4,7 @@
         Title="キーボードショートカット" Width="700" Height="720"
         Background="{StaticResource PanelBrush}" Foreground="{StaticResource TextBrush}"
         WindowStartupLocation="CenterOwner"
-        ShowInTaskbar="False" WindowStyle="ToolWindow"
+        ShowInTaskbar="False"
         PreviewKeyDown="OnWindowPreviewKeyDown">
     <DockPanel Margin="16,12">
         <TextBlock DockPanel.Dock="Bottom" FontSize="11" Margin="0,10,0,0"

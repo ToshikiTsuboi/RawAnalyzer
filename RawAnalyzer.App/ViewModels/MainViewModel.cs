@@ -1,7 +1,9 @@
 ﻿using System.Collections.ObjectModel;
 using System.IO;
 using System.Windows.Media;
+using RawAnalyzer.App.Compare;
 using RawAnalyzer.App.Mvvm;
+using RawAnalyzer.App.Rendering;
 using RawAnalyzer.App.Services;
 
 namespace RawAnalyzer.App.ViewModels;
@@ -35,6 +37,8 @@ public sealed class MainViewModel : ObservableObject
     private bool _isLoading;
     private double _loadProgress;
     private bool _isCompareMode;
+    private string _compareImageInfoText = "比較 0 枚";
+    private string _compareZoomStatusText = "";
     private bool _isProcessed;
     private string _processingStateText = "";
     private string _processingStateTooltip = "";
@@ -267,6 +271,7 @@ public sealed class MainViewModel : ObservableObject
                 OnPropertyChanged(nameof(CanChangeFormat));
                 OnPropertyChanged(nameof(ChangeFormatToolTip));
                 OnPropertyChanged(nameof(CanUseMainView));
+                OnPropertyChanged(nameof(MainViewDisabledReason));
             }
         }
     }
@@ -278,6 +283,26 @@ public sealed class MainViewModel : ObservableObject
         set => SetProperty(ref _imageInfoText, value);
     }
 
+    /// <summary>比較モード中の枚数とアクティブペインの画像情報。</summary>
+    public string CompareImageInfoText => _compareImageInfoText;
+
+    /// <summary>比較モード中のアクティブペインのズーム倍率。</summary>
+    public string CompareZoomStatusText => _compareZoomStatusText;
+
+    internal void UpdateCompareStatus(int paneCount, ComparePaneStatus? active)
+    {
+        string summary = $"比較 {paneCount} 枚";
+        string zoom = "";
+        if (active is { } pane)
+        {
+            summary += $" · {pane.Label}: {pane.FileName} · {pane.Width}×{pane.Height} · {pane.BitDepth}bit";
+            zoom = $"Zoom {DeviceScaling.FormatZoomPercent(pane.DeviceZoom)}";
+        }
+
+        SetProperty(ref _compareImageInfoText, summary, nameof(CompareImageInfoText));
+        SetProperty(ref _compareZoomStatusText, zoom, nameof(CompareZoomStatusText));
+    }
+
     /// <summary>比較モード中か(メニューのチェック表示と、メイン画像を対象にする操作の可否に使う)。</summary>
     public bool IsCompareMode
     {
@@ -287,6 +312,7 @@ public sealed class MainViewModel : ObservableObject
             if (SetProperty(ref _isCompareMode, value))
             {
                 OnPropertyChanged(nameof(CanUseMainView));
+                OnPropertyChanged(nameof(MainViewDisabledReason));
                 OnPropertyChanged(nameof(CanChangeFormat));
                 OnPropertyChanged(nameof(ChangeFormatToolTip));
                 OnPropertyChanged(nameof(CanUseAdjustPanel));
@@ -322,6 +348,10 @@ public sealed class MainViewModel : ObservableObject
     /// ツールバーの該当項目はこの値で有効・無効を決め、コマンド表(キー・コマンドパレット)も同じ条件で断る。
     /// </remarks>
     public bool CanUseMainView => _hasImage && !_isCompareMode;
+
+    /// <summary>通常表示を対象にするコマンドが無効な理由。</summary>
+    public string? MainViewDisabledReason =>
+        CanUseMainView ? null : CommandDisabledReasons.ForMainView(IsCompareMode);
 
     /// <summary>ファイル読み込み中か(ステータスバーの進捗バー表示に使う)。</summary>
     public bool IsLoading

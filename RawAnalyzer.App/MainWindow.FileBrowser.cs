@@ -14,7 +14,7 @@ public partial class MainWindow
     private static readonly string[] SupportedExtensions =
         Compare.ComparePane.RawExtensions
             .Concat(ImageFileLoader.SupportedExtensions).ToArray();
-    private readonly RecentFilesStore _recentFiles = new();
+    private readonly RecentFilesStore _recentFiles;
     private int _recentMenuGeneration;
     private int _folderGeneration;
     private string? _currentFolder;

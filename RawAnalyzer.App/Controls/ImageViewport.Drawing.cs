@@ -2,6 +2,7 @@
 using System.Windows;
 using System.Windows.Media;
 using RawAnalyzer.App.Rendering;
+using RawAnalyzer.App.Services;
 using RawAnalyzer.Core;
 
 namespace RawAnalyzer.App.Controls;
@@ -29,6 +30,107 @@ public sealed partial class ImageViewport
         DrawProfileMarker(dc);
         DrawKeyboardCursor(dc);
         DrawGhostCursor(dc);
+        DrawSplitLabels(dc);
+    }
+
+    private static readonly Brush SplitLabelBackground = CreateSplitLabelBrush(0xD9, 0x16, 0x16, 0x18);
+    private static readonly Brush SplitLabelRed = CreateSplitLabelBrush(0xFF, 0xE0, 0x52, 0x4E);
+    private static readonly Brush SplitLabelGr = CreateSplitLabelBrush(0xFF, 0x7E, 0xCB, 0x72);
+    private static readonly Brush SplitLabelGb = CreateSplitLabelBrush(0xFF, 0x4E, 0x9A, 0x4E);
+    private static readonly Brush SplitLabelBlue = CreateSplitLabelBrush(0xFF, 0x5B, 0x9D, 0xD9);
+    private static readonly Typeface SplitLabelTypeface = new(new FontFamily("Segoe UI"),
+        FontStyles.Normal, FontWeights.SemiBold, FontStretches.Normal);
+    private readonly Dictionary<string, FormattedText> _splitLabelText = new();
+    private double _splitLabelScale;
+
+    private static Brush CreateSplitLabelBrush(byte a, byte r, byte g, byte b)
+    {
+        var brush = new SolidColorBrush(Color.FromArgb(a, r, g, b));
+        brush.Freeze();
+        return brush;
+    }
+
+    private void DrawSplitLabels(DrawingContext dc)
+    {
+        if (_bitmap is null || _image is null)
+        {
+            return;
+        }
+
+        if (IsChannelSplitLayout && _format is { } format)
+        {
+            // ChannelSplitRenderSource の象限は、元画像の行列の偶奇順。奇数寸法の端は描かない。
+            int width = _image.Width / 2;
+            int height = _image.Height / 2;
+            for (int y = 0; y < 2; y++)
+            {
+                for (int x = 0; x < 2; x++)
+                {
+                    BayerChannel channel = BayerHelper.GetChannel(format.Bayer, x, y);
+                    Brush color = channel switch
+                    {
+                        BayerChannel.R => SplitLabelRed,
+                        BayerChannel.Gr => SplitLabelGr,
+                        BayerChannel.Gb => SplitLabelGb,
+                        _ => SplitLabelBlue,
+                    };
+                    DrawSplitLabel(dc, new Rect(x * width, y * height, width, height),
+                        BayerHelper.GetLabel(channel), color);
+                }
+            }
+        }
+        else if (_segmentLuts is { Length: > 1 } luts && _segmentWidth > 0)
+        {
+            for (int stage = 0; stage < luts.Length; stage++)
+            {
+                double left = (double)stage * _segmentWidth;
+                double width = Math.Clamp(_image.Width - left, 0, _segmentWidth);
+                DrawSplitLabel(dc, new Rect(left, 0, width, _image.Height),
+                    HdrFormatText.StageName(stage, luts.Length), Brushes.White);
+            }
+        }
+    }
+
+    private void DrawSplitLabel(DrawingContext dc, Rect section, string label, Brush color)
+    {
+        var screen = new Rect((section.X - _presentedOriginX) * _presentedZoom,
+            (section.Y - _presentedOriginY) * _presentedZoom,
+            section.Width * _presentedZoom, section.Height * _presentedZoom);
+        Rect visible = Rect.Intersect(screen, new Rect(RenderSize));
+        if (visible.IsEmpty)
+        {
+            return;
+        }
+
+        double pixelsPerDip = VisualTreeHelper.GetDpi(this).PixelsPerDip;
+        if (pixelsPerDip != _splitLabelScale)
+        {
+            _splitLabelText.Clear();
+            _splitLabelScale = pixelsPerDip;
+        }
+
+        if (!_splitLabelText.TryGetValue(label, out FormattedText? text))
+        {
+            text = new FormattedText(label, CultureInfo.CurrentUICulture, FlowDirection.LeftToRight,
+                SplitLabelTypeface, 12, color, pixelsPerDip);
+            _splitLabelText.Add(label, text);
+        }
+
+        var size = new Size(text.Width + 10, text.Height + 4);
+        if (SplitLabelPlacement.Find(visible, size) is { } position)
+        {
+            bool needsClip = size.Width > visible.Width || size.Height > visible.Height;
+            if (needsClip)
+            {
+                dc.PushClip(new RectangleGeometry(visible));
+            }
+            dc.DrawRoundedRectangle(SplitLabelBackground, null, new Rect(position, size), 3, 3);
+            dc.DrawText(text, position + new Vector(5, 2));
+            if (needsClip)
+            {
+                dc.Pop();
+            }
+        }
     }
 
     private static readonly GuidelineSet BitmapGuidelines = CreateBitmapGuidelines();

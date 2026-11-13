@@ -1,5 +1,7 @@
 ﻿using System.Windows;
+using System.Globalization;
 using System.Windows.Controls;
+using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
@@ -16,6 +18,10 @@ namespace RawAnalyzer.App.Compare;
 public partial class ComparePaneView : UserControl
 {
     private bool _adjusting;
+    private PaneNameDisplay _nameDisplay = new("", "", "");
+    private double _fullNameWidth;
+    private double _shortNameWidth;
+    private PaneNameDisplay? _shownName;
 
     // ユーザーがズーム/パン操作をするまでは全体表示を維持する。
     // Attach時点はレイアウト前でサイズが決まっておらず、その後もペインの
@@ -30,6 +36,7 @@ public partial class ComparePaneView : UserControl
 
         // ペイン内のどこをクリックしてもアクティブ化の対象にする
         PreviewMouseDown += (_, _) => ActivateRequested?.Invoke(this);
+        FileNameText.SizeChanged += (_, _) => RefreshFileName();
 
         Viewport.SizeChanged += (_, e) =>
         {
@@ -131,6 +138,16 @@ public partial class ComparePaneView : UserControl
 
     /// <summary>ビューポート(同期計算がビュー状態とサイズを読むために公開)。</summary>
     internal ImageViewport ViewportControl => Viewport;
+
+    internal Size ImageAreaInsets => new(
+        ActiveBorder.Margin.Left + ActiveBorder.Margin.Right
+            + ActiveBorder.BorderThickness.Left + ActiveBorder.BorderThickness.Right,
+        ActiveBorder.Margin.Top + ActiveBorder.Margin.Bottom
+            + ActiveBorder.BorderThickness.Top + ActiveBorder.BorderThickness.Bottom
+            + PaneHeader.Height + ChipsBar.Height);
+
+    internal string Label => LabelText.Text;
+    internal event Action? PaneAttached;
 
     /// <summary>
     /// 未操作で、全体表示をサイズ変化へ追従させている間はtrue
@@ -251,6 +268,38 @@ public partial class ComparePaneView : UserControl
         LabelText.Text = label;
     }
 
+    internal void SetFileNameDisplay(PaneNameDisplay display)
+    {
+        _nameDisplay = display;
+        _fullNameWidth = MeasureFileName(display.FullName);
+        _shortNameWidth = MeasureFileName(display.ForWidth(0, _fullNameWidth).FullName);
+        RefreshFileName();
+    }
+
+    private double MeasureFileName(string text) =>
+        new FormattedText(text, CultureInfo.CurrentUICulture,
+            FileNameText.FlowDirection, new Typeface(FileNameText.FontFamily, FileNameText.FontStyle,
+                FileNameText.FontWeight, FileNameText.FontStretch), FileNameText.FontSize,
+            FileNameText.Foreground, VisualTreeHelper.GetDpi(FileNameText).PixelsPerDip).WidthIncludingTrailingWhitespace;
+
+    private void RefreshFileName()
+    {
+        double width = FileNameText.ActualWidth;
+        PaneNameDisplay display = width < _shortNameWidth
+            ? _nameDisplay.DifferenceOnly()
+            : _nameDisplay.ForWidth(width, _fullNameWidth);
+        if (_shownName == display)
+        {
+            return;
+        }
+
+        _shownName = display;
+        FileNameText.Inlines.Clear();
+        FileNameText.Inlines.Add(new Run(display.Prefix));
+        FileNameText.Inlines.Add(new Run(display.Difference) { Foreground = (Brush)FindResource("AccentBrush") });
+        FileNameText.Inlines.Add(new Run(display.Suffix));
+    }
+
     /// <summary>
     /// 資源を装着して表示を開始する。所有権はこのビューに移る
     /// (<see cref="DetachAndDisposeAsync"/> で破棄する)。
@@ -261,8 +310,8 @@ public partial class ComparePaneView : UserControl
     internal void Attach(ComparePane pane, CancellationToken cancellationToken = default)
     {
         Pane = pane;
-        FileNameText.Text = pane.FileName;
         FileNameText.ToolTip = pane.Path;
+        SetFileNameDisplay(new PaneNameDisplay(pane.FileName, "", ""));
         ChipsBar.Visibility = Visibility.Visible;
 
         Viewport.SetImage(pane.Image, pane.Format);
@@ -277,6 +326,7 @@ public partial class ComparePaneView : UserControl
         // 縮小表示用ピラミッドは表示開始を待たせない。
         // 待つと次のファイルの読み込み開始まで止まり、複数枚ドロップで待ち時間が累積する
         _ = BuildPyramidAsync(pane, cancellationToken);
+        PaneAttached?.Invoke();
     }
 
     /// <summary>縮小表示用ピラミッドを裏で用意する(失敗しても等倍表示はできる)。</summary>
@@ -318,6 +368,14 @@ public partial class ComparePaneView : UserControl
     private void OnCloseClick(object sender, RoutedEventArgs e)
     {
         CloseRequested?.Invoke(this);
+    }
+
+    private void OnAdjustMenuClick(object sender, RoutedEventArgs e)
+    {
+        var button = (Button)sender;
+        ActivateRequested?.Invoke(this);
+        button.ContextMenu.PlacementTarget = button;
+        button.ContextMenu.IsOpen = true;
     }
 
     private async void OnAutoClick(object sender, RoutedEventArgs e)

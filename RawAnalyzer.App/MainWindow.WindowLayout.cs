@@ -8,7 +8,7 @@ namespace RawAnalyzer.App;
 
 public partial class MainWindow
 {
-    private readonly SessionStore _sessionStore = new();
+    private readonly SessionStore _sessionStore;
 
     // 起動時に読んだセッション(ウィンドウ配置・パネル・絞り込み・最後のフォルダの復元に使う)。変更は
     // _sessionStore.Update で保存されている最新の状態へ当てる(別のインスタンスの保存を巻き戻さない)

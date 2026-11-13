@@ -59,8 +59,17 @@ public partial class MainWindow : Window
     private bool _closed;
 
     /// <summary>メインウィンドウを生成する。</summary>
-    public MainWindow()
+    public MainWindow() : this(null)
     {
+    }
+
+    internal MainWindow(string? settingsDirectory)
+    {
+        _sessionStore = settingsDirectory is null ? new SessionStore() : new SessionStore(settingsDirectory);
+        _recentFiles = settingsDirectory is null ? new RecentFilesStore() : new RecentFilesStore(settingsDirectory);
+        _formatMemory = new FormatMemory(settingsDirectory is null
+            ? new FormatHistoryStore()
+            : new FormatHistoryStore(settingsDirectory));
         InitializeComponent();
         _session = _sessionStore.Load();
         ApplyWindowPlacement();
@@ -90,8 +99,9 @@ public partial class MainWindow : Window
 
             RefreshProjections();
         };
-        HorizontalProjectionToggle.ToolTip = ProjectionText.ToolbarToolTip(ProjectionDirection.Horizontal);
-        VerticalProjectionToggle.ToolTip = ProjectionText.ToolbarToolTip(ProjectionDirection.Vertical);
+        HorizontalProjectionToggle.Tag = ProjectionText.ToolbarToolTip(ProjectionDirection.Horizontal);
+        VerticalProjectionToggle.Tag = ProjectionText.ToolbarToolTip(ProjectionDirection.Vertical);
+        ZebraToggle.Tag = ZebraToolTip.For(Viewport.DisplayMode);
         HorizontalProjectionMenu.ToolTip = ProjectionText.Explanation(ProjectionDirection.Horizontal);
         VerticalProjectionMenu.ToolTip = ProjectionText.Explanation(ProjectionDirection.Vertical);
 
@@ -104,6 +114,7 @@ public partial class MainWindow : Window
         InitFolderTree();
         CompareArea.PanePicker = PickComparePaneAsync;
         CompareArea.PaneLoader = LoadComparePaneAsync;
+        CompareArea.StatusChanged += () => _vm.UpdateCompareStatus(CompareArea.PaneCount, CompareArea.ActivePaneStatus);
         CompareArea.ExitRequested += async (_, _) => await ExitCompareModeAsync();
         CompareArea.AddRefused += reason =>
             MessageBox.Show(this, reason, "比較モード", MessageBoxButton.OK, MessageBoxImage.Information);

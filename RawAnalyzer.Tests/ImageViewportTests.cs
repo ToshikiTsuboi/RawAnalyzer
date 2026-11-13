@@ -15,6 +15,56 @@ namespace RawAnalyzer.Tests;
 [Collection("WPF UI")]
 public class ImageViewportTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public Task SplitViews_DrawChannelOrExposureLabelsInViewport(bool hdr) => WpfTestHost.Run(async () =>
+    {
+        const int width = 300;
+        const int height = 160;
+        var format = new RawFormat
+        {
+            Width = width, Height = height, BitDepth = 16,
+            Bayer = hdr ? BayerPattern.None : BayerPattern.Bggr,
+        };
+        var pixels = new ushort[width * height];
+        for (int y = 0; y < height; y++)
+        {
+            for (int x = 0; x < width; x++)
+            {
+                pixels[y * width + x] = (ushort)(x * 145 + y * 105);
+            }
+        }
+        using RawImage image = RawImage.FromPixels(format, pixels);
+        var viewport = new ImageViewport();
+        viewport.Measure(new Size(450, 240));
+        viewport.Arrange(new Rect(0, 0, 450, 240));
+        var presented = new TaskCompletionSource();
+        viewport.ViewportStateChanged += (_, _) => presented.TrySetResult();
+        try
+        {
+            viewport.SetImage(image, format);
+            if (hdr)
+            {
+                var lut = DisplayLut.Create(new DisplayParameters());
+                viewport.SetSplitLuts([lut, lut, lut], width / 3);
+            }
+            else
+            {
+                viewport.SetDisplayMode(ViewportDisplayMode.ChannelSplit);
+            }
+            await presented.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            viewport.UpdateLayout();
+            Assert.Equal(hdr ? new[] { "長秒", "中秒", "短秒" } : new[] { "B", "Gb", "Gr", "R" },
+                CollectTexts(VisualTreeHelper.GetDrawing(viewport)));
+            WpfTestHost.CaptureIfRequested(viewport, hdr ? "hdr-split-labels" : "channel-split-labels");
+        }
+        finally
+        {
+            await viewport.ClearImageAsync();
+        }
+    });
+
     [Fact]
     public Task ZoomedIn_DrawsRawCodeOverlay() => WpfTestHost.Run(async () =>
     {

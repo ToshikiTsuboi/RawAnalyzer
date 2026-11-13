@@ -1,5 +1,7 @@
 using System.Windows.Controls;
+using System.Windows;
 using System.Windows.Controls.Primitives;
+using System.Windows.Documents;
 using System.Windows.Input;
 using RawAnalyzer.App.Services;
 using RawAnalyzer.App.Views;
@@ -19,6 +21,73 @@ namespace RawAnalyzer.Tests;
 [Collection("WPF UI")]
 public class DefectPixelWindowTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public Task FooterButtons_FitClientAreaWithoutOverlap(bool minimumSize) => WpfTestHost.Run(async () =>
+    {
+        var window = new DefectPixelWindow { ShowActivated = false };
+        if (minimumSize)
+        {
+            window.Width = window.MinWidth;
+            window.Height = window.MinHeight;
+        }
+
+        try
+        {
+            window.Show();
+            await System.Windows.Threading.Dispatcher.Yield(System.Windows.Threading.DispatcherPriority.ApplicationIdle);
+            window.UpdateLayout();
+            var client = (FrameworkElement)window.Content;
+            var footer = (Panel)window.FindName("FooterPanel");
+            var buttons = footer.Children.OfType<Panel>().SelectMany(row => row.Children.OfType<Button>()).ToArray();
+            Assert.Equal(4, buttons.Length);
+
+            Rect Bounds(FrameworkElement element) =>
+                element.TransformToAncestor(client).TransformBounds(new Rect(element.RenderSize));
+
+            var area = new Rect(client.RenderSize);
+            Assert.All(buttons, button =>
+            {
+                Assert.True(button.ActualWidth > 0);
+                Assert.True(area.Contains(Bounds(button)));
+            });
+            var correct = (Button)window.FindName("CorrectButton");
+            var copy = (Button)window.FindName("CopyButton");
+            Assert.False(Bounds(correct).IntersectsWith(Bounds(copy)));
+
+            // 結果表示後のフッターを、実測した幅でウィンドウ枠から独立して撮る。
+            var snapshot = new DefectPixelWindow();
+            try
+            {
+                snapshot.ShowResult(DetectTwoDefects(), 4095);
+                var snapshotFooter = (StackPanel)snapshot.FindName("FooterPanel");
+                ((DockPanel)snapshot.Content).Children.Remove(snapshotFooter);
+                snapshotFooter.Margin = new Thickness(0);
+                var frame = new Border
+                {
+                    Background = snapshot.Background,
+                    Padding = new Thickness(12),
+                    Width = footer.ActualWidth + 24,
+                    Child = snapshotFooter,
+                };
+                TextElement.SetForeground(frame, snapshot.Foreground);
+                frame.Measure(new Size(frame.Width, double.PositiveInfinity));
+                frame.Arrange(new Rect(frame.DesiredSize));
+                frame.UpdateLayout();
+                WpfTestHost.CaptureIfRequested(frame, minimumSize ? "defect-footer-minimum" : "defect-footer-default");
+            }
+            finally
+            {
+                snapshot.Close();
+            }
+        }
+        finally
+        {
+            window.Close();
+        }
+    });
+
     [Fact]
     public Task DiscardResult_KeepsWindowOpenAndReturnsToNotRun() => WpfTestHost.Run(() =>
     {

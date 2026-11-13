@@ -8,10 +8,11 @@
             <Setter Property="Foreground" Value="{StaticResource TextDim}" />
             <Setter Property="BorderBrush" Value="{StaticResource BorderBrushDark}" />
             <Setter Property="BorderThickness" Value="1" />
-            <Setter Property="Padding" Value="7,1" />
-            <Setter Property="Margin" Value="4,0,0,0" />
+            <Setter Property="Padding" Value="3,1" />
+            <Setter Property="Margin" Value="2,0,0,0" />
             <Setter Property="FontSize" Value="11" />
             <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="FocusVisualStyle" Value="{StaticResource AccentFocusVisual}" />
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
@@ -37,10 +38,11 @@
             <Setter Property="Foreground" Value="{StaticResource TextDim}" />
             <Setter Property="BorderBrush" Value="{StaticResource BorderBrushDark}" />
             <Setter Property="BorderThickness" Value="1" />
-            <Setter Property="Padding" Value="7,1" />
-            <Setter Property="Margin" Value="4,0,0,0" />
+            <Setter Property="Padding" Value="3,1" />
+            <Setter Property="Margin" Value="2,0,0,0" />
             <Setter Property="FontSize" Value="11" />
             <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="FocusVisualStyle" Value="{StaticResource AccentFocusVisual}" />
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="ToggleButton">
@@ -75,34 +77,42 @@
     <Border x:Name="ActiveBorder" BorderThickness="2" BorderBrush="Transparent"
             Background="#FF161618" Margin="2">
         <DockPanel>
-            <Border DockPanel.Dock="Top" Background="{StaticResource PanelBrush}"
+            <Border x:Name="PaneHeader" DockPanel.Dock="Top" Height="32" Background="{StaticResource PanelBrush}"
                     BorderBrush="{StaticResource BorderBrushDark}" BorderThickness="0,0,0,1"
-                    Padding="8,4">
+                    Padding="4,4">
                 <DockPanel>
                     <Border Background="{StaticResource AccentSoftBrush}" CornerRadius="3"
-                            Padding="6,0" VerticalAlignment="Center">
+                            Padding="3,0" VerticalAlignment="Center">
                         <TextBlock x:Name="LabelText" FontSize="12" FontWeight="Bold"
                                    Foreground="{StaticResource AccentBrush}" />
                     </Border>
                     <Button DockPanel.Dock="Right" Content="✕" Style="{StaticResource HeaderButton}"
                             Click="OnCloseClick" AutomationProperties.Name="ペインを閉じる"
                             ToolTip="このペインを閉じる" />
-                    <Button x:Name="AutoButton" DockPanel.Dock="Right" Content="自動"
-                            Style="{StaticResource HeaderButton}" Click="OnAutoClick"
-                            ToolTip="このペインだけ自動コントラスト (0.35%クリップ)" />
-                    <Button DockPanel.Dock="Right" Content="リセット"
-                            Style="{StaticResource HeaderButton}" Click="OnResetClick"
-                            ToolTip="このペインの表示調整を初期値へ戻す" />
+                    <Button DockPanel.Dock="Right" Content="⋯" Style="{StaticResource HeaderButton}"
+                            Click="OnAdjustMenuClick" AutomationProperties.Name="ペインの表示調整"
+                            ToolTip="ペインの表示調整">
+                        <Button.ContextMenu>
+                            <ContextMenu Placement="Bottom">
+                                <MenuItem x:Name="AutoButton" Header="自動" Click="OnAutoClick"
+                                          AutomationProperties.Name="自動"
+                                          ToolTip="このペインだけ自動コントラスト (0.35%クリップ)" />
+                                <MenuItem x:Name="ResetItem" Header="リセット" Click="OnResetClick"
+                                          AutomationProperties.Name="リセット"
+                                          ToolTip="このペインの表示調整を初期値へ戻す" />
+                            </ContextMenu>
+                        </Button.ContextMenu>
+                    </Button>
                     <ToggleButton x:Name="LinkToggle" DockPanel.Dock="Right" Content="🔗"
                                   Style="{StaticResource HeaderToggle}"
                                   AutomationProperties.Name="調整リンク"
                                   ToolTip="調整をリンク: 🔗がONのペイン同士で自動/リセットの結果を共有 (黒/白は%FS換算)" />
-                    <TextBlock x:Name="FileNameText" FontSize="12" Margin="8,0,8,0"
+                    <TextBlock x:Name="FileNameText" FontSize="12" Margin="4,0"
                                VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
                                Foreground="{StaticResource TextBrush}" />
                 </DockPanel>
             </Border>
-            <Border x:Name="ChipsBar" DockPanel.Dock="Top" Visibility="Collapsed"
+            <Border x:Name="ChipsBar" DockPanel.Dock="Top" Visibility="Collapsed" Height="20"
                     Background="{StaticResource PanelBrush}"
                     BorderBrush="{StaticResource BorderBrushDark}" BorderThickness="0,0,0,1"
                     Padding="8,1"

@@ -11,6 +11,9 @@
 /// </remarks>
 public static class DeviceScaling
 {
+    internal static string FormatZoomPercent(double deviceZoom) =>
+        deviceZoom >= 0.1 ? $"{deviceZoom * 100:F0}%" : $"{deviceZoom * 100:F2}%";
+
     /// <summary>raw 値オーバーレイを描く最小のデバイス基準ズーム(元画像 1 画素が 32 デバイス画素以上)。</summary>
     public const double RawOverlayMinDeviceZoom = 32;
 

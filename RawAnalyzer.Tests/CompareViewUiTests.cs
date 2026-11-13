@@ -2,10 +2,12 @@ using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
+using System.Windows.Documents;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using RawAnalyzer.App.Compare;
+using RawAnalyzer.App.ViewModels;
 using Xunit;
 
 namespace RawAnalyzer.Tests;
@@ -15,11 +17,11 @@ public class CompareViewUiTests
 {
     [Theory]
     [InlineData(0, 1, 1)]
-    [InlineData(3, 3, 1)]
+    [InlineData(3, 2, 2)]
     [InlineData(4, 2, 2)]
     public Task Layout_OnlyLoadedImagesOccupyGrid(int count, int columns, int rows) => WpfTestHost.Run(async () =>
     {
-        using var fixture = new ImageFixture();
+        using var fixture = new ImageFixture(height: 270);
         var view = NewView();
         try
         {
@@ -38,7 +40,7 @@ public class CompareViewUiTests
             Assert.Equal(count < 4, add.IsEnabled);
             Assert.Equal(Visibility.Visible, add.Visibility);
             Assert.Equal($"{count} / 4枚", ((TextBlock)view.FindName("PaneCountText")).Text);
-            CaptureIfRequested(view, $"compare-{count}");
+            WpfTestHost.CaptureIfRequested(view, $"compare-{count}");
             if (count == 4)
             {
                 Assert.False(await view.AddPaneFromPathAsync(fixture.Path));
@@ -49,6 +51,108 @@ public class CompareViewUiTests
         {
             await view.CloseAllAsync();
         }
+    });
+
+    [Fact]
+    public Task Layout_ReevaluatesAfterResizeAndImageReplacement() => WpfTestHost.Run(async () =>
+    {
+        using var landscape = new ImageFixture(height: 270);
+        using var portrait = new ImageFixture(width: 180, height: 320);
+        var view = NewView();
+        try
+        {
+            for (int i = 0; i < 3; i++) Assert.True(await view.AddPaneFromPathAsync(landscape.Path));
+            var grid = (UniformGrid)view.FindName("PaneGrid");
+            await LayoutAsync(view, 1280, 720);
+            Assert.Equal((2, 2), (grid.Rows, grid.Columns));
+            await LayoutAsync(view, 1280, 350);
+            Assert.Equal((1, 3), (grid.Rows, grid.Columns));
+            await LayoutAsync(view, 1280, 720);
+            Assert.Equal((2, 2), (grid.Rows, grid.Columns));
+
+            foreach (ComparePaneView pane in grid.Children)
+            {
+                await pane.DetachAndDisposeAsync();
+                pane.Attach(await ComparePane.LoadAsync(portrait.Path, null, CancellationToken.None));
+            }
+            await LayoutAsync(view, 1280, 720);
+            Assert.Equal((1, 3), (grid.Rows, grid.Columns));
+        }
+        finally
+        {
+            await view.CloseAllAsync();
+        }
+    });
+
+    [Fact]
+    public Task FileNames_ExposeDifferentLettersAndKeepFullPathInTooltip() => WpfTestHost.Run(async () =>
+    {
+        const string prefix = "demo_scene_reference_capture_2026_sensor_measurement_";
+        const string suffix = "_exposure_120_gain_6_capture.png";
+        using var a = new ImageFixture(fileName: prefix + "a" + suffix);
+        using var b = new ImageFixture(fileName: prefix + "b" + suffix);
+        using var c = new ImageFixture(fileName: prefix + "c" + suffix);
+        var view = NewView();
+        try
+        {
+            foreach (ImageFixture fixture in new[] { a, b, c })
+            {
+                Assert.True(await view.AddPaneFromPathAsync(fixture.Path));
+            }
+            await ArrangeAsync(view, 240, 460);
+            var aName = (TextBlock)PaneAt(view, 0).FindName("FileNameText");
+            var bName = (TextBlock)PaneAt(view, 1).FindName("FileNameText");
+            Assert.Equal("a", string.Concat(aName.Inlines.OfType<Run>().Select(run => run.Text)));
+            Assert.Equal("b", string.Concat(bName.Inlines.OfType<Run>().Select(run => run.Text)));
+            Assert.True(aName.ActualWidth >= 10);
+            Assert.True(bName.ActualWidth >= 10);
+            Assert.Equal(a.Path, aName.ToolTip);
+            Assert.Equal(b.Path, bName.ToolTip);
+            WpfTestHost.CaptureIfRequested(view, "compare-filename-minimum");
+            await LayoutAsync(view, 480, 460);
+            Assert.Equal("…a…", string.Concat(aName.Inlines.OfType<Run>().Select(run => run.Text)));
+            Assert.Equal("…b…", string.Concat(bName.Inlines.OfType<Run>().Select(run => run.Text)));
+            WpfTestHost.CaptureIfRequested(view, "compare-filename-differences");
+        }
+        finally
+        {
+            await view.CloseAllAsync();
+        }
+    });
+
+    [Fact]
+    public Task Status_FollowsActivePaneZoomAndClose() => WpfTestHost.Run(async () =>
+    {
+        using var a = new ImageFixture(fileName: "a.png");
+        using var b = new ImageFixture(fileName: "b.png");
+        var view = NewView();
+        var vm = new MainViewModel { IsCompareMode = true };
+        view.StatusChanged += () => vm.UpdateCompareStatus(view.PaneCount, view.ActivePaneStatus);
+        try
+        {
+            Assert.True(await view.AddPaneFromPathAsync(a.Path));
+            Assert.True(await view.AddPaneFromPathAsync(b.Path));
+            await ArrangeAsync(view, 1280, 720);
+            Assert.Contains("B: b.png", vm.CompareImageInfoText);
+
+            ComparePaneView first = PaneAt(view, 0);
+            Click(first, System.Windows.Input.MouseButton.Left);
+            Assert.Contains("A: a.png", vm.CompareImageInfoText);
+            var rendered = new TaskCompletionSource();
+            first.ViewportControl.ViewportStateChanged += (_, _) => rendered.TrySetResult();
+            first.ViewportControl.ActualSize();
+            await rendered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal("Zoom 100%", vm.CompareZoomStatusText);
+
+            await ClosePaneAsync(view, 0);
+            Assert.Contains("比較 1 枚 · A: b.png", vm.CompareImageInfoText);
+        }
+        finally
+        {
+            await view.CloseAllAsync();
+        }
+        Assert.Equal("比較 0 枚", vm.CompareImageInfoText);
+        Assert.Empty(vm.CompareZoomStatusText);
     });
 
     [Fact]
@@ -86,7 +190,7 @@ public class CompareViewUiTests
     [Fact]
     public Task ClosePane_RedistributesSpaceAndRestoresAddButton() => WpfTestHost.Run(async () =>
     {
-        using var fixture = new ImageFixture();
+        using var fixture = new ImageFixture(height: 270);
         var view = NewView();
         try
         {
@@ -107,8 +211,8 @@ public class CompareViewUiTests
                 Assert.Equal(count, view.PaneCount);
                 Assert.Equal(count, grid.Children.Count);
 
-                // 残った枚数で並べ直す: 1〜3枚は横一列(0枚でも1列)
-                Assert.Equal((Math.Max(1, count), 1), (grid.Columns, grid.Rows));
+                // この領域では横長3枚は2×2、2枚は左右に並べると画像が大きくなる。
+                Assert.Equal(count == 3 ? (2, 2) : (Math.Max(1, count), 1), (grid.Columns, grid.Rows));
                 Assert.True(((Button)view.FindName("AddImageButton")).IsEnabled);
                 if (count > 0)
                 {
@@ -609,16 +713,16 @@ public class CompareViewUiTests
             Assert.True(await view.AddPaneFromPathAsync(fixture.Path));
             await LayoutAsync(view, 1280, 720);
             ComparePaneView pane = PaneAt(view, 0);
-            var auto = (Button)pane.FindName("AutoButton");
-            Button reset = Descendants<Button>(pane).Single(b => Equals(b.Content, "リセット"));
+            var auto = (MenuItem)pane.FindName("AutoButton");
+            var reset = (MenuItem)pane.FindName("ResetItem");
             ComparePane source = pane.Pane!;
             DisplaySettings defaults = DisplaySettings.CreateDefault(source.Format.BitDepth);
             pane.ApplyDisplay(defaults with { GainDb = 6 });
             int changes = 0;
             pane.DisplayChanged += _ => changes++;
 
-            auto.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-            reset.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            auto.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+            reset.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
             Assert.Equal(defaults, source.Display);
             await Task.Delay(300);
             await DrainAsync();
@@ -627,7 +731,7 @@ public class CompareViewUiTests
             Assert.Equal(1, changes); // リセットだけ
 
             // 変えずに待てば「自動」の結果を使う(この画像では既定の全域と違う黒/白になる)
-            auto.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            auto.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
             await WaitUntilAsync(() => changes == 2);
             Assert.NotEqual(defaults, source.Display);
         }
@@ -808,26 +912,14 @@ public class CompareViewUiTests
         }
     }
 
-    private static void CaptureIfRequested(FrameworkElement view, string name)
-    {
-        string? directory = Environment.GetEnvironmentVariable("RAWANALYZER_UI_SNAPSHOTS");
-        if (string.IsNullOrEmpty(directory)) return;
-        var bitmap = new RenderTargetBitmap((int)view.ActualWidth, (int)view.ActualHeight,
-            96, 96, PixelFormats.Pbgra32);
-        bitmap.Render(view);
-        var encoder = new PngBitmapEncoder();
-        encoder.Frames.Add(BitmapFrame.Create(bitmap));
-        using var output = File.Create(Path.Combine(directory, name + ".png"));
-        encoder.Save(output);
-    }
-
     private sealed class ImageFixture : IDisposable
     {
         internal string Path { get; }
 
-        internal ImageFixture(int width = 480, int height = 320)
+        internal ImageFixture(int width = 480, int height = 320, string? fileName = null)
         {
-            Path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), Guid.NewGuid().ToString("N") + ".png");
+            string directory = Directory.CreateTempSubdirectory("RawAnalyzerCompare-").FullName;
+            Path = System.IO.Path.Combine(directory, fileName ?? "compare.png");
             var pixels = new byte[width * height * 3];
             for (int y = 0; y < height; y++)
                 for (int x = 0; x < width; x++)
@@ -845,6 +937,10 @@ public class CompareViewUiTests
             encoder.Save(output);
         }
 
-        public void Dispose() => File.Delete(Path);
+        public void Dispose()
+        {
+            File.Delete(Path);
+            Directory.Delete(System.IO.Path.GetDirectoryName(Path)!);
+        }
     }
 }

@@ -13,7 +13,7 @@ public partial class MainWindow
     private readonly FormatPresetStore _presetStore = new();
 
     // サイズ別フォーマット記憶(format-history.json)。raw の読み込みに成功するたびに記録・保存する
-    private readonly FormatMemory _formatMemory = new(new FormatHistoryStore());
+    private readonly FormatMemory _formatMemory;
     private bool _updatingFormatPanel;
 
     // 表示中のファイルを同じサイズの記憶から推定して開いたことの通知(比較モードを抜けたら表示し直す)

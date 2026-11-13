@@ -1,7 +1,7 @@
 <Window x:Class="RawAnalyzer.App.Views.DefectPixelWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="欠陥画素検出" Width="520" Height="560"
+        Title="欠陥画素検出" Width="520" Height="560" MinWidth="400" MinHeight="340"
         Background="#FF2E2E32" Foreground="#FFD8D8D4"
         WindowStartupLocation="CenterOwner" ShowInTaskbar="False">
     <DockPanel Margin="12">
@@ -28,7 +28,7 @@
                    TextWrapping="Wrap" Text="「検出実行」で全画素を走査します (ダーク→白点 / フラット→黒点)" />
 
         <!-- フッタ -->
-        <DockPanel DockPanel.Dock="Bottom" Margin="0,10,0,0">
+        <StackPanel x:Name="FooterPanel" DockPanel.Dock="Bottom" Margin="0,10,0,0">
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Left">
                 <ComboBox x:Name="CorrectionMethodCombo" SelectedIndex="0" MinWidth="128"
                           VerticalAlignment="Center" FontSize="11">
@@ -40,7 +40,7 @@
                         BorderBrush="#FF7ECB72" Foreground="#FF7ECB72"
                         ToolTip="同色近傍から補間して欠陥画素を置き換えます(元ファイルは変更されません)" />
             </StackPanel>
-            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,8,0,0">
                 <!-- 表示中の検出結果の一覧を書き出す。未実行・破棄した後は書き出すものがないので押せない -->
                 <Button x:Name="CopyButton" Content="コピー (Excel用)" Click="OnCopyClick" Margin="0,0,8,0"
                         IsEnabled="False" />
@@ -48,7 +48,7 @@
                         IsEnabled="False" />
                 <Button Content="閉じる" IsCancel="True" Click="OnCloseClick" />
             </StackPanel>
-        </DockPanel>
+        </StackPanel>
 
         <!-- 結果リスト -->
         <ListView x:Name="DefectList" MouseDoubleClick="OnListDoubleClick"

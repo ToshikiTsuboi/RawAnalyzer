@@ -1,6 +1,7 @@
 ﻿using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Threading;
+using RawAnalyzer.App.Rendering;
 
 namespace RawAnalyzer.App.Compare;
 
@@ -37,6 +38,7 @@ public partial class CompareView : UserControl
 
     private readonly List<ComparePaneView> _panes = new();
     private ComparePaneView? _active;
+    private (int Count, ComparePaneStatus? Active) _lastStatus;
     private bool _loading;
     private bool _closing;
     private CompareSyncMode _syncMode = CompareSyncMode.FieldOfView;
@@ -56,11 +58,15 @@ public partial class CompareView : UserControl
     public CompareView()
     {
         InitializeComponent();
+        PaneGrid.SizeChanged += (_, _) => UpdateGridDimensions();
         Relayout();
     }
 
     /// <summary>「比較モードを終了」が押されたときに発火する。</summary>
     public event EventHandler? ExitRequested;
+
+    internal event Action? StatusChanged;
+    internal ComparePaneStatus? ActivePaneStatus => _lastStatus.Active;
 
     /// <summary>
     /// ペインを追加できなかった(上限・読み込み中)ときに、理由と追加しなかったファイルを知らせる(ホストが利用者へ示す)。
@@ -166,22 +172,12 @@ public partial class CompareView : UserControl
         finally
         {
             _panes.Clear();
+            PaneGrid.Children.Clear();
             _active = null;
             _fitBase = null;
             _closing = false;
             Relayout();
         }
-    }
-
-    /// <summary>
-    /// 開いている画像数に応じたグリッド列数。
-    /// 1〜3枚は横一列、4枚は2×2。追加用の空き枠は数えない。
-    /// </summary>
-    /// <param name="paneCount">表示する画像数。</param>
-    /// <returns>UniformGridの列数。</returns>
-    private static int ColumnsFor(int paneCount)
-    {
-        return paneCount <= 3 ? Math.Max(1, paneCount) : 2;
     }
 
     /// <summary>
@@ -309,10 +305,26 @@ public partial class CompareView : UserControl
         view.CursorLeft += OnPaneCursorLeft;
         view.DisplayChanged += OnPaneDisplayChanged;
         view.ViewportControl.SizeChanged += (_, _) => OnPaneViewportResized(view);
+        view.ViewportControl.ViewportStateChanged += (_, _) =>
+        {
+            if (ReferenceEquals(view, _active))
+            {
+                UpdateStatus();
+            }
+        };
+        view.PaneAttached += () =>
+        {
+            UpdateFileNames();
+            UpdateGridDimensions();
+            UpdateStatus();
+        };
         _panes.Add(view);
-        Relayout();
+        PaneGrid.Children.Add(view);
+        view.SetLabel(((char)('A' + _panes.Count - 1)).ToString());
         view.Attach(pane, cancellationToken);
         SetActive(view);
+        EmptyAddButton.Visibility = Visibility.Collapsed;
+        UpdateAddControls();
         RefreshChips();
 
         // 新規ペインはまだレイアウト前でサイズが0のため、ここでは既存ペインの
@@ -646,6 +658,7 @@ public partial class CompareView : UserControl
         {
             return;
         }
+        PaneGrid.Children.Remove(view);
         if (ReferenceEquals(_active, view))
         {
             SetActive(_panes.LastOrDefault());
@@ -694,22 +707,62 @@ public partial class CompareView : UserControl
         {
             pane.IsActive = ReferenceEquals(pane, view);
         }
+        UpdateStatus();
     }
 
-    /// <summary>開いているペインだけをグリッドへ並べ直し、ラベルを振り直す。</summary>
+    /// <summary>開いているペインの見出しと配置を更新する。</summary>
     private void Relayout()
     {
-        PaneGrid.Children.Clear();
         for (int i = 0; i < _panes.Count; i++)
         {
             _panes[i].SetLabel(((char)('A' + i)).ToString());
-            PaneGrid.Children.Add(_panes[i]);
         }
 
-        PaneGrid.Columns = ColumnsFor(_panes.Count);
-        PaneGrid.Rows = _panes.Count <= 3 ? 1 : 2;
+        UpdateFileNames();
+        UpdateGridDimensions();
+        UpdateStatus();
         EmptyAddButton.Visibility = _panes.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         UpdateAddControls();
+    }
+
+    private void UpdateFileNames()
+    {
+        var loaded = _panes.Where(view => view.Pane is not null).ToArray();
+        PaneNameDisplay[] names = PaneNameDisplay.ForFiles(loaded.Select(view => view.Pane!.FileName).ToArray());
+        for (int i = 0; i < loaded.Length; i++)
+        {
+            loaded[i].SetFileNameDisplay(names[i]);
+        }
+    }
+
+    private void UpdateGridDimensions()
+    {
+        Size insets = _panes.FirstOrDefault()?.ImageAreaInsets ?? default;
+        double[] aspects = _panes.Select(view => view.Pane is { } pane
+            ? (double)pane.Image.Width / pane.Image.Height
+            : 1).ToArray();
+        (int rows, int columns) = CompareLayout.Choose(PaneGrid.ActualWidth, PaneGrid.ActualHeight,
+            aspects, insets.Width, insets.Height, (PaneGrid.Rows, PaneGrid.Columns));
+        PaneGrid.Rows = rows;
+        PaneGrid.Columns = columns;
+    }
+
+    private void UpdateStatus()
+    {
+        ComparePaneStatus? active = null;
+        if (_active?.Pane is { } pane)
+        {
+            var viewport = _active.ViewportControl;
+            active = new ComparePaneStatus(_active.Label, pane.FileName, pane.Image.Width, pane.Image.Height,
+                pane.Format.BitDepth, DeviceScaling.ToDeviceZoom(viewport.Zoom, viewport.DeviceScale));
+        }
+
+        var status = (_panes.Count, active);
+        if (status != _lastStatus)
+        {
+            _lastStatus = status;
+            StatusChanged?.Invoke();
+        }
     }
 
     private void UpdateAddControls()
