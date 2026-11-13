@@ -185,7 +185,6 @@ internal static class HdrViewSidecar
         return sb.ToString();
     }
 
-    /// <summary>段の名前(表示調整の対象の選択肢と同じ。左端の段が長秒、右端の段が短秒、その間が中秒)。</summary>
     private static string FormatRatio(double ratio) => ratio.ToString("0.###", Invariant);
 
     private static string DescribeImage(RawFormat format) =>

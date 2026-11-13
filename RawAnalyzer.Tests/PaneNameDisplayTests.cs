@@ -5,6 +5,34 @@ namespace RawAnalyzer.Tests;
 
 public class PaneNameDisplayTests
 {
+    internal static IReadOnlyList<string> MixedNames { get; } =
+    [
+        "demo_scene_a_1920x1080_12bit_rggb.raw",
+        "demo_scene_b_1920x1080_12bit_rggb.raw",
+        "dark_a_1920x1080_12bit.raw",
+    ];
+
+    [Fact]
+    public void ForFiles_ChoosesClosestNameEvenWithAnUnrelatedPane()
+    {
+        PaneNameDisplay[] display = PaneNameDisplay.ForFiles(MixedNames);
+        Assert.Equal(MixedNames, display.Select(name => name.FullName));
+        Assert.Equal(new PaneNameDisplay("demo_scene_", "a", "_1920x1080_12bit_rggb.raw"), display[0]);
+        Assert.Equal(new PaneNameDisplay("demo_scene_", "b", "_1920x1080_12bit_rggb.raw"), display[1]);
+        Assert.Equal("…a…", display[0].ForWidth(50, 220).FullName);
+        Assert.Equal("…b…", display[1].ForWidth(50, 220).FullName);
+        Assert.Equal(new PaneNameDisplay("d", "ark_a_1920x1080_12bit", ".raw"), display[2]);
+    }
+
+    [Fact]
+    public void ForFiles_MarksOnlyTheOmittedEnds()
+    {
+        PaneNameDisplay[] sharedPrefix = PaneNameDisplay.ForFiles(["demo_a", "demo_b"]);
+        Assert.Equal("…a", sharedPrefix[0].ForWidth(20, 60).FullName);
+        PaneNameDisplay[] sharedSuffix = PaneNameDisplay.ForFiles(["a.raw", "b.raw"]);
+        Assert.Equal("a…", sharedSuffix[0].ForWidth(20, 60).FullName);
+    }
+
     [Fact]
     public void ForFiles_ShortensSharedEndsAndPreservesDifferences()
     {

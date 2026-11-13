@@ -4,11 +4,15 @@ using System.Windows.Automation.Peers;
 using System.Windows.Automation.Provider;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
+using System.Windows.Documents;
+using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
 using RawAnalyzer.App;
+using RawAnalyzer.App.Compare;
 using RawAnalyzer.App.Services;
 using RawAnalyzer.App.ViewModels;
+using RawAnalyzer.Core;
 using Xunit;
 
 namespace RawAnalyzer.Tests;
@@ -42,7 +46,7 @@ public class MainWindowPhaseOneUiTests
             Assert.False(ToolBar.GetIsOverflowItem(pinned));
             Assert.True(new Rect(toolbar.RenderSize).Contains(BoundsIn(pinned, toolbar)));
 
-            var items = toolbar.Items.Cast<FrameworkElement>().Skip(1).ToArray();
+            var items = toolbar.Items.OfType<ButtonBase>().ToArray();
             Assert.Equal(new[] { "ZebraToggle", "ProfileToggle", "RoiToggle", "HorizontalProjectionToggle",
                 "VerticalProjectionToggle", "SaveToolButton" }, items.Select(item => item.Name));
             int firstOverflow = Array.FindIndex(items, ToolBar.GetIsOverflowItem);
@@ -56,6 +60,12 @@ public class MainWindowPhaseOneUiTests
                 await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
                 Assert.True(toolbar.IsOverflowOpen);
                 Assert.True(overflow.IsVisible);
+                var overflowItems = items.Skip(firstOverflow).ToArray();
+                Assert.All(overflowItems, item =>
+                {
+                    Assert.Equal(overflowItems[0].ActualWidth, item.ActualWidth);
+                    Assert.Equal(HorizontalAlignment.Left, item.HorizontalContentAlignment);
+                });
             }
 
             for (int i = 0; i < items.Length; i++)
@@ -99,6 +109,90 @@ public class MainWindowPhaseOneUiTests
         }
         finally
         {
+            window.Close();
+        }
+    });
+
+    [Fact]
+    public Task Toolbar_OverflowButtonClosesOnSecondPress() => WpfTestHost.Run(async () =>
+    {
+        using var settings = new TemporaryDirectory();
+        var window = new MainWindow(settings.Path) { Width = 720, ShowActivated = false };
+        try
+        {
+            window.Show();
+            await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+            var toolbar = (ToolBar)window.FindName("ToolBarPanel");
+            var button = (ToggleButton)toolbar.Template.FindName("OverflowButton", toolbar);
+            var popup = (Popup)toolbar.Template.FindName("OverflowPopup", toolbar);
+            Assert.Equal(ClickMode.Press, button.ClickMode);
+            Assert.True(toolbar.HasOverflowItems);
+            Assert.False(popup.IsOpen);
+            for (int click = 0; click < 2; click++)
+            {
+                button.RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, Environment.TickCount, MouseButton.Left)
+                    { RoutedEvent = Mouse.MouseDownEvent });
+                await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+                Assert.Equal(click == 0, toolbar.IsOverflowOpen);
+                Assert.Equal(click == 0, popup.IsOpen);
+            }
+        }
+        finally
+        {
+            window.Close();
+        }
+    });
+
+    [Fact]
+    public Task CompareFileNames_MixedRawNamesRemainDistinctAtWindowWidth720() => WpfTestHost.Run(async () =>
+    {
+        using var settings = new TemporaryDirectory();
+        Directory.CreateDirectory(settings.Path);
+        var window = new MainWindow(settings.Path) { Width = 720, ShowActivated = false };
+        var compare = (CompareView)window.FindName("CompareArea");
+        try
+        {
+            window.Show();
+            await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+            Assert.Equal(720, window.ActualWidth, 0);
+            var menu = (Menu)window.FindName("MainMenuBar");
+            var viewMenu = menu.Items.OfType<MenuItem>().Single(item => Equals(item.Header, "表示(_V)"));
+            var compareItem = viewMenu.Items.OfType<MenuItem>().Single(item =>
+                Equals(item.Header, "比較モード (複数画像を並べる)"));
+            compareItem.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+            Assert.True(compare.IsVisible);
+
+            var format = new RawFormat { Width = 1920, Height = 1080, BitDepth = 12, Bayer = BayerPattern.Rggb };
+            compare.PaneLoader = async (path, token) => await ComparePane.LoadAsync(path, format, token);
+            string[] paths = PaneNameDisplayTests.MixedNames.Select(name => Path.Combine(settings.Path, name)).ToArray();
+            foreach (string path in paths)
+            {
+                await using (FileStream file = File.Create(path))
+                {
+                    file.SetLength(2L * format.Width * format.Height);
+                }
+                Assert.True(await compare.AddPaneFromPathAsync(path));
+            }
+            await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+            var grid = (UniformGrid)compare.FindName("PaneGrid");
+            Assert.Equal(3, grid.Children.Count);
+            for (int i = 0; i < 2; i++)
+            {
+                var pane = (ComparePaneView)grid.Children[i];
+                var name = (TextBlock)pane.FindName("FileNameText");
+                string difference = i == 0 ? "a" : "b";
+                Run[] runs = name.Inlines.OfType<Run>().ToArray();
+                Assert.Equal($"…{difference}…", string.Concat(runs.Select(run => run.Text)));
+                Assert.Equal(difference, Assert.Single(runs, run =>
+                    ReferenceEquals(run.Foreground, name.FindResource("AccentBrush"))).Text);
+                Assert.Equal(paths[i], name.ToolTip);
+                Assert.True(name.ActualWidth >= 24);
+            }
+            WpfTestHost.CaptureIfRequested(compare, "compare-mixed-raw-720");
+        }
+        finally
+        {
+            await compare.CloseAllAsync();
             window.Close();
         }
     });

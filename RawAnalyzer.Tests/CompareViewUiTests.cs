@@ -102,10 +102,10 @@ public class CompareViewUiTests
             await ArrangeAsync(view, 240, 460);
             var aName = (TextBlock)PaneAt(view, 0).FindName("FileNameText");
             var bName = (TextBlock)PaneAt(view, 1).FindName("FileNameText");
-            Assert.Equal("a", string.Concat(aName.Inlines.OfType<Run>().Select(run => run.Text)));
-            Assert.Equal("b", string.Concat(bName.Inlines.OfType<Run>().Select(run => run.Text)));
-            Assert.True(aName.ActualWidth >= 10);
-            Assert.True(bName.ActualWidth >= 10);
+            Assert.Equal("…a…", string.Concat(aName.Inlines.OfType<Run>().Select(run => run.Text)));
+            Assert.Equal("…b…", string.Concat(bName.Inlines.OfType<Run>().Select(run => run.Text)));
+            Assert.True(aName.ActualWidth >= 24);
+            Assert.True(bName.ActualWidth >= 24);
             Assert.Equal(a.Path, aName.ToolTip);
             Assert.Equal(b.Path, bName.ToolTip);
             WpfTestHost.CaptureIfRequested(view, "compare-filename-minimum");

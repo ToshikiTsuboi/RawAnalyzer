@@ -47,6 +47,7 @@
         <Setter Property="BorderBrush" Value="{StaticResource BorderBrushDark}" />
         <Setter Property="Padding" Value="12,5" />
         <Setter Property="FontSize" Value="12" />
+        <Setter Property="HorizontalContentAlignment" Value="Center" />
         <Setter Property="SnapsToDevicePixels" Value="True" />
         <Setter Property="FocusVisualStyle" Value="{StaticResource AccentFocusVisual}" />
         <Setter Property="Template">
@@ -58,7 +59,7 @@
                             BorderThickness="1"
                             SnapsToDevicePixels="True">
                         <ContentPresenter Margin="{TemplateBinding Padding}"
-                                          HorizontalAlignment="Center"
+                                          HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
                                           VerticalAlignment="Center"
                                           RecognizesAccessKey="True" />
                     </Border>
@@ -87,6 +88,7 @@
         <Setter Property="BorderBrush" Value="{StaticResource BorderBrushDark}" />
         <Setter Property="Padding" Value="12,5" />
         <Setter Property="FontSize" Value="12" />
+        <Setter Property="HorizontalContentAlignment" Value="Center" />
         <Setter Property="SnapsToDevicePixels" Value="True" />
         <Setter Property="FocusVisualStyle" Value="{StaticResource AccentFocusVisual}" />
         <Setter Property="Template">
@@ -98,7 +100,7 @@
                             BorderThickness="1"
                             SnapsToDevicePixels="True">
                         <ContentPresenter Margin="{TemplateBinding Padding}"
-                                          HorizontalAlignment="Center"
+                                          HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
                                           VerticalAlignment="Center"
                                           RecognizesAccessKey="True" />
                     </Border>

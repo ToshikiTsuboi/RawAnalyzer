@@ -20,7 +20,6 @@ public partial class ComparePaneView : UserControl
     private bool _adjusting;
     private PaneNameDisplay _nameDisplay = new("", "", "");
     private double _fullNameWidth;
-    private double _shortNameWidth;
     private PaneNameDisplay? _shownName;
 
     // ユーザーがズーム/パン操作をするまでは全体表示を維持する。
@@ -272,7 +271,6 @@ public partial class ComparePaneView : UserControl
     {
         _nameDisplay = display;
         _fullNameWidth = MeasureFileName(display.FullName);
-        _shortNameWidth = MeasureFileName(display.ForWidth(0, _fullNameWidth).FullName);
         RefreshFileName();
     }
 
@@ -284,10 +282,7 @@ public partial class ComparePaneView : UserControl
 
     private void RefreshFileName()
     {
-        double width = FileNameText.ActualWidth;
-        PaneNameDisplay display = width < _shortNameWidth
-            ? _nameDisplay.DifferenceOnly()
-            : _nameDisplay.ForWidth(width, _fullNameWidth);
+        PaneNameDisplay display = _nameDisplay.ForWidth(FileNameText.ActualWidth, _fullNameWidth);
         if (_shownName == display)
         {
             return;
