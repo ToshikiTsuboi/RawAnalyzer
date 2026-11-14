@@ -497,7 +497,8 @@
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="1.4*" MinHeight="80" />
                         </Grid.RowDefinitions>
-                        <TreeView x:Name="FolderTree" Grid.Row="0"
+                        <controls:FolderTreeView x:Name="FolderTree" Grid.Row="0"
+                                  Style="{StaticResource FolderTree}"
                                   ScrollViewer.VerticalScrollBarVisibility="Auto"
                                   TreeViewItem.Expanded="OnFolderTreeExpanded"
                                   SelectedItemChanged="OnFolderTreeSelected"
@@ -510,7 +511,7 @@
                                               Click="OnTreeRefreshClick" />
                                 </ContextMenu>
                             </TreeView.ContextMenu>
-                        </TreeView>
+                        </controls:FolderTreeView>
                         <GridSplitter Grid.Row="1" Height="3" HorizontalAlignment="Stretch"
                                       Margin="4,3" />
                         <!-- ファイル一覧の絞り込み。拡張子の候補はドロップダウンから、

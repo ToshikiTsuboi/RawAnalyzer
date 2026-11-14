@@ -87,9 +87,9 @@ public class FileListVirtualizationTests
         {
             window.Show();
             var list = (ListBox)window.FindName("FileListBox");
-            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-            async Task WaitUntil(Func<bool> condition)
+            static async Task WaitUntil(Func<bool> condition)
             {
+                using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
                 while (!condition()) await Task.Delay(10, timeout.Token);
             }
 

@@ -1,151 +1,117 @@
 using System.IO;
 using System.Windows;
-using System.Windows.Automation;
 using System.Windows.Controls;
+using System.Windows.Media;
+using System.Windows.Threading;
+using RawAnalyzer.App.Mvvm;
 using RawAnalyzer.App.Themes;
 using RawAnalyzer.Core;
 
 namespace RawAnalyzer.App.Services;
 
-/// <summary>
-/// フォルダツリーの子フォルダ1件。
-/// </summary>
-/// <param name="Name">フォルダ名(見出しに出す)。</param>
-/// <param name="FullPath">フォルダのフルパス。</param>
+/// <summary>子フォルダの列挙結果。UI スレッドに依存しない。</summary>
 internal readonly record struct FolderTreeEntry(string Name, string FullPath);
 
-internal sealed record FolderTreeHeader(string Name, string Glyph);
-
-/// <summary>
-/// 左パネルのフォルダツリー。項目を展開したときに子フォルダを足し、表示中のフォルダまで展開して選択する。
-/// </summary>
-/// <remarks>
-/// <para>
-/// 子フォルダの列挙(とフォルダの属性の取得)は UI スレッドの外で行う。ネットワーク共有では1階層の列挙に
-/// 数秒かかることがあり、切断中の割り当てドライブでは SMB のタイムアウトまで戻らない。UI スレッドで列挙すると、
-/// 展開・再読込のたび、またファイルを開いたフォルダまでツリーを同期するたび(祖先の各階層の初回)にウィンドウが
-/// 固まる(性能ルール5)。列挙中は子に「読み込み中…」を置き、同じ項目の列挙を重ねない。
-/// </para>
-/// <para>
-/// 未展開の項目はダミーの子(<see cref="Placeholder"/>)を1つ持ち、展開できることを示す。列挙の結果は、
-/// 列挙中にその項目を作り直していなければ(再読込)足す。
-/// </para>
-/// </remarks>
-internal sealed class FolderTreeNavigator
+/// <summary>フォルダツリーのデータ。WPF は表示範囲の項目だけにコンテナーを作る。</summary>
+internal sealed class FolderTreeNode(string name, string fullPath, string glyph = IconGlyphs.Folder) : ObservableObject
 {
-    /// <summary>未展開の項目に置くダミーの子。</summary>
     internal const string Placeholder = "…";
-
-    /// <summary>子フォルダを列挙している間に置く子の表示。</summary>
     internal const string LoadingText = "読み込み中…";
 
-    private readonly Func<string, IReadOnlyList<FolderTreeEntry>> _enumerate;
+    private string _name = name;
+    private IReadOnlyList<object> _children = [Placeholder];
+    private bool _isExpanded;
 
-    // 表示中のフォルダへの同期の世代。新しい同期が始まったら、前の同期は列挙を待った後で何もしない
+    public string Name
+    {
+        get => _name;
+        set => SetProperty(ref _name, value);
+    }
+
+    public string FullPath { get; } = fullPath;
+    public string Glyph { get; } = glyph;
+
+    public IReadOnlyList<object> Children
+    {
+        get => _children;
+        set => SetProperty(ref _children, value);
+    }
+
+    public bool IsExpanded
+    {
+        get => _isExpanded;
+        set => SetProperty(ref _isExpanded, value);
+    }
+
+    internal Task? PendingLoad { get; set; }
+    internal TreeViewItem? Container { get; set; }
+}
+
+/// <summary>子フォルダの遅延列挙と、表示中のフォルダへのツリーの同期。</summary>
+internal sealed class FolderTreeNavigator
+{
+    private readonly Func<string, IReadOnlyList<FolderTreeEntry>> _enumerate;
     private int _syncGeneration;
 
-    /// <summary>
-    /// フォルダツリーを作る。
-    /// </summary>
-    /// <param name="enumerate">
-    /// 子フォルダの列挙(UI スレッドの外で呼ぶ)。null なら <see cref="EnumerateChildFolders"/>。
-    /// </param>
     internal FolderTreeNavigator(Func<string, IReadOnlyList<FolderTreeEntry>>? enumerate = null)
     {
         _enumerate = enumerate ?? EnumerateChildFolders;
     }
 
-    /// <summary>
-    /// 表示中のフォルダへの同期がツリーの選択を変えている間は true。
-    /// </summary>
-    /// <remarks>
-    /// 選択の変更(SelectedItemChanged)でフォルダを開く側は、この間の変更を無視する
-    /// (開いたフォルダへ同期しただけなので、開き直さない)。
-    /// </remarks>
     internal bool IsSyncingSelection { get; private set; }
 
-    /// <summary>
-    /// 未展開の項目(ダミーの子を持つ)を作る。
-    /// </summary>
-    /// <param name="header">見出し。</param>
-    /// <param name="path">フォルダのフルパス(Tag に持つ)。</param>
-    /// <param name="glyph">見出しのアイコン。</param>
-    /// <returns>作った項目。</returns>
-    internal static TreeViewItem CreateItem(string header, string path, string glyph = IconGlyphs.Folder)
+    internal Task PopulateAsync(FolderTreeNode node)
     {
-        var item = new TreeViewItem { Tag = path };
-        item.SetResourceReference(HeaderedItemsControl.HeaderTemplateProperty, "FolderTreeHeader");
-        SetHeader(item, header, glyph);
-        item.Items.Add(Placeholder);
-        return item;
-    }
-
-    internal static void SetHeader(TreeViewItem item, string name, string glyph)
-    {
-        item.Header = new FolderTreeHeader(name, glyph);
-        AutomationProperties.SetName(item, name);
-    }
-
-    /// <summary>
-    /// 項目が未展開(ダミーの子だけを持つ)なら子フォルダを列挙して足す。列挙中なら同じ列挙の完了を待つ。
-    /// </summary>
-    /// <param name="item">フォルダの項目(Tag にフルパス)。</param>
-    /// <returns>子を足し終えた(または足さないと決めた)ことを表すタスク。列挙の想定外の失敗は例外で終わる。</returns>
-    internal Task PopulateAsync(TreeViewItem item)
-    {
-        if (item.Items.Count == 1 && item.Items[0] is Loading loading)
+        if (node.PendingLoad is { } pending)
         {
-            return loading.Completion;
+            return pending;
         }
 
-        if (item.Items.Count != 1 || !Equals(item.Items[0], Placeholder) || item.Tag is not string path)
+        if (node.Children.Count != 1 || !Equals(node.Children[0], FolderTreeNode.Placeholder))
         {
             return Task.CompletedTask;
         }
 
-        var marker = new Loading();
-        item.Items.Clear();
-        item.Items.Add(marker);
-        marker.Completion = PopulateCoreAsync(item, path, marker);
-        return marker.Completion;
+        object[] loading = [FolderTreeNode.LoadingText];
+        node.Children = loading;
+        return node.PendingLoad = PopulateCoreAsync(node, loading);
     }
 
-    /// <summary>
-    /// 項目の子フォルダを列挙し直す(右クリックメニューの「再読込」)。展開していなければ次に展開したときに列挙する。
-    /// </summary>
-    /// <param name="item">フォルダの項目。</param>
-    /// <returns>子を足し終えたことを表すタスク。</returns>
-    internal Task RefreshAsync(TreeViewItem item)
+    internal Task RefreshAsync(FolderTreeNode node)
     {
-        // 列挙中の結果は、子を作り直したことで後から終わっても足さない(PopulateCoreAsync)
-        item.Items.Clear();
-        item.Items.Add(Placeholder);
-        return item.IsExpanded ? PopulateAsync(item) : Task.CompletedTask;
+        node.PendingLoad = null;
+        node.Children = [FolderTreeNode.Placeholder];
+        return node.IsExpanded ? PopulateAsync(node) : Task.CompletedTask;
     }
 
-    /// <summary>
-    /// ツリーを指定のフォルダまで展開して選択する(ベストエフォート)。
-    /// </summary>
-    /// <remarks>
-    /// 祖先の各階層を順に展開し、未列挙なら列挙を待つ。待つ間に次の同期が始まったら(別のフォルダを開いた)、
-    /// または利用者がツリーの項目を選んだら(同期による選択ではない選択の変更)、この同期はそこでやめる
-    /// (後から来た利用者の選択を優先する)。以前は別の同期でしか世代が進まず、列挙を待つ間にクリックした項目の
-    /// 選択を、後から終わった同期が表示中のフォルダへ戻していた(クリックした項目を開く側は、実在を確かめた後に
-    /// 選択されたままかを照合するので、そのフォルダへ移れなかった)。
-    /// ツリーにない(UNC パス、起動後に接続したドライブ、隠し・システム属性のフォルダの下など、ルートや途中の階層が
-    /// 見つからない)ときは、前のフォルダの選択を外す。残すと、TreeView は選択済みの項目をクリックしても選択の
-    /// 変更を出さないので、その項目をクリックしても前のフォルダへ戻れない。
-    /// </remarks>
-    /// <param name="tree">フォルダツリー。最上位の項目はドライブのルート(Tag にルートのパス)。</param>
-    /// <param name="folder">選択するフォルダのフルパス。</param>
-    /// <returns>同期の完了を表すタスク。</returns>
+    private async Task PopulateCoreAsync(FolderTreeNode node, object[] loading)
+    {
+        FolderTreeNode[]? children = null;
+        try
+        {
+            children = await Task.Run(() => _enumerate(node.FullPath)
+                .Select(entry => new FolderTreeNode(entry.Name, entry.FullPath)).ToArray());
+            // 大きな ItemsSource の切り替えと、その直後のレイアウトの前に入力を処理する。
+            await Dispatcher.Yield(DispatcherPriority.Background);
+        }
+        finally
+        {
+            // 再読込で入れ替えた子に、古い列挙結果を上書きしない。
+            if (ReferenceEquals(node.Children, loading))
+            {
+                node.PendingLoad = null;
+                node.Children = children ?? (IReadOnlyList<object>)[FolderTreeNode.Placeholder];
+            }
+        }
+    }
+
+    /// <summary>祖先のデータをたどり、各階層で必要なコンテナーだけを生成して選択する。</summary>
     internal async Task SyncToFolderAsync(TreeView tree, string folder)
     {
         int generation = ++_syncGeneration;
-
-        // 同期の途中の利用者の選択で、この同期の世代を古くする(次の同期は進めた世代のさらに先で始まる)
         void OnSelectionChanged(object sender, RoutedPropertyChangedEventArgs<object> e)
         {
+            // 列挙やレイアウトを待つ間に利用者が選んだ項目を優先する。
             if (!IsSyncingSelection && generation == _syncGeneration)
             {
                 _syncGeneration++;
@@ -155,7 +121,77 @@ internal sealed class FolderTreeNavigator
         tree.SelectedItemChanged += OnSelectionChanged;
         try
         {
-            await SyncCoreAsync(tree, folder, generation);
+            if (!tree.IsVisible)
+            {
+                return;
+            }
+
+            string? root = Path.GetPathRoot(folder);
+            if (string.IsNullOrEmpty(root))
+            {
+                Select(tree, null);
+                return;
+            }
+
+            FolderTreeNode? parentNode = null;
+            IReadOnlyList<object> children = tree.Items.Cast<object>().ToArray();
+            string[] segments = folder[root.Length..].Split(Path.DirectorySeparatorChar,
+                StringSplitOptions.RemoveEmptyEntries);
+            string path = root;
+            for (int depth = 0; depth <= segments.Length; depth++)
+            {
+                int index = FindChildIndex(children, path);
+                if (index < 0 || children[index] is not FolderTreeNode node)
+                {
+                    Select(tree, null);
+                    return;
+                }
+
+                // ItemsSource の更新に続く WPF のレイアウトを、入力より優先して連続実行しない。
+                await Dispatcher.Yield(DispatcherPriority.Background);
+                if (generation != _syncGeneration || !tree.IsVisible)
+                {
+                    return;
+                }
+
+                // 待機中の再読込でインデックスの参照先が変わることがある。
+                ItemsControl? parent = parentNode is null ? tree : parentNode.Container;
+                if (parent is null || index >= parent.Items.Count || !ReferenceEquals(parent.Items[index], node))
+                {
+                    return;
+                }
+
+                TreeViewItem? container = BringChildIntoView(parent, index);
+                if (container is null)
+                {
+                    return;
+                }
+
+                // 選択先は生成したこの UI ターンで選択する。列挙待ちを挟むとコンテナーが再利用され得る。
+                if (depth == segments.Length)
+                {
+                    Select(tree, container);
+                    container.BringIntoView();
+                }
+
+                node.IsExpanded = true;
+                await PopulateAsync(node);
+                if (generation != _syncGeneration)
+                {
+                    return;
+                }
+
+                if (depth == segments.Length)
+                {
+                    // 子の有無で高さが確定した後も、選択行を表示範囲に収める。
+                    node.Container?.BringIntoView();
+                    return;
+                }
+
+                parentNode = node;
+                children = node.Children;
+                path = Path.Combine(path, segments[depth]);
+            }
         }
         finally
         {
@@ -163,73 +199,37 @@ internal sealed class FolderTreeNavigator
         }
     }
 
-    /// <summary>
-    /// <see cref="SyncToFolderAsync"/> の本体。列挙を待った後は、世代が古くなっていたら何もしない。
-    /// </summary>
-    /// <param name="tree">フォルダツリー。</param>
-    /// <param name="folder">選択するフォルダのフルパス。</param>
-    /// <param name="generation">この同期の世代。</param>
-    /// <returns>同期の完了を表すタスク。</returns>
-    private async Task SyncCoreAsync(TreeView tree, string folder, int generation)
+    private static int FindChildIndex(IReadOnlyList<object> children, string path)
     {
-        string? root = Path.GetPathRoot(folder);
-        if (string.IsNullOrEmpty(root))
+        for (int i = 0; i < children.Count; i++)
         {
-            Select(tree, null);
-            return;
-        }
-
-        TreeViewItem? node = tree.Items
-            .OfType<TreeViewItem>()
-            .FirstOrDefault(i => string.Equals(i.Tag as string, root, StringComparison.OrdinalIgnoreCase));
-        if (node is null)
-        {
-            Select(tree, null);
-            return;
-        }
-
-        node.IsExpanded = true;
-        await PopulateAsync(node);
-        if (generation != _syncGeneration)
-        {
-            return;
-        }
-
-        string relative = folder[root.Length..].Trim('\\');
-        if (relative.Length > 0)
-        {
-            foreach (string segment in relative.Split('\\'))
+            if (children[i] is FolderTreeNode node && string.Equals(node.FullPath, path, StringComparison.OrdinalIgnoreCase))
             {
-                TreeViewItem? next = node.Items
-                    .OfType<TreeViewItem>()
-                    .FirstOrDefault(i => string.Equals(
-                        Path.GetFileName(i.Tag as string), segment, StringComparison.OrdinalIgnoreCase));
-                if (next is null)
-                {
-                    Select(tree, null);
-                    return;
-                }
-
-                next.IsExpanded = true;
-                await PopulateAsync(next);
-                if (generation != _syncGeneration)
-                {
-                    return;
-                }
-
-                node = next;
+                return i;
             }
         }
 
-        Select(tree, node);
-        node.BringIntoView();
+        return -1;
     }
 
-    /// <summary>
-    /// 同期として項目を選択する。null なら選択中のフォルダの項目の選択を外す。
-    /// </summary>
-    /// <param name="tree">フォルダツリー。</param>
-    /// <param name="node">選択する項目。null なら選択を外す。</param>
+    private static TreeViewItem? BringChildIntoView(ItemsControl parent, int index)
+    {
+        if (parent.ItemContainerGenerator.ContainerFromIndex(index) is TreeViewItem visible)
+        {
+            return visible;
+        }
+
+        var presenter = parent.Template?.FindName("ItemsHost", parent) as ItemsPresenter;
+        presenter?.ApplyTemplate();
+        if (presenter is not null && VisualTreeHelper.GetChildrenCount(presenter) > 0
+            && VisualTreeHelper.GetChild(presenter, 0) is VirtualizingPanel panel)
+        {
+            panel.BringIndexIntoViewPublic(index);
+        }
+
+        return parent.ItemContainerGenerator.ContainerFromIndex(index) as TreeViewItem;
+    }
+
     private void Select(TreeView tree, TreeViewItem? node)
     {
         IsSyncingSelection = true;
@@ -239,9 +239,18 @@ internal sealed class FolderTreeNavigator
             {
                 node.IsSelected = true;
             }
-            else if (tree.SelectedItem is TreeViewItem selected)
+            else if (tree.SelectedItem is FolderTreeNode selected)
             {
-                selected.IsSelected = false;
+                if (selected.Container is { } selectedContainer)
+                {
+                    selectedContainer.IsSelected = false;
+                }
+                else if (FirstVisibleContainer(tree) is { } visible)
+                {
+                    // WPF は画面外の選択を保持する。表示中の項目を経由して、選択だけを解除する。
+                    visible.IsSelected = true;
+                    visible.IsSelected = false;
+                }
             }
         }
         finally
@@ -250,20 +259,20 @@ internal sealed class FolderTreeNavigator
         }
     }
 
-    /// <summary>
-    /// 子フォルダを列挙する。隠し・システム属性のフォルダは除き、名前の自然順に並べる。
-    /// </summary>
-    /// <remarks>
-    /// 属性は列挙結果に含まれているものを使う。ディレクトリごとに File.GetAttributes を呼ぶと
-    /// SMB では1件ごとに往復が増え、フォルダ数の多いネットワーク共有では列挙1回に数秒かかる。
-    /// アクセスできない・消えた・切断されたフォルダは子なしとして扱う。
-    /// </remarks>
-    /// <param name="path">親フォルダのフルパス。</param>
-    /// <returns>子フォルダ。</returns>
+    private static TreeViewItem? FirstVisibleContainer(TreeView tree)
+    {
+        return tree.Template?.FindName("ItemsHost", tree) is ItemsPresenter presenter
+            && VisualTreeHelper.GetChildrenCount(presenter) > 0
+            && VisualTreeHelper.GetChild(presenter, 0) is Panel panel
+            ? panel.Children.OfType<TreeViewItem>().FirstOrDefault() : null;
+    }
+
+    /// <summary>隠し・システム属性のフォルダを除き、子フォルダを名前の自然順で返す。</summary>
     internal static IReadOnlyList<FolderTreeEntry> EnumerateChildFolders(string path)
     {
         try
         {
+            // 属性は列挙結果を使い、ネットワーク共有でも各フォルダへ個別に問い合わせない。
             return new DirectoryInfo(path).EnumerateDirectories()
                 .Where(d => (d.Attributes & (FileAttributes.Hidden | FileAttributes.System)) == 0)
                 .OrderBy(d => d.FullName, NaturalOrderComparer.Instance)
@@ -272,50 +281,11 @@ internal sealed class FolderTreeNavigator
         }
         catch (UnauthorizedAccessException)
         {
-            return Array.Empty<FolderTreeEntry>();
+            return [];
         }
         catch (IOException)
         {
-            return Array.Empty<FolderTreeEntry>();
+            return [];
         }
-    }
-
-    private async Task PopulateCoreAsync(TreeViewItem item, string path, Loading marker)
-    {
-        IReadOnlyList<FolderTreeEntry>? children = null;
-        try
-        {
-            children = await Task.Run(() => _enumerate(path));
-        }
-        finally
-        {
-            // 列挙中に「再読込」で作り直されていたら、この結果は足さない
-            if (item.Items.Count == 1 && ReferenceEquals(item.Items[0], marker))
-            {
-                item.Items.Clear();
-                if (children is null)
-                {
-                    // 想定外の例外で列挙できなかった。列挙中の表示を残さず、展開し直せる状態へ戻す
-                    item.Items.Add(Placeholder);
-                }
-                else
-                {
-                    foreach (FolderTreeEntry child in children)
-                    {
-                        item.Items.Add(CreateItem(child.Name, child.FullPath));
-                    }
-                }
-            }
-        }
-    }
-
-    /// <summary>列挙中に置く子。同じ項目の列挙を重ねないよう、進行中の列挙を持つ。</summary>
-    private sealed class Loading
-    {
-        /// <summary>進行中の列挙(子を足し終えるまで)。</summary>
-        internal Task Completion { get; set; } = Task.CompletedTask;
-
-        /// <inheritdoc />
-        public override string ToString() => LoadingText;
     }
 }

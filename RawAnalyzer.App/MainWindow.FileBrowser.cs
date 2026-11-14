@@ -422,19 +422,14 @@ public partial class MainWindow
     // ---- フォルダツリー ----
 
     // 子フォルダの列挙は UI スレッドの外で行う(ネットワーク共有・切断中のドライブで固まらない)
-    private readonly FolderTreeNavigator _folderTreeNavigator = new();
+    private readonly FolderTreeNavigator _folderTreeNavigator;
 
     private void InitFolderTree()
     {
-        FolderTree.Items.Clear();
-        var items = new List<(System.Windows.Controls.TreeViewItem Item, DriveInfo Drive)>();
-        foreach (DriveInfo drive in DriveInfo.GetDrives())
-        {
-            System.Windows.Controls.TreeViewItem item = FolderTreeNavigator.CreateItem(
-                drive.Name.TrimEnd('\\'), drive.RootDirectory.FullName, IconGlyphs.Drive);
-            FolderTree.Items.Add(item);
-            items.Add((item, drive));
-        }
+        var items = DriveInfo.GetDrives().Select(drive =>
+            (Node: new FolderTreeNode(drive.Name.TrimEnd('\\'), drive.RootDirectory.FullName, IconGlyphs.Drive),
+                Drive: drive)).ToArray();
+        FolderTree.ItemsSource = items.Select(item => item.Node).ToArray();
 
         // IsReady/VolumeLabel は切断されたネットワークドライブだと
         // タイムアウトまでブロックする。ツリーは先に出してから名前を足す
@@ -445,9 +440,9 @@ public partial class MainWindow
     /// <param name="items">対象のツリー項目とドライブ。</param>
     /// <returns>更新の完了を表すタスク。</returns>
     private static async Task AppendDriveLabelsAsync(
-        List<(System.Windows.Controls.TreeViewItem Item, DriveInfo Drive)> items)
+        (FolderTreeNode Node, DriveInfo Drive)[] items)
     {
-        foreach ((System.Windows.Controls.TreeViewItem item, DriveInfo drive) in items)
+        foreach ((FolderTreeNode node, DriveInfo drive) in items)
         {
             string label;
             try
@@ -461,16 +456,16 @@ public partial class MainWindow
 
             if (!string.IsNullOrEmpty(label))
             {
-                FolderTreeNavigator.SetHeader(item, $"{drive.Name.TrimEnd('\\')} ({label})", IconGlyphs.Drive);
+                node.Name = $"{drive.Name.TrimEnd('\\')} ({label})";
             }
         }
     }
 
     private void OnFolderTreeExpanded(object sender, RoutedEventArgs e)
     {
-        if (e.OriginalSource is System.Windows.Controls.TreeViewItem item)
+        if (e.OriginalSource is TreeViewItem { DataContext: FolderTreeNode node })
         {
-            _ = _folderTreeNavigator.PopulateAsync(item);
+            _ = _folderTreeNavigator.PopulateAsync(node);
         }
     }
 
@@ -482,8 +477,9 @@ public partial class MainWindow
             return;
         }
 
-        if (e.NewValue is System.Windows.Controls.TreeViewItem { Tag: string path } item)
+        if (e.NewValue is FolderTreeNode item)
         {
+            string path = item.FullPath;
             // 存在の確認も切断されたネットワークドライブではタイムアウトまで戻らないので、UI スレッドの外で行う。
             // 確かめる間に別の項目を選んでいた・別のファイルやフォルダを開いていたら(後から来た方を優先する)開かない。
             // 以前は選択だけを見ていたので、確かめる間に「開く」で別のフォルダのファイルを開くと、その一覧の列挙中に
@@ -674,11 +670,12 @@ public partial class MainWindow
 
     private async void OnTreeOpenExplorerClick(object sender, RoutedEventArgs e)
     {
-        if (FolderTree.SelectedItem is not System.Windows.Controls.TreeViewItem { Tag: string path })
+        if (FolderTree.SelectedItem is not FolderTreeNode item)
         {
             return;
         }
 
+        string path = item.FullPath;
         // 実在の確認(と起動)は UI スレッドの外で行う(切断したネットワークドライブではタイムアウトまで戻らない)
         await Task.Run(() =>
         {
@@ -695,7 +692,7 @@ public partial class MainWindow
 
     private void OnTreeRefreshClick(object sender, RoutedEventArgs e)
     {
-        if (FolderTree.SelectedItem is System.Windows.Controls.TreeViewItem item)
+        if (FolderTree.SelectedItem is FolderTreeNode item)
         {
             _ = _folderTreeNavigator.RefreshAsync(item);
         }

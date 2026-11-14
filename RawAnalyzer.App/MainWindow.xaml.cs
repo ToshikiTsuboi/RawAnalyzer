@@ -63,13 +63,14 @@ public partial class MainWindow : Window
     {
     }
 
-    internal MainWindow(string? settingsDirectory)
+    internal MainWindow(string? settingsDirectory, FolderTreeNavigator? folderTreeNavigator = null)
     {
         _sessionStore = settingsDirectory is null ? new SessionStore() : new SessionStore(settingsDirectory);
         _recentFiles = settingsDirectory is null ? new RecentFilesStore() : new RecentFilesStore(settingsDirectory);
         _formatMemory = new FormatMemory(settingsDirectory is null
             ? new FormatHistoryStore()
             : new FormatHistoryStore(settingsDirectory));
+        _folderTreeNavigator = folderTreeNavigator ?? new FolderTreeNavigator();
         InitializeComponent();
         PanToggle.Checked += OnPanCheckedChanged;
         PanToggle.Unchecked += OnPanCheckedChanged;
@@ -128,6 +129,13 @@ public partial class MainWindow : Window
             CancelViewportInteraction);
         RebuildRecentMenu();
         InitFolderTree();
+        FolderTree.IsVisibleChanged += (_, _) =>
+        {
+            if (FolderTree.IsVisible && _currentFolder is { } folder)
+            {
+                _ = _folderTreeNavigator.SyncToFolderAsync(FolderTree, folder);
+            }
+        };
         CompareArea.PanePicker = PickComparePaneAsync;
         CompareArea.PaneLoader = LoadComparePaneAsync;
         CompareArea.StatusChanged += () => _vm.UpdateCompareStatus(CompareArea.PaneCount, CompareArea.ActivePaneStatus);
