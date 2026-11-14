@@ -392,7 +392,7 @@ public partial class ComparePaneView : UserControl
         _autoContrast = job;
         try
         {
-            // 対象切替・クローズ・他の調整で取り消された計算結果は捨てる。
+            // 同じ画像に対して、計算開始後に表示調整が変わっていなければ適用する。
             AutoLevels? result = await CalculateAutoLevelsAsync(pane, job.Token);
             if (job.IsCancellationRequested || !ReferenceEquals(pane, Pane))
             {
@@ -435,7 +435,6 @@ public partial class ComparePaneView : UserControl
     {
         if (Pane is { } pane)
         {
-            CancelAutoContrast();
             EditDisplay(DisplaySettings.CreateDefault(pane.Format.BitDepth));
         }
     }

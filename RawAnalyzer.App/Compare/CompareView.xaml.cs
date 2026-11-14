@@ -187,6 +187,10 @@ public partial class CompareView : UserControl
         }
 
         _closing = true;
+        foreach (ComparePaneView pane in _panes)
+        {
+            pane.CancelAutoContrast();
+        }
         SetActive(null);
         ClearCursor();
         _loading = false;
@@ -812,7 +816,6 @@ public partial class CompareView : UserControl
             return;
         }
 
-        _active?.CancelAutoContrast();
         _active = view;
         foreach (ComparePaneView pane in _panes)
         {

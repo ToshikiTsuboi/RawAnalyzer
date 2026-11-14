@@ -179,10 +179,83 @@ public class CompareAdjustmentUiTests
         Assert.Equal(b, second.Pane.Display);
     });
 
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public Task AutoContrast_DiscardsPendingResultAfterTargetSwitchOrClose(bool close) => WpfTestHost.Run(async () =>
+    [Fact]
+    public Task AutoContrast_AppliesToOriginalPaneAfterSwitchWithoutChangingPanel() => WpfTestHost.Run(async () =>
+    {
+        using var fixture = new TestWindow();
+        await fixture.EnterCompareAsync();
+        ComparePaneView first = await fixture.AddPaneAsync(10);
+        ComparePaneView second = await fixture.AddPaneAsync(12);
+        DisplaySettings a = first.Pane!.Display;
+        DisplaySettings b = second.Pane!.Display;
+        var result = new TaskCompletionSource<AutoLevels?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        CancellationToken? runningToken = null;
+        second.CalculateAutoLevelsAsync = (_, token) =>
+        {
+            runningToken = token;
+            return result.Task;
+        };
+
+        WpfTestHost.Invoke(Find<Button>(fixture.Window, "DisplayAutoButton"));
+        await DrainAsync();
+        Assert.NotNull(runningToken);
+        try
+        {
+            Activate(first);
+            Assert.Same(first, fixture.Compare.ActivePane);
+            Assert.False(runningToken.Value.IsCancellationRequested);
+        }
+        finally
+        {
+            result.SetResult(new AutoLevels(100, 700));
+        }
+
+        await WaitUntilAsync(() => second.Pane.Display == b with { BlackCode = 100, WhiteCode = 700 });
+        Assert.Equal(a, first.Pane.Display);
+        Assert.Equal("表示調整 · 調整対象: A", Find<Expander>(fixture.Window, "DisplaySection").Header);
+        Assert.Equal(a.BlackCode, Find<NumericSliderRow>(fixture.Window, "DisplayBlackRow").Value);
+        var white = Find<NumericSliderRow>(fixture.Window, "DisplayWhiteRow");
+        Assert.Equal(a.WhiteCode, white.Value);
+        Assert.Equal(1023, white.Maximum);
+    });
+
+    [Fact]
+    public Task AutoContrast_HeaderButtonsApplyBothPendingResults() => WpfTestHost.Run(async () =>
+    {
+        using var fixture = new TestWindow();
+        await fixture.EnterCompareAsync();
+        ComparePaneView first = await fixture.AddPaneAsync(10);
+        ComparePaneView second = await fixture.AddPaneAsync(12);
+        DisplaySettings a = first.Pane!.Display;
+        DisplaySettings b = second.Pane!.Display;
+        var firstResult = new TaskCompletionSource<AutoLevels?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var secondResult = new TaskCompletionSource<AutoLevels?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        first.CalculateAutoLevelsAsync = (_, _) => firstResult.Task;
+        second.CalculateAutoLevelsAsync = (_, _) => secondResult.Task;
+
+        try
+        {
+            WpfTestHost.Invoke(Find<Button>(first, "AutoButton"));
+            await DrainAsync();
+            Assert.Same(first, fixture.Compare.ActivePane);
+            WpfTestHost.Invoke(Find<Button>(second, "AutoButton"));
+            await DrainAsync();
+            Assert.Same(second, fixture.Compare.ActivePane);
+            secondResult.SetResult(new AutoLevels(100, 700));
+            await WaitUntilAsync(() => second.Pane.Display == b with { BlackCode = 100, WhiteCode = 700 });
+        }
+        finally
+        {
+            firstResult.TrySetResult(new AutoLevels(50, 300));
+            secondResult.TrySetResult(new AutoLevels(100, 700));
+        }
+
+        await WaitUntilAsync(() => first.Pane.Display == a with { BlackCode = 50, WhiteCode = 300 });
+        Assert.Equal(b with { BlackCode = 100, WhiteCode = 700 }, second.Pane.Display);
+    });
+
+    [Fact]
+    public Task AutoContrast_DiscardsPendingResultAfterTargetCloses() => WpfTestHost.Run(async () =>
     {
         using var fixture = new TestWindow();
         await fixture.EnterCompareAsync();
@@ -205,21 +278,10 @@ public class CompareAdjustmentUiTests
         Assert.NotNull(runningToken);
         try
         {
-            if (close)
-            {
-                WpfTestHost.Invoke(Find<Button>(second, "CloseButton"));
-                await DrainAsync();
-            }
-            else
-            {
-                Activate(first);
-            }
+            WpfTestHost.Invoke(Find<Button>(second, "CloseButton"));
+            await DrainAsync();
             Assert.Same(first, fixture.Compare.ActivePane);
             Assert.True(runningToken.Value.IsCancellationRequested);
-            if (!close)
-            {
-                Activate(second); // 戻っても切替前の計算結果は復活しない。
-            }
         }
         finally
         {
