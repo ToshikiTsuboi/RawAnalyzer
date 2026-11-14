@@ -46,15 +46,23 @@ public partial class MainWindow
 
         // 参照画像は1フレームだけ読むため、期待サイズも1フレーム分。raw の参照はファイルを読んだ形式で読む
         // (ビニング・フィルタの結果の 16bit 形式で読むと下詰めNbitの参照が正規化されない)
-        long expectedSize = ReferenceImage.ExpectedRawSize(
-            ReferenceImage.RawReadFormat(_currentFormat, _openedRawFormat));
+        RawFormat rawReadFormat = ReferenceImage.RawReadFormat(_currentFormat, _openedRawFormat);
+        long expectedSize = ReferenceImage.ExpectedRawSize(rawReadFormat);
+        string sourceDescription = FormatCandidateText.Describe(_currentFormat, " · ");
+        string referenceDescription = FormatCandidateText.Describe(rawReadFormat, " · ");
+        if (referenceDescription != FormatCandidateText.Describe(_currentFormat with { FrameCount = 1 }, " · "))
+            sourceDescription += $"\n参照 raw の読み込み形式 · {referenceDescription}";
 
         // 対象名には演算するフレーム・TIFFページも示す(ビニング・フィルタと同じ。演算は表示中の1フレームだけ)
         var dialog = new ImageCalculatorDialog(
             NoiseSourceName() + (_tiffStack is null ? CalculationFrameNote(_currentImage, Viewport.Frame) : ""),
-            _currentFolder, expectedSize, TargetRawFileSize())
+            _currentFolder, expectedSize, TargetRawFileSize(),
+            sourceDescription: sourceDescription,
+            sourceBytes: _currentFileSize,
+            folderFiles: _vm.Files.Where(file => !file.IsDirectory).Select(file => file.FullPath).ToArray())
         {
             Owner = this,
+            LoadRecent = _recentFiles.Load,
         };
         if (dialog.ShowDialog() != true || dialog.Result is null)
         {

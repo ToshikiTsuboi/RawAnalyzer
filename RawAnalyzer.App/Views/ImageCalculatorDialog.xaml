@@ -2,7 +2,7 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:themes="clr-namespace:RawAnalyzer.App.Themes"
-        Title="画像演算" Width="440" SizeToContent="Height"
+        Title="画像演算" Width="590" SizeToContent="Height"
         WindowStartupLocation="CenterOwner"
         Background="{StaticResource PanelBrush}" Foreground="{StaticResource TextBrush}"
         ShowInTaskbar="False" ResizeMode="NoResize">
@@ -13,9 +13,6 @@
         </Style>
     </Window.Resources>
     <StackPanel Margin="16,14">
-        <TextBlock x:Name="SourceText" Foreground="{StaticResource TextBrush}" Margin="0,0,0,10"
-                   TextTrimming="CharacterEllipsis" />
-
         <TextBlock Text="演算" />
         <ComboBox x:Name="OperationCombo" AutomationProperties.Name="演算" Margin="0,3,0,0" SelectionChanged="OnOperationChanged">
             <ComboBoxItem Content="減算 A − B (ダークフレーム減算)" />
@@ -26,13 +23,41 @@
         <TextBlock x:Name="OperationHint" FontSize="{x:Static themes:ThemeTypography.FontSizeCaption}" Margin="0,4,0,0"
                    Foreground="{StaticResource TextFaint}" TextWrapping="Wrap" />
 
-        <TextBlock Text="参照画像 B (同一サイズ・同一フォーマットのraw)" Margin="0,10,0,0" />
+        <TextBlock Text="参照画像 B" Margin="0,10,0,0" />
+        <UniformGrid Columns="2" Margin="0,4,0,4">
+            <ComboBox x:Name="RecentFiles" Margin="0,0,4,0" IsEnabled="False"
+                      AutomationProperties.Name="最近使ったファイル" SelectionChanged="OnFileSelected"
+                      VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
+                <ComboBox.ItemsPanel><ItemsPanelTemplate><VirtualizingStackPanel /></ItemsPanelTemplate></ComboBox.ItemsPanel>
+            </ComboBox>
+            <ComboBox x:Name="FolderFiles" Margin="4,0,0,0" IsEnabled="False"
+                      AutomationProperties.Name="現在のフォルダのファイル" SelectionChanged="OnFileSelected"
+                      VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
+                <ComboBox.ItemsPanel><ItemsPanelTemplate><VirtualizingStackPanel /></ItemsPanelTemplate></ComboBox.ItemsPanel>
+            </ComboBox>
+        </UniformGrid>
         <DockPanel Margin="0,3,0,0" KeyboardNavigation.TabNavigation="Local">
             <Button DockPanel.Dock="Right" Content="参照…" Margin="6,0,0,0"
                     Click="OnBrowseClick" TabIndex="1" />
             <TextBox x:Name="ReferenceBox" TabIndex="0"
-                     AutomationProperties.Name="参照画像 B (同一サイズ・同一フォーマットのraw)" TextChanged="OnReferenceChanged" />
+                     AutomationProperties.Name="参照画像 B のパス" TextChanged="OnReferenceChanged" />
         </DockPanel>
+        <UniformGrid Columns="2" Margin="0,10,0,0">
+            <Border Background="{StaticResource Panel2Brush}" Padding="10" Margin="0,0,4,0">
+                <StackPanel>
+                    <TextBlock Text="対象 A" Foreground="{StaticResource TextBrush}" />
+                    <TextBlock x:Name="SourceText" TextTrimming="CharacterEllipsis" />
+                    <TextBlock x:Name="SourceDetails" TextWrapping="Wrap" />
+                </StackPanel>
+            </Border>
+            <Border Background="{StaticResource Panel2Brush}" Padding="10" Margin="4,0,0,0">
+                <StackPanel>
+                    <TextBlock Text="参照 B" Foreground="{StaticResource TextBrush}" />
+                    <TextBlock x:Name="ReferenceName" TextTrimming="CharacterEllipsis" />
+                    <TextBlock x:Name="ReferenceDetails" Text="—" TextWrapping="Wrap" />
+                </StackPanel>
+            </Border>
+        </UniformGrid>
         <TextBlock x:Name="NoteText" FontSize="{x:Static themes:ThemeTypography.FontSizeCaption}" Margin="0,6,0,0"
                    Foreground="{StaticResource WarningBrush}" TextWrapping="Wrap" Visibility="Collapsed" />
 
