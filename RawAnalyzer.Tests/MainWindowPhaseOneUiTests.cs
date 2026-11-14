@@ -116,6 +116,47 @@ public class MainWindowPhaseOneUiTests
     });
 
     [Fact]
+    public Task RightPanel_ActionButtonsStayOnOneRowAtDefaultWidthWithScrollbar() => WpfTestHost.Run(async () =>
+    {
+        using var settings = new TemporaryDirectory();
+        var window = new MainWindow(settings.Path) { ShowActivated = false };
+        try
+        {
+            window.Show();
+            ((MainViewModel)window.DataContext).HasImage = true;
+            await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+
+            var panel = (Border)window.FindName("RightPanel");
+            var scroll = Descendants<ScrollViewer>(panel).First();
+            Assert.Equal(1280, window.ActualWidth, 0);
+            Assert.Equal(820, window.ActualHeight, 0);
+            Assert.Equal(240, panel.ActualWidth, 0);
+            Assert.Equal(Visibility.Visible, scroll.ComputedVerticalScrollBarVisibility);
+
+            foreach (string name in new[] { "DisplayActionRow", "WhiteBalanceActionRow" })
+            {
+                var row = (WrapPanel)window.FindName(name);
+                ButtonBase[] buttons = row.Children.OfType<ButtonBase>().ToArray();
+                Assert.Equal(2, buttons.Length);
+                Rect first = BoundsIn(buttons[0], row);
+                Rect second = BoundsIn(buttons[1], row);
+                Assert.True(first.Right <= second.Left && second.Right <= row.ActualWidth + 0.01,
+                    $"{name}: {first} / {second} / {row.ActualWidth}");
+                Assert.InRange(Math.Abs(first.Top - second.Top), 0, 1);
+            }
+
+            WpfTestHost.CaptureIfRequested((FrameworkElement)window.Content, "right-panel-240");
+            ((WrapPanel)window.FindName("WhiteBalanceActionRow")).BringIntoView();
+            await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+            WpfTestHost.CaptureIfRequested((FrameworkElement)window.Content, "right-panel-240-scrolled");
+        }
+        finally
+        {
+            window.Close();
+        }
+    });
+
+    [Fact]
     public Task RightPanel_ButtonsFitAtMinimumWidth() => WpfTestHost.Run(async () =>
     {
         using var settings = new TemporaryDirectory();
@@ -147,6 +188,12 @@ public class MainWindowPhaseOneUiTests
                 Assert.True(bounds.Left >= 0 && bounds.Right <= content.ActualWidth + 0.01,
                     $"右パネル: {button.Name} {button.Content} {bounds} / {content.ActualWidth}");
             });
+            foreach (string name in new[] { "DisplayActionRow", "WhiteBalanceActionRow" })
+            {
+                var row = (WrapPanel)window.FindName(name);
+                Assert.True(BoundsIn((FrameworkElement)row.Children[0], row).Bottom
+                    <= BoundsIn((FrameworkElement)row.Children[1], row).Top);
+            }
             WpfTestHost.CaptureIfRequested((FrameworkElement)window.Content, "right-panel-190");
         }
         finally

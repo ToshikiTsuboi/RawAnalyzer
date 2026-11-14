@@ -39,6 +39,8 @@ internal static class ThemeColors
     public static Color Histogram { get; } = Color.FromRgb(0x8A, 0x8A, 0x85);
     public static Color HotPixel { get; } = Color.FromRgb(0xE6, 0x50, 0x3C);
     public static Color DeadPixel { get; } = Color.FromRgb(0x3C, 0x78, 0xE6);
+    internal static Color ZebraSaturation { get; } = Color.FromRgb(0xE6, 0x50, 0x3C);
+    internal static Color ZebraBlackCrush { get; } = Color.FromRgb(0x3C, 0x78, 0xE6);
     public static Color PrimaryHover { get; } = Color.FromRgb(0x79, 0xB4, 0xE6);
     public static Color PrimaryPressed { get; } = Color.FromRgb(0x50, 0x8F, 0xC8);
 

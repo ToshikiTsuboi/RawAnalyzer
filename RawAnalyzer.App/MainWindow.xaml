@@ -15,6 +15,12 @@
             <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}" />
             <Setter Property="Foreground" Value="{StaticResource AccentBrush}" />
         </Style>
+        <Style TargetType="Button" x:Key="RightPanelButton" BasedOn="{StaticResource ToolButton}">
+            <Setter Property="Padding" Value="4,4" />
+        </Style>
+        <Style TargetType="ToggleButton" x:Key="RightPanelToggle" BasedOn="{StaticResource ToolToggle}">
+            <Setter Property="Padding" Value="4,4" />
+        </Style>
         <Style TargetType="Button" x:Key="OverflowToolButton" BasedOn="{StaticResource ToolButton}">
             <Style.Triggers>
                 <Trigger Property="ToolBar.IsOverflowItem" Value="True">
@@ -743,10 +749,10 @@
                                     <ComboBox x:Name="HdrTargetCombo" FontSize="{x:Static themes:ThemeTypography.FontSizeBody}"
                                               DropDownClosed="OnSelectorDropDownClosed" />
                                 </DockPanel>
-                                <WrapPanel Margin="0,8,0,0">
-                                    <Button Style="{StaticResource ToolButton}" Content="自動 (0.35%クリップ)"
+                                <WrapPanel x:Name="DisplayActionRow" Margin="0,8,0,0">
+                                    <Button Style="{StaticResource RightPanelButton}" Content="自動 (0.35%クリップ)"
                                             Click="OnAutoContrastClick" FontSize="{x:Static themes:ThemeTypography.FontSizeBody}" />
-                                    <Button Style="{StaticResource ToolButton}" Content="リセット"
+                                    <Button Style="{StaticResource RightPanelButton}" Content="リセット"
                                             Tag="{x:Static themes:IconGlyphs.Refresh}" ContentTemplate="{StaticResource IconLabelContent}"
                                             Click="OnResetDisplayClick" FontSize="{x:Static themes:ThemeTypography.FontSizeBody}" />
                                 </WrapPanel>
@@ -886,15 +892,15 @@
                                                            Minimum="0.5" Maximum="4" Step="0.01"
                                                            Decimals="3" DefaultValue="1" Unit="×"
                                                            TickFrequency="0.5" />
-                                <WrapPanel Margin="0,6,0,0">
-                                    <Button Style="{StaticResource ToolButton}"
+                                <WrapPanel x:Name="WhiteBalanceActionRow" Margin="0,6,0,0">
+                                    <Button Style="{StaticResource RightPanelButton}"
                                             Content="AWB (グレーワールド)"
                                             Click="OnGrayWorldClick" FontSize="{x:Static themes:ThemeTypography.FontSizeBody}"
                                             IsEnabled="{Binding HasImage}"
                                             ToolTip="画像全体の平均からR/Bゲインを自動計算" />
                                     <ToggleButton x:Name="WbPickToggle" Content="スポイト" Tag="{x:Static themes:IconGlyphs.Eyedropper}"
                                                   ContentTemplate="{StaticResource IconLabelContent}"
-                                                  Style="{StaticResource ToolToggle}"
+                                                  Style="{StaticResource RightPanelToggle}"
                                                   FontSize="{x:Static themes:ThemeTypography.FontSizeBody}"
                                                   IsEnabled="{Binding HasImage}"
                                                   ToolTip="クリックした画素を無彩色とみなしてWBを合わせる"

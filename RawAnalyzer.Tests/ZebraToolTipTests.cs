@@ -68,6 +68,36 @@ public class ZebraToolTipTests
     }
 
     [Theory]
+    [InlineData(ViewportDisplayMode.Raw)]
+    [InlineData(ViewportDisplayMode.TrueColor)]
+    public void Zebra_StripesPreserveBgraBytes(ViewportDisplayMode mode)
+    {
+        const int width = 8;
+        ushort[] codes = [ushort.MaxValue, 0, 32768, 32768, ushort.MaxValue, 0, 32768, 32768];
+        using RawImage image = TestImages.FromCodes(codes, width, 1);
+        ushort[] rgb = codes.SelectMany(value => new[] { value, value, value }).ToArray();
+        var request = new RenderRequest
+        {
+            Source = new RawImageRenderSource(image, 0),
+            Lut = DisplayLut.Create(new DisplayParameters()),
+            Mode = mode,
+            ZebraEnabled = true,
+            Color = ColorImage.FromInterleaved(width, 1, 16, rgb),
+        };
+        var buffer = new byte[width * 4];
+        ViewportRenderer.Render(request, zoom: 1, originX: 0, originY: 0, width, 1, buffer, default);
+
+        byte[] expected = codes.SelectMany(value =>
+        {
+            byte gray = request.Lut.Map(value);
+            return new[] { gray, gray, gray, byte.MaxValue };
+        }).ToArray();
+        byte[] stripeColors = [0x3C, 0x50, 0xE6, 0xFF, 0xE6, 0x78, 0x3C, 0xFF];
+        stripeColors.CopyTo(expected, 0);
+        Assert.Equal(expected, buffer);
+    }
+
+    [Theory]
     [InlineData(8, 250, 249, 5, 6)]           // 0.98×255 = 249.9 → 250、0.02×255 = 5.1 → 5
     [InlineData(10, 1003, 1002, 20, 21)]      // 0.98×1023 = 1002.5 → 1003、0.02×1023 = 20.5 → 20
     [InlineData(12, 4014, 4013, 81, 82)]
