@@ -46,6 +46,39 @@ internal static class WpfTestHost
         CaptureIfRequested(view, name, new Rect(view.RenderSize));
     }
 
+    internal static void CaptureDialogIfRequested(Window window, string name)
+    {
+        if (Environment.GetEnvironmentVariable("RAWANALYZER_UI_SNAPSHOTS") is not { Length: > 0 } directory)
+            return;
+
+        // Lay out the client separately so desktop size and native window chrome do not crop the capture.
+        var content = (FrameworkElement)window.Content;
+        window.Content = null;
+        var frame = new Border { Background = window.Background, Child = content };
+        frame.Resources.MergedDictionaries.Add(window.Resources);
+        System.Windows.Documents.TextElement.SetForeground(frame, window.Foreground);
+        System.Windows.Documents.TextElement.SetFontFamily(frame, window.FontFamily);
+        System.Windows.Documents.TextElement.SetFontSize(frame, window.FontSize);
+        try
+        {
+            int width = (int)Math.Ceiling(window.Width);
+            double height = window.SizeToContent == SizeToContent.Height ? double.PositiveInfinity : window.Height;
+            frame.Measure(new Size(width, height));
+            int pixelsHigh = (int)Math.Ceiling(double.IsPositiveInfinity(height) ? frame.DesiredSize.Height : height);
+            frame.Arrange(new Rect(0, 0, width, pixelsHigh));
+            frame.UpdateLayout();
+            var bitmap = new RenderTargetBitmap(width, pixelsHigh, 96, 96, PixelFormats.Pbgra32);
+            bitmap.Render(frame);
+            SaveSnapshot(bitmap, directory, name);
+        }
+        finally
+        {
+            frame.Child = null;
+            window.Content = content;
+            window.UpdateLayout();
+        }
+    }
+
     internal static void CaptureIfRequested(FrameworkElement view, string name, Rect bounds)
     {
         string? directory = Environment.GetEnvironmentVariable("RAWANALYZER_UI_SNAPSHOTS");
@@ -67,6 +100,11 @@ internal static class WpfTestHost
             }, null, outputBounds);
         }
         bitmap.Render(visual);
+        SaveSnapshot(bitmap, directory, name);
+    }
+
+    private static void SaveSnapshot(BitmapSource bitmap, string directory, string name)
+    {
         var encoder = new PngBitmapEncoder();
         encoder.Frames.Add(BitmapFrame.Create(bitmap));
         using var output = File.Create(Path.Combine(directory, name + ".png"));

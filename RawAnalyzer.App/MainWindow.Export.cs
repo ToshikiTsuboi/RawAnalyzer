@@ -40,7 +40,8 @@ public partial class MainWindow
             (long)target.Width * target.Height,
             allowFloatRaw: targetFloat is not null,
             hasBayer: ActiveFormat?.Bayer is not (null or BayerPattern.None) && !BayerPhaseMismatchShown,
-            bitDepth: target.Format.BitDepth)
+            bitDepth: target.Format.BitDepth, frameCount: target.FrameCount,
+            isColor: _derivedImage is null && _colorImage is not null)
         {
             Owner = this,
         };

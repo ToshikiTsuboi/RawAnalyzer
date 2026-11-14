@@ -45,6 +45,7 @@
         <Border BorderBrush="{StaticResource BorderBrushDark}" BorderThickness="1"
                 CornerRadius="5" Padding="12,8" Margin="0,12,0,0">
             <StackPanel>
+                <StackPanel x:Name="ProcessingOptions">
                 <TextBlock Text="画素値に適用される処理" FontWeight="SemiBold"
                            Foreground="{StaticResource TextBrush}" />
                 <CheckBox x:Name="LutCheck" IsChecked="True" Click="OnProcessingChanged"
@@ -55,6 +56,7 @@
                           Content="カラーマトリクス" />
                 <CheckBox x:Name="DemosaicCheck" IsChecked="True" Click="OnProcessingChanged"
                           Content="デモザイク (Bayer → RGB現像)" />
+                </StackPanel>
                 <Border Background="{StaticResource Panel2Brush}" CornerRadius="4" Padding="8,6" Margin="0,8,0,0">
                     <TextBlock x:Name="SummaryText" TextWrapping="Wrap" FontSize="{x:Static themes:ThemeTypography.FontSizeCaption}"
                                Foreground="{StaticResource SuccessBrush}" />
@@ -65,6 +67,7 @@
         <CheckBox x:Name="SidecarCheck" Content="処理内容を同名の .txt に併せて保存"
                   Margin="0,10,0,0"
                   ToolTip="保存した画像に何が適用されているかを後から確認できます" />
+        <TextBlock x:Name="SizeEstimateText" Margin="0,8,0,0" TextWrapping="Wrap" />
 
         <TextBlock x:Name="NoteText" Margin="0,8,0,0" FontSize="{x:Static themes:ThemeTypography.FontSizeCaption}"
                    Foreground="{StaticResource WarningBrush}" TextWrapping="Wrap" Visibility="Collapsed" />
