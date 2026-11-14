@@ -2,40 +2,66 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:themes="clr-namespace:RawAnalyzer.App.Themes"
-        Title="キーボードショートカット" Width="700" Height="720"
+        Title="キーボードショートカット" Width="975" Height="690" MinWidth="350" MinHeight="300"
         Background="{StaticResource PanelBrush}" Foreground="{StaticResource TextBrush}"
         WindowStartupLocation="CenterOwner"
         ShowInTaskbar="False"
         PreviewKeyDown="OnWindowPreviewKeyDown">
     <DockPanel Margin="16,12">
+        <StackPanel DockPanel.Dock="Top" Margin="0,0,0,12">
+            <Label Content="ショートカットを絞り込む" Target="{Binding ElementName=FilterBox}" Padding="0,0,0,4"
+                   Foreground="{StaticResource TextBrush}" />
+            <TextBox x:Name="FilterBox" TextChanged="OnFilterChanged"
+                     AutomationProperties.Name="ショートカットを絞り込む" />
+        </StackPanel>
         <TextBlock DockPanel.Dock="Bottom" FontSize="{x:Static themes:ThemeTypography.FontSizeCaption}" Margin="0,10,0,0"
                    Foreground="{StaticResource TextFaint}"
                    Text="Esc または F1 で閉じる / Ctrl+Shift+P でコマンドパレット" />
-        <ScrollViewer VerticalScrollBarVisibility="Auto">
-            <ItemsControl x:Name="GroupList">
+        <TextBlock x:Name="EmptyText" DockPanel.Dock="Top" Text="一致するショートカットがありません"
+                   Foreground="{StaticResource TextDim}" Visibility="Collapsed" />
+        <ScrollViewer x:Name="ResultsScroll" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+            <ItemsControl x:Name="GroupList" SizeChanged="OnGroupWidthChanged">
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate>
+                        <WrapPanel ItemWidth="{Binding Tag, RelativeSource={RelativeSource AncestorType=ItemsControl}, FallbackValue=300}" />
+                    </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
                 <ItemsControl.ItemTemplate>
                     <DataTemplate>
-                        <StackPanel Margin="0,0,0,14">
-                            <TextBlock Text="{Binding Category}" FontSize="{x:Static themes:ThemeTypography.FontSizeBody}"
+                        <Border Margin="0,0,8,8" VerticalAlignment="Top" CornerRadius="5" Padding="10"
+                                Background="{StaticResource Panel2Brush}">
+                        <StackPanel>
+                            <TextBlock Text="{Binding Category}" FontSize="{x:Static themes:ThemeTypography.FontSizeBody}" TextWrapping="Wrap"
                                        FontWeight="SemiBold" Margin="0,0,0,4"
                                        Foreground="{StaticResource AccentBrush}" />
                             <ItemsControl ItemsSource="{Binding Entries}">
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
-                                        <DockPanel Margin="8,2">
-                                            <TextBlock DockPanel.Dock="Left"
-                                                       Text="{Binding Gesture}"
-                                                       FontFamily="Consolas" FontSize="{x:Static themes:ThemeTypography.FontSizeBody}"
-                                                       Width="180"
-                                                       Foreground="{StaticResource TextBrush}" />
-                                            <TextBlock Text="{Binding Title}" FontSize="{x:Static themes:ThemeTypography.FontSizeBody}"
+                                        <Grid Margin="0,3">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="144" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <ItemsControl ItemsSource="{Binding Keys}" AutomationProperties.Name="{Binding Gesture}">
+                                                <ItemsControl.ItemsPanel><ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate>
+                                                        <Border BorderBrush="{StaticResource BorderBrushDark}" BorderThickness="1" CornerRadius="3"
+                                                                Background="{StaticResource CanvasBrush}" Margin="0,0,3,2" Padding="4,1">
+                                                            <TextBlock Text="{Binding}" Foreground="{StaticResource TextBrush}" />
+                                                        </Border>
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+                                            <TextBlock Grid.Column="1" Text="{Binding Title}" FontSize="{x:Static themes:ThemeTypography.FontSizeBody}"
                                                        TextWrapping="Wrap"
                                                        Foreground="{StaticResource TextDim}" />
-                                        </DockPanel>
+                                        </Grid>
                                     </DataTemplate>
                                 </ItemsControl.ItemTemplate>
                             </ItemsControl>
                         </StackPanel>
+                        </Border>
                     </DataTemplate>
                 </ItemsControl.ItemTemplate>
             </ItemsControl>
