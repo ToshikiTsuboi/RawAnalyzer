@@ -1,11 +1,9 @@
-<Window x:Class="RawAnalyzer.App.Views.ProjectionWindow"
+<views:GraphView x:Class="RawAnalyzer.App.Views.ProjectionGraphView"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:themes="clr-namespace:RawAnalyzer.App.Themes"
         xmlns:views="clr-namespace:RawAnalyzer.App.Views"
-        Title="射影" Width="820" Height="500" MinWidth="620" MinHeight="380"
-        Background="{StaticResource PanelBrush}" Foreground="{StaticResource TextBrush}"
-        WindowStartupLocation="CenterOwner" ShowInTaskbar="False">
+        Foreground="{StaticResource TextBrush}">
     <DockPanel Margin="10">
         <DockPanel DockPanel.Dock="Top" Margin="0,0,0,6">
             <!-- 向きと流儀の説明(EMVA 1288 方式。逆の流儀もあるのでマウスオーバーで示す) -->
@@ -52,4 +50,4 @@
         <!-- 統計・グラフ・縦軸の設定・コピー/CSV はラインプロファイル窓と共有する -->
         <views:ProfilePlotView x:Name="Plot" />
     </DockPanel>
-</Window>
+</views:GraphView>

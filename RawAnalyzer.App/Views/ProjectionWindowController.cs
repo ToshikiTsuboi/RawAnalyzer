@@ -107,7 +107,7 @@ internal sealed class ProjectionWindowController
 
         ProjectionWindow window = _createWindow(direction, WindowFor(Other(direction)));
         window.Closed += (_, _) => OnWindowClosed(direction, window);
-        window.ChannelSelectionChanged += OnChannelSelected;
+        window.View.ChannelSelectionChanged += OnChannelSelected;
         if (direction == ProjectionDirection.Horizontal)
         {
             _horizontal = window;
@@ -238,7 +238,7 @@ internal sealed class ProjectionWindowController
             ProjectionRequest next = ProjectionTargets.BuildRequest(direction, view, chosen);
 
             // 共有のチャネルの選択を両方の窓の選択欄に映す(ROI を優先しているときは選べなくする)
-            window.SetChannelChoice(next.ChannelChoice, chosen);
+            window.View.SetChannelChoice(next.ChannelChoice, chosen);
 
             states.Add(new ProjectionWindowState(
                 direction, next, _shown.GetValueOrDefault(direction), _pending.GetValueOrDefault(direction)));
@@ -249,14 +249,14 @@ internal sealed class ProjectionWindowController
         foreach (ProjectionDirection direction in plan.ShowPlayback)
         {
             ProjectionRequest next = states.First(state => state.Direction == direction).Next;
-            WindowFor(direction)?.ShowMessage(next.Header, ProjectionTargets.Playback, next.MaxCode);
+            WindowFor(direction)?.View.ShowMessage(next.Header, ProjectionTargets.Playback, next.MaxCode);
             _shown.Remove(direction);
             _pending.Remove(direction);
         }
 
         foreach (ProjectionRequest refused in plan.ShowRefusal)
         {
-            WindowFor(refused.Direction)?.ShowMessage(
+            WindowFor(refused.Direction)?.View.ShowMessage(
                 refused.Header, refused.RefusalReason ?? "射影を取れません。", refused.MaxCode);
             _shown[refused.Direction] = refused;
             _pending.Remove(refused.Direction);
@@ -286,7 +286,7 @@ internal sealed class ProjectionWindowController
         {
             if (!_pending.ContainsKey(state.Direction) && !plan.Compute.Any(r => r.Direction == state.Direction))
             {
-                WindowFor(state.Direction)?.CancelBusy();
+                WindowFor(state.Direction)?.View.CancelBusy();
             }
         }
 
@@ -308,7 +308,7 @@ internal sealed class ProjectionWindowController
     {
         foreach (ProjectionRequest request in job.Requests)
         {
-            WindowFor(request.Direction)?.ShowBusy(request.Header);
+            WindowFor(request.Direction)?.View.ShowBusy(request.Header);
         }
 
         // 水平・垂直を同じ対象で求めるときは1回の走査で両方を求める(10億画素を2度読まない)
@@ -323,7 +323,7 @@ internal sealed class ProjectionWindowController
             double fraction = (report.Pass + report.Fraction) / passes.Count;
             foreach (ProjectionRequest request in job.Requests)
             {
-                WindowFor(request.Direction)?.ReportProgress(fraction);
+                WindowFor(request.Direction)?.View.ReportProgress(fraction);
             }
         });
         CancellationToken token = job.Cts.Token;
@@ -363,7 +363,7 @@ internal sealed class ProjectionWindowController
                 _job = null;
                 foreach (ProjectionRequest request in job.Requests.Where(IsPending))
                 {
-                    WindowFor(request.Direction)?.ShowMessage(
+                    WindowFor(request.Direction)?.View.ShowMessage(
                         request.Header, $"射影を計算できませんでした: {ex.Message}", request.MaxCode);
                     _shown[request.Direction] = request;
                 }
@@ -409,7 +409,7 @@ internal sealed class ProjectionWindowController
                 continue;
             }
 
-            window.ShowResult(
+            window.View.ShowResult(
                 request.Header, profile, ProjectionTargets.AxisOf(request.Target, request.Direction), request.MaxCode);
             _shown[request.Direction] = request;
         }

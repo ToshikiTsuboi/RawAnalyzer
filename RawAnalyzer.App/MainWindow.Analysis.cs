@@ -350,7 +350,7 @@ public partial class MainWindow
             return;
         }
 
-        (int x, int y) = window.CurrentPoint;
+        (int x, int y) = window.View.CurrentPoint;
         _ = ShowLineProfileAsync(x, y, fromClick: false);
     }
 
@@ -408,7 +408,7 @@ public partial class MainWindow
             }
 
             _profileWindow = new LineProfileWindow { Owner = this };
-            _profileWindow.HoverPixelChanged += point =>
+            _profileWindow.View.HoverPixelChanged += point =>
             {
                 if (!_compareMode && _profileReadoutSource?.IsCurrent(ActiveImage, Viewport.Frame) == true
                     && point is { } pixel
@@ -421,10 +421,10 @@ public partial class MainWindow
                     Viewport.ClearGhostCursor();
                 }
             };
-            _profileWindow.DirectionChanged += horizontal =>
+            _profileWindow.View.DirectionChanged += horizontal =>
             {
                 // 基準点が範囲外で断面を出していないときは、マーカーを出さない
-                if (_profileWindow is { IsOutsideImage: false } window)
+                if (_profileWindow?.View is { IsOutsideImage: false } window)
                 {
                     // マーカーはプロファイルと同じ元画像の列・行で渡す
                     // (表示のどこに並ぶかはビューポートが表示モードに合わせて写す)
@@ -447,16 +447,16 @@ public partial class MainWindow
         {
             _profileReadoutSource = null;
             // 寸法の違う画像へ送った・差し替えたため、基準点が範囲外になった
-            _profileWindow.ShowOutsideImage(sourceX, sourceY, image.Width, image.Height, maxCode);
+            _profileWindow.View.ShowOutsideImage(sourceX, sourceY, image.Width, image.Height, maxCode);
             Viewport.ClearProfileMarker();
         }
         else
         {
             _profileReadoutSource = analyzed;
-            _profileWindow.SetProfiles(data.Row, data.Column, sourceX, sourceY, maxCode);
+            _profileWindow.View.SetProfiles(data.Row, data.Column, sourceX, sourceY, maxCode);
 
             // 表示座標(e.X, e.Y)で渡すと、分割⇔非分割の切替後にプロファイルと別の行・列を指す
-            Viewport.SetProfileMarker(sourceX, sourceY, _profileWindow.IsHorizontal);
+            Viewport.SetProfileMarker(sourceX, sourceY, _profileWindow.View.IsHorizontal);
         }
 
         if (fromClick)

@@ -31,7 +31,7 @@ public class ProjectionWindowControllerTests
 
             ProjectionWindow window = controller.WindowFor(H)!;
             Assert.Equal("対象: 画像全体 (4×2) · フレーム 1/2 · 各列 2 画素の平均", Find<TextBlock>(window, "TargetText").Text);
-            Assert.Equal(Table("x", (0, 2, 0, 4), (1, 3, 1, 5), (2, 4, 2, 6), (3, 5, 3, 7)), window.BuildTable(','));
+            Assert.Equal(Table("x", (0, 2, 0, 4), (1, 3, 1, 5), (2, 4, 2, 6), (3, 5, 3, 7)), window.View.BuildTable(','));
             Assert.Null(controller.WindowFor(V));
             Assert.False(controller.IsComputing);
         }
@@ -51,19 +51,19 @@ public class ProjectionWindowControllerTests
             controller.Open(V);
             await controller.WhenIdleAsync();
             ProjectionWindow window = controller.WindowFor(V)!;
-            Assert.StartsWith("y,mean,min,max" + Environment.NewLine + "0,1.5,0,3", window.BuildTable(','));
+            Assert.StartsWith("y,mean,min,max" + Environment.NewLine + "0,1.5,0,3", window.View.BuildTable(','));
 
             // ROI(1,0,2,2): 行 0 は (1+2)/2、行 1 は (5+6)/2。座標は ROI の元画像の座標
             view.Roi = new RegionOfInterest(1, 1, 2, 1);
             controller.Refresh();
             await controller.WhenIdleAsync();
-            Assert.Equal(Table("y", (1, 5.5, 5, 6)), window.BuildTable(','));
+            Assert.Equal(Table("y", (1, 5.5, 5, 6)), window.View.BuildTable(','));
             Assert.StartsWith("対象: ROI (1, 1, 2×1)", Find<TextBlock>(window, "TargetText").Text);
 
             view.Roi = null;
             controller.Refresh();
             await controller.WhenIdleAsync();
-            Assert.StartsWith("y,mean,min,max" + Environment.NewLine + "0,1.5,0,3", window.BuildTable(','));
+            Assert.StartsWith("y,mean,min,max" + Environment.NewLine + "0,1.5,0,3", window.View.BuildTable(','));
         }
         finally
         {
@@ -108,8 +108,8 @@ public class ProjectionWindowControllerTests
             controller.Open(V);
             await controller.WhenIdleAsync();
 
-            Assert.StartsWith("x,mean,min,max", controller.WindowFor(H)!.BuildTable(','));
-            Assert.StartsWith("y,mean,min,max", controller.WindowFor(V)!.BuildTable(','));
+            Assert.StartsWith("x,mean,min,max", controller.WindowFor(H)!.View.BuildTable(','));
+            Assert.StartsWith("y,mean,min,max", controller.WindowFor(V)!.View.BuildTable(','));
             Assert.Same(controller.WindowFor(H), view.OtherWindowWhenCreated[V]);
         }
         finally
@@ -133,7 +133,7 @@ public class ProjectionWindowControllerTests
 
             // frame1 は frame0 + 100
             Assert.StartsWith("x,mean,min,max" + Environment.NewLine + "0,102,100,104",
-                controller.WindowFor(H)!.BuildTable(','));
+                controller.WindowFor(H)!.View.BuildTable(','));
             Assert.Contains("フレーム 2/2", Find<TextBlock>(controller.WindowFor(H)!, "TargetText").Text);
         }
         finally
@@ -154,22 +154,22 @@ public class ProjectionWindowControllerTests
             controller.Open(H);
             await controller.WhenIdleAsync();
             ProjectionWindow window = controller.WindowFor(H)!;
-            string? shown = window.BuildTable(',');
+            string? shown = window.View.BuildTable(',');
             string header = Find<TextBlock>(window, "TargetText").Text;
 
             view.Gate = new SemaphoreSlim(0);
             view.Frame = 1;
             controller.Refresh();
             await WaitUntil(() => controller.IsComputing);
-            Assert.True(window.IsBusy);
+            Assert.True(window.View.IsBusy);
             Assert.Contains("フレーム 2/2", Find<TextBlock>(window, "TargetText").Text);
 
             view.Frame = 0;
             controller.CancelRunning();
             await controller.WhenIdleAsync();
 
-            Assert.False(window.IsBusy);
-            Assert.Equal(shown, window.BuildTable(','));
+            Assert.False(window.View.IsBusy);
+            Assert.Equal(shown, window.View.BuildTable(','));
             Assert.Equal(header, Find<TextBlock>(window, "TargetText").Text);
         }
         finally
@@ -199,8 +199,8 @@ public class ProjectionWindowControllerTests
             view.Gate.Release(10);
             await controller.WhenIdleAsync();
 
-            Assert.NotNull(controller.WindowFor(H)!.BuildTable(','));
-            Assert.Null(controller.WindowFor(V)!.BuildTable(','));
+            Assert.NotNull(controller.WindowFor(H)!.View.BuildTable(','));
+            Assert.Null(controller.WindowFor(V)!.View.BuildTable(','));
             Assert.Equal(ProjectionTargets.HdrSplitWholeImageVertical,
                 Find<TextBlock>(controller.WindowFor(V)!, "StatsText").Text);
         }
@@ -221,13 +221,13 @@ public class ProjectionWindowControllerTests
             await controller.WhenIdleAsync();
             ProjectionWindow window = controller.WindowFor(H)!;
             Assert.Equal(ProjectionTargets.Playback, Find<TextBlock>(window, "StatsText").Text);
-            Assert.Null(window.BuildTable(','));
+            Assert.Null(window.View.BuildTable(','));
 
             // 停止したとき(送りの後の計算し直し)に表示中のフレームで計算する
             view.Playing = false;
             controller.Refresh();
             await controller.WhenIdleAsync();
-            Assert.NotNull(window.BuildTable(','));
+            Assert.NotNull(window.View.BuildTable(','));
         }
         finally
         {
@@ -249,7 +249,7 @@ public class ProjectionWindowControllerTests
             await controller.WhenIdleAsync();
             ProjectionWindow window = controller.WindowFor(H)!;
             Assert.Equal(ProjectionTargets.ChannelSplitWithoutRoi, Find<TextBlock>(window, "StatsText").Text);
-            Assert.Null(window.BuildTable(','));
+            Assert.Null(window.View.BuildTable(','));
 
             view.Roi = new RegionOfInterest(4, 0, 2, 2);
             controller.Refresh();
@@ -257,7 +257,7 @@ public class ProjectionWindowControllerTests
             Assert.Equal(
                 $"x_display,x_source,mean,min,max{Environment.NewLine}4,1,9,1,17{Environment.NewLine}" +
                 $"5,3,11,3,19{Environment.NewLine}",
-                window.BuildTable(','));
+                window.View.BuildTable(','));
             Assert.Contains("チャネル Gr", Find<TextBlock>(window, "TargetText").Text);
 
             // 象限をまたぐ ROI は理由を示して断る(前の結果は消す)
@@ -265,7 +265,7 @@ public class ProjectionWindowControllerTests
             controller.Refresh();
             await controller.WhenIdleAsync();
             Assert.Contains("象限", Find<TextBlock>(window, "StatsText").Text);
-            Assert.Null(window.BuildTable(','));
+            Assert.Null(window.View.BuildTable(','));
         }
         finally
         {
@@ -297,8 +297,8 @@ public class ProjectionWindowControllerTests
             string nl = Environment.NewLine;
             Assert.Equal(
                 $"x_display,x_source,mean,min,max{nl}0,0,16,8,24{nl}1,2,18,10,26{nl}2,4,20,12,28{nl}3,6,22,14,30{nl}",
-                horizontal.BuildTable(','));
-            Assert.Equal($"y_display,y_source,mean,min,max{nl}2,1,11,8,14{nl}3,3,27,24,30{nl}", vertical.BuildTable(','));
+                horizontal.View.BuildTable(','));
+            Assert.Equal($"y_display,y_source,mean,min,max{nl}2,1,11,8,14{nl}3,3,27,24,30{nl}", vertical.View.BuildTable(','));
             Assert.Equal("Gb", ((ComboBoxItem)Find<ComboBox>(horizontal, "ChannelCombo").SelectedItem).Content);
             Assert.StartsWith("対象: チャネル Gb 全体 (4×2", Find<TextBlock>(horizontal, "TargetText").Text);
 
@@ -307,20 +307,20 @@ public class ProjectionWindowControllerTests
             controller.Refresh();
             await controller.WhenIdleAsync();
             Assert.False(Find<ComboBox>(horizontal, "ChannelCombo").IsEnabled);
-            Assert.StartsWith("x_display,x_source,mean,min,max" + nl + "4,1,", horizontal.BuildTable(','));
+            Assert.StartsWith("x_display,x_source,mean,min,max" + nl + "4,1,", horizontal.View.BuildTable(','));
 
             view.Roi = null;
             controller.Refresh();
             await controller.WhenIdleAsync();
             Assert.True(Find<ComboBox>(horizontal, "ChannelCombo").IsEnabled);
-            Assert.StartsWith("x_display,x_source,mean,min,max" + nl + "0,0,16", horizontal.BuildTable(','));
+            Assert.StartsWith("x_display,x_source,mean,min,max" + nl + "0,0,16", horizontal.View.BuildTable(','));
 
             // 窓を閉じて開き直しても同じ画像の間は保つ
             controller.Close(V);
             controller.Open(V);
             await controller.WhenIdleAsync();
             Assert.Equal("Gb", ((ComboBoxItem)Find<ComboBox>(controller.WindowFor(V)!, "ChannelCombo").SelectedItem).Content);
-            Assert.NotNull(controller.WindowFor(V)!.BuildTable(','));
+            Assert.NotNull(controller.WindowFor(V)!.View.BuildTable(','));
 
             // チャネル分割表示を抜けたら忘れる(戻っても未選択の案内から)
             view.Split = false;
@@ -351,8 +351,8 @@ public class ProjectionWindowControllerTests
             controller.Open(V);
             await controller.WhenIdleAsync();
 
-            Assert.NotNull(controller.WindowFor(H)!.BuildTable(','));
-            Assert.Null(controller.WindowFor(V)!.BuildTable(','));
+            Assert.NotNull(controller.WindowFor(H)!.View.BuildTable(','));
+            Assert.Null(controller.WindowFor(V)!.View.BuildTable(','));
             Assert.Equal(ProjectionTargets.HdrSplitWholeImageVertical,
                 Find<TextBlock>(controller.WindowFor(V)!, "StatsText").Text);
         }
@@ -380,7 +380,7 @@ public class ProjectionWindowControllerTests
 
             controller.Open(V);
             await controller.WhenIdleAsync();
-            Assert.NotNull(controller.WindowFor(V)!.BuildTable(','));
+            Assert.NotNull(controller.WindowFor(V)!.View.BuildTable(','));
 
             controller.Close(V);
             Assert.Equal(new[] { V, V }, closed);
@@ -466,7 +466,7 @@ public class ProjectionWindowControllerTests
             (direction, other) =>
             {
                 OtherWindowWhenCreated[direction] = other;
-                return new ProjectionWindow(direction) { BusyDelay = TimeSpan.Zero };
+                return new ProjectionWindow(direction) { View = { BusyDelay = TimeSpan.Zero } };
             },
             Layout,
             (pass, token, progress) =>

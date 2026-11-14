@@ -18,24 +18,24 @@ public class LineProfileWindowTests
         var window = NewWindow();
         try
         {
-            window.SetProfiles([10, 20, 30], [40, 50, 60], 1, 1, 255);
-            var plot = (ProfilePlotView)window.FindName("Plot");
+            window.View.SetProfiles([10, 20, 30], [40, 50, 60], 1, 1, 255);
+            var plot = (ProfilePlotView)window.View.FindName("Plot");
             var canvas = ProfileWindowParts.Find<Canvas>(window, "PlotCanvas");
             var hover = ProfileWindowParts.Find<TextBlock>(window, "HoverText");
             var points = new List<(int X, int Y)?>();
-            window.HoverPixelChanged += points.Add;
+            window.View.HoverPixelChanged += points.Add;
             plot.ShowHover(canvas.ActualWidth);
             Assert.Equal((2, 1), points[^1]);
             Assert.Contains("2 px", hover.Text);
             Assert.Contains("30", hover.Text);
 
-            var vertical = (RadioButton)window.FindName("VerticalRadio");
+            var vertical = (RadioButton)window.View.FindName("VerticalRadio");
             vertical.IsChecked = true;
             Assert.Null(points[^1]);
             plot.ShowHover(canvas.ActualWidth);
             Assert.Equal((1, 2), points[^1]);
             Assert.Contains("60", hover.Text);
-            window.ShowOutsideImage(3, 3, 2, 2, 255);
+            window.View.ShowOutsideImage(3, 3, 2, 2, 255);
             Assert.Null(points[^1]);
         }
         finally
@@ -59,7 +59,7 @@ public class LineProfileWindowTests
             var max = ProfileWindowParts.Find<TextBox>(window, "YMaximumBox");
             var apply = ProfileWindowParts.Find<Button>(window, "ApplyAxisFormatButton");
             var error = ProfileWindowParts.Find<TextBlock>(window, "YScaleErrorText");
-            Assert.Equal(new ProfileAxisRange(0, 4095), window.AxisRange);
+            Assert.Equal(new ProfileAxisRange(0, 4095), window.View.AxisRange);
             Assert.False(min.IsEnabled);
             string statistics = (ProfileWindowParts.Find<TextBlock>(window, "StatsText")).Text;
             ProfileWindowParts.CaptureIfRequested(window, "profile-full");
@@ -67,28 +67,28 @@ public class LineProfileWindowTests
             // 縦軸の右クリックメニューはコンボボックスと同じモード切替
             (ProfileWindowParts.Find<MenuItem>(window, "YAutoRangeMenu")).RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
             Assert.Equal(1, mode.SelectedIndex);
-            Assert.InRange(window.AxisRange.Minimum, 994, 995);
-            Assert.InRange(window.AxisRange.Maximum, 1005, 1006);
+            Assert.InRange(window.View.AxisRange.Minimum, 994, 995);
+            Assert.InRange(window.View.AxisRange.Maximum, 1005, 1006);
             ProfileWindowParts.CaptureIfRequested(window, "profile-auto");
 
             mode.SelectedIndex = 2;
             Assert.True(min.IsEnabled);
-            ProfileAxisRange frozen = window.AxisRange; // 手動へ切り替えた時点の表示範囲が固定される
+            ProfileAxisRange frozen = window.View.AxisRange; // 手動へ切り替えた時点の表示範囲が固定される
 
             // 不正な入力は適用できず、クリックしても最後の範囲を置き換えない
             min.Text = "abc";
             Assert.False(apply.IsEnabled);
             Assert.Equal(Visibility.Visible, error.Visibility);
             apply.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-            Assert.Equal(frozen, window.AxisRange);
+            Assert.Equal(frozen, window.View.AxisRange);
 
             min.Text = "998.5";
             max.Text = "1001.5";
             Assert.True(apply.IsEnabled);
             Assert.Equal(Visibility.Collapsed, error.Visibility);
-            Assert.Equal(frozen, window.AxisRange); // 入力だけでは未反映
+            Assert.Equal(frozen, window.View.AxisRange); // 入力だけでは未反映
             apply.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-            Assert.Equal(new ProfileAxisRange(998.5, 1001.5), window.AxisRange);
+            Assert.Equal(new ProfileAxisRange(998.5, 1001.5), window.View.AxisRange);
             Assert.Equal(statistics, (ProfileWindowParts.Find<TextBlock>(window, "StatsText")).Text);
             ProfileWindowParts.CaptureIfRequested(window, "profile-manual");
 
@@ -103,16 +103,16 @@ public class LineProfileWindowTests
             });
 
             mode.SelectedIndex = 0;
-            Assert.Equal(new ProfileAxisRange(0, 4095), window.AxisRange);
+            Assert.Equal(new ProfileAxisRange(0, 4095), window.View.AxisRange);
             mode.SelectedIndex = 2;
-            Assert.Equal(new ProfileAxisRange(998.5, 1001.5), window.AxisRange);
+            Assert.Equal(new ProfileAxisRange(998.5, 1001.5), window.View.AxisRange);
             Assert.Equal("998.5", min.Text);
 
             // スケール設定を開くだけでは表示範囲を変えず、表示中の値を丸めずに手動欄へ引き継ぐ
             mode.SelectedIndex = 1;
-            ProfileAxisRange auto = window.AxisRange;
-            window.PrepareYScaleEditor(); // OSのポップアップを表示せず内容だけ検証
-            Assert.Equal(auto, window.AxisRange);
+            ProfileAxisRange auto = window.View.AxisRange;
+            window.View.PrepareYScaleEditor(); // OSのポップアップを表示せず内容だけ検証
+            Assert.Equal(auto, window.View.AxisRange);
             Assert.Equal(2, mode.SelectedIndex);
             Assert.Equal(auto.Minimum.ToString("G17", CultureInfo.CurrentCulture), min.Text);
             ProfileWindowParts.CaptureElementIfRequested((FrameworkElement)(ProfileWindowParts.Find<Popup>(window, "AxisFormatPopup")).Child,
@@ -178,19 +178,19 @@ public class LineProfileWindowTests
             (ProfileWindowParts.Find<Button>(window, "ApplyAxisFormatButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             var expected = new ProfileAxisRange(-10.25, 1010.5);
             (ProfileWindowParts.Find<RadioButton>(window, "VerticalRadio")).IsChecked = true;
-            Assert.Equal(expected, window.AxisRange);
-            window.SetProfiles(new double[] { 1, 2 }, new double[] { 10, 20 }, 0, 0, 255);
-            Assert.Equal(expected, window.AxisRange);
+            Assert.Equal(expected, window.View.AxisRange);
+            window.View.SetProfiles(new double[] { 1, 2 }, new double[] { 10, 20 }, 0, 0, 255);
+            Assert.Equal(expected, window.View.AxisRange);
             mode.SelectedIndex = 0;
-            Assert.Equal(new ProfileAxisRange(0, 255), window.AxisRange);
+            Assert.Equal(new ProfileAxisRange(0, 255), window.View.AxisRange);
 
             // 自動スケールは空データでは全範囲、1点では±0.5に落ち、再描画で例外にならない
             mode.SelectedIndex = 1;
-            window.SetProfiles(Array.Empty<double>(), Array.Empty<double>(), 0, 0, 1023);
-            Assert.Equal(new ProfileAxisRange(0, 1023), window.AxisRange);
+            window.View.SetProfiles(Array.Empty<double>(), Array.Empty<double>(), 0, 0, 1023);
+            Assert.Equal(new ProfileAxisRange(0, 1023), window.View.AxisRange);
             Assert.Equal("1023", (ProfileWindowParts.Find<TextBlock>(window, "MaxLabel")).Text);
-            window.SetProfiles(new double[] { 25 }, new double[] { 25 }, 0, 0, 1023);
-            Assert.Equal(new ProfileAxisRange(24.5, 25.5), window.AxisRange);
+            window.View.SetProfiles(new double[] { 25 }, new double[] { 25 }, 0, 0, 1023);
+            Assert.Equal(new ProfileAxisRange(24.5, 25.5), window.View.AxisRange);
         }
         finally
         {
@@ -205,24 +205,24 @@ public class LineProfileWindowTests
         try
         {
             (ProfileWindowParts.Find<ComboBox>(window, "YScaleCombo")).SelectedIndex = 1;
-            string? data = window.BuildTable(',');
+            string? data = window.View.BuildTable(',');
             string stats = (ProfileWindowParts.Find<TextBlock>(window, "StatsText")).Text;
             var canvas = ProfileWindowParts.Find<Canvas>(window, "PlotCanvas");
             var cursor = new Point(canvas.ActualWidth * 0.3, 1 + (canvas.ActualHeight - 2) * 0.7);
-            ProfileAxisRange x = window.HorizontalRange;
-            ProfileAxisRange y = window.AxisRange;
-            for (int i = 0; i < 5; i++) window.ZoomAt(cursor, 120);
-            Assert.True(window.HorizontalRange.Maximum - window.HorizontalRange.Minimum < (x.Maximum - x.Minimum) / 2);
+            ProfileAxisRange x = window.View.HorizontalRange;
+            ProfileAxisRange y = window.View.AxisRange;
+            for (int i = 0; i < 5; i++) window.View.ZoomAt(cursor, 120);
+            Assert.True(window.View.HorizontalRange.Maximum - window.View.HorizontalRange.Minimum < (x.Maximum - x.Minimum) / 2);
             Assert.Equal(x.Minimum + (x.Maximum - x.Minimum) * 0.3,
-                window.HorizontalRange.Minimum + (window.HorizontalRange.Maximum - window.HorizontalRange.Minimum) * 0.3, 8);
+                window.View.HorizontalRange.Minimum + (window.View.HorizontalRange.Maximum - window.View.HorizontalRange.Minimum) * 0.3, 8);
             Assert.Equal(y.Minimum + (y.Maximum - y.Minimum) * 0.3,
-                window.AxisRange.Minimum + (window.AxisRange.Maximum - window.AxisRange.Minimum) * 0.3, 8);
-            Assert.Equal(data, window.BuildTable(','));
+                window.View.AxisRange.Minimum + (window.View.AxisRange.Maximum - window.View.AxisRange.Minimum) * 0.3, 8);
+            Assert.Equal(data, window.View.BuildTable(','));
             Assert.Equal(stats, (ProfileWindowParts.Find<TextBlock>(window, "StatsText")).Text);
             ProfileWindowParts.CaptureIfRequested(window, "profile-zoomed");
-            window.ResetView();
-            Assert.Equal(new ProfileAxisRange(0, 1999), window.HorizontalRange);
-            Assert.Equal(new ProfileAxisRange(0, 4095), window.AxisRange);
+            window.View.ResetView();
+            Assert.Equal(new ProfileAxisRange(0, 1999), window.View.HorizontalRange);
+            Assert.Equal(new ProfileAxisRange(0, 4095), window.View.AxisRange);
         }
         finally
         {
@@ -238,19 +238,19 @@ public class LineProfileWindowTests
         {
             var canvas = ProfileWindowParts.Find<Canvas>(window, "PlotCanvas");
             var center = new Point(canvas.ActualWidth / 2, canvas.ActualHeight / 2);
-            ProfileAxisRange originalY = window.AxisRange;
-            window.ZoomAt(center, 120, zoomHorizontal: true, zoomVertical: false);
-            Assert.Equal(originalY, window.AxisRange);
+            ProfileAxisRange originalY = window.View.AxisRange;
+            window.View.ZoomAt(center, 120, zoomHorizontal: true, zoomVertical: false);
+            Assert.Equal(originalY, window.View.AxisRange);
             Assert.Equal(0, (ProfileWindowParts.Find<ComboBox>(window, "YScaleCombo")).SelectedIndex);
-            ProfileAxisRange originalX = window.HorizontalRange;
-            window.ZoomAt(center, 120, zoomHorizontal: false, zoomVertical: true);
-            Assert.Equal(originalX, window.HorizontalRange);
-            ProfileAxisRange y = window.AxisRange;
-            window.PanFrom(originalX, y, new Vector(canvas.ActualWidth * 0.05, canvas.ActualHeight * 0.1));
-            Assert.True(window.HorizontalRange.Minimum < originalX.Minimum);
-            Assert.True(window.AxisRange.Minimum > y.Minimum);
+            ProfileAxisRange originalX = window.View.HorizontalRange;
+            window.View.ZoomAt(center, 120, zoomHorizontal: false, zoomVertical: true);
+            Assert.Equal(originalX, window.View.HorizontalRange);
+            ProfileAxisRange y = window.View.AxisRange;
+            window.View.PanFrom(originalX, y, new Vector(canvas.ActualWidth * 0.05, canvas.ActualHeight * 0.1));
+            Assert.True(window.View.HorizontalRange.Minimum < originalX.Minimum);
+            Assert.True(window.View.AxisRange.Minimum > y.Minimum);
             Assert.Equal(originalX.Maximum - originalX.Minimum,
-                window.HorizontalRange.Maximum - window.HorizontalRange.Minimum, 8);
+                window.View.HorizontalRange.Maximum - window.View.HorizontalRange.Minimum, 8);
         }
         finally
         {
@@ -266,17 +266,17 @@ public class LineProfileWindowTests
         var window = NewWindow();
         try
         {
-            window.SetProfiles(new double[] { 0, maxCode }, new double[] { 0, maxCode }, 0, 0, maxCode);
+            window.View.SetProfiles(new double[] { 0, maxCode }, new double[] { 0, maxCode }, 0, 0, maxCode);
             var canvas = ProfileWindowParts.Find<Canvas>(window, "PlotCanvas");
             var position = new Point(canvas.ActualWidth / 2, 1 + (1 - anchor) * (canvas.ActualHeight - 2));
-            for (int i = 0; i < 30; i++) window.ZoomAt(position, 1200, false, true);
-            ProfileAxisRange zoomed = window.AxisRange;
+            for (int i = 0; i < 30; i++) window.View.ZoomAt(position, 1200, false, true);
+            ProfileAxisRange zoomed = window.View.AxisRange;
             Assert.Equal(1, zoomed.Maximum - zoomed.Minimum, 8);
             Assert.Equal(maxCode * anchor, zoomed.Minimum + anchor, 8);
-            window.ZoomAt(position, 120, false, true);
-            Assert.Equal(zoomed, window.AxisRange);
-            window.ZoomAt(position, -120, false, true);
-            Assert.Equal(1.2, window.AxisRange.Maximum - window.AxisRange.Minimum, 8);
+            window.View.ZoomAt(position, 120, false, true);
+            Assert.Equal(zoomed, window.View.AxisRange);
+            window.View.ZoomAt(position, -120, false, true);
+            Assert.Equal(1.2, window.View.AxisRange.Maximum - window.View.AxisRange.Minimum, 8);
         }
         finally
         {
@@ -298,11 +298,11 @@ public class LineProfileWindowTests
             Assert.Contains("元画像上の画素座標", (string)axis.ToolTip);
             ProfileWindowParts.Find<RadioButton>(window, "VerticalRadio").IsChecked = true;
             Assert.Equal("垂直プロファイル — y座標 [px・画像座標]", title.Text);
-            Assert.StartsWith("y,value" + Environment.NewLine + "0,200", window.BuildTable(','));
+            Assert.StartsWith("y,value" + Environment.NewLine + "0,200", window.View.BuildTable(','));
             Assert.Equal(new[] { "0", "1", "2", "3" }, axis.Children.OfType<TextBlock>().Select(t => t.Text));
 
             // ROI の射影を選ぶ欄はもうない(射影は射影の窓で見る)
-            Assert.Null(window.FindName("ProjectionCheck"));
+            Assert.Null(window.View.FindName("ProjectionCheck"));
         }
         finally
         {
@@ -319,7 +319,7 @@ public class LineProfileWindowTests
         var window = NewWindow();
         try
         {
-            window.SetProfiles(new double[] { 1000, 1001, 1003 }, new double[] { 1, 2, 3 }, 0, 0, 4095);
+            window.View.SetProfiles(new double[] { 1000, 1001, 1003 }, new double[] { 1, 2, 3 }, 0, 0, 4095);
             string stats = ProfileWindowParts.Find<TextBlock>(window, "StatsText").Text;
             Assert.Contains("最小 1000 ", stats);
             Assert.Contains("最大 1003 ", stats);
@@ -327,8 +327,8 @@ public class LineProfileWindowTests
 
             // 表(コピー・CSV)は 5 桁の raw code でもそのまま整数
             string nl = Environment.NewLine;
-            window.SetProfiles(new double[] { 40000, 40001, 40003 }, new double[] { 1, 2, 3 }, 0, 0, 65535);
-            Assert.Equal($"x,value{nl}0,40000{nl}1,40001{nl}2,40003{nl}", window.BuildTable(','));
+            window.View.SetProfiles(new double[] { 40000, 40001, 40003 }, new double[] { 1, 2, 3 }, 0, 0, 65535);
+            Assert.Equal($"x,value{nl}0,40000{nl}1,40001{nl}2,40003{nl}", window.View.BuildTable(','));
         }
         finally
         {
@@ -344,17 +344,17 @@ public class LineProfileWindowTests
         try
         {
             var canvas = ProfileWindowParts.Find<Canvas>(window, "PlotCanvas");
-            window.ZoomAt(new Point(canvas.ActualWidth / 2, canvas.ActualHeight / 2), 240);
-            ProfileAxisRange zoomedY = window.AxisRange;
+            window.View.ZoomAt(new Point(canvas.ActualWidth / 2, canvas.ActualHeight / 2), 240);
+            ProfileAxisRange zoomedY = window.View.AxisRange;
             (ProfileWindowParts.Find<RadioButton>(window, "VerticalRadio")).IsChecked = true;
-            Assert.Equal(new ProfileAxisRange(0, 3), window.HorizontalRange);
-            Assert.Equal(zoomedY, window.AxisRange);
-            window.ZoomAt(new Point(canvas.ActualWidth / 2, canvas.ActualHeight / 2), 120, true, false);
-            ProfileAxisRange x = window.HorizontalRange;
-            window.SetProfiles(new double[] { 1, 2 }, new double[] { 10, 20, 30, 40 }, 1, 1, 255);
-            Assert.Equal(x, window.HorizontalRange); // 同じ向き・長さの別ラインでは維持
-            window.SetProfiles(new double[] { 1, 2 }, new double[] { 10, 20 }, 1, 1, 255);
-            Assert.Equal(new ProfileAxisRange(0, 1), window.HorizontalRange);
+            Assert.Equal(new ProfileAxisRange(0, 3), window.View.HorizontalRange);
+            Assert.Equal(zoomedY, window.View.AxisRange);
+            window.View.ZoomAt(new Point(canvas.ActualWidth / 2, canvas.ActualHeight / 2), 120, true, false);
+            ProfileAxisRange x = window.View.HorizontalRange;
+            window.View.SetProfiles(new double[] { 1, 2 }, new double[] { 10, 20, 30, 40 }, 1, 1, 255);
+            Assert.Equal(x, window.View.HorizontalRange); // 同じ向き・長さの別ラインでは維持
+            window.View.SetProfiles(new double[] { 1, 2 }, new double[] { 10, 20 }, 1, 1, 255);
+            Assert.Equal(new ProfileAxisRange(0, 1), window.View.HorizontalRange);
         }
         finally
         {
@@ -379,26 +379,26 @@ public class LineProfileWindowTests
             (ProfileWindowParts.Find<TextBox>(window, "YMaximumBox")).Text = "300";
             (ProfileWindowParts.Find<Button>(window, "ApplyAxisFormatButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
 
-            window.ShowOutsideImage(1000, 2, 640, 480, 1023);
+            window.View.ShowOutsideImage(1000, 2, 640, 480, 1023);
 
-            Assert.Null(window.BuildTable(','));
+            Assert.Null(window.View.BuildTable(','));
             var canvas = ProfileWindowParts.Find<Canvas>(window, "PlotCanvas");
             Assert.Empty(canvas.Children.OfType<System.Windows.Shapes.Path>());
             string stats = (ProfileWindowParts.Find<TextBlock>(window, "StatsText")).Text;
             Assert.Contains("範囲外", stats);
             Assert.Contains("640×480", stats);
             Assert.Contains("範囲外", window.Title);
-            Assert.True(window.IsOutsideImage);
-            Assert.Equal((1000, 2), window.CurrentPoint);
-            Assert.False(window.IsHorizontal);
+            Assert.True(window.View.IsOutsideImage);
+            Assert.Equal((1000, 2), window.View.CurrentPoint);
+            Assert.False(window.View.IsHorizontal);
             ProfileWindowParts.CaptureIfRequested(window, "profile-outside");
 
-            window.SetProfiles(new double[] { 1, 2 }, new double[] { 7, 8, 9 }, 1000, 2, 1023);
-            Assert.False(window.IsOutsideImage);
-            Assert.False(window.IsHorizontal);
-            Assert.StartsWith("y,value" + Environment.NewLine + "0,7", window.BuildTable(','));
+            window.View.SetProfiles(new double[] { 1, 2 }, new double[] { 7, 8, 9 }, 1000, 2, 1023);
+            Assert.False(window.View.IsOutsideImage);
+            Assert.False(window.View.IsHorizontal);
+            Assert.StartsWith("y,value" + Environment.NewLine + "0,7", window.View.BuildTable(','));
             Assert.DoesNotContain("範囲外", (ProfileWindowParts.Find<TextBlock>(window, "StatsText")).Text);
-            Assert.Equal(new ProfileAxisRange(100, 300), window.AxisRange);
+            Assert.Equal(new ProfileAxisRange(100, 300), window.View.AxisRange);
         }
         finally
         {
@@ -411,7 +411,7 @@ public class LineProfileWindowTests
         var window = new LineProfileWindow();
         double[] row = Enumerable.Range(0, 2000).Select(i => 1000.0 + 5 * Math.Sin(i / 30.0)).ToArray();
         double[] column = new double[] { 200, 220, 240, 220 };
-        window.SetProfiles(row, column, 1000, 2, 4095);
+        window.View.SetProfiles(row, column, 1000, 2, 4095);
         ProfileWindowParts.Layout(window);
         return window;
     }
