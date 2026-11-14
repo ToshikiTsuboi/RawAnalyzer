@@ -4,9 +4,13 @@ namespace RawAnalyzer.App.Views;
 public sealed class LineProfileWindow : GraphWindow
 {
     /// <summary>ラインプロファイル用のウィンドウを生成する。</summary>
-    public LineProfileWindow() : base(new LineProfileView(), 480, 360)
+    public LineProfileWindow() : this(new LineProfileView())
     {
     }
 
-    internal LineProfileView View => (LineProfileView)Content;
+    internal LineProfileWindow(LineProfileView view) : base(view, 480, 360)
+    {
+    }
+
+    internal LineProfileView View => (LineProfileView)Graph;
 }

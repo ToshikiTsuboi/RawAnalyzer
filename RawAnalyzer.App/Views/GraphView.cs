@@ -16,4 +16,27 @@ public abstract class GraphView : UserControl
     }
 
     internal abstract ProfilePlotView PlotView { get; }
+
+    internal abstract FrameworkElement Header { get; }
+
+    internal event EventHandler? GraphClosed;
+    internal event Action? ChromeChanged;
+
+    protected void NotifyChromeChanged() => ChromeChanged?.Invoke();
+
+    internal virtual void SetDocked(bool docked) => PlotView.SetDocked(docked);
+
+    internal double DockChromeHeight(double width)
+    {
+        const double margin = 20; // グラフを囲む DockPanel の上下と左右
+        double contentWidth = Math.Max(0, width - margin);
+        Header.Measure(new Size(contentWidth, double.PositiveInfinity));
+        return margin + Header.DesiredSize.Height + PlotView.DockChromeHeight(contentWidth);
+    }
+
+    internal void NotifyClosed()
+    {
+        PlotView.EndInteraction();
+        GraphClosed?.Invoke(this, EventArgs.Empty);
+    }
 }

@@ -5,6 +5,7 @@
         xmlns:sys="clr-namespace:System;assembly=System.Runtime"
         xmlns:controls="clr-namespace:RawAnalyzer.App.Controls"
         xmlns:compare="clr-namespace:RawAnalyzer.App.Compare"
+        xmlns:views="clr-namespace:RawAnalyzer.App.Views"
         Title="RawAnalyzer" Width="1280" Height="820" MinWidth="720" MinHeight="480"
         Background="{StaticResource WindowBackgroundBrush}" Foreground="{StaticResource TextBrush}"
         AllowDrop="True" Drop="OnFileDrop" DragOver="OnFileDragOver" PreviewDragLeave="OnFileDragLeave">
@@ -624,7 +625,14 @@
                           Cursor="SizeWE" ToolTip="ドラッグで幅を調整" />
 
             <!-- 中央: 画像キャンバス -->
-            <Grid Grid.Column="3" Background="{StaticResource CanvasBrush}">
+            <Grid x:Name="GraphLayout" Grid.Column="3" Background="{StaticResource CanvasBrush}"
+                  SizeChanged="OnGraphLayoutSizeChanged">
+                <Grid.RowDefinitions>
+                    <RowDefinition x:Name="ViewportRow" Height="*" />
+                    <RowDefinition x:Name="GraphSplitterRow" Height="0" />
+                    <RowDefinition x:Name="GraphDockRow" Height="0" />
+                </Grid.RowDefinitions>
+            <Grid x:Name="ViewportLayout">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="*" />
@@ -880,6 +888,13 @@
                 <!-- 比較モード(表示中は通常ビューを覆う) -->
                 <compare:CompareView x:Name="CompareArea" Grid.Column="1" Visibility="Collapsed"
                                      IsFullscreen="{Binding IsFullscreen, Mode=TwoWay}" />
+            </Grid>
+                <GridSplitter x:Name="GraphDockSplitter" Grid.Row="1" Height="5" Visibility="Collapsed"
+                              HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
+                              ResizeDirection="Rows" ResizeBehavior="PreviousAndNext"
+                              Cursor="SizeNS" AutomationProperties.Name="グラフドックの高さ"
+                              ToolTip="ドラッグまたは矢印キーでグラフドックの高さを調整" />
+                <views:GraphDock x:Name="AnalysisGraphDock" Grid.Row="2" Margin="37,0,0,0" Visibility="Collapsed" />
             </Grid>
 
             <GridSplitter x:Name="RightSplitter" Grid.Column="4" Width="5"

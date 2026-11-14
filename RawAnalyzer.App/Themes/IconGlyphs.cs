@@ -4,6 +4,7 @@ namespace RawAnalyzer.App.Themes;
 internal static class IconGlyphs
 {
     public const string Brightness = "\uE706";
+    public const string OpenInNewWindow = "\uE8A7";
     public const string Add = "\uE710";
     public const string Close = "\uE711";
     public const string More = "\uE712";

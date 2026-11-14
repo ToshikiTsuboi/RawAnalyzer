@@ -81,6 +81,7 @@ public partial class MainWindow
         CancelTiffPageLoad();
         StopPlayback();
         _compareMode = true;
+        UpdateGraphDock();
         _vm.IsCompareMode = true;
         bool rightPanelWasVisible = _vm.RightPanelVisible;
         _vm.RightPanelVisible = false;
@@ -109,6 +110,7 @@ public partial class MainWindow
         await CompareArea.CloseAllAsync();
         CompareArea.Visibility = Visibility.Collapsed;
         _compareMode = false;
+        UpdateGraphDock();
         _vm.IsCompareMode = false;
         if (_rightPanelBeforeCompare is bool rightPanelWasVisible)
         {

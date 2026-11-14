@@ -6,7 +6,7 @@
     <!-- ラインプロファイル窓と射影の窓で共有するグラフ(統計・縦軸・横軸・拡大・移動・コピー/CSV)。 -->
     <DockPanel>
         <!-- 統計 -->
-        <Border DockPanel.Dock="Top" Background="{StaticResource Panel2Brush}" CornerRadius="4"
+        <Border x:Name="StatsPanel" DockPanel.Dock="Top" Background="{StaticResource Panel2Brush}" CornerRadius="4"
                 Padding="10,5" Margin="0,0,0,8">
             <TextBlock x:Name="StatsText" FontFamily="Consolas" FontSize="{x:Static themes:ThemeTypography.FontSizeBody}"
                        Foreground="{StaticResource TextBrush}" TextWrapping="Wrap"
@@ -110,7 +110,7 @@
             </Canvas>
             <TextBlock x:Name="XAxisTitle" Grid.Column="1" Grid.Row="2" TextAlignment="Center"
                        FontSize="{x:Static themes:ThemeTypography.FontSizeBody}" Foreground="{StaticResource TextBrush}" Margin="0,0,0,5" />
-            <TextBlock Grid.ColumnSpan="2" Grid.Row="3" FontSize="{x:Static themes:ThemeTypography.FontSizeCaption}" Foreground="{StaticResource TextDim}"
+            <TextBlock x:Name="PlotInstructions" Grid.ColumnSpan="2" Grid.Row="3" FontSize="{x:Static themes:ThemeTypography.FontSizeCaption}" Foreground="{StaticResource TextDim}"
                        TextWrapping="Wrap" Text="ホイール: 拡大・縮小 (Shift: 横軸 / Ctrl: 縦軸)　ドラッグ: 移動　ダブルクリック: 全体表示　軸を右クリック: 範囲・目盛りの設定" />
 
             <!-- 設定は必要時だけ表示し、通常はグラフの表示領域を確保する。 -->

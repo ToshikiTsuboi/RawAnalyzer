@@ -46,6 +46,7 @@ internal sealed record ProfilePlotData(
 /// </remarks>
 public partial class ProfilePlotView : UserControl
 {
+    private const string StatisticsToolTip = "全プロファイルの統計です。グラフの拡大・移動では変わりません。";
     private static readonly Color PrimaryStroke = ThemeColors.Accent;
 
     private ProfilePlotData _data = new(Array.Empty<double>(), 65535);
@@ -202,6 +203,8 @@ public partial class ProfilePlotView : UserControl
         if (_busyShown)
         {
             StatsText.Text = message;
+            if (PlotInstructions.Visibility == Visibility.Collapsed)
+                StatsText.ToolTip = message;
             OverlayText.Text = message;
         }
     }
@@ -247,10 +250,32 @@ public partial class ProfilePlotView : UserControl
     /// <summary>ドラッグを終え、縦軸の設定を閉じる(窓を閉じるとき)。</summary>
     internal void EndInteraction()
     {
+        EndPointerInteraction();
+        _busyTimer?.Stop();
+    }
+
+    internal void EndPointerInteraction()
+    {
         EndPan();
         ClearHover();
-        _busyTimer?.Stop();
         AxisFormatPopup.IsOpen = false;
+    }
+
+    internal void SetDocked(bool docked)
+    {
+        PlotInstructions.Visibility = docked ? Visibility.Collapsed : Visibility.Visible;
+        PlotCanvas.ToolTip = docked ? PlotInstructions.Text : null;
+        StatsText.TextWrapping = docked ? TextWrapping.NoWrap : TextWrapping.Wrap;
+        StatsText.TextTrimming = docked ? TextTrimming.CharacterEllipsis : TextTrimming.None;
+        StatsText.ToolTip = docked ? StatsText.Text : StatisticsToolTip;
+    }
+
+    internal double DockChromeHeight(double width)
+    {
+        StatsPanel.Measure(new Size(width, double.PositiveInfinity));
+        XAxisTitle.Measure(new Size(Math.Max(0, width - 92), double.PositiveInfinity));
+        // 横軸の目盛り行と描画枠の上下の境界線。
+        return StatsPanel.DesiredSize.Height + XAxisTitle.DesiredSize.Height + 25 + 2;
     }
 
     /// <summary>
@@ -358,6 +383,8 @@ public partial class ProfilePlotView : UserControl
             : $"N={stats.Count}   平均 {stats.Mean:F2}   最小 {stats.Min.ToString(extremeFormat)}   " +
               $"最大 {stats.Max.ToString(extremeFormat)}   中央値 {stats.Median.ToString(medianFormat)}   σ {stats.Sigma:F2}   " +
               $"P-P {(stats.Max - stats.Min).ToString(extremeFormat)}");
+        if (PlotInstructions.Visibility == Visibility.Collapsed)
+            StatsText.ToolTip = StatsText.Text;
 
         // 計算中は前のデータを薄く残し、上に知らせを出す。断る理由などもグラフの上に出す
         string? overlay = busy ?? _overlayMessage;

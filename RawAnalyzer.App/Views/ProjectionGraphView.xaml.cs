@@ -69,6 +69,8 @@ public partial class ProjectionGraphView : GraphView
     /// <param name="channel">選んでいるチャネル(未選択なら null)。</param>
     internal void SetChannelChoice(ProjectionChannelChoice choice, BayerChannel? channel)
     {
+        Visibility previous = ChannelPanel.Visibility;
+        Visibility previousRoi = RoiPriorityText.Visibility;
         _settingChannel = true;
         try
         {
@@ -83,6 +85,8 @@ public partial class ProjectionGraphView : GraphView
         {
             _settingChannel = false;
         }
+        if (ChannelPanel.Visibility != previous || RoiPriorityText.Visibility != previousRoi)
+            NotifyChromeChanged();
     }
 
     private void OnChannelComboChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
@@ -102,6 +106,14 @@ public partial class ProjectionGraphView : GraphView
     }
 
     internal override ProfilePlotView PlotView => Plot;
+    internal override FrameworkElement Header => ProjectionHeader;
+
+    internal override void SetDocked(bool docked)
+    {
+        base.SetDocked(docked);
+        System.Windows.Controls.DockPanel.SetDock(ProjectionOptions,
+            docked ? System.Windows.Controls.Dock.Top : System.Windows.Controls.Dock.Right);
+    }
 
     internal ProfileAxisRange AxisRange => Plot.AxisRange;
 

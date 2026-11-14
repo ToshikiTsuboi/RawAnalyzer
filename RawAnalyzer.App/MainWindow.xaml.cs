@@ -190,6 +190,7 @@ public partial class MainWindow : Window
                 }
             }
         };
+        InitializeGraphDock();
         Closing += (_, _) => SaveWindowPlacement();
         Closed += async (_, _) =>
         {
@@ -197,8 +198,8 @@ public partial class MainWindow : Window
             _navigatorCts?.Cancel();
             ReplaceLoadCts(null);
             CancelAnalysis();
-            _profileWindow?.Close();
             _projections?.Shutdown();
+            AnalysisGraphDock.Shutdown();
             await CompareArea.CloseAllAsync();
             await Viewport.ClearImageAsync();
             _mainBayerPyramid?.Dispose();

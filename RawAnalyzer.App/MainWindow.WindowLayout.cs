@@ -67,6 +67,8 @@ public partial class MainWindow
         bool navigatorVisible = NavigatorEnabled;
         string fileFilter = _vm.FileFilterText;
         string[] usedCommands = _usedCommands;
+        double graphDockHeight = AnalysisGraphDock.RequestedHeight;
+        GraphKind[] floatingGraphs = AnalysisGraphDock.FloatingPreferences();
         // フルスクリーン中は(フルスクリーンのための最大化ではなく)フルスクリーンに入る前の状態を保存する
         bool maximized = FullscreenWindowState.IsMaximizedToSave(
             WindowState, _vm.IsFullscreen, _preFullscreenState);
@@ -94,6 +96,8 @@ public partial class MainWindow
             session.FileFilter = fileFilter;
             if (usedCommands.Length > 0)
                 session.RecentCommands = PaletteHistory.Combine(usedCommands, session.RecentCommands ?? []);
+            session.GraphDockHeight = graphDockHeight;
+            session.FloatingGraphs = floatingGraphs;
             session.WindowMaximized = maximized;
             session.WindowLeft = left;
             session.WindowTop = top;

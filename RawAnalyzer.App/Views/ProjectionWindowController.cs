@@ -26,12 +26,13 @@ internal sealed class ProjectionWindowController
     private readonly Func<ProjectionView?> _currentView;
     private readonly Func<bool> _isPlaying;
     private readonly Func<RawImage, int, bool> _isCurrent;
-    private readonly Func<ProjectionDirection, ProjectionWindow?, ProjectionWindow> _createWindow;
-    private readonly Action<ProjectionWindow> _showWindow;
+    private readonly Func<ProjectionDirection, ProjectionGraphView> _createView;
+    private readonly Action<ProjectionGraphView> _showGraph;
+    private readonly Action<ProjectionGraphView> _closeGraph;
     private readonly ComputePass _compute;
 
-    private ProjectionWindow? _horizontal;
-    private ProjectionWindow? _vertical;
+    private ProjectionGraphView? _horizontal;
+    private ProjectionGraphView? _vertical;
 
     // 窓が出している結果・断る理由の求め方(再生中の知らせ・まだ出していなければなし)
     private readonly Dictionary<ProjectionDirection, ProjectionRequest> _shown = new();
@@ -54,24 +55,27 @@ internal sealed class ProjectionWindowController
     /// <param name="currentView">いまの表示の状態(画像がなければ null)。</param>
     /// <param name="isPlaying">再生中か。</param>
     /// <param name="isCurrent">画像・フレームがいまも表示中か(計算中に送った・差し替えたら結果を出さない)。</param>
-    /// <param name="createWindow">窓を作る(もう一方の窓が開いていればそれを渡す。並べて開くため)。</param>
-    /// <param name="showWindow">作った窓を表示する。</param>
+    /// <param name="createView">射影の表示を作る。</param>
+    /// <param name="showGraph">作ったグラフを表示する。</param>
+    /// <param name="closeGraph">グラフを閉じる。</param>
     /// <param name="compute">1回の走査で射影を求める(UI スレッドの外で呼ぶ。省略時は <see cref="ProjectionTargets.Compute"/>)。</param>
     internal ProjectionWindowController(
         Dispatcher dispatcher,
         Func<ProjectionView?> currentView,
         Func<bool> isPlaying,
         Func<RawImage, int, bool> isCurrent,
-        Func<ProjectionDirection, ProjectionWindow?, ProjectionWindow> createWindow,
-        Action<ProjectionWindow> showWindow,
+        Func<ProjectionDirection, ProjectionGraphView> createView,
+        Action<ProjectionGraphView> showGraph,
+        Action<ProjectionGraphView> closeGraph,
         ComputePass? compute = null)
     {
         _dispatcher = dispatcher;
         _currentView = currentView;
         _isPlaying = isPlaying;
         _isCurrent = isCurrent;
-        _createWindow = createWindow;
-        _showWindow = showWindow;
+        _createView = createView;
+        _showGraph = showGraph;
+        _closeGraph = closeGraph;
         _compute = compute ?? ((pass, token, progress) =>
             ProjectionTargets.Compute(pass.Image, pass.Frame, pass.Target, pass.Axes, token, progress));
     }
@@ -90,7 +94,7 @@ internal sealed class ProjectionWindowController
     /// <summary>開いている窓(なければ null)。</summary>
     /// <param name="direction">向き。</param>
     /// <returns>窓。</returns>
-    internal ProjectionWindow? WindowFor(ProjectionDirection direction) =>
+    internal ProjectionGraphView? ViewFor(ProjectionDirection direction) =>
         direction == ProjectionDirection.Horizontal ? _horizontal : _vertical;
 
     /// <summary>計算中か(走っている計算がある)。</summary>
@@ -100,30 +104,34 @@ internal sealed class ProjectionWindowController
     /// <param name="direction">向き。</param>
     internal void Open(ProjectionDirection direction)
     {
-        if (_shutDown || WindowFor(direction) is not null)
+        if (_shutDown || ViewFor(direction) is not null)
         {
             return;
         }
 
-        ProjectionWindow window = _createWindow(direction, WindowFor(Other(direction)));
-        window.Closed += (_, _) => OnWindowClosed(direction, window);
-        window.View.ChannelSelectionChanged += OnChannelSelected;
+        ProjectionGraphView view = _createView(direction);
+        view.GraphClosed += (_, _) => OnWindowClosed(direction, view);
+        view.ChannelSelectionChanged += OnChannelSelected;
         if (direction == ProjectionDirection.Horizontal)
         {
-            _horizontal = window;
+            _horizontal = view;
         }
         else
         {
-            _vertical = window;
+            _vertical = view;
         }
 
-        _showWindow(window);
+        _showGraph(view);
         Refresh();
     }
 
     /// <summary>窓を閉じる(開いていなければ何もしない)。</summary>
     /// <param name="direction">向き。</param>
-    internal void Close(ProjectionDirection direction) => WindowFor(direction)?.Close();
+    internal void Close(ProjectionDirection direction)
+    {
+        if (ViewFor(direction) is { } view)
+            _closeGraph(view);
+    }
 
     /// <summary>計算を取り消して窓を閉じる(メインウィンドウを閉じるとき)。</summary>
     internal void Shutdown()
@@ -132,8 +140,8 @@ internal sealed class ProjectionWindowController
         _scheduled?.Abort();
         _scheduled = null;
         CancelRunning();
-        _horizontal?.Close();
-        _vertical?.Close();
+        Close(ProjectionDirection.Horizontal);
+        Close(ProjectionDirection.Vertical);
     }
 
     /// <summary>
@@ -190,12 +198,9 @@ internal sealed class ProjectionWindowController
         }
     }
 
-    private static ProjectionDirection Other(ProjectionDirection direction) =>
-        direction == ProjectionDirection.Horizontal ? ProjectionDirection.Vertical : ProjectionDirection.Horizontal;
-
-    private void OnWindowClosed(ProjectionDirection direction, ProjectionWindow window)
+    private void OnWindowClosed(ProjectionDirection direction, ProjectionGraphView view)
     {
-        if (!ReferenceEquals(WindowFor(direction), window))
+        if (!ReferenceEquals(ViewFor(direction), view))
         {
             return;
         }
@@ -211,6 +216,7 @@ internal sealed class ProjectionWindowController
 
         _shown.Remove(direction);
         _pending.Remove(direction);
+        view.ChannelSelectionChanged -= OnChannelSelected;
         WindowClosed?.Invoke(direction);
 
         // この窓のための計算だけが走っていれば取り消す
@@ -230,7 +236,7 @@ internal sealed class ProjectionWindowController
         BayerChannel? chosen = _channelSelection.Current(view);
         foreach (ProjectionDirection direction in new[] { ProjectionDirection.Horizontal, ProjectionDirection.Vertical })
         {
-            if (WindowFor(direction) is not { } window || view is null)
+            if (ViewFor(direction) is not { } graph || view is null)
             {
                 continue;
             }
@@ -238,7 +244,7 @@ internal sealed class ProjectionWindowController
             ProjectionRequest next = ProjectionTargets.BuildRequest(direction, view, chosen);
 
             // 共有のチャネルの選択を両方の窓の選択欄に映す(ROI を優先しているときは選べなくする)
-            window.View.SetChannelChoice(next.ChannelChoice, chosen);
+            graph.SetChannelChoice(next.ChannelChoice, chosen);
 
             states.Add(new ProjectionWindowState(
                 direction, next, _shown.GetValueOrDefault(direction), _pending.GetValueOrDefault(direction)));
@@ -249,14 +255,14 @@ internal sealed class ProjectionWindowController
         foreach (ProjectionDirection direction in plan.ShowPlayback)
         {
             ProjectionRequest next = states.First(state => state.Direction == direction).Next;
-            WindowFor(direction)?.View.ShowMessage(next.Header, ProjectionTargets.Playback, next.MaxCode);
+            ViewFor(direction)?.ShowMessage(next.Header, ProjectionTargets.Playback, next.MaxCode);
             _shown.Remove(direction);
             _pending.Remove(direction);
         }
 
         foreach (ProjectionRequest refused in plan.ShowRefusal)
         {
-            WindowFor(refused.Direction)?.View.ShowMessage(
+            ViewFor(refused.Direction)?.ShowMessage(
                 refused.Header, refused.RefusalReason ?? "射影を取れません。", refused.MaxCode);
             _shown[refused.Direction] = refused;
             _pending.Remove(refused.Direction);
@@ -286,7 +292,7 @@ internal sealed class ProjectionWindowController
         {
             if (!_pending.ContainsKey(state.Direction) && !plan.Compute.Any(r => r.Direction == state.Direction))
             {
-                WindowFor(state.Direction)?.View.CancelBusy();
+                ViewFor(state.Direction)?.CancelBusy();
             }
         }
 
@@ -308,7 +314,7 @@ internal sealed class ProjectionWindowController
     {
         foreach (ProjectionRequest request in job.Requests)
         {
-            WindowFor(request.Direction)?.View.ShowBusy(request.Header);
+            ViewFor(request.Direction)?.ShowBusy(request.Header);
         }
 
         // 水平・垂直を同じ対象で求めるときは1回の走査で両方を求める(10億画素を2度読まない)
@@ -323,7 +329,7 @@ internal sealed class ProjectionWindowController
             double fraction = (report.Pass + report.Fraction) / passes.Count;
             foreach (ProjectionRequest request in job.Requests)
             {
-                WindowFor(request.Direction)?.View.ReportProgress(fraction);
+                ViewFor(request.Direction)?.ReportProgress(fraction);
             }
         });
         CancellationToken token = job.Cts.Token;
@@ -363,7 +369,7 @@ internal sealed class ProjectionWindowController
                 _job = null;
                 foreach (ProjectionRequest request in job.Requests.Where(IsPending))
                 {
-                    WindowFor(request.Direction)?.View.ShowMessage(
+                    ViewFor(request.Direction)?.ShowMessage(
                         request.Header, $"射影を計算できませんでした: {ex.Message}", request.MaxCode);
                     _shown[request.Direction] = request;
                 }
@@ -394,7 +400,7 @@ internal sealed class ProjectionWindowController
         foreach (ProjectionRequest request in job.Requests.Where(IsPending).ToList())
         {
             _pending.Remove(request.Direction);
-            if (WindowFor(request.Direction) is not { } window)
+            if (ViewFor(request.Direction) is not { } view)
             {
                 continue;
             }
@@ -409,7 +415,7 @@ internal sealed class ProjectionWindowController
                 continue;
             }
 
-            window.View.ShowResult(
+            view.ShowResult(
                 request.Header, profile, ProjectionTargets.AxisOf(request.Target, request.Direction), request.MaxCode);
             _shown[request.Direction] = request;
         }

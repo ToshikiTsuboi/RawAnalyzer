@@ -37,6 +37,7 @@ public partial class LineProfileView : GraphView
     }
 
     internal override ProfilePlotView PlotView => Plot;
+    internal override FrameworkElement Header => ProfileHeader;
 
     internal ProfileAxisRange AxisRange => Plot.AxisRange;
 
@@ -158,6 +159,7 @@ public partial class LineProfileView : GraphView
             ? $"範囲外 (x={_pointX}, y={_pointY})"
             : horizontal ? $"行 y={_pointY} (x={_pointX}基準)" : $"列 x={_pointX} (y={_pointY}基準)";
         InfoText.Text = $"{(horizontal ? "水平" : "垂直")}  {origin}";
+        NotifyChromeChanged();
         GraphTitle = _outsideImage is not null
             ? $"ラインプロファイル — 範囲外 (x={_pointX}, y={_pointY})"
             : horizontal

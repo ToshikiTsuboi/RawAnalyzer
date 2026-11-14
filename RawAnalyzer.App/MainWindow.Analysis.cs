@@ -46,7 +46,7 @@ public partial class MainWindow
 
     // _histogram の集計の対象とした画素数(間引く前)。表(CSV・コピー)に間引いたサンプル数であることを書く
     private long _histogramPopulation;
-    private LineProfileWindow? _profileWindow;
+    private LineProfileView? _lineProfile;
     private AnalysisSource? _profileReadoutSource;
 
     // ---- ヒストグラム・ROI解析 ----
@@ -345,12 +345,12 @@ public partial class MainWindow
     private void RefreshLineProfile()
     {
         Viewport.ClearGhostCursor();
-        if (_profileWindow is not { } window)
+        if (_lineProfile is not { } window)
         {
             return;
         }
 
-        (int x, int y) = window.View.CurrentPoint;
+        (int x, int y) = window.CurrentPoint;
         _ = ShowLineProfileAsync(x, y, fromClick: false);
     }
 
@@ -360,7 +360,7 @@ public partial class MainWindow
     /// <param name="sourceX">基準点の元画像X座標。</param>
     /// <param name="sourceY">基準点の元画像Y座標。</param>
     /// <param name="fromClick">
-    /// 画像上のクリックからか。クリックなら窓を開いて前面に出す。送り・差し替えの後の計算し直しでは、
+    /// 画像上のクリックからか。クリックならグラフを開いてドックのタブを選ぶ。送り・差し替えの後の計算し直しでは、
     /// 計算中に窓が閉じられていたら開き直さない。
     /// </param>
     private async Task ShowLineProfileAsync(int sourceX, int sourceY, bool fromClick)
@@ -400,15 +400,15 @@ public partial class MainWindow
             return;
         }
 
-        if (_profileWindow is null)
+        if (_lineProfile is null)
         {
             if (!fromClick)
             {
                 return;
             }
 
-            _profileWindow = new LineProfileWindow { Owner = this };
-            _profileWindow.View.HoverPixelChanged += point =>
+            _lineProfile = new LineProfileView();
+            _lineProfile.HoverPixelChanged += point =>
             {
                 if (!_compareMode && _profileReadoutSource?.IsCurrent(ActiveImage, Viewport.Frame) == true
                     && point is { } pixel
@@ -421,10 +421,10 @@ public partial class MainWindow
                     Viewport.ClearGhostCursor();
                 }
             };
-            _profileWindow.View.DirectionChanged += horizontal =>
+            _lineProfile.DirectionChanged += horizontal =>
             {
                 // 基準点が範囲外で断面を出していないときは、マーカーを出さない
-                if (_profileWindow?.View is { IsOutsideImage: false } window)
+                if (_lineProfile is { IsOutsideImage: false } window)
                 {
                     // マーカーはプロファイルと同じ元画像の列・行で渡す
                     // (表示のどこに並ぶかはビューポートが表示モードに合わせて写す)
@@ -432,14 +432,15 @@ public partial class MainWindow
                     Viewport.SetProfileMarker(px, py, horizontal);
                 }
             };
-            _profileWindow.Closed += (_, _) =>
+            _lineProfile.GraphClosed += (_, _) =>
             {
-                _profileWindow = null;
+                ReplaceProfileCts(null);
+                _lineProfile = null;
                 _profileReadoutSource = null;
                 Viewport.ClearProfileMarker();
                 Viewport.ClearGhostCursor();
             };
-            _profileWindow.Show();
+            AnalysisGraphDock.ShowGraph(GraphKind.LineProfile, _lineProfile);
         }
 
         int maxCode = (1 << ActiveFormat!.BitDepth) - 1;
@@ -447,21 +448,21 @@ public partial class MainWindow
         {
             _profileReadoutSource = null;
             // 寸法の違う画像へ送った・差し替えたため、基準点が範囲外になった
-            _profileWindow.View.ShowOutsideImage(sourceX, sourceY, image.Width, image.Height, maxCode);
+            _lineProfile.ShowOutsideImage(sourceX, sourceY, image.Width, image.Height, maxCode);
             Viewport.ClearProfileMarker();
         }
         else
         {
             _profileReadoutSource = analyzed;
-            _profileWindow.View.SetProfiles(data.Row, data.Column, sourceX, sourceY, maxCode);
+            _lineProfile.SetProfiles(data.Row, data.Column, sourceX, sourceY, maxCode);
 
             // 表示座標(e.X, e.Y)で渡すと、分割⇔非分割の切替後にプロファイルと別の行・列を指す
-            Viewport.SetProfileMarker(sourceX, sourceY, _profileWindow.View.IsHorizontal);
+            Viewport.SetProfileMarker(sourceX, sourceY, _lineProfile.IsHorizontal);
         }
 
         if (fromClick)
         {
-            _profileWindow.Activate();
+            AnalysisGraphDock.SelectGraph(GraphKind.LineProfile);
         }
     }
 

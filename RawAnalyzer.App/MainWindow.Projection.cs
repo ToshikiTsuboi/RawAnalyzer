@@ -36,8 +36,9 @@ public partial class MainWindow
             CurrentProjectionView,
             () => _playTimer?.IsEnabled == true,
             (image, frame) => new AnalysisSource(image, frame).IsCurrent(ActiveImage, Viewport.Frame),
-            CreateProjectionWindow,
-            window => window.Show());
+            direction => new ProjectionGraphView(direction),
+            view => AnalysisGraphDock.ShowGraph(GraphFor(view.Direction), view),
+            view => AnalysisGraphDock.CloseGraph(GraphFor(view.Direction)));
 
         // 窓の ✕ で閉じたらトグル(とメニューのチェック)も戻す
         controller.WindowClosed += direction => ProjectionToggleFor(direction).IsChecked = false;
@@ -63,21 +64,8 @@ public partial class MainWindow
     private ToggleButton ProjectionToggleFor(ProjectionDirection direction) =>
         direction == ProjectionDirection.Horizontal ? HorizontalProjectionToggle : VerticalProjectionToggle;
 
-    private ProjectionWindow CreateProjectionWindow(ProjectionDirection direction, ProjectionWindow? other)
-    {
-        // 開いてもメインウィンドウのフォーカスは移さない(続けて H / V・ROI の操作ができる。所有された窓なので前面に出る)
-        var window = new ProjectionWindow(direction) { Owner = this, ShowActivated = false };
-
-        // もう一方の窓が開いていれば、少しずらして重ならないように開く(並べて見比べられる)
-        if (other is { IsLoaded: true })
-        {
-            window.WindowStartupLocation = WindowStartupLocation.Manual;
-            window.Left = other.Left + 40;
-            window.Top = other.Top + 40;
-        }
-
-        return window;
-    }
+    private static GraphKind GraphFor(ProjectionDirection direction) => direction == ProjectionDirection.Horizontal
+        ? GraphKind.HorizontalProjection : GraphKind.VerticalProjection;
 
     /// <summary>
     /// 開いている射影の窓を、いまの表示(画像・フレーム・ROI・表示モード)で計算し直すよう求める
