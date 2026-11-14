@@ -7,12 +7,19 @@
         WindowStartupLocation="CenterOwner" ResizeMode="NoResize"
         ShowInTaskbar="False">
     <StackPanel Margin="16,14">
-        <TextBlock x:Name="MessageText" FontSize="{x:Static themes:ThemeTypography.FontSizeBody}" Margin="0,0,0,10"
-                   TextTrimming="CharacterEllipsis" />
-        <ProgressBar x:Name="Bar" Height="10" Minimum="0" Maximum="100" />
-        <TextBlock x:Name="PercentText" FontFamily="Consolas" FontSize="{x:Static themes:ThemeTypography.FontSizeCaption}"
-                   Foreground="{StaticResource TextDim}" Margin="0,4,0,10" HorizontalAlignment="Right" />
-        <Button x:Name="CancelButton" Content="キャンセル" HorizontalAlignment="Right"
-                Click="OnCancelClick" />
+        <TextBlock x:Name="MessageText" FontSize="{x:Static themes:ThemeTypography.FontSizeBody}" FontWeight="SemiBold"
+                   Margin="0,0,0,10" TextWrapping="Wrap" />
+        <Border BorderBrush="{StaticResource BorderBrushDark}" BorderThickness="1" CornerRadius="5"
+                Background="{StaticResource CanvasBrush}" Padding="10">
+            <DockPanel>
+                <TextBlock x:Name="PercentText" DockPanel.Dock="Right" Text="0%" FontFamily="Consolas"
+                           FontSize="{x:Static themes:ThemeTypography.FontSizeCaption}" Foreground="{StaticResource TextDim}"
+                           VerticalAlignment="Center" TextAlignment="Right" MinWidth="42" />
+                <ProgressBar x:Name="Bar" Minimum="0" Maximum="100" VerticalAlignment="Center"
+                             AutomationProperties.Name="処理の進捗" />
+            </DockPanel>
+        </Border>
+        <Button x:Name="CancelButton" Content="キャンセル" HorizontalAlignment="Right" Margin="0,12,0,0"
+                Style="{StaticResource PrimaryButton}" Click="OnCancelClick" />
     </StackPanel>
 </Window>

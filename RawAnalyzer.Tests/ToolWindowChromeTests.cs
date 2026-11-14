@@ -1,4 +1,5 @@
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Threading;
 using RawAnalyzer.App.Views;
 using Xunit;
@@ -22,6 +23,46 @@ public class ToolWindowChromeTests
             {
                 dialog.Close();
             }
+        }
+    });
+
+    [Fact]
+    public Task ProgressWindow_CancelButtonKeepsTheDialogOpenUntilWorkStops() => WpfTestHost.Run(() =>
+    {
+        var owner = new Window { ShowActivated = false };
+        owner.Show();
+        var canceled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        bool stayedOpen = false;
+        try
+        {
+            ProgressWindow result = ProgressWindow.Run(owner, "ビニングを適用中…", async (report, token) =>
+            {
+                using var registration = token.Register(() => canceled.TrySetResult());
+                report.Report(0.42);
+                await owner.Dispatcher.InvokeAsync(() =>
+                {
+                    var progress = owner.OwnedWindows.OfType<ProgressWindow>().Single();
+                    var bar = (ProgressBar)progress.FindName("Bar");
+                    Assert.Equal(42, bar.Value);
+                    WpfTestHost.CaptureDialogIfRequested(progress, "d9-progress");
+                    WpfTestHost.Invoke((Button)progress.FindName("CancelButton"));
+                }, DispatcherPriority.Background);
+                await canceled.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                await owner.Dispatcher.InvokeAsync(() =>
+                {
+                    var progress = owner.OwnedWindows.OfType<ProgressWindow>().Single();
+                    stayedOpen = progress.IsVisible && !((Button)progress.FindName("CancelButton")).IsEnabled;
+                });
+                token.ThrowIfCancellationRequested();
+            });
+            Assert.True(stayedOpen);
+            Assert.True(result.WasCanceled);
+            Assert.False(result.Succeeded);
+            Assert.Null(result.Error);
+        }
+        finally
+        {
+            owner.Close();
         }
     });
 
