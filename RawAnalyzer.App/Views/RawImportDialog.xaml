@@ -40,12 +40,14 @@
                 <TextBlock Text="由来" />
                 <TextBlock Grid.Column="1" Text="形式" />
             </Grid>
-            <ListBox x:Name="CandidateList" MaxHeight="124" Margin="0,2,0,0"
+            <!-- 1行 26 DIP × 5 + テンプレートの上下余白。6件目からスクロールする。 -->
+            <ListBox x:Name="CandidateList" MaxHeight="132" Margin="0,2,0,0"
                      AutomationProperties.LabeledBy="{Binding ElementName=CandidateHeading}"
                      IsTabStop="False" KeyboardNavigation.TabNavigation="Once"
                      ScrollViewer.VerticalScrollBarVisibility="Auto" SelectionChanged="OnCandidateSelected">
                 <ListBox.ItemContainerStyle>
                     <Style TargetType="ListBoxItem" BasedOn="{StaticResource {x:Type ListBoxItem}}">
+                        <Setter Property="Height" Value="26" />
                         <Setter Property="AutomationProperties.Name" Value="{Binding AccessibleName}" />
                         <Setter Property="ToolTip" Value="{Binding AccessibleName}" />
                     </Style>
@@ -94,8 +96,9 @@
                     <ComboBox x:Name="BayerCombo" AutomationProperties.Name="Bayerパターン" SelectionChanged="OnFieldChanged" />
                 </StackPanel>
             </Grid>
-            <Expander x:Name="DetailsExpander" Header="詳細" AutomationProperties.Name="詳細"
-                      Collapsed="OnDetailsCollapsed" Margin="0,0,0,8">
+            <Expander x:Name="DetailsExpander" Header="詳細"
+                      AutomationProperties.Name="{Binding Header, RelativeSource={RelativeSource Self}}"
+                      Expanded="OnDetailsExpanded" Collapsed="OnDetailsCollapsed" Margin="0,0,0,8">
                 <Grid Margin="0,4,0,0">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" />

@@ -273,10 +273,9 @@ public partial class RawImportDialog : Window
 
     private void UpdateDisclosure(bool applyingFormat)
     {
-        bool hasHeader = NumericInput.TryParseInteger(HeaderOffsetBox.Text, out long header) && header != 0;
-        bool hasMultipleFrames = NumericInput.TryParseInteger(FrameCountBox.Text, out int frames) && frames > 1;
+        var (header, frames) = ReadDetailsValues();
         if (RawImportDisclosure.ShouldExpandDetails(applyingFormat, HasInvalidDetails,
-            SelectedPacking, SelectedEndianness, hasHeader, hasMultipleFrames))
+            SelectedPacking, SelectedEndianness, header > 0, frames > 1))
         {
             DetailsExpander.IsExpanded = true;
         }
@@ -285,6 +284,23 @@ public partial class RawImportDialog : Window
             || InputFeedback.GetHasError(HdrRowOffsetBox);
         HdrDetails.Visibility = RawImportDisclosure.ShowHdrDetails(SelectedHdrMode, invalidHdr)
             ? Visibility.Visible : Visibility.Collapsed;
+        UpdateDetailsHeading(header, frames);
+    }
+
+    private (long Header, int Frames) ReadDetailsValues()
+    {
+        NumericInput.TryParseInteger(HeaderOffsetBox.Text, out long header);
+        NumericInput.TryParseInteger(FrameCountBox.Text, out int frames);
+        return (header, frames);
+    }
+
+    private void UpdateDetailsHeading(long header, int frames) =>
+        DetailsExpander.Header = RawImportDisclosure.DetailsHeading(DetailsExpander.IsExpanded,
+            SelectedPacking, SelectedEndianness, header, frames);
+
+    private void OnDetailsExpanded(object sender, RoutedEventArgs e)
+    {
+        DetailsExpander.Header = "詳細";
     }
 
     private void OnDetailsCollapsed(object sender, RoutedEventArgs e)
@@ -292,6 +308,13 @@ public partial class RawImportDialog : Window
         if (!_initializing && HasInvalidDetails)
         {
             DetailsExpander.IsExpanded = true;
+            return;
+        }
+
+        if (!_initializing)
+        {
+            var (header, frames) = ReadDetailsValues();
+            UpdateDetailsHeading(header, frames);
         }
     }
 

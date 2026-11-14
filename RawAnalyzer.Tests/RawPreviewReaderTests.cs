@@ -92,7 +92,8 @@ public class RawPreviewReaderTests
         Assert.InRange(preview.Width, 1, 64);
         Assert.InRange(preview.Height, 1, 64);
         Assert.Equal(preview.Height, preview.RowsRead);
-        Assert.Equal(preview.Width * preview.Height, stream.BytesRead);
+        Assert.Equal(preview.RowsRead * width, stream.BytesRead);
+        Assert.Equal(preview.RowsRead, stream.ReadCalls);
     }
 
     [Theory]
@@ -121,13 +122,38 @@ public class RawPreviewReaderTests
     }
 
     [Fact]
-    public void ReadDecimated_LargeStreamReadsOnlySampledPixelBytes()
+    public void ReadDecimated_LargeStreamReadsEachSampledRowInOneCall()
     {
         var format = new RawFormat { Width = 32768, Height = 32768, BitDepth = 12, HeaderOffset = 512 };
         using var stream = new CountingStream(format.RequiredBytes());
         RawPreview preview = RawPreviewReader.ReadDecimated(stream, format, 256, 256);
         Assert.Equal((256, 256, 256, 128L), (preview.Width, preview.Height, preview.RowsRead, preview.Step));
-        Assert.Equal(256 * 256 * 2, stream.BytesRead);
+        Assert.Equal(preview.RowsRead * format.Width * format.BytesPerPixel, stream.BytesRead);
+        Assert.Equal(preview.RowsRead, stream.ReadCalls);
+        Assert.Equal(preview.RowsRead, stream.SeekCalls);
+    }
+
+    [Fact]
+    public void ReadDecimated_FillsARowFromPartialStreamReadsBeforeDecimating()
+    {
+        var format = new RawFormat { Width = 8, Height = 4, BitDepth = 12 };
+        using var stream = new CountingStream(format.RequiredBytes()) { MaxReadSize = 3 };
+        RawPreview preview = RawPreviewReader.ReadDecimated(stream, format, 4, 2);
+        Assert.Equal((4, 2, 2, 2L), (preview.Width, preview.Height, preview.RowsRead, preview.Step));
+        Assert.Equal(32, stream.BytesRead);
+        Assert.Equal(2, stream.SeekCalls);
+    }
+
+    [Fact]
+    public void ReadDecimated_VeryWideRowUsesBoundedConsecutiveReads()
+    {
+        var format = new RawFormat { Width = 20_000_003, Height = 1, BitDepth = 8 };
+        using var stream = new CountingStream(format.RequiredBytes());
+        RawPreview preview = RawPreviewReader.ReadDecimated(stream, format, 2, 1);
+        Assert.Equal((2, 1, 1, 10_000_002L), (preview.Width, preview.Height, preview.RowsRead, preview.Step));
+        Assert.Equal(format.Width, stream.BytesRead);
+        Assert.Equal(2, stream.ReadCalls);
+        Assert.Equal(1, stream.SeekCalls);
     }
 
     [Fact]
@@ -138,16 +164,20 @@ public class RawPreviewReaderTests
         using var stream = new CountingStream(format.RequiredBytes()) { OnRead = cts.Cancel };
         Assert.Throws<OperationCanceledException>(() =>
             RawPreviewReader.ReadDecimated(stream, format, 8, 8, cts.Token));
-        Assert.Equal(2, stream.BytesRead);
+        Assert.Equal(format.Width * format.BytesPerPixel, stream.BytesRead);
+        Assert.Equal(1, stream.ReadCalls);
         Assert.Throws<OperationCanceledException>(() =>
             RawPreviewReader.ReadDecimated(stream, format, 8, 8, cts.Token));
-        Assert.Equal(2, stream.BytesRead);
+        Assert.Equal(1, stream.ReadCalls);
     }
 
     private sealed class CountingStream(long length) : Stream
     {
         internal int BytesRead { get; private set; }
+        internal int ReadCalls { get; private set; }
+        internal int SeekCalls { get; private set; }
         internal long ReadLimit { get; init; } = length;
+        internal int MaxReadSize { get; init; } = int.MaxValue;
         internal Action? OnRead { get; init; }
         public override bool CanRead => true;
         public override bool CanSeek => true;
@@ -155,12 +185,21 @@ public class RawPreviewReaderTests
         public override long Length { get; } = length;
         public override long Position { get; set; }
 
-        public override long Seek(long offset, SeekOrigin origin) => origin == SeekOrigin.Begin
-            ? Position = offset : throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin)
+        {
+            if (origin != SeekOrigin.Begin)
+            {
+                throw new NotSupportedException();
+            }
+
+            SeekCalls++;
+            return Position = offset;
+        }
 
         public override int Read(Span<byte> buffer)
         {
-            int count = (int)Math.Clamp(ReadLimit - Position, 0, buffer.Length);
+            ReadCalls++;
+            int count = (int)Math.Clamp(ReadLimit - Position, 0, Math.Min(buffer.Length, MaxReadSize));
             buffer[..count].Clear();
             Position += count;
             BytesRead += count;

@@ -165,9 +165,12 @@ public partial class RawImportDialog
         BitmapSource bitmap = BitmapSource.Create(preview.Width, preview.Height, 96, 96,
             PixelFormats.Bgra32, null, pixels, preview.Width * 4);
         bitmap.Freeze();
-        string note = preview.RowsRead < preview.Height
-            ? $"ファイルが短いため、読み取れた {preview.RowsRead}/{preview.Height} 行を表示しています (間引き後)。"
-            : $"グレー表示 · 間引き {preview.Step} px";
+        string sampling = preview.Step == 1 ? "間引きなし" : $"間引き {preview.Step} px";
+        string note = $"グレー表示 · {sampling}";
+        if (preview.RowsRead < preview.Height)
+        {
+            note += $"\nファイルが短いため、{preview.RowsRead}/{preview.Height} 行を表示しています。";
+        }
         return (bitmap, note);
     }
 }

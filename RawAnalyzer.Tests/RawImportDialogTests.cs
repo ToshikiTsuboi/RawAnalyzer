@@ -188,6 +188,7 @@ public class RawImportDialogTests : IDisposable
             await WaitForPreviewAsync(() => preview.Source is not null);
             var correct = Assert.IsAssignableFrom<BitmapSource>(preview.Source);
             Assert.Equal((192, 128), (correct.PixelWidth, correct.PixelHeight));
+            Assert.Equal("グレー表示 · 間引きなし", Find<TextBlock>(dialog, "PreviewNote").Text);
             await CaptureVisibleAsync(dialog, "import-preview-correct-width");
 
             var width = Find<TextBox>(dialog, "WidthBox");
@@ -844,6 +845,81 @@ public class RawImportDialogTests : IDisposable
             var selected = Assert.IsType<ListBoxItem>(list.ItemContainerGenerator.ContainerFromIndex(9));
             Rect bounds = selected.TransformToAncestor(list).TransformBounds(new Rect(selected.RenderSize));
             Assert.InRange(bounds.Bottom, 1, list.ActualHeight);
+        }
+        finally
+        {
+            dialog.Close();
+        }
+    });
+
+    [Theory]
+    [InlineData(5)]
+    [InlineData(6)]
+    public Task CandidateList_ScrollbarStartsAtSixRows(int count) => WpfTestHost.Run(async () =>
+    {
+        string path = CreateFile("cap_320x960.raw", FileSize);
+        FormatMemory memory = CreateMemory();
+        memory.RememberLoaded(path, FileSize, Fmt(640, 480, bayer: BayerPattern.Rggb) with
+        {
+            Packing = BitPacking.Msb, Endianness = Endianness.Big,
+        }, autoOpen: true);
+        if (count == 6)
+        {
+            memory.RememberLoaded(path, FileSize, Fmt(100, 3072), autoOpen: false);
+        }
+
+        RawImportDialog dialog = CreateDialog(path, memory, displayed: Fmt(480, 640, 16));
+        try
+        {
+            dialog.Show();
+            await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+            var list = Find<ListBox>(dialog, "CandidateList");
+            Assert.Equal(count, list.Items.Count);
+            var scroll = Assert.IsType<ScrollViewer>(list.Template.FindName("PART_ScrollViewer", list)
+                ?? VisualTreeHelper.GetChild(VisualTreeHelper.GetChild(list, 0), 0));
+            Assert.Equal(count == 5 ? Visibility.Collapsed : Visibility.Visible, scroll.ComputedVerticalScrollBarVisibility);
+
+            var fifth = Assert.IsType<ListBoxItem>(list.ItemContainerGenerator.ContainerFromIndex(4));
+            Rect bounds = fifth.TransformToAncestor(scroll).TransformBounds(new Rect(fifth.RenderSize));
+            Assert.InRange(bounds.Bottom, 1, scroll.ActualHeight);
+            if (count == 5)
+            {
+                await WaitForPreviewAsync(() => Find<Image>(dialog, "PreviewImage").Source is not null);
+                await CaptureVisibleAsync(dialog, "candidate-list-five-rows");
+            }
+        }
+        finally
+        {
+            dialog.Close();
+        }
+    });
+
+    [Fact]
+    public Task Disclosure_CollapsedHeadingShowsAndAnnouncesNonDefaultValues() => WpfTestHost.Run(async () =>
+    {
+        string path = CreatePreviewFile();
+        RawImportDialog dialog = CreateDialog(path, null, initial: Fmt(192, 128) with
+        {
+            Packing = BitPacking.Msb, Endianness = Endianness.Big,
+        });
+        try
+        {
+            dialog.Show();
+            await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+            var details = Find<Expander>(dialog, "DetailsExpander");
+            var header = Assert.IsType<ToggleButton>(details.Template.FindName("HeaderSite", details));
+            var peer = new System.Windows.Automation.Peers.ToggleButtonAutomationPeer(header);
+            Assert.True(details.IsExpanded);
+            Assert.Equal("詳細", peer.GetName());
+            WpfTestHost.Toggle(header);
+            Assert.False(details.IsExpanded);
+            Assert.Equal("詳細 · 上詰め · Big", details.Header);
+            Assert.Equal(details.Header, peer.GetName());
+            await WaitForPreviewAsync(() => Find<Image>(dialog, "PreviewImage").Source is not null);
+            await CaptureVisibleAsync(dialog, "details-collapsed-summary");
+            WpfTestHost.Toggle(header);
+            Assert.True(details.IsExpanded);
+            Assert.Equal("詳細", peer.GetName());
         }
         finally
         {

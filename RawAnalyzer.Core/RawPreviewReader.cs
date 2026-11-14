@@ -8,9 +8,12 @@ namespace RawAnalyzer.Core;
 /// <param name="Step">元画像の行・列で使った間引き間隔。</param>
 public sealed record RawPreview(int Width, int Height, ushort[] Pixels, int RowsRead, long Step);
 
-/// <summary>RAW の先頭フレームを、必要な画素だけシークして読み取る。</summary>
+/// <summary>RAW の先頭フレームから必要な行へシークし、行をまとめて読んでメモリ上で間引く。</summary>
 public static class RawPreviewReader
 {
+    // 極端に幅の広い画像でも、元画像の1行に比例する巨大なバッファを確保しない。
+    private const int MaxRowBufferBytes = 16 * 1024 * 1024;
+
     /// <summary>ファイルの先頭フレームから間引きプレビューを読み取る。</summary>
     /// <param name="path">RAW ファイルのパス。</param>
     /// <param name="format">ヘッダオフセットと画素の解釈を含む形式。</param>
@@ -33,13 +36,14 @@ public static class RawPreviewReader
     /// <param name="format">ヘッダオフセットと画素の解釈を含む形式。</param>
     /// <param name="maxWidth">間引き後の最大幅。正の値。</param>
     /// <param name="maxHeight">間引き後の最大高さ。正の値。</param>
-    /// <param name="cancellationToken">読み取りの取り消し。各行と間引き画素の間で確認する。</param>
+    /// <param name="cancellationToken">読み取りの取り消し。各行の間で確認する。</param>
     /// <returns>予定寸法と、完全に読み取れた行だけの画素。</returns>
     /// <remarks>
     /// 先頭フレームの左上 (0, 0) を起点に、行・列を同じ間隔で抽出する。
     /// 間隔は幅と高さがそれぞれの上限に収まる最小の正整数。Bayer で間引く場合は次の偶数へ切り上げ、
     /// 左上と同じ色の画素を採る。間引きが不要なら Bayer モザイクを維持する。
     /// 末尾に元画像の1行分が揃っていない場合、その行は返さない。HDR の行を並べ替えない。
+    /// 選んだ行を一括で読み取る。ストリームが短い読み取りを返す場合や、1行が16 MiBを超える場合は連続して補う。
     /// </remarks>
     public static RawPreview ReadDecimated(Stream stream, RawFormat format, int maxWidth, int maxHeight,
         CancellationToken cancellationToken = default)
@@ -74,18 +78,20 @@ public static class RawPreviewReader
             return new RawPreview(width, height, pixels, 0, step);
         }
 
-        var row = new byte[checked(width * bytesPerPixel)];
+        var row = new byte[(int)Math.Min(rowBytes, MaxRowBufferBytes)];
+        byte[] samples = step == 1 && row.Length == rowBytes
+            ? row : new byte[checked(width * bytesPerPixel)];
         int rowsRead = 0;
         for (; rowsRead < availableRows; rowsRead++)
         {
             cancellationToken.ThrowIfCancellationRequested();
             long offset = format.HeaderOffset + rowsRead * step * rowBytes;
-            if (!ReadRow(stream, row, offset, step, bytesPerPixel, cancellationToken))
+            if (!ReadRow(stream, row, samples, offset, rowBytes, step * bytesPerPixel, bytesPerPixel, cancellationToken))
             {
                 break;
             }
 
-            PixelNormalizer.Normalize(row, pixels.AsSpan(rowsRead * width, width),
+            PixelNormalizer.Normalize(samples, pixels.AsSpan(rowsRead * width, width),
                 format.BitDepth, format.Packing, format.Endianness);
         }
 
@@ -100,40 +106,34 @@ public static class RawPreviewReader
 
     private static long CeilingDivide(long value, long divisor) => (value + divisor - 1) / divisor;
 
-    private static bool ReadRow(Stream stream, Span<byte> row, long offset, long step, int bytesPerPixel,
+    private static bool ReadRow(Stream stream, byte[] row, byte[] samples, long offset, long rowBytes,
+        long sampleStride, int bytesPerPixel,
         CancellationToken cancellationToken)
     {
-        if (step == 1)
+        stream.Seek(offset, SeekOrigin.Begin);
+        if (ReferenceEquals(row, samples))
         {
-            stream.Seek(offset, SeekOrigin.Begin);
-            return ReadFully(stream, row, cancellationToken);
+            return stream.ReadAtLeast(row, row.Length, throwOnEndOfStream: false) == row.Length;
         }
 
-        for (int i = 0; i < row.Length; i += bytesPerPixel)
+        long nextSample = 0;
+        int destination = 0;
+        for (long start = 0; start < rowBytes; start += row.Length)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            stream.Seek(offset + i * step, SeekOrigin.Begin);
-            if (!ReadFully(stream, row.Slice(i, bytesPerPixel), cancellationToken))
+            int count = (int)Math.Min(rowBytes - start, row.Length);
+            Span<byte> block = row.AsSpan(0, count);
+            if (stream.ReadAtLeast(block, count, throwOnEndOfStream: false) != count)
             {
                 return false;
             }
-        }
-
-        return true;
-    }
-
-    private static bool ReadFully(Stream stream, Span<byte> destination, CancellationToken cancellationToken)
-    {
-        while (!destination.IsEmpty)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            int read = stream.Read(destination);
-            if (read == 0)
+            while (nextSample < start + count)
             {
-                return false;
+                block.Slice((int)(nextSample - start), bytesPerPixel)
+                    .CopyTo(samples.AsSpan(destination, bytesPerPixel));
+                destination += bytesPerPixel;
+                nextSample += sampleStride;
             }
-
-            destination = destination[read..];
         }
 
         return true;
