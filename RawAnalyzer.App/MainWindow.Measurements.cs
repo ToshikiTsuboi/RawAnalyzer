@@ -165,6 +165,7 @@ public partial class MainWindow
     // ---- ノイズ / ダイナミックレンジ測定 ----
 
     private NoiseMeasureDialog? _noiseWindow;
+    private readonly System.Collections.ObjectModel.ObservableCollection<NoiseHistoryEntry> _noiseHistory = [];
 
     private void OnNoiseMeasureClick(object sender, RoutedEventArgs e)
     {
@@ -185,6 +186,7 @@ public partial class MainWindow
                 TargetRawFileSize())
             {
                 Owner = this,
+                History = _noiseHistory,
             };
             _noiseWindow.MeasureRequested += OnNoiseMeasureRequested;
             _noiseWindow.Closed += (_, _) => _noiseWindow = null;
