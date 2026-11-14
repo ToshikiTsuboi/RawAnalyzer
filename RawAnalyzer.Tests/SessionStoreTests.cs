@@ -49,6 +49,48 @@ public class SessionStoreTests : IDisposable
     }
 
     [Fact]
+    public void RecentCommandsPersistAtMostEightDistinctIds()
+    {
+        SessionStore store = Start();
+        Assert.Null(store.Current.RecentCommands);
+        string[] commands = Enumerable.Range(0, 10).Select(i => $"c{i}").ToArray();
+        store.Update(session => session.RecentCommands = PaletteHistory.Combine(
+            ["c5", "palette", "c5", "c2"], commands));
+        Assert.Equal(new[] { "c5", "c2", "c0", "c1", "c3", "c4", "c6", "c7" }, Start().Current.RecentCommands);
+    }
+
+    [Fact]
+    public void AdjustmentSections_UseDefaultsForOldSessionsAndRoundTripChanges()
+    {
+        Directory.CreateDirectory(_directory);
+        File.WriteAllText(Path.Combine(_directory, "session.json"), """{"WindowWidth":1024}""");
+        SessionStore store = Start();
+        SessionState defaults = store.Current;
+        Assert.True(defaults.DisplayExpanded);
+        Assert.True(defaults.HistogramExpanded);
+        Assert.True(defaults.WhiteBalanceExpanded);
+        Assert.False(defaults.ColorMatrixExpanded);
+        Assert.False(defaults.FormatExpanded);
+
+        store.Update(session =>
+        {
+            session.DisplayExpanded = false;
+            session.HistogramExpanded = false;
+            session.WhiteBalanceExpanded = false;
+            session.ColorMatrixExpanded = true;
+            session.FormatExpanded = true;
+        });
+
+        SessionState saved = Start().Current;
+        Assert.False(saved.DisplayExpanded);
+        Assert.False(saved.HistogramExpanded);
+        Assert.False(saved.WhiteBalanceExpanded);
+        Assert.True(saved.ColorMatrixExpanded);
+        Assert.True(saved.FormatExpanded);
+        Assert.Equal(1024, saved.WindowWidth);
+    }
+
+    [Fact]
     public void TwoInstances_FileFormatsRememberedInEach_AreKept()
     {
         // B が起動した後に A で記憶したフォーマットは、B の記憶の保存で消えない

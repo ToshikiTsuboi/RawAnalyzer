@@ -15,6 +15,7 @@ public partial class MainWindow
     private IReadOnlyList<AppCommand>? _commands;
     private CommandPaletteWindow? _paletteWindow;
     private ShortcutHelpWindow? _shortcutWindow;
+    private string[] _usedCommands = [];
 
     /// <summary>全コマンド(遅延構築)。</summary>
     private IReadOnlyList<AppCommand> Commands => _commands ??= BuildCommands();
@@ -35,7 +36,7 @@ public partial class MainWindow
 
         Key key = e.Key == Key.System ? e.SystemKey : e.Key;
         AppCommand? command = ShortcutRouting.Resolve(
-            Commands, key, Keyboard.Modifiers, ShortcutRouting.Classify(Keyboard.FocusedElement));
+            Commands, key, e.KeyboardDevice.Modifiers, ShortcutRouting.Classify(Keyboard.FocusedElement));
         if (command is null)
         {
             return;
@@ -66,7 +67,8 @@ public partial class MainWindow
 
     /// <summary>コマンドを実行する(例外はログへ送り、UIは落とさない)。</summary>
     /// <param name="command">実行するコマンド。</param>
-    private void RunCommand(AppCommand command)
+    /// <param name="fromPalette">パレットで選んだ操作を履歴へ記録するか。</param>
+    private void RunCommand(AppCommand command, bool fromPalette = false)
     {
         // ショートカットはフォーカスを動かさないので、数値欄に打ちかけの値があれば先に確定し、
         // 欄に見えている値で処理させる(メニュー・パレットへはフォーカスが移った時点で確定済み)
@@ -74,11 +76,13 @@ public partial class MainWindow
         try
         {
             command.Execute();
+            if (fromPalette)
+                _usedCommands = PaletteHistory.Combine([command.Id], _usedCommands);
         }
         catch (Exception ex)
         {
             AppLog.Error($"コマンド実行に失敗: {command.Id}", ex);
-            MessageBox.Show(this, $"コマンドの実行に失敗しました: {ex.Message}", "RawAnalyzer",
+            AppMessage.Show(this, $"コマンドの実行に失敗しました: {ex.Message}", "RawAnalyzer",
                 MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }
@@ -95,14 +99,16 @@ public partial class MainWindow
             return;
         }
 
-        _paletteWindow = new CommandPaletteWindow(Commands) { Owner = this };
+        _paletteWindow = new CommandPaletteWindow(Commands, PaletteHistory.Combine(_usedCommands, _session.RecentCommands ?? []))
+            { Owner = this };
+        _paletteWindow.PositionOverOwner();
         _paletteWindow.Closed += (_, _) =>
         {
             AppCommand? chosen = _paletteWindow?.SelectedCommand;
             _paletteWindow = null;
             if (chosen is not null)
             {
-                RunCommand(chosen);
+                RunCommand(chosen, fromPalette: true);
             }
         };
         _paletteWindow.Show();
@@ -150,14 +156,11 @@ public partial class MainWindow
     /// <summary>メインの画像・通常表示を対象にするコマンドの理由。比較モードなら画像の有無より先に示す。</summary>
     private string MainViewReason() => CommandDisabledReasons.ForMainView(_compareMode);
 
-    /// <summary>
-    /// 右の調整パネルの切替(ヒストグラムの表示の切替)の前提。比較モード中はパネルごと無効にするので、キー・パレットも断る。
-    /// 比較モードでなければ、画像がなくても従来どおり切り替えられる。
-    /// </summary>
+    /// <summary>現在の表示調整の対象があるか。</summary>
     private bool AdjustPanelAvailable() => _vm.CanUseAdjustPanel;
 
-    /// <summary>右の調整パネルの切替を実行できない理由(比較モード中)。</summary>
-    private string AdjustPanelReason() => CommandDisabledReasons.CompareMode;
+    /// <summary>自動コントラスト・表示調整のリセットを実行できない理由。</summary>
+    private string AdjustPanelReason() => _compareMode ? CommandDisabledReasons.NoActiveComparePane : MainViewReason();
 
     /// <summary>フレーム送り・再生(送れるフレームがあり、比較モードでないこと)の理由。</summary>
     private string NoSequenceReason() => CommandDisabledReasons.ForSequence(_vm.HasImage, _compareMode);
@@ -440,8 +443,8 @@ public partial class MainWindow
                 Title = "自動コントラスト (0.35%クリップ)",
                 Key = Key.A,
                 Modifiers = ModifierKeys.Control,
-                CanExecute = MainViewAvailable,
-                DisabledReason = MainViewReason,
+                CanExecute = AdjustPanelAvailable,
+                DisabledReason = AdjustPanelReason,
                 Execute = () => OnAutoContrastClick(this, empty),
             },
             new()
@@ -451,8 +454,8 @@ public partial class MainWindow
                 Title = "表示調整をリセット",
                 Key = Key.R,
                 Modifiers = ModifierKeys.Control | ModifierKeys.Shift,
-                CanExecute = MainViewAvailable,
-                DisabledReason = MainViewReason,
+                CanExecute = AdjustPanelAvailable,
+                DisabledReason = AdjustPanelReason,
                 Execute = () => OnResetDisplayClick(this, empty),
             },
             new()
@@ -656,8 +659,8 @@ public partial class MainWindow
                 Id = "hist-log",
                 Category = "解析",
                 Title = "ヒストグラムのlog表示切替",
-                CanExecute = AdjustPanelAvailable,
-                DisabledReason = AdjustPanelReason,
+                CanExecute = MainViewAvailable,
+                DisabledReason = MainViewReason,
                 Execute = () => _vm.HistogramIsLog = !_vm.HistogramIsLog,
             },
             new()
@@ -665,8 +668,8 @@ public partial class MainWindow
                 Id = "hist-cumulative",
                 Category = "解析",
                 Title = "累積ヒストグラム切替",
-                CanExecute = AdjustPanelAvailable,
-                DisabledReason = AdjustPanelReason,
+                CanExecute = MainViewAvailable,
+                DisabledReason = MainViewReason,
                 Execute = () => _vm.HistogramIsCumulative = !_vm.HistogramIsCumulative,
             },
             new()
@@ -674,8 +677,8 @@ public partial class MainWindow
                 Id = "hist-channel",
                 Category = "解析",
                 Title = "チャネル別ヒストグラム切替",
-                CanExecute = AdjustPanelAvailable,
-                DisabledReason = AdjustPanelReason,
+                CanExecute = MainViewAvailable,
+                DisabledReason = MainViewReason,
                 Execute = () => _vm.HistogramByChannel = !_vm.HistogramByChannel,
             },
             new()
@@ -803,7 +806,7 @@ public partial class MainWindow
         // 必ず別チャネルの画素にまたがり解析できない。作ってから断るより先に知らせる
         if (Viewport.IsChannelSplitLayout)
         {
-            MessageBox.Show(this,
+            AppMessage.Show(this,
                 "チャネル分割表示では中央にROIを設定できません(4つの象限の境目になるため)。\n" +
                 "ROI選択モードで、1つの象限の中をドラッグして選択してください。",
                 "ROI", MessageBoxButton.OK, MessageBoxImage.Information);

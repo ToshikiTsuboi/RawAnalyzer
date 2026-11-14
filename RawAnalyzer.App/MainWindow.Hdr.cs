@@ -44,7 +44,7 @@ public partial class MainWindow
         {
             // 表示モードの選択は分割・合成のまま、表示は計算前のまま残っている。そろえて Raw 表示へ戻す
             string operation = expectedModeIndex == 4 ? "HDR分割" : "HDR合成";
-            MessageBox.Show(this, HdrViewReplacement.Explain(refusal, operation),
+            AppMessage.Show(this, HdrViewReplacement.Explain(refusal, operation),
                 operation, MessageBoxButton.OK, MessageBoxImage.Information);
             DisplayModeCombo.SelectedIndex = 0;
         }
@@ -179,7 +179,7 @@ public partial class MainWindow
         }
         catch (InvalidOperationException ex)
         {
-            MessageBox.Show(this, ex.Message, "HDR分割", MessageBoxButton.OK, MessageBoxImage.Warning);
+            AppMessage.Show(this, ex.Message, "HDR分割", MessageBoxButton.OK, MessageBoxImage.Warning);
             DisplayModeCombo.SelectedIndex = 0;
             return;
         }
@@ -237,13 +237,11 @@ public partial class MainWindow
 
         HdrTargetCombo.Items.Clear();
         HdrTargetCombo.Items.Add("全体");
-        HdrTargetCombo.Items.Add("長秒");
-        if (stages == 3)
+        for (int i = 0; i < stages; i++)
         {
-            HdrTargetCombo.Items.Add("中秒");
+            HdrTargetCombo.Items.Add(HdrFormatText.StageName(i, stages));
         }
 
-        HdrTargetCombo.Items.Add("短秒");
         HdrTargetCombo.SelectedIndex = 0;
         _vm.HdrTargetVisible = true;
         ApplySplitLuts();
@@ -318,7 +316,7 @@ public partial class MainWindow
         }
         catch (InvalidOperationException ex)
         {
-            MessageBox.Show(this, ex.Message, "HDR合成", MessageBoxButton.OK, MessageBoxImage.Warning);
+            AppMessage.Show(this, ex.Message, "HDR合成", MessageBoxButton.OK, MessageBoxImage.Warning);
             DisplayModeCombo.SelectedIndex = 0;
             return;
         }
@@ -427,6 +425,7 @@ public partial class MainWindow
         // 前の画像(元画像・前の派生ビュー)のヒストグラムを捨てる。下の RefreshHistogram が終わるまでに自動コントラストを
         // 押すと、別のビット深度・別の画像の分布で黒/白を決めてしまう(画像を開く・処理結果へ差し替える経路と同じ)
         _histogram = null;
+        RedrawHistogram();
         _channelHistograms = null;
 
         // 派生ビューは計算を始めたときの Bayer で作った画像。表示中は右パネルの Bayer を選べなくする
@@ -572,6 +571,7 @@ public partial class MainWindow
 
         // 派生ビューのヒストグラムを捨ててから元画像で作り直す(できるまでの自動コントラストは何もしない)
         _histogram = null;
+        RedrawHistogram();
         _channelHistograms = null;
         RefreshHistogram(roi: null);
 

@@ -112,6 +112,7 @@ public static class CompareSync
         // 画素中心 (x+0.5) の相対位置を保って写像する
         double relX = (x + 0.5) / source.Width;
         double relY = (y + 0.5) / source.Height;
-        return (relX * target.Width - 0.5, relY * target.Height - 0.5);
+        return (source.Width == target.Width ? x : relX * target.Width - 0.5,
+            source.Height == target.Height ? y : relY * target.Height - 0.5);
     }
 }

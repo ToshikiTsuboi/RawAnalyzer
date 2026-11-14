@@ -1,7 +1,10 @@
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Automation.Peers;
+using System.Windows.Automation.Provider;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using RawAnalyzer.App.Services;
 using RawAnalyzer.App.Views;
 using RawAnalyzer.Core;
 using Xunit;
@@ -11,6 +14,79 @@ namespace RawAnalyzer.Tests;
 [Collection("WPF UI")]
 public class ImageProcessingDialogTests
 {
+    [Theory]
+    [InlineData(BayerPattern.None, false)]
+    [InlineData(BayerPattern.Rggb, false)]
+    [InlineData(BayerPattern.None, true)]
+    [InlineData(BayerPattern.Rggb, true)]
+    public void PreviewRegionMatchesTheFullProcessingResult(BayerPattern bayer, bool binning)
+    {
+        using RawImage source = MakeSource(43, 39);
+        var choice = new ImageProcessingChoice(3, BinningMode.Average,
+            binning ? null : new(ImageFilterKind.Gaussian, 3, 1.7), "test");
+        var plan = ProcessingPreview.SelectRegion(source.Width, source.Height, bayer, choice, limit: 18);
+        using RawImage crop = ProcessingPreview.ReadRaw(source, 0, plan.Input, default);
+        using RawImage regionResult = ProcessingPreview.Apply(crop, choice, 0, bayer, null, default);
+        using RawImage fullResult = ProcessingPreview.Apply(source, choice, 0, bayer, null, default);
+        Assert.InRange(plan.Before.Width, 1, 18);
+        Assert.True(plan.Input.Width < source.Width);
+        for (int y = 0; y < plan.After.Height; y++)
+        {
+            for (int x = 0; x < plan.After.Width; x++)
+                Assert.Equal(fullResult.GetPixel(plan.OutputX + x, plan.OutputY + y),
+                    regionResult.GetPixel(plan.After.X + x, plan.After.Y + y));
+        }
+    }
+
+    [Fact]
+    public Task LivePreviewReadsOffTheUiThreadAndUpdatesWhenSettingsChange() => WpfTestHost.Run(async () =>
+    {
+        using RawImage source = MakeSource(320, 240);
+        int uiThread = Environment.CurrentManagedThreadId;
+        int worker = uiThread;
+        var dialog = new ImageProcessingDialog("sample_320x240.raw", source.Width, source.Height, BayerPattern.None, false, false)
+        {
+            PreviewDisplay = new DisplayParameters(0, 65535, 1, 1, 1),
+            ReadPreviewRegion = (area, token) =>
+            {
+                worker = Environment.CurrentManagedThreadId;
+                return ProcessingPreview.ReadRaw(source, 0, area, token);
+            },
+        };
+        try
+        {
+            dialog.Show();
+            var image = (Image)dialog.FindName("LiveImage");
+            await WaitFor(() => image.Source is not null);
+            Assert.NotEqual(uiThread, worker);
+            var gaussian = image.Source;
+            ((ComboBox)dialog.FindName("OperationCombo")).SelectedIndex = 5;
+            await WaitFor(() => !ReferenceEquals(gaussian, image.Source));
+            var after = image.Source;
+            WpfTestHost.CaptureDialogIfRequested(dialog, "d4-processing-after");
+            var before = (RadioButton)dialog.FindName("BeforePreview");
+            ((ISelectionItemProvider)new RadioButtonAutomationPeer(before)).Select();
+            Assert.NotSame(after, image.Source);
+            WpfTestHost.CaptureDialogIfRequested(dialog, "d4-processing-before");
+        }
+        finally
+        {
+            dialog.Close();
+        }
+    });
+
+    private static RawImage MakeSource(int width, int height) => RawImage.FromPixels(
+        new RawFormat { Width = width, Height = height },
+        Enumerable.Range(0, width * height).Select(i => (ushort)((i / width * 211 + i % width * 331
+            + ((i / width / 20 + i % width / 20) % 2) * 12000) % 65536)).ToArray());
+
+    private static async Task WaitFor(Func<bool> condition)
+    {
+        for (int i = 0; i < 200 && !condition(); i++)
+            await Task.Delay(20);
+        Assert.True(condition());
+    }
+
     [Fact]
     public Task Dialog_LoadsThemeUpdatesDimensionsAndValidatesOnlyVisibleSettings()
     {

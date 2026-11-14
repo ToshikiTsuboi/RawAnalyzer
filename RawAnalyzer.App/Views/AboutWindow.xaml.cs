@@ -68,7 +68,7 @@ public partial class AboutWindow : Window
         catch (Exception ex)
         {
             AppLog.Error("リポジトリURLを開けませんでした", ex);
-            MessageBox.Show(this, $"リンクを開けませんでした: {ex.Message}", "ソフト情報",
+            AppMessage.Show(this, $"リンクを開けませんでした: {ex.Message}", "ソフト情報",
                 MessageBoxButton.OK, MessageBoxImage.Warning);
         }
 

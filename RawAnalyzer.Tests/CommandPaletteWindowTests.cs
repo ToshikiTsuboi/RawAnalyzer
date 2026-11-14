@@ -4,6 +4,8 @@ using System.Windows.Controls.Primitives;
 using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Threading;
+using RawAnalyzer.App;
 using RawAnalyzer.App.Services;
 using RawAnalyzer.App.Views;
 using Xunit;
@@ -19,6 +21,82 @@ namespace RawAnalyzer.Tests;
 [Collection("WPF UI")]
 public class CommandPaletteWindowTests
 {
+    [Fact]
+    public Task ShortcutCommandsDoNotEnterPaletteHistory() => WpfTestHost.Run(async () =>
+    {
+        string settings = Path.Combine(Path.GetTempPath(), "RawAnalyzerTests", Guid.NewGuid().ToString("N"));
+        var main = new MainWindow(settings) { ShowActivated = false, Width = 1280 };
+        try
+        {
+            main.Show();
+            SendKey(main, Key.F11);
+            Assert.Equal(WindowStyle.None, main.WindowStyle);
+            SendKey(main, Key.F11);
+            Assert.Equal(WindowStyle.SingleBorderWindow, main.WindowStyle);
+
+            CommandPaletteWindow palette = await OpenPalette();
+            var list = (ListBox)palette.FindName("CommandList");
+            Assert.NotEqual("fullscreen", ((CommandPaletteWindow.PaletteRow)list.Items[0]).Command.Id);
+            ((TextBox)palette.FindName("FilterBox")).Text = "フルスクリーン切替";
+            PressEnter(palette);
+            Assert.Equal(WindowStyle.None, main.WindowStyle);
+            SendKey(main, Key.F11);
+
+            palette = await OpenPalette();
+            list = (ListBox)palette.FindName("CommandList");
+            Assert.Equal("fullscreen", ((CommandPaletteWindow.PaletteRow)list.Items[0]).Command.Id);
+        }
+        finally
+        {
+            main.Close();
+            if (Directory.Exists(settings))
+                Directory.Delete(settings, recursive: true);
+        }
+
+        async Task<CommandPaletteWindow> OpenPalette()
+        {
+            WpfTestHost.Invoke((Button)main.FindName("CommandSearchToolButton"));
+            await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+            return main.OwnedWindows.OfType<CommandPaletteWindow>().Single();
+        }
+    });
+
+    [Fact]
+    public Task EmptySearchShowsRecentCommandsAndExcludesThePaletteItself() => WpfTestHost.Run(() =>
+    {
+        AppCommand open = Command("open", "画像を開く…", null);
+        AppCommand help = Command("help", "ショートカット一覧", null);
+        AppCommand folder = Command("folder", "フォルダを開く…", null);
+        AppCommand palette = Command("palette", "コマンドパレット", null);
+        var window = new CommandPaletteWindow([open, help, folder, palette], ["folder", "help", "palette"])
+            { ShowActivated = false };
+        try
+        {
+            window.Show();
+            var list = (ListBox)window.FindName("CommandList");
+            var filter = (TextBox)window.FindName("FilterBox");
+            IEnumerable<string> Order() => list.Items.Cast<CommandPaletteWindow.PaletteRow>().Select(row => row.Command.Id);
+            Assert.Equal(new[] { "folder", "help", "open" }, Order());
+            Assert.Equal(WindowStyle.None, window.WindowStyle);
+            WpfTestHost.CaptureDialogIfRequested(window, "d7-command-palette");
+            filter.Text = "開く";
+            Assert.Equal(new[] { "open", "folder" }, Order());
+            filter.Text = "コマンドパレット";
+            Assert.Empty(list.Items);
+        }
+        finally
+        {
+            window.Close();
+        }
+    });
+
+    [Theory]
+    [InlineData(true, false, true)]
+    [InlineData(true, true, false)]
+    [InlineData(false, false, false)]
+    public void DeactivationClosesOnlyALoadedWindowThatIsNotClosing(bool loaded, bool closing, bool expected)
+        => Assert.Equal(expected, CommandPaletteWindow.ShouldCloseOnDeactivated(loaded, closing));
+
     [Fact]
     public Task DisabledCommand_LooksDisabled_AndEnterExplainsInsteadOfDoingNothing() => WpfTestHost.Run(() =>
     {
@@ -275,9 +353,11 @@ public class CommandPaletteWindowTests
     }
 
     /// <summary>パレットで Enter を押す(パレットはウィンドウの PreviewKeyDown でキーを捌く)。</summary>
-    private static void PressEnter(Window window)
+    private static void PressEnter(Window window) => SendKey(window, Key.Enter);
+
+    private static void SendKey(Window window, Key key)
     {
-        var args = new KeyEventArgs(Keyboard.PrimaryDevice, new TestInputSource(), Environment.TickCount, Key.Enter)
+        var args = new KeyEventArgs(Keyboard.PrimaryDevice, new TestInputSource(), Environment.TickCount, key)
         {
             RoutedEvent = Keyboard.PreviewKeyDownEvent,
         };

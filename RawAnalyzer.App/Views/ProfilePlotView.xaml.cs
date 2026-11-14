@@ -8,13 +8,15 @@ using System.Windows.Threading;
 using Microsoft.Win32;
 using RawAnalyzer.App.Services;
 using RawAnalyzer.Core;
+using RawAnalyzer.App.Themes;
 
 namespace RawAnalyzer.App.Views;
 
 /// <summary>グラフに重ねて描く線(射影の各位置の最大・最小など)。統計・表には使わない。</summary>
 /// <param name="Values">値(主の線と同じ長さ・同じ座標)。</param>
 /// <param name="Stroke">線の色。</param>
-internal sealed record ProfileSeries(double[] Values, Color Stroke);
+/// <param name="Label">ホバー時の系列名。</param>
+internal sealed record ProfileSeries(double[] Values, Color Stroke, string Label);
 
 /// <summary>グラフに出すデータ。</summary>
 /// <param name="Values">主の線(統計・表・自動の縦軸の元)。</param>
@@ -44,7 +46,8 @@ internal sealed record ProfilePlotData(
 /// </remarks>
 public partial class ProfilePlotView : UserControl
 {
-    private static readonly Color PrimaryStroke = Color.FromRgb(0x5B, 0x9D, 0xD9);
+    private const string StatisticsToolTip = "全プロファイルの統計です。グラフの拡大・移動では変わりません。";
+    private static readonly Color PrimaryStroke = ThemeColors.Accent;
 
     private ProfilePlotData _data = new(Array.Empty<double>(), 65535);
 
@@ -128,6 +131,7 @@ public partial class ProfilePlotView : UserControl
         int previousCount = _data.Values.Length;
         long previousOffset = _data.CoordinateOffset;
         EndPan();
+        ClearHover();
         _data = data with { MaxCode = Math.Max(1, data.MaxCode) };
         _statsMessage = null;
         _overlayMessage = null;
@@ -199,6 +203,8 @@ public partial class ProfilePlotView : UserControl
         if (_busyShown)
         {
             StatsText.Text = message;
+            if (PlotInstructions.Visibility == Visibility.Collapsed)
+                StatsText.ToolTip = message;
             OverlayText.Text = message;
         }
     }
@@ -244,9 +250,32 @@ public partial class ProfilePlotView : UserControl
     /// <summary>ドラッグを終え、縦軸の設定を閉じる(窓を閉じるとき)。</summary>
     internal void EndInteraction()
     {
-        EndPan();
+        EndPointerInteraction();
         _busyTimer?.Stop();
+    }
+
+    internal void EndPointerInteraction()
+    {
+        EndPan();
+        ClearHover();
         AxisFormatPopup.IsOpen = false;
+    }
+
+    internal void SetDocked(bool docked)
+    {
+        PlotInstructions.Visibility = docked ? Visibility.Collapsed : Visibility.Visible;
+        PlotCanvas.ToolTip = docked ? PlotInstructions.Text : null;
+        StatsText.TextWrapping = docked ? TextWrapping.NoWrap : TextWrapping.Wrap;
+        StatsText.TextTrimming = docked ? TextTrimming.CharacterEllipsis : TextTrimming.None;
+        StatsText.ToolTip = docked ? StatsText.Text : StatisticsToolTip;
+    }
+
+    internal double DockChromeHeight(double width)
+    {
+        StatsPanel.Measure(new Size(width, double.PositiveInfinity));
+        XAxisTitle.Measure(new Size(Math.Max(0, width - 92), double.PositiveInfinity));
+        // 横軸の目盛り行と描画枠の上下の境界線。
+        return StatsPanel.DesiredSize.Height + XAxisTitle.DesiredSize.Height + 25 + 2;
     }
 
     /// <summary>
@@ -317,6 +346,7 @@ public partial class ProfilePlotView : UserControl
             return;
         }
 
+        ClearHover();
         PlotCanvas.Children.Clear();
         double[] data = _data.Values;
         double width = PlotCanvas.ActualWidth;
@@ -353,6 +383,8 @@ public partial class ProfilePlotView : UserControl
             : $"N={stats.Count}   平均 {stats.Mean:F2}   最小 {stats.Min.ToString(extremeFormat)}   " +
               $"最大 {stats.Max.ToString(extremeFormat)}   中央値 {stats.Median.ToString(medianFormat)}   σ {stats.Sigma:F2}   " +
               $"P-P {(stats.Max - stats.Min).ToString(extremeFormat)}");
+        if (PlotInstructions.Visibility == Visibility.Collapsed)
+            StatsText.ToolTip = StatsText.Text;
 
         // 計算中は前のデータを薄く残し、上に知らせを出す。断る理由などもグラフの上に出す
         string? overlay = busy ?? _overlayMessage;
@@ -377,11 +409,11 @@ public partial class ProfilePlotView : UserControl
         }
 
         // 平均・±σのガイド線
-        AddGuideLine(stats.Mean, height, width, Color.FromArgb(0x70, 0x7E, 0xCB, 0x72));
+        AddGuideLine(stats.Mean, height, width, ThemeColors.MeanGuide);
         AddGuideLine(stats.Mean + stats.Sigma, height, width,
-            Color.FromArgb(0x40, 0x9A, 0x9A, 0x95));
+            ThemeColors.SpreadGuide);
         AddGuideLine(stats.Mean - stats.Sigma, height, width,
-            Color.FromArgb(0x40, 0x9A, 0x9A, 0x95));
+            ThemeColors.SpreadGuide);
 
         // 重ねる線は主の線の下に描く
         if (_extraSeriesVisible && _data.ExtraSeries is { } extras)
@@ -412,7 +444,7 @@ public partial class ProfilePlotView : UserControl
                 X2 = markerX,
                 Y1 = 0,
                 Y2 = height,
-                Stroke = new SolidColorBrush(Color.FromArgb(0x80, 0xD9, 0x9B, 0x5B)),
+                Stroke = ThemeColors.Brush(ThemeColors.PlotMarker),
                 StrokeThickness = 1,
             });
         }

@@ -1,0 +1,57 @@
+<views:GraphView x:Class="RawAnalyzer.App.Views.ProjectionGraphView"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:themes="clr-namespace:RawAnalyzer.App.Themes"
+        xmlns:views="clr-namespace:RawAnalyzer.App.Views"
+        Foreground="{StaticResource TextBrush}">
+    <DockPanel Margin="10">
+        <DockPanel x:Name="ProjectionHeader" DockPanel.Dock="Top" Margin="0,0,0,6">
+            <DockPanel x:Name="ProjectionOptions" DockPanel.Dock="Right">
+                <!-- 向きと流儀の説明(EMVA 1288 方式。逆の流儀もあるのでマウスオーバーで示す) -->
+                <Border x:Name="HelpMark" DockPanel.Dock="Right" Width="22" Height="22" CornerRadius="11"
+                        BorderBrush="{StaticResource AccentBrush}" BorderThickness="1" Background="{StaticResource Panel2Brush}" Cursor="Help"
+                        VerticalAlignment="Center" Margin="10,0,0,0"
+                        ToolTipService.ShowDuration="60000" ToolTipService.InitialShowDelay="200"
+                        AutomationProperties.Name="射影の向きと流儀の説明">
+                    <TextBlock Text="？" FontSize="{x:Static themes:ThemeTypography.FontSizeBody}" Foreground="{StaticResource AccentBrush}"
+                               HorizontalAlignment="Center" VerticalAlignment="Center" />
+                </Border>
+                <WrapPanel VerticalAlignment="Center">
+                    <!-- チャネル分割表示で ROI がないとき、選んだチャネル全体(その象限全体)の射影を取る -->
+                    <StackPanel x:Name="ChannelPanel" Orientation="Horizontal" VerticalAlignment="Center"
+                                Visibility="Collapsed" Margin="12,0,0,0">
+                        <TextBlock Text="チャネル:" VerticalAlignment="Center" Margin="0,0,4,0" FontSize="{x:Static themes:ThemeTypography.FontSizeBody}" />
+                        <ComboBox x:Name="ChannelCombo" MinWidth="76" FontSize="{x:Static themes:ThemeTypography.FontSizeBody}" VerticalAlignment="Center"
+                                  SelectedIndex="0" SelectionChanged="OnChannelComboChanged"
+                                  AutomationProperties.Name="射影を取るチャネル">
+                            <ComboBoxItem Content="未選択" />
+                            <ComboBoxItem Content="R" />
+                            <ComboBoxItem Content="Gr" />
+                            <ComboBoxItem Content="Gb" />
+                            <ComboBoxItem Content="B" />
+                        </ComboBox>
+                        <TextBlock x:Name="RoiPriorityText" Text="ROI を優先" FontSize="{x:Static themes:ThemeTypography.FontSizeCaption}" Foreground="{StaticResource WarningBrush}"
+                                   VerticalAlignment="Center" Margin="6,0,0,0" Visibility="Collapsed" />
+                    </StackPanel>
+                    <CheckBox x:Name="ExtremesCheck" Content="最大・最小" IsChecked="True"
+                              VerticalAlignment="Center" Margin="12,0,10,0"
+                              Checked="OnExtremesChanged" Unchecked="OnExtremesChanged" />
+                    <!-- 線の凡例 -->
+                    <StackPanel Orientation="Horizontal">
+                        <Rectangle Width="14" Height="2" Fill="{StaticResource AccentBrush}" VerticalAlignment="Center" />
+                        <TextBlock Text="平均" FontSize="{x:Static themes:ThemeTypography.FontSizeCaption}" Foreground="{StaticResource TextDim}" Margin="4,0,10,0" VerticalAlignment="Center" />
+                        <Rectangle x:Name="MaxLegend" Width="14" Height="2" Fill="{StaticResource PlotMaxBrush}" VerticalAlignment="Center" />
+                        <TextBlock Text="最大" FontSize="{x:Static themes:ThemeTypography.FontSizeCaption}" Foreground="{StaticResource TextDim}" Margin="4,0,10,0" VerticalAlignment="Center" />
+                        <Rectangle x:Name="MinLegend" Width="14" Height="2" Fill="{StaticResource PlotMinBrush}" VerticalAlignment="Center" />
+                        <TextBlock Text="最小" FontSize="{x:Static themes:ThemeTypography.FontSizeCaption}" Foreground="{StaticResource TextDim}" Margin="4,0,0,0" VerticalAlignment="Center" />
+                    </StackPanel>
+                </WrapPanel>
+            </DockPanel>
+            <TextBlock x:Name="TargetText" FontSize="{x:Static themes:ThemeTypography.FontSizeBody}" Foreground="{StaticResource TextDim}" VerticalAlignment="Center"
+                       TextTrimming="CharacterEllipsis" />
+        </DockPanel>
+
+        <!-- 統計・グラフ・縦軸の設定・コピー/CSV はラインプロファイル窓と共有する -->
+        <views:ProfilePlotView x:Name="Plot" />
+    </DockPanel>
+</views:GraphView>

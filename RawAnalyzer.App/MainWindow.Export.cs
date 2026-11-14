@@ -40,7 +40,8 @@ public partial class MainWindow
             (long)target.Width * target.Height,
             allowFloatRaw: targetFloat is not null,
             hasBayer: ActiveFormat?.Bayer is not (null or BayerPattern.None) && !BayerPhaseMismatchShown,
-            bitDepth: target.Format.BitDepth)
+            bitDepth: target.Format.BitDepth, frameCount: target.FrameCount,
+            isColor: _derivedImage is null && _colorImage is not null)
         {
             Owner = this,
         };
@@ -73,7 +74,7 @@ public partial class MainWindow
         // 保存することになる(替える処理の途中は上で断っているが、保存する直前にも確かめる)
         if (!ReferenceEquals(target, ActiveImage) || !ReferenceEquals(targetFloat, _hdrFloatImage))
         {
-            MessageBox.Show(this, "保存の準備中に表示中の画像が替わったため、保存を中止しました。" +
+            AppMessage.Show(this, "保存の準備中に表示中の画像が替わったため、保存を中止しました。" +
                 "表示中の画像を確かめてから、もう一度保存してください。", "RawAnalyzer",
                 MessageBoxButton.OK, MessageBoxImage.Information);
             return;
@@ -87,7 +88,7 @@ public partial class MainWindow
     {
         if (_tiffStack?.IsSourcePath(path) == true)
         {
-            MessageBox.Show(this, "これは現在の1ページだけの保存です。スタック全体を失わないよう、" +
+            AppMessage.Show(this, "これは現在の1ページだけの保存です。スタック全体を失わないよう、" +
                 "元TIFFとは別の名前で保存してください。", "TIFFスタックの保存",
                 MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
@@ -171,7 +172,7 @@ public partial class MainWindow
 
         if (result.Error is not null)
         {
-            MessageBox.Show(this, $"保存に失敗しました: {result.Error.Message}", "RawAnalyzer",
+            AppMessage.Show(this, $"保存に失敗しました: {result.Error.Message}", "RawAnalyzer",
                 MessageBoxButton.OK, MessageBoxImage.Error);
         }
         else if (!result.WasCanceled)
@@ -194,6 +195,7 @@ public partial class MainWindow
                     Endianness = choice.Endianness,
                     Bayer = savedBayer,
                 });
+                RefreshFileDetails();
             }
 
             // マルチフレームでは「どのフレームを出したか」を明示する
@@ -392,7 +394,7 @@ public partial class MainWindow
         // ファイル単位で読み直すバッチの対象にしない
         if (_derivedImage is not null || _correctionLabel is not null)
         {
-            MessageBox.Show(this,
+            AppMessage.Show(this,
                 "補正・HDR表示を適用中はバッチ書き出しできません。元のファイルを開き直してください。",
                 "バッチ書き出し", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
@@ -413,7 +415,7 @@ public partial class MainWindow
             long size = _currentFileSize;
             if (size <= 0)
             {
-                MessageBox.Show(this, "対象ファイルのサイズを取得できませんでした。",
+                AppMessage.Show(this, "対象ファイルのサイズを取得できませんでした。",
                     "バッチ書き出し", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
@@ -447,11 +449,17 @@ public partial class MainWindow
         }
 
         string folder = Path.GetDirectoryName(_currentPath)!;
+        int? firstPageCount = string.Equals(targets[0], _currentPath, StringComparison.OrdinalIgnoreCase)
+            ? _tiffStack?.PageCount ?? 1
+            : null;
         var dialog = new BatchExportDialog(
-            targets.Count, Path.Combine(folder, "export"), rawTargets,
+            targets, Path.Combine(folder, "export"), rawTargets,
             _currentFormat?.Width ?? 0, _currentFormat?.Height ?? 0,
-            _tiffStack is { PageNavigationEnabled: true } stack ? stack.PageCount : 1,
-            sourceFolder: folder)
+            firstPageCount,
+            sourceFolder: folder, rawFrameCount: format.FrameCount,
+            knownTiffBytes: rawTargets || (targets.Count == 1 && _tiffStack is null)
+                ? ExportSize.ForBatchTiff(format.Width, format.Height,
+                    rawTargets ? (long)targets.Count * format.FrameCount : 1) : null)
         {
             Owner = this,
         };
@@ -466,7 +474,7 @@ public partial class MainWindow
         if (!BatchTiffOutput.IsTiff(choice.Format)
             && (long)format.Width * format.Height > RawLoader.DefaultInMemoryPixelThreshold)
         {
-            MessageBox.Show(this, "1億画素を超える画像の現像バッチはサポートされていません(TIFF16は可)。",
+            AppMessage.Show(this, "1億画素を超える画像の現像バッチはサポートされていません(TIFF16は可)。",
                 "バッチ書き出し", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
@@ -502,10 +510,7 @@ public partial class MainWindow
         int width = format.Width;
         int height = format.Height;
         bool video = choice.Format is BatchFormat.AviMjpeg or BatchFormat.Mp4H264;
-        string videoPath = Path.Combine(
-            choice.OutputFolder,
-            Path.GetFileNameWithoutExtension(targets[0])
-                + (choice.Format == BatchFormat.Mp4H264 ? "_seq.mp4" : "_seq.avi"));
+        string videoPath = OutputPaths.BatchVideoPath(choice.OutputFolder, targets[0], choice.Format);
 
         // 動画は一時ファイルへ書き切ってから置換する。最終パスへ直接書くと、
         // 失敗・キャンセル時に上書き対象だった既存の動画を失う
@@ -585,7 +590,7 @@ public partial class MainWindow
                                 bool jpeg = choice.Format == BatchFormat.Jpeg8;
                                 string outputPath = OutputPaths.BatchImagePath(
                                     choice.OutputFolder, file, entry.Index, entry.Count, entry.IsTiffPage,
-                                    BatchTiffOutput.IsTiff(choice.Format) ? ".tif" : jpeg ? ".jpg" : ".png");
+                                    OutputPaths.BatchImageExtension(choice.Format));
                                 sourceGuard.EnsureNotSource(outputPath);
                                 if (BatchTiffOutput.IsTiff(choice.Format))
                                 {
@@ -621,7 +626,7 @@ public partial class MainWindow
 
         if (result.Error is not null)
         {
-            MessageBox.Show(this, $"バッチ書き出しに失敗しました: {result.Error.Message}",
+            AppMessage.Show(this, $"バッチ書き出しに失敗しました: {result.Error.Message}",
                 "バッチ書き出し", MessageBoxButton.OK, MessageBoxImage.Error);
         }
         else if (!result.WasCanceled)

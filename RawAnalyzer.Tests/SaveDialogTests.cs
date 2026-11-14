@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Controls;
 using RawAnalyzer.App.Views;
+using RawAnalyzer.App.Services;
 using RawAnalyzer.Core;
 using Xunit;
 
@@ -12,6 +13,59 @@ namespace RawAnalyzer.Tests;
 [Collection("WPF UI")]
 public class SaveDialogTests
 {
+    [Theory]
+    [InlineData(SaveFormat.Raw, 1, false, false, 300)]
+    [InlineData(SaveFormat.Raw, 2, false, false, 600)]
+    [InlineData(SaveFormat.FloatRaw, 2, false, false, 400)]
+    [InlineData(SaveFormat.Tiff16, 2, true, false, 600)]
+    [InlineData(SaveFormat.Png16, 2, false, false, 200)]
+    [InlineData(SaveFormat.Png8, 2, false, true, 300)]
+    [InlineData(SaveFormat.Jpeg8, 2, false, false, 100)]
+    public void EstimateMatchesExportPixelLayout(SaveFormat format, int bytes, bool color, bool demosaic, long expected)
+    {
+        var estimate = ExportSize.ForSave(format, 100, 3, bytes, color, demosaic)!.Value;
+        Assert.Equal(expected, estimate.Bytes);
+        Assert.Equal(format is SaveFormat.Png16 or SaveFormat.Png8 or SaveFormat.Jpeg8, estimate.Label.Contains("圧縮前"));
+    }
+
+    [Fact]
+    public Task ProcessingOptions_FollowFormatAndBayerWithoutChangingChoice() => WpfTestHost.Run(() =>
+    {
+        var dialog = new SaveDialog(1920 * 1080, frameCount: 3);
+        var bayer = new SaveDialog(1920 * 1080, hasBayer: true);
+        try
+        {
+            var combo = (ComboBox)dialog.FindName("FormatCombo");
+            var group = (FrameworkElement)dialog.FindName("ProcessingOptions");
+            for (int i = 0; i < 3; i++)
+            {
+                combo.SelectedIndex = i;
+                Assert.Equal(Visibility.Collapsed, group.Visibility);
+                Assert.False(dialog.BuildChoice().ApplyDisplayLut);
+                Assert.False(dialog.BuildChoice().ApplyDemosaic);
+            }
+            combo.SelectedIndex = 3;
+            Assert.Equal(Visibility.Visible, group.Visibility);
+            foreach (string name in new[] { "WbCheck", "MatrixCheck", "DemosaicCheck" })
+            {
+                Assert.Equal(Visibility.Collapsed, ((CheckBox)dialog.FindName(name)).Visibility);
+            }
+            Assert.True(dialog.BuildChoice().ApplyDisplayLut);
+            Assert.False(dialog.BuildChoice().ApplyDemosaic);
+            ((ComboBox)bayer.FindName("FormatCombo")).SelectedIndex = 3;
+            Assert.True(bayer.BuildChoice().ApplyDemosaic);
+            combo.SelectedIndex = 0;
+            dialog.Show();
+            dialog.UpdateLayout();
+            WpfTestHost.CaptureDialogIfRequested(dialog, "d1-save");
+        }
+        finally
+        {
+            dialog.Close();
+            bayer.Close();
+        }
+    });
+
     [Fact]
     public Task EightBitImage_RawIsDescribedAsOneBytePerPixelWithoutByteOrder()
     {

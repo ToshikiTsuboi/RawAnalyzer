@@ -376,6 +376,38 @@ public static unsafe partial class TiffLoader
         return TryReadSampleInfo(path, out info, out _, pageIndex, cancellationToken);
     }
 
+    /// <summary>ヘッダとページ表から全ページの寸法を取得する。画素データは展開しない。</summary>
+    /// <param name="path">調べる TIFF ファイルのパス。</param>
+    /// <param name="cancellationToken">読み取りを取り消すトークン。</param>
+    /// <returns>
+    /// ページ順の幅と高さ(画素単位)。ファイルを開けない、ヘッダが無効、ページがない、または幅・高さが正でない場合は null。
+    /// </returns>
+    public static IReadOnlyList<(int Width, int Height)>? ReadPageDimensions(
+        string path, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        (int, int)[]? dimensions = null;
+        string reason = "";
+        WithMappedFile(path, ref reason, data =>
+        {
+            if (!TryParseHeader(data, out TiffHeader header, out _))
+                return false;
+            IReadOnlyList<PageRef> pages = ReadPageTable(data, header, cancellationToken);
+            var sizes = new (int, int)[pages.Count];
+            for (int i = 0; i < pages.Count; i++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                PageLayout page = ReadPageLayout(data, header, pages[i]);
+                if (page.Width <= 0 || page.Height <= 0)
+                    return false;
+                sizes[i] = (page.Width, page.Height);
+            }
+            dimensions = sizes;
+            return sizes.Length > 0;
+        });
+        return dimensions is { Length: > 0 } ? dimensions : null;
+    }
+
     /// <summary>
     /// 非圧縮の1サンプル/画素ページ(と多チャネルのグレーの先頭チャネル)を自前で復号する。
     /// </summary>

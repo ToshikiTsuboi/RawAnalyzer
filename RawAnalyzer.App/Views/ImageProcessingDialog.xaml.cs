@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Media.Imaging;
 using RawAnalyzer.App.Controls;
 using RawAnalyzer.App.Services;
 using RawAnalyzer.Core;
@@ -22,6 +23,22 @@ public partial class ImageProcessingDialog : Window
     private readonly BayerPattern _pattern;
     private readonly bool _color;
     private bool _ready;
+    private readonly SemaphoreSlim _previewSlot = new(1, 1);
+    private CancellationTokenSource? _previewCancellation;
+    private (BitmapSource Before, BitmapSource After)? _previewImages;
+    internal Func<RegionOfInterest, CancellationToken, RawImage>? ReadPreviewRegion { get; init; }
+    internal Func<RegionOfInterest, CancellationToken, ColorImage>? ReadColorPreviewRegion { get; init; }
+    private readonly DisplayParameters? _previewDisplay;
+    internal DisplayParameters? PreviewDisplay
+    {
+        get => _previewDisplay;
+        init
+        {
+            _previewDisplay = value;
+            if (value is not null)
+                Width = 820;
+        }
+    }
 
     /// <summary>入力形式に応じた処理設定画面を生成する。</summary>
     /// <param name="sourceName">対象の表示名。</param>
@@ -44,6 +61,15 @@ public partial class ImageProcessingDialog : Window
         OperationCombo.SelectedIndex = binning ? 0 : 2;
         _ready = true;
         UpdatePreview();
+        Loaded += (_, _) =>
+        {
+            if (ReadPreviewRegion is not null && PreviewDisplay is not null)
+            {
+                LivePreviewPanel.Visibility = Visibility.Visible;
+                UpdatePreview();
+            }
+        };
+        Closed += (_, _) => _previewCancellation?.Cancel();
     }
 
     /// <summary>適用ボタンで確定された設定。</summary>
@@ -128,6 +154,7 @@ public partial class ImageProcessingDialog : Window
 
     private bool UpdatePreview()
     {
+        _previewCancellation?.Cancel();
         bool binning = OperationCombo.SelectedIndex == 0;
         bool gaussian = OperationCombo.SelectedIndex is 2 or 4;
         BinningPanel.Visibility = binning ? Visibility.Visible : Visibility.Collapsed;
@@ -165,6 +192,8 @@ public partial class ImageProcessingDialog : Window
                       + "\n12bit素材でも14bit等への階調拡張は行いません。" : "");
             ErrorText.Text = "";
             RunButton.IsEnabled = true;
+            if (LivePreviewPanel.Visibility == Visibility.Visible)
+                _ = UpdateLivePreviewAsync(choice);
             return true;
         }
         catch (Exception ex) when (ex is ArgumentException or FormatException or NotSupportedException)
@@ -178,8 +207,64 @@ public partial class ImageProcessingDialog : Window
             }
 
             RunButton.IsEnabled = false;
+            if (LivePreviewPanel.Visibility == Visibility.Visible)
+                LiveStatus.Text = "設定を確認してください。";
             return false;
         }
+    }
+
+    private async Task UpdateLivePreviewAsync(ImageProcessingChoice choice)
+    {
+        using var cancellation = new CancellationTokenSource();
+        _previewCancellation = cancellation;
+        CancellationToken token = cancellation.Token;
+        LiveStatus.Text = "プレビューを更新中…";
+        try
+        {
+            await Task.Delay(150, token);
+            await _previewSlot.WaitAsync(token);
+            try
+            {
+                Func<RegionOfInterest, CancellationToken, RawImage> read = ReadPreviewRegion!;
+                var readColor = ReadColorPreviewRegion;
+                DisplayParameters display = PreviewDisplay!;
+                var images = await Task.Run(() => ProcessingPreview.Render(
+                    ProcessingPreview.SelectRegion(_width, _height, _pattern, choice),
+                    _pattern, choice, read, readColor, DisplayLut.Create(display), token), token);
+                token.ThrowIfCancellationRequested();
+                _previewImages = images;
+                ShowPreviewSide();
+                LiveStatus.Text = "適用前・適用後は同じ表示調整で表示";
+            }
+            finally
+            {
+                _previewSlot.Release();
+            }
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex) when (!token.IsCancellationRequested)
+        {
+            LiveStatus.Text = $"プレビューを作成できません。{ex.Message}";
+        }
+        catch (ObjectDisposedException) when (token.IsCancellationRequested)
+        {
+            // The source may have been closed after this dialog closed.
+        }
+        finally
+        {
+            if (ReferenceEquals(_previewCancellation, cancellation))
+                _previewCancellation = null;
+        }
+    }
+
+    private void OnPreviewSideChanged(object sender, RoutedEventArgs e) => ShowPreviewSide();
+
+    private void ShowPreviewSide()
+    {
+        if (_previewImages is { } images)
+            LiveImage.Source = BeforePreview.IsChecked == true ? images.Before : images.After;
     }
 
     /// <summary>例外の説明を利用者向けの文にする。</summary>

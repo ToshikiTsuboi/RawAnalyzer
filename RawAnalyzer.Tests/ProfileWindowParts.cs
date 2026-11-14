@@ -19,8 +19,13 @@ internal static class ProfileWindowParts
     internal static T Find<T>(Window window, string name)
         where T : class
     {
-        object? found = window.FindName(name)
-            ?? (window.FindName("Plot") as ProfilePlotView)?.FindName(name);
+        return Find<T>((FrameworkElement)window.Content, name);
+    }
+
+    internal static T Find<T>(FrameworkElement view, string name) where T : class
+    {
+        object? found = view.FindName(name)
+            ?? (view.FindName("Plot") as ProfilePlotView)?.FindName(name);
         return found as T ?? throw new InvalidOperationException($"{name} ({typeof(T).Name}) が見つかりません");
     }
 

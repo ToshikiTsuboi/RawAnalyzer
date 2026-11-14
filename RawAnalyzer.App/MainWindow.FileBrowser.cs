@@ -1,9 +1,11 @@
 using System.IO;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Input;
 using Microsoft.Win32;
 using System.Windows.Threading;
 using RawAnalyzer.App.Services;
+using RawAnalyzer.App.Themes;
 using RawAnalyzer.App.ViewModels;
 using RawAnalyzer.Core;
 
@@ -14,10 +16,16 @@ public partial class MainWindow
     private static readonly string[] SupportedExtensions =
         Compare.ComparePane.RawExtensions
             .Concat(ImageFileLoader.SupportedExtensions).ToArray();
-    private readonly RecentFilesStore _recentFiles = new();
+    private readonly RecentFilesStore _recentFiles;
     private int _recentMenuGeneration;
     private int _folderGeneration;
     private string? _currentFolder;
+    private readonly Dictionary<(string Path, long Length, DateTime LastWrite), Task<string>> _fileDetails = new();
+    private readonly HashSet<TextBlock> _realizedFileDetails = new();
+    private IReadOnlyDictionary<string, RawFormat> _fileDetailsPathMemory = new Dictionary<string, RawFormat>();
+    private FormatHistoryEntry[] _fileDetailsHistory = [];
+    private FormatHistory _fileDetailsSnapshot = new();
+    private (string Path, RawFormat Format, bool IsColor)? _openedFileDetails;
 
     private void OnOpenFolderClick(object sender, RoutedEventArgs e)
     {
@@ -70,19 +78,18 @@ public partial class MainWindow
                 return false;
             }
 
-            MessageBox.Show(this, $"フォルダを読み込めません: {ex.Message}", "RawAnalyzer",
+            AppMessage.Show(this, $"フォルダを読み込めません: {ex.Message}", "RawAnalyzer",
                 MessageBoxButton.OK, MessageBoxImage.Warning);
             return true;
         }
 
-        if (generation != _folderGeneration)
+        if (_closed || generation != _folderGeneration)
         {
             return false; // 列挙中に別のフォルダが開かれた
         }
 
         _currentFolder = folder;
-        _vm.FolderPath = $"📂 {folder}";
-        _vm.ReplaceFiles(entries);
+        _vm.FolderPath = folder;
 
         // 祖先の各階層の初回の列挙は UI スレッドの外で行い、待たずに一覧の続きへ進む(別のフォルダを開いたら
         // 前の同期はやめる)
@@ -93,6 +100,8 @@ public partial class MainWindow
             session.LastFolder = folder;
             session.FileFilter = fileFilter;
         });
+        UpdateFileDetailsMemory();
+        _vm.ReplaceFiles(entries);
 
         if (selectPath is not null)
         {
@@ -120,20 +129,138 @@ public partial class MainWindow
                 f.Extension, StringComparer.OrdinalIgnoreCase))
             .OrderBy(f => f.FullName, NaturalOrderComparer.Instance))
         {
-            long length;
+            long length = -1;
+            DateTime lastWrite = default;
             try
             {
                 length = info.Length;
+                lastWrite = info.LastWriteTimeUtc;
             }
-            catch (Exception)
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
-                length = -1;
             }
 
-            entries.Add(new FileEntry(info.Name, info.FullName, IsDirectory: false, length));
+            entries.Add(new FileEntry(info.Name, info.FullName, IsDirectory: false, length, lastWrite));
         }
 
         return entries;
+    }
+
+    private void OnFileDetailsLoaded(object sender, RoutedEventArgs e)
+    {
+        var text = (TextBlock)sender;
+        _realizedFileDetails.Add(text);
+        LoadFileDetails(text);
+    }
+
+    private void OnFileDetailsUnloaded(object sender, RoutedEventArgs e) =>
+        _realizedFileDetails.Remove((TextBlock)sender);
+
+    private void OnFileDetailsDataContextChanged(object sender, DependencyPropertyChangedEventArgs e)
+    {
+        var text = (TextBlock)sender;
+        if (text.IsLoaded)
+        {
+            LoadFileDetails(text);
+        }
+    }
+
+    private async void LoadFileDetails(TextBlock text)
+    {
+        if (text.DataContext is not FileEntry entry)
+        {
+            text.Text = "";
+            return;
+        }
+
+        var opened = OpenedFileDetailsFor(entry);
+        if (opened is { } current)
+        {
+            string actual = await Task.Run(() => FormatCandidateText.Describe(
+                current.Format, separator: " · ", isColorImage: current.IsColor));
+            if (!_closed && text.IsLoaded && ReferenceEquals(text.DataContext, entry)
+                && OpenedFileDetailsFor(entry) == current)
+            {
+                text.Text = actual;
+            }
+
+            return;
+        }
+
+        text.Text = FileListDetails.FormatSize(entry.Length);
+        var key = (entry.FullPath, entry.Length, entry.LastWriteTimeUtc);
+        FormatHistory snapshotAtRequest = _fileDetailsSnapshot;
+        var pathsAtRequest = _fileDetailsPathMemory;
+        if (!_fileDetails.TryGetValue(key, out Task<string>? details))
+        {
+            if (_fileDetails.Count >= 8192)
+            {
+                _fileDetails.Clear();
+            }
+
+            details = Task.Run(() => FileListDetails.Describe(entry, snapshotAtRequest, pathsAtRequest));
+            _fileDetails.Add(key, details);
+        }
+
+        string description = await details;
+        if (!_closed && text.IsLoaded && ReferenceEquals(text.DataContext, entry)
+            && OpenedFileDetailsFor(entry) is null
+            && ReferenceEquals(_fileDetailsSnapshot, snapshotAtRequest)
+            && ReferenceEquals(_fileDetailsPathMemory, pathsAtRequest))
+        {
+            text.Text = description;
+        }
+    }
+
+    private (string Path, RawFormat Format, bool IsColor)? OpenedFileDetailsFor(FileEntry entry) =>
+        _openedFileDetails is { } current && string.Equals(current.Path, entry.FullPath, StringComparison.OrdinalIgnoreCase)
+            ? current : null;
+
+    private bool UpdateFileDetailsMemory()
+    {
+        var paths = _sessionStore.CachedFileFormats;
+        FormatHistoryEntry[] history = _formatMemory.SnapshotEntries();
+        if (ReferenceEquals(_fileDetailsPathMemory, paths) && _fileDetailsHistory.SequenceEqual(history))
+        {
+            return false;
+        }
+
+        // TouchFileFormat は辞書を置き換えるので、ワーカーへ渡した記憶は後から変更されない。
+        _fileDetailsPathMemory = paths;
+        _fileDetailsHistory = history;
+        _fileDetailsSnapshot = new FormatHistory(history);
+        _fileDetails.Clear();
+        return true;
+    }
+
+    private void UpdateOpenedFileDetails(RawFormat format, bool isColor)
+    {
+        if (_currentPath is not { } path)
+        {
+            return;
+        }
+
+        string? previousPath = _openedFileDetails?.Path;
+        _openedFileDetails = (path, format, isColor);
+        RefreshFileDetails(previousPath);
+    }
+
+    private void RefreshFileDetails(string? previousPath = null)
+    {
+        if (_closed)
+        {
+            return;
+        }
+
+        bool memoryChanged = UpdateFileDetailsMemory();
+        foreach (TextBlock text in _realizedFileDetails)
+        {
+            if (text.DataContext is FileEntry entry && (memoryChanged || OpenedFileDetailsFor(entry) is not null
+                || string.Equals(previousPath, entry.FullPath, StringComparison.OrdinalIgnoreCase)))
+            {
+                LoadFileDetails(text);
+            }
+        }
     }
 
     private void OnFileListDoubleClick(object sender, MouseButtonEventArgs e)
@@ -155,10 +282,27 @@ public partial class MainWindow
 
     // ---- メニュー・エクスポート ----
 
+    private sealed record RecentCanvasFile(string FullPath)
+    {
+        public string FileName => Path.GetFileName(FullPath);
+        public string AccessibleName => $"{FileName} · {Folder}";
+        public string? Folder
+        {
+            get
+            {
+                string? parent = Path.GetDirectoryName(FullPath);
+                string? name = Path.GetFileName(parent);
+                return string.IsNullOrEmpty(name) ? parent : name;
+            }
+        }
+    }
+
     private void RebuildRecentMenu()
     {
         RecentMenu.Items.Clear();
         List<string> recent = _recentFiles.Load();
+        int generation = ++_recentMenuGeneration;
+        UpdateEmptyCanvasRecent(recent);
         if (recent.Count == 0)
         {
             RecentMenu.Items.Add(new System.Windows.Controls.MenuItem
@@ -177,47 +321,53 @@ public partial class MainWindow
                 Header = AccessKeyText.Escape(Path.GetFileName(path)),
                 ToolTip = path,
             };
-            string captured = path;
-            item.Click += async (_, _) =>
-            {
-                // 実在はメニューを作り直したときにしか確かめないので、その後に消えた・接続が切れたファイルの項目も
-                // 残っている。開く前に UI スレッドを止めずに確かめ、無ければ一度だけ知らせてメニューから外す
-                // (確かめずに開くと、フォルダを読み込めない警告に続けて、実在しない raw にフォーマット指定ダイアログを出していた)
-                int deferredRequests = ++_deferredOpenRequests;
-                int openRequests = _openRequests;
-                int folderGeneration = _folderGeneration;
-                bool exists = await Task.Run(() => File.Exists(captured));
-                if (deferredRequests != _deferredOpenRequests
-                    || openRequests != _openRequests || folderGeneration != _folderGeneration)
-                {
-                    // 確かめている間に別のファイル・フォルダが開かれた、または確認を待つ別の要求を受け付けた
-                    // (後から来た方を優先する)
-                    return;
-                }
-
-                if (!exists)
-                {
-                    MessageBox.Show(this,
-                        $"ファイルが見つかりません(移動・削除されたか、ネットワークに接続できません)。\n{captured}",
-                        "最近使ったファイル", MessageBoxButton.OK, MessageBoxImage.Warning);
-                    RemoveRecentMenuItems(new[] { captured });
-                    return;
-                }
-
-                if (AddToCompareInstead(new[] { captured }))
-                {
-                    return;
-                }
-
-                await LoadFolderAndOpenAsync(captured);
-            };
+            item.Click += async (_, _) => await OpenRecentFileAsync(path);
             RecentMenu.Items.Add(item);
         }
 
         // 存在確認は切断されたNAS/UNCパスでSMBタイムアウトまでブロックするため、
         // メニューは先に出してから裏で確認し、消えていた項目だけ後から取り除く
-        int generation = ++_recentMenuGeneration;
         _ = PruneMissingRecentItemsAsync(generation, recent);
+    }
+
+    private void UpdateEmptyCanvasRecent(IEnumerable<string> paths)
+    {
+        EmptyCanvasRecent.ItemsSource = paths.Take(5)
+            .Select(path => new RecentCanvasFile(path)).ToArray();
+    }
+
+    private async void OnEmptyCanvasRecentClick(object sender, RoutedEventArgs e)
+    {
+        if (((FrameworkElement)sender).DataContext is RecentCanvasFile recent)
+        {
+            await OpenRecentFileAsync(recent.FullPath);
+        }
+    }
+
+    private async Task OpenRecentFileAsync(string path)
+    {
+        // 切断されたネットワーク上の履歴も UI を止めずに確認し、後発の要求を優先する。
+        int deferredRequests = ++_deferredOpenRequests;
+        int openRequests = _openRequests;
+        int folderGeneration = _folderGeneration;
+        bool exists = await Task.Run(() => File.Exists(path));
+        if (_closed || deferredRequests != _deferredOpenRequests
+            || openRequests != _openRequests || folderGeneration != _folderGeneration)
+        {
+            return;
+        }
+
+        if (!exists)
+        {
+            AppMessage.Show(this,
+                $"ファイルが見つかりません(移動・削除されたか、ネットワークに接続できません)。\n{path}",
+                "最近使ったファイル", MessageBoxButton.OK, MessageBoxImage.Warning);
+            RemoveRecentMenuItems(new[] { path });
+        }
+        else if (!AddToCompareInstead(new[] { path }))
+        {
+            await LoadFolderAndOpenAsync(path);
+        }
     }
 
     /// <summary>最近使ったファイルのうち実在しないものをメニューから取り除く。</summary>
@@ -237,7 +387,7 @@ public partial class MainWindow
             return;
         }
 
-        if (generation != _recentMenuGeneration || missing.Count == 0)
+        if (_closed || generation != _recentMenuGeneration || missing.Count == 0)
         {
             return; // 確認中に作り直された(結果は古い)
         }
@@ -257,6 +407,8 @@ public partial class MainWindow
             RecentMenu.Items.Remove(item);
         }
 
+        UpdateEmptyCanvasRecent(RecentMenu.Items.OfType<System.Windows.Controls.MenuItem>()
+            .Select(item => item.ToolTip).OfType<string>());
         if (RecentMenu.Items.Count == 0)
         {
             RecentMenu.Items.Add(new System.Windows.Controls.MenuItem
@@ -270,19 +422,14 @@ public partial class MainWindow
     // ---- フォルダツリー ----
 
     // 子フォルダの列挙は UI スレッドの外で行う(ネットワーク共有・切断中のドライブで固まらない)
-    private readonly FolderTreeNavigator _folderTreeNavigator = new();
+    private readonly FolderTreeNavigator _folderTreeNavigator;
 
     private void InitFolderTree()
     {
-        FolderTree.Items.Clear();
-        var items = new List<(System.Windows.Controls.TreeViewItem Item, DriveInfo Drive)>();
-        foreach (DriveInfo drive in DriveInfo.GetDrives())
-        {
-            System.Windows.Controls.TreeViewItem item = FolderTreeNavigator.CreateItem(
-                $"💽 {drive.Name.TrimEnd('\\')}", drive.RootDirectory.FullName);
-            FolderTree.Items.Add(item);
-            items.Add((item, drive));
-        }
+        var items = DriveInfo.GetDrives().Select(drive =>
+            (Node: new FolderTreeNode(drive.Name.TrimEnd('\\'), drive.RootDirectory.FullName, IconGlyphs.Drive),
+                Drive: drive)).ToArray();
+        FolderTree.ItemsSource = items.Select(item => item.Node).ToArray();
 
         // IsReady/VolumeLabel は切断されたネットワークドライブだと
         // タイムアウトまでブロックする。ツリーは先に出してから名前を足す
@@ -293,9 +440,9 @@ public partial class MainWindow
     /// <param name="items">対象のツリー項目とドライブ。</param>
     /// <returns>更新の完了を表すタスク。</returns>
     private static async Task AppendDriveLabelsAsync(
-        List<(System.Windows.Controls.TreeViewItem Item, DriveInfo Drive)> items)
+        (FolderTreeNode Node, DriveInfo Drive)[] items)
     {
-        foreach ((System.Windows.Controls.TreeViewItem item, DriveInfo drive) in items)
+        foreach ((FolderTreeNode node, DriveInfo drive) in items)
         {
             string label;
             try
@@ -309,16 +456,16 @@ public partial class MainWindow
 
             if (!string.IsNullOrEmpty(label))
             {
-                item.Header = $"{item.Header} ({label})";
+                node.Name = $"{drive.Name.TrimEnd('\\')} ({label})";
             }
         }
     }
 
     private void OnFolderTreeExpanded(object sender, RoutedEventArgs e)
     {
-        if (e.OriginalSource is System.Windows.Controls.TreeViewItem item)
+        if (e.OriginalSource is TreeViewItem { DataContext: FolderTreeNode node })
         {
-            _ = _folderTreeNavigator.PopulateAsync(item);
+            _ = _folderTreeNavigator.PopulateAsync(node);
         }
     }
 
@@ -330,8 +477,9 @@ public partial class MainWindow
             return;
         }
 
-        if (e.NewValue is System.Windows.Controls.TreeViewItem { Tag: string path } item)
+        if (e.NewValue is FolderTreeNode item)
         {
+            string path = item.FullPath;
             // 存在の確認も切断されたネットワークドライブではタイムアウトまで戻らないので、UI スレッドの外で行う。
             // 確かめる間に別の項目を選んでいた・別のファイルやフォルダを開いていたら(後から来た方を優先する)開かない。
             // 以前は選択だけを見ていたので、確かめる間に「開く」で別のフォルダのファイルを開くと、その一覧の列挙中に
@@ -522,11 +670,12 @@ public partial class MainWindow
 
     private async void OnTreeOpenExplorerClick(object sender, RoutedEventArgs e)
     {
-        if (FolderTree.SelectedItem is not System.Windows.Controls.TreeViewItem { Tag: string path })
+        if (FolderTree.SelectedItem is not FolderTreeNode item)
         {
             return;
         }
 
+        string path = item.FullPath;
         // 実在の確認(と起動)は UI スレッドの外で行う(切断したネットワークドライブではタイムアウトまで戻らない)
         await Task.Run(() =>
         {
@@ -543,7 +692,7 @@ public partial class MainWindow
 
     private void OnTreeRefreshClick(object sender, RoutedEventArgs e)
     {
-        if (FolderTree.SelectedItem is System.Windows.Controls.TreeViewItem item)
+        if (FolderTree.SelectedItem is FolderTreeNode item)
         {
             _ = _folderTreeNavigator.RefreshAsync(item);
         }
@@ -553,14 +702,19 @@ public partial class MainWindow
 
     private void OnFileDragOver(object sender, DragEventArgs e)
     {
-        e.Effects = e.Data.GetDataPresent(DataFormats.FileDrop)
+        bool isFileDrop = e.Data.GetDataPresent(DataFormats.FileDrop);
+        EmptyCanvas.Tag = isFileDrop;
+        e.Effects = isFileDrop
             ? DragDropEffects.Copy
             : DragDropEffects.None;
         e.Handled = true;
     }
 
+    private void OnFileDragLeave(object sender, DragEventArgs e) => EmptyCanvas.Tag = false;
+
     private async void OnFileDrop(object sender, DragEventArgs e)
     {
+        EmptyCanvas.Tag = false;
         if (e.Data.GetData(DataFormats.FileDrop) is not string[] { Length: > 0 } paths)
         {
             return;

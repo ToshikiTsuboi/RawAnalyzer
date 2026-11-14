@@ -1,5 +1,6 @@
 using System.Windows;
 using Microsoft.Win32;
+using RawAnalyzer.App.Compare;
 using RawAnalyzer.App.Services;
 using RawAnalyzer.App.Views;
 using RawAnalyzer.Core;
@@ -11,10 +12,50 @@ public partial class MainWindow
     // ---- 比較モード ----
 
     private bool _compareMode;
+    private bool? _rightPanelBeforeCompare;
+
+    private void RefreshCompareAdjustment()
+    {
+        ComparePaneView? active = CompareArea.ActivePane;
+        if (active?.Pane is not { } pane)
+        {
+            _vm.SetCompareAdjustTarget(null);
+            return;
+        }
+
+        bool wasUpdating = _updatingSliders;
+        _updatingSliders = true;
+        try
+        {
+            _vm.CompareAdjustment.Load(pane.Display, pane.Format.BitDepth);
+            _vm.SetCompareAdjustTarget(active.Label);
+        }
+        finally
+        {
+            _updatingSliders = wasUpdating;
+        }
+    }
+
+    private void OnCompareAdjustmentEdited(DisplaySettings settings)
+    {
+        if (_compareMode && !_updatingSliders)
+        {
+            CompareArea.ActivePane?.EditDisplay(settings);
+        }
+    }
 
     private async void OnCompareModeClick(object sender, RoutedEventArgs e)
     {
         await ToggleCompareModeAsync();
+    }
+
+    private async void OnCompareToolCheckedChanged(object sender, RoutedEventArgs e)
+    {
+        // メニューやコマンドによる状態変更で、トグルから同じ操作を再実行しない。
+        if ((((System.Windows.Controls.Primitives.ToggleButton)sender).IsChecked == true) != _vm.IsCompareMode)
+        {
+            await ToggleCompareModeAsync();
+        }
     }
 
     /// <summary>比較モードへ入る/抜ける。</summary>
@@ -40,7 +81,12 @@ public partial class MainWindow
         CancelTiffPageLoad();
         StopPlayback();
         _compareMode = true;
+        UpdateGraphDock();
         _vm.IsCompareMode = true;
+        bool rightPanelWasVisible = _vm.RightPanelVisible;
+        _vm.RightPanelVisible = false;
+        _rightPanelBeforeCompare = rightPanelWasVisible;
+        Viewport.ClearGhostCursor();
         CompareArea.Visibility = Visibility.Visible;
 
         // 開いている画像があれば最初のペイン(A)として読み直す。
@@ -64,7 +110,13 @@ public partial class MainWindow
         await CompareArea.CloseAllAsync();
         CompareArea.Visibility = Visibility.Collapsed;
         _compareMode = false;
+        UpdateGraphDock();
         _vm.IsCompareMode = false;
+        if (_rightPanelBeforeCompare is bool rightPanelWasVisible)
+        {
+            _rightPanelBeforeCompare = null;
+            _vm.RightPanelVisible = rightPanelWasVisible;
+        }
 
         // 比較ペインの推定の通知から、表示中のファイルの通知へ戻す
         _vm.FormatNoticeText = _mainFormatNotice;
@@ -136,6 +188,7 @@ public partial class MainWindow
                 // サイズは UI スレッドの外で取る。読み込んだペインを返せなくなるので、ここでは打ち切らない
                 long loadedSize = await Task.Run(() => SafeFileSize(path));
                 _formatMemory.RememberLoaded(path, loadedSize, format, autoOpenChoice);
+                RefreshFileDetails();
 
                 // 比較ペインは F2 で開き直せないので、直し方を添えて知らせる(比較モードを抜けたら戻す)
                 if (origin == RawFormatOrigin.SizeMemory && _compareMode)
@@ -153,7 +206,7 @@ public partial class MainWindow
         }
         catch (Exception ex)
         {
-            MessageBox.Show(this, $"読み込みに失敗しました: {ex.Message}", "比較モード",
+            AppMessage.Show(this, $"読み込みに失敗しました: {ex.Message}", "比較モード",
                 MessageBoxButton.OK, MessageBoxImage.Warning);
             return null;
         }

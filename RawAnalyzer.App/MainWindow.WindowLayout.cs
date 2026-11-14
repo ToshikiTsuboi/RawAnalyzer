@@ -1,6 +1,5 @@
 using System.IO;
 using System.Windows;
-using System.Windows.Media;
 using RawAnalyzer.App.Services;
 using RawAnalyzer.App.Views;
 
@@ -8,7 +7,7 @@ namespace RawAnalyzer.App;
 
 public partial class MainWindow
 {
-    private readonly SessionStore _sessionStore = new();
+    private readonly SessionStore _sessionStore;
 
     // 起動時に読んだセッション(ウィンドウ配置・パネル・絞り込み・最後のフォルダの復元に使う)。変更は
     // _sessionStore.Update で保存されている最新の状態へ当てる(別のインスタンスの保存を巻き戻さない)
@@ -58,8 +57,18 @@ public partial class MainWindow
         double leftPanelWidth = _leftPanelWidth;
         double rightPanelWidth = _rightPanelWidth;
         bool leftPanelVisible = _vm.LeftPanelVisible;
-        bool rightPanelVisible = _vm.RightPanelVisible;
+        bool rightPanelVisible = _rightPanelBeforeCompare ?? _vm.RightPanelVisible;
+        var compareLayoutMode = CompareArea.LayoutMode;
+        bool displayExpanded = DisplaySection.IsExpanded;
+        bool histogramExpanded = HistogramSection.IsExpanded;
+        bool whiteBalanceExpanded = WhiteBalanceSection.IsExpanded;
+        bool colorMatrixExpanded = ColorMatrixSection.IsExpanded;
+        bool formatExpanded = FormatSection.IsExpanded;
+        bool navigatorVisible = NavigatorEnabled;
         string fileFilter = _vm.FileFilterText;
+        string[] usedCommands = _usedCommands;
+        double graphDockHeight = AnalysisGraphDock.RequestedHeight;
+        GraphKind[] floatingGraphs = AnalysisGraphDock.FloatingPreferences();
         // フルスクリーン中は(フルスクリーンのための最大化ではなく)フルスクリーンに入る前の状態を保存する
         bool maximized = FullscreenWindowState.IsMaximizedToSave(
             WindowState, _vm.IsFullscreen, _preFullscreenState);
@@ -77,7 +86,18 @@ public partial class MainWindow
             session.RightPanelWidth = rightPanelWidth;
             session.LeftPanelVisible = leftPanelVisible;
             session.RightPanelVisible = rightPanelVisible;
+            session.CompareLayoutMode = compareLayoutMode;
+            session.DisplayExpanded = displayExpanded;
+            session.HistogramExpanded = histogramExpanded;
+            session.WhiteBalanceExpanded = whiteBalanceExpanded;
+            session.ColorMatrixExpanded = colorMatrixExpanded;
+            session.FormatExpanded = formatExpanded;
+            session.NavigatorVisible = navigatorVisible;
             session.FileFilter = fileFilter;
+            if (usedCommands.Length > 0)
+                session.RecentCommands = PaletteHistory.Combine(usedCommands, session.RecentCommands ?? []);
+            session.GraphDockHeight = graphDockHeight;
+            session.FloatingGraphs = floatingGraphs;
             session.WindowMaximized = maximized;
             session.WindowLeft = left;
             session.WindowTop = top;
@@ -99,7 +119,7 @@ public partial class MainWindow
 
     private void OnUsageGuideClick(object sender, RoutedEventArgs e)
     {
-        ShowInfoWindow("操作ガイド",
+        AppMessage.Show(this,
             "キーボード操作\n" +
             "  Ctrl+Shift+P: コマンドパレット(全機能を検索して実行)\n" +
             "  F1: ショートカット一覧\n" +
@@ -110,58 +130,20 @@ public partial class MainWindow
             "  ドラッグ: パン / ダブルクリック: 全体表示\n" +
             "  ズーム3200%以上で画素上にraw値を表示\n\n" +
             "解析\n" +
-            "  ROI: ツールバーのROIを押してドラッグで矩形選択\n" +
+            "  ROI: キャンバス左側のROIを押してドラッグで矩形選択\n" +
             "  ラインプロファイル: モードを押して画素をクリック\n" +
             "  ヒストグラム/プロファイルは右クリックでデータ保存\n\n" +
             "ホワイトバランス\n" +
             "  AWB(グレーワールド): 全体平均から自動計算\n" +
             "  スポイト: クリック画素を無彩色として計算\n\n" +
             "HDR\n" +
-            "  フォーマットでHDR方式を指定 → 表示モードで分割/合成");
+            "  フォーマットでHDR方式を指定 → 表示モードで分割/合成",
+            "操作ガイド", MessageBoxButton.OK, MessageBoxImage.Information);
     }
 
     private void OnAboutClick(object sender, RoutedEventArgs e)
     {
         new AboutWindow { Owner = this }.ShowDialog();
-    }
-
-    private void ShowInfoWindow(string title, string message)
-    {
-        var text = new System.Windows.Controls.TextBlock
-        {
-            Text = message,
-            Margin = new Thickness(20, 16, 20, 8),
-            FontSize = 12,
-            LineHeight = 19,
-            TextWrapping = TextWrapping.Wrap,
-        };
-        var ok = new System.Windows.Controls.Button
-        {
-            Content = "OK",
-            IsDefault = true,
-            IsCancel = true,
-            HorizontalAlignment = HorizontalAlignment.Right,
-            Margin = new Thickness(20, 8, 20, 14),
-            MinWidth = 80,
-        };
-        var panel = new System.Windows.Controls.StackPanel();
-        panel.Children.Add(text);
-        panel.Children.Add(ok);
-        var window = new Window
-        {
-            Title = title,
-            Content = panel,
-            Owner = this,
-            Width = 420,
-            SizeToContent = SizeToContent.Height,
-            WindowStartupLocation = WindowStartupLocation.CenterOwner,
-            ResizeMode = ResizeMode.NoResize,
-            ShowInTaskbar = false,
-            Background = (Brush)FindResource("PanelBrush"),
-            Foreground = (Brush)FindResource("TextBrush"),
-        };
-        ok.Click += (_, _) => window.Close();
-        window.ShowDialog();
     }
 
     // ---- フルスクリーン ----

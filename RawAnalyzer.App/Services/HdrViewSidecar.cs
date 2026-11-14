@@ -67,7 +67,7 @@ internal static class HdrViewSidecar
             int first = stage * width;
             int last = stage == stages - 1 ? derived.Width - 1 : first + width - 1;
             sb.Append("    段").Append(stage + 1).Append(" (x ").Append(first).Append('〜').Append(last).Append("): ")
-                .Append(StageName(stage, stages));
+                .Append(HdrFormatText.StageName(stage, stages));
             if (stage > 0)
             {
                 sb.Append(" (長秒の 1/").Append(FormatRatio(Math.Pow(source.ExposureRatio, stage)))
@@ -170,7 +170,7 @@ internal static class HdrViewSidecar
         for (int i = 0; i < stages.Count; i++)
         {
             DisplayParameters stage = stages[i];
-            sb.Append("    ").Append(StageName(i, stages.Count)).AppendLine(":");
+            sb.Append("    ").Append(HdrFormatText.StageName(i, stages.Count)).AppendLine(":");
             sb.Append("      黒点/白点: ").Append(stage.BlackPoint).Append(" / ")
                 .AppendLine(stage.WhitePoint.ToString(Invariant));
             sb.Append("      ゲイン: ")
@@ -184,10 +184,6 @@ internal static class HdrViewSidecar
 
         return sb.ToString();
     }
-
-    /// <summary>段の名前(表示調整の対象の選択肢と同じ。左端の段が長秒、右端の段が短秒、その間が中秒)。</summary>
-    private static string StageName(int stage, int stages) =>
-        stage == 0 ? "長秒" : stage == stages - 1 ? "短秒" : "中秒";
 
     private static string FormatRatio(double ratio) => ratio.ToString("0.###", Invariant);
 

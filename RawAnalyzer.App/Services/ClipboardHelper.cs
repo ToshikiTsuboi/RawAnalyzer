@@ -33,6 +33,34 @@ internal static class ClipboardHelper
         return TryWithRetry(() => Clipboard.SetDataObject(text, copy: true), "テキスト");
     }
 
+    /// <summary>クリップボードが使用中なら、UI を止めずにコピーを再試行する。</summary>
+    internal static async Task<bool> TrySetTextAsync(string text)
+    {
+        if (text.Length == 0)
+        {
+            return false;
+        }
+
+        for (int attempt = 1; ; attempt++)
+        {
+            try
+            {
+                Clipboard.SetDataObject(text, copy: true);
+                return true;
+            }
+            catch (Exception ex) when (ex is ExternalException or InvalidOperationException)
+            {
+                if (attempt == RetryTimes)
+                {
+                    AppLog.Warn($"クリップボードへのテキストコピーに失敗: {ex.Message}");
+                    return false;
+                }
+
+                await Task.Delay(RetryDelayMs);
+            }
+        }
+    }
+
     /// <summary>画像をクリップボードへコピーする。</summary>
     /// <param name="bitmap">コピーする画像。</param>
     /// <returns>成功したかどうか。</returns>
@@ -119,7 +147,7 @@ internal static class ClipboardHelper
             return true;
         }
 
-        MessageBox.Show(owner, $"保存に失敗しました: {error}", title,
+        AppMessage.Show(owner, $"保存に失敗しました: {error}", title,
             MessageBoxButton.OK, MessageBoxImage.Warning);
         return false;
     }

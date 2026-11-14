@@ -1,7 +1,8 @@
 ﻿using System.Collections.ObjectModel;
 using System.IO;
-using System.Windows.Media;
+using RawAnalyzer.App.Compare;
 using RawAnalyzer.App.Mvvm;
+using RawAnalyzer.App.Rendering;
 using RawAnalyzer.App.Services;
 
 namespace RawAnalyzer.App.ViewModels;
@@ -14,8 +15,9 @@ namespace RawAnalyzer.App.ViewModels;
 /// ファイルサイズ(バイト)。不明なら-1。列挙時に取得済みの値を保持しておき、
 /// 仮想スタック判定のたびに GetFileAttributesEx を撃ち直さないようにする。
 /// </param>
+/// <param name="LastWriteTimeUtc">列挙時に取得した更新時刻。</param>
 public sealed record FileEntry(
-    string Name, string FullPath, bool IsDirectory = false, long Length = -1);
+    string Name, string FullPath, bool IsDirectory = false, long Length = -1, DateTime LastWriteTimeUtc = default);
 
 /// <summary>
 /// メインウィンドウのViewModel。表示状態(テキスト・スライダー値・ヒストグラム)を保持する。
@@ -35,12 +37,15 @@ public sealed class MainViewModel : ObservableObject
     private bool _isLoading;
     private double _loadProgress;
     private bool _isCompareMode;
+    private string? _compareAdjustTarget;
+    private string _compareImageInfoText = "比較 0 枚";
+    private string _compareZoomStatusText = "";
     private bool _isProcessed;
     private string _processingStateText = "";
     private string _processingStateTooltip = "";
     private string _formatNoticeText = "";
     private string _formatNoticeToolTip = "";
-    private string _cursorStatusText = "";
+    private CursorReadout.Text? _cursorReadout;
     private string _zoomStatusText = "";
     private string _zoomPercentText = "—";
     private string _cursorOverlayText = "";
@@ -71,7 +76,6 @@ public sealed class MainViewModel : ObservableObject
     private double _sequenceIndex;
     private double _sequenceMax;
     private string _sequenceLabel = "";
-    private ImageSource? _histogramSource;
     private string _histMeanSigmaText = "— / —";
     private string _histMinMaxText = "— / —";
     private string _histMedianModeText = "— / —";
@@ -267,6 +271,10 @@ public sealed class MainViewModel : ObservableObject
                 OnPropertyChanged(nameof(CanChangeFormat));
                 OnPropertyChanged(nameof(ChangeFormatToolTip));
                 OnPropertyChanged(nameof(CanUseMainView));
+                OnPropertyChanged(nameof(MainViewDisabledReason));
+                OnPropertyChanged(nameof(CanUseAdjustPanel));
+                OnPropertyChanged(nameof(AdjustPanelDisabledReason));
+                OnPropertyChanged(nameof(ShowEmptyCanvas));
             }
         }
     }
@@ -278,6 +286,26 @@ public sealed class MainViewModel : ObservableObject
         set => SetProperty(ref _imageInfoText, value);
     }
 
+    /// <summary>比較モード中の枚数とアクティブペインの画像情報。</summary>
+    public string CompareImageInfoText => _compareImageInfoText;
+
+    /// <summary>比較モード中のアクティブペインのズーム倍率。</summary>
+    public string CompareZoomStatusText => _compareZoomStatusText;
+
+    internal void UpdateCompareStatus(int paneCount, ComparePaneStatus? active)
+    {
+        string summary = $"比較 {paneCount} 枚";
+        string zoom = "";
+        if (active is { } pane)
+        {
+            summary += $" · {pane.Label}: {pane.FileName} · {pane.Width}×{pane.Height} · {pane.BitDepth}bit";
+            zoom = $"Zoom {DeviceScaling.FormatZoomPercent(pane.DeviceZoom)}";
+        }
+
+        SetProperty(ref _compareImageInfoText, summary, nameof(CompareImageInfoText));
+        SetProperty(ref _compareZoomStatusText, zoom, nameof(CompareZoomStatusText));
+    }
+
     /// <summary>比較モード中か(メニューのチェック表示と、メイン画像を対象にする操作の可否に使う)。</summary>
     public bool IsCompareMode
     {
@@ -286,11 +314,17 @@ public sealed class MainViewModel : ObservableObject
         {
             if (SetProperty(ref _isCompareMode, value))
             {
+                OnPropertyChanged(nameof(ShowMainViewTools));
+                OnPropertyChanged(nameof(DisplayAdjustmentSource));
+                OnPropertyChanged(nameof(ShowHdrAdjustTarget));
+                OnPropertyChanged(nameof(DisplayAdjustmentTitle));
                 OnPropertyChanged(nameof(CanUseMainView));
+                OnPropertyChanged(nameof(MainViewDisabledReason));
                 OnPropertyChanged(nameof(CanChangeFormat));
                 OnPropertyChanged(nameof(ChangeFormatToolTip));
                 OnPropertyChanged(nameof(CanUseAdjustPanel));
                 OnPropertyChanged(nameof(AdjustPanelDisabledReason));
+                OnPropertyChanged(nameof(ShowEmptyCanvas));
                 OnPropertyChanged(nameof(CanEditBayer));
                 OnPropertyChanged(nameof(BayerEditToolTip));
                 OnPropertyChanged(nameof(CanOpenSelectedFileWithFormat));
@@ -299,18 +333,40 @@ public sealed class MainViewModel : ObservableObject
         }
     }
 
-    /// <summary>右の調整パネルを操作できるか(比較モードでないとき)。</summary>
-    /// <remarks>
-    /// 調整パネル(表示調整のスライダー・ボタン、ヒストグラムの切替・コピー、ホワイトバランス、カラーマトリクス、
-    /// フォーマット)は通常表示を対象にするので、比較モード中はパネルの中身ごと無効にし、上端に
-    /// <see cref="AdjustPanelDisabledReason"/> を示す(<see cref="CanUseMainView"/> と同じく、比較画面に隠れた
-    /// 通常表示に効かせない)。比較モードでなければ、個々の項目の条件(画像の有無など)は従来どおり。
-    /// </remarks>
-    public bool CanUseAdjustPanel => !_isCompareMode;
+    /// <summary>通常表示用のツールバー項目を表示するか。</summary>
+    public bool ShowMainViewTools => !IsCompareMode;
+
+    /// <summary>表示調整の対象となる画像があるか。</summary>
+    public bool CanUseAdjustPanel => IsCompareMode ? _compareAdjustTarget is not null : CanUseMainView;
 
     /// <summary>調整パネルを使えない理由(パネルの上端に示す)。使えるときは null。</summary>
     public string? AdjustPanelDisabledReason =>
-        _isCompareMode ? CommandDisabledReasons.AdjustPanelInCompareMode : null;
+        IsCompareMode ? (CanUseAdjustPanel ? null : CommandDisabledReasons.NoActiveComparePane)
+        : HasImage ? null : "画像を開くと調整できます";
+
+    internal CompareDisplayEditor CompareAdjustment { get; } = new();
+
+    /// <summary>表示調整のスライダーが参照する設定。</summary>
+    public object DisplayAdjustmentSource => IsCompareMode ? CompareAdjustment : this;
+
+    /// <summary>表示調整の見出し。比較中は調整対象のペインを添える。</summary>
+    public string DisplayAdjustmentTitle => IsCompareMode && _compareAdjustTarget is { } label
+        ? $"表示調整 · 調整対象: {label}" : "表示調整";
+
+    /// <summary>通常表示の HDR 調整対象の行を表示するか。</summary>
+    public bool ShowHdrAdjustTarget => !IsCompareMode && HdrTargetVisible;
+
+    internal void SetCompareAdjustTarget(string? label)
+    {
+        if (SetProperty(ref _compareAdjustTarget, label, nameof(DisplayAdjustmentTitle)))
+        {
+            OnPropertyChanged(nameof(CanUseAdjustPanel));
+            OnPropertyChanged(nameof(AdjustPanelDisabledReason));
+        }
+    }
+
+    /// <summary>空のキャンバスに画像の開き方を示すか。</summary>
+    public bool ShowEmptyCanvas => !HasImage && !IsCompareMode && !IsLoading;
 
     /// <summary>
     /// 通常表示(メインの画像・ビューポート)を操作できるか。画像を開いていて、比較モードでないとき。
@@ -323,11 +379,21 @@ public sealed class MainViewModel : ObservableObject
     /// </remarks>
     public bool CanUseMainView => _hasImage && !_isCompareMode;
 
+    /// <summary>通常表示を対象にするコマンドが無効な理由。</summary>
+    public string? MainViewDisabledReason =>
+        CanUseMainView ? null : CommandDisabledReasons.ForMainView(IsCompareMode);
+
     /// <summary>ファイル読み込み中か(ステータスバーの進捗バー表示に使う)。</summary>
     public bool IsLoading
     {
         get => _isLoading;
-        set => SetProperty(ref _isLoading, value);
+        set
+        {
+            if (SetProperty(ref _isLoading, value))
+            {
+                OnPropertyChanged(nameof(ShowEmptyCanvas));
+            }
+        }
     }
 
     /// <summary>読み込みの進捗率(0〜100)。</summary>
@@ -396,12 +462,22 @@ public sealed class MainViewModel : ObservableObject
     /// <summary>推定の通知を出すか。</summary>
     public bool HasFormatNotice => _formatNoticeText.Length > 0;
 
-    /// <summary>ステータスバー中央のカーソル位置情報。</summary>
-    public string CursorStatusText
+    internal void SetCursorStatus(CursorReadout.Text? readout)
     {
-        get => _cursorStatusText;
-        set => SetProperty(ref _cursorStatusText, value);
+        if (_cursorReadout == readout)
+        {
+            return;
+        }
+
+        _cursorReadout = readout;
+        OnPropertyChanged(nameof(CursorCoordinatesText));
+        OnPropertyChanged(nameof(CursorValueText));
+        OnPropertyChanged(nameof(CursorChannelText));
     }
+
+    public string CursorCoordinatesText => _cursorReadout?.Coordinates ?? "";
+    public string CursorValueText => _cursorReadout?.Value ?? "";
+    public string CursorChannelText => _cursorReadout?.Channel ?? "";
 
     /// <summary>ステータスバー右端のズーム/レベル情報。</summary>
     public string ZoomStatusText
@@ -465,7 +541,7 @@ public sealed class MainViewModel : ObservableObject
     public double MinGainDb => DisplayLevels.MinGainDb;
 
     /// <summary>ゲインスライダーの上限[dB](×1000)。</summary>
-    public double MaxGainDb => 60;
+    public double MaxGainDb => DisplayLevels.MaxGainDb;
 
     /// <summary>表示ガンマ(LUTパラメータ)。</summary>
     public double Gamma
@@ -614,7 +690,13 @@ public sealed class MainViewModel : ObservableObject
     public bool HdrTargetVisible
     {
         get => _hdrTargetVisible;
-        set => SetProperty(ref _hdrTargetVisible, value);
+        set
+        {
+            if (SetProperty(ref _hdrTargetVisible, value))
+            {
+                OnPropertyChanged(nameof(ShowHdrAdjustTarget));
+            }
+        }
     }
 
     /// <summary>再生可能なシーケンス(連番ファイル/マルチフレーム)があるか。</summary>
@@ -643,13 +725,6 @@ public sealed class MainViewModel : ObservableObject
     {
         get => _sequenceLabel;
         set => SetProperty(ref _sequenceLabel, value);
-    }
-
-    /// <summary>ヒストグラム画像。</summary>
-    public ImageSource? HistogramSource
-    {
-        get => _histogramSource;
-        set => SetProperty(ref _histogramSource, value);
     }
 
     /// <summary>ヒストグラム統計 mean/σ。</summary>

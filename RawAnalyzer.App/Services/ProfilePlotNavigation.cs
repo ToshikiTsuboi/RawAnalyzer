@@ -45,6 +45,18 @@ internal static class ProfilePlotNavigation
     internal static double ToCanvasX(double index, ProfileAxisRange horizontal, double width) =>
         (index - horizontal.Minimum) / (horizontal.Maximum - horizontal.Minimum) * width;
 
+    internal static int? ToDataIndex(double canvasX, ProfileAxisRange horizontal, double width, int count)
+    {
+        if (width <= 0 || !double.IsFinite(canvasX) || canvasX < 0 || canvasX > width || count <= 0)
+        {
+            return null;
+        }
+
+        double index = Math.Round(horizontal.Minimum
+            + canvasX / width * (horizontal.Maximum - horizontal.Minimum), MidpointRounding.AwayFromZero);
+        return index >= 0 && index < count && horizontal.Contains(index) ? (int)index : null;
+    }
+
     /// <summary>表示中の区間だけを読む。間引く場合も列ごとの極値とその出現順を保つ。</summary>
     internal static IReadOnlyList<Point> SampleVisible(double[] data, ProfileAxisRange horizontal, double width)
     {

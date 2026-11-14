@@ -61,7 +61,7 @@ public partial class MainWindow
             return false;
         }
 
-        MessageBox.Show(this, BusyNotice.ForOperation(reason, operation),
+        AppMessage.Show(this, BusyNotice.ForOperation(reason, operation),
             "RawAnalyzer", MessageBoxButton.OK, MessageBoxImage.Information);
         return true;
     }
@@ -86,7 +86,7 @@ public partial class MainWindow
             return false;
         }
 
-        MessageBox.Show(this, BusyNotice.ForOperation(reason, operation),
+        AppMessage.Show(this, BusyNotice.ForOperation(reason, operation),
             "RawAnalyzer", MessageBoxButton.OK, MessageBoxImage.Information);
         return true;
     }
@@ -108,7 +108,7 @@ public partial class MainWindow
             return false;
         }
 
-        MessageBox.Show(this, CommandDisabledReasons.CompareMode,
+        AppMessage.Show(this, CommandDisabledReasons.CompareMode,
             operation, MessageBoxButton.OK, MessageBoxImage.Information);
         return true;
     }

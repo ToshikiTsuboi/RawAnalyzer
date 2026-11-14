@@ -16,9 +16,11 @@ internal static class CursorReadout
     /// <summary>
     /// 表示文。
     /// </summary>
-    /// <param name="Status">ステータスバーの文。</param>
+    /// <param name="Coordinates">ステータスバーの座標。</param>
+    /// <param name="Value">ステータスバーの値。</param>
+    /// <param name="Channel">ステータスバーのチャネル。</param>
     /// <param name="Overlay">キャンバス左上のオーバーレイの文。</param>
-    internal readonly record struct Text(string Status, string Overlay);
+    internal readonly record struct Text(string Coordinates, string Value, string Channel, string Overlay);
 
     /// <summary>
     /// 元画像の座標 (x, y) の画素値の表示文を作る。
@@ -38,16 +40,7 @@ internal static class CursorReadout
     /// <returns>表示文。画像の範囲外・フレームの範囲外・破棄済みで読めないときは null。</returns>
     internal static Text? Compose(RawImage image, RawFormat format, ColorImage? color, int x, int y, int frame)
     {
-        ushort value;
-        try
-        {
-            value = image.GetPixel(x, y, frame);
-        }
-        catch (ObjectDisposedException)
-        {
-            return null;
-        }
-        catch (ArgumentOutOfRangeException)
+        if (ReadCode(image, format, x, y, frame) is not int code)
         {
             return null;
         }
@@ -62,11 +55,10 @@ internal static class CursorReadout
             int b = b16 >> shift;
             (int luma, int cb, int cr) = ColorConvert.RgbToYCbCr(r, g, b, (1 << color.BitDepth) - 1);
             return new Text(
-                $"({x}, {y}) RGB=({r}, {g}, {b}) YCbCr=({luma}, {cb}, {cr})",
+                $"({x}, {y})", $"RGB=({r}, {g}, {b}) YCbCr=({luma}, {cb}, {cr})", "RGB",
                 $"({x}, {y})  RGB: {r} {g} {b}  YCbCr: {luma} {cb} {cr}");
         }
 
-        int code = value >> (16 - format.BitDepth);
         int maxCode = (1 << format.BitDepth) - 1;
         // 行交互HDRの raw の Raw 表示でライン単位か行オフセットが奇数だと、ファイル上の行の偶奇がセンサの Bayer の
         // 位相と一致せず、短秒の行などで R↔Gb・Gr↔B を取り違える。名前を出さない(HDR分割ビューでは段の位相で出る)
@@ -74,7 +66,24 @@ internal static class CursorReadout
             ? BayerHelper.GetLabel(BayerChannel.None)
             : BayerHelper.GetLabel(BayerHelper.GetChannel(format.Bayer, x, y, image.SegmentWidth));
         return new Text(
-            $"({x}, {y}) raw={code}",
+            $"({x}, {y})", $"raw={code}", channel,
             $"({x}, {y})  raw: {code} / {maxCode}  {channel}");
+    }
+
+    /// <summary>画像のビット深度での画素値。範囲外か破棄済みなら null。</summary>
+    internal static int? ReadCode(RawImage image, RawFormat format, int x, int y, int frame)
+    {
+        try
+        {
+            return image.GetPixel(x, y, frame) >> (16 - format.BitDepth);
+        }
+        catch (ObjectDisposedException)
+        {
+            return null;
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            return null;
+        }
     }
 }

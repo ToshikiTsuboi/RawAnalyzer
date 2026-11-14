@@ -1,28 +1,91 @@
-﻿<Window x:Class="RawAnalyzer.App.MainWindow"
+<Window x:Class="RawAnalyzer.App.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:themes="clr-namespace:RawAnalyzer.App.Themes"
         xmlns:sys="clr-namespace:System;assembly=System.Runtime"
         xmlns:controls="clr-namespace:RawAnalyzer.App.Controls"
         xmlns:compare="clr-namespace:RawAnalyzer.App.Compare"
-        Title="RawAnalyzer" Width="1280" Height="820"
-        Background="#FF252528" Foreground="#FFD8D8D4"
-        AllowDrop="True" Drop="OnFileDrop" DragOver="OnFileDragOver">
+        xmlns:views="clr-namespace:RawAnalyzer.App.Views"
+        Title="RawAnalyzer" Width="1280" Height="820" MinWidth="720" MinHeight="480"
+        Background="{StaticResource WindowBackgroundBrush}" Foreground="{StaticResource TextBrush}"
+        AllowDrop="True" Drop="OnFileDrop" DragOver="OnFileDragOver" PreviewDragLeave="OnFileDragLeave">
     <Window.Resources>
         <BooleanToVisibilityConverter x:Key="BoolToVis" />
-
-        <Style TargetType="Button" x:Key="ToolButton"
-               BasedOn="{StaticResource {x:Type Button}}">
-            <Setter Property="Padding" Value="10,4" />
-            <Setter Property="Margin" Value="2,0" />
+        <Style x:Key="MainViewAdjustmentSection" TargetType="Expander" BasedOn="{StaticResource {x:Type Expander}}">
+            <Setter Property="IsEnabled" Value="{Binding CanUseMainView}" />
+            <Setter Property="Visibility" Value="{Binding ShowMainViewTools, Converter={StaticResource BoolToVis}}" />
         </Style>
+
         <Style TargetType="Button" x:Key="AccentButton" BasedOn="{StaticResource ToolButton}">
             <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}" />
             <Setter Property="Foreground" Value="{StaticResource AccentBrush}" />
         </Style>
-        <Style TargetType="ToggleButton" x:Key="ToolToggle"
-               BasedOn="{StaticResource {x:Type ToggleButton}}">
-            <Setter Property="Padding" Value="10,4" />
-            <Setter Property="Margin" Value="2,0" />
+        <Style TargetType="Button" x:Key="RightPanelButton" BasedOn="{StaticResource ToolButton}">
+            <Setter Property="Padding" Value="4,4" />
+        </Style>
+        <Style TargetType="ToggleButton" x:Key="RightPanelToggle" BasedOn="{StaticResource ToolToggle}">
+            <Setter Property="Padding" Value="4,4" />
+        </Style>
+        <Style TargetType="ToggleButton" x:Key="CanvasToolToggle" BasedOn="{StaticResource ToolToggle}">
+            <Setter Property="Width" Value="32" />
+            <Setter Property="Height" Value="32" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="Margin" Value="0,0,0,2" />
+            <Setter Property="ToolTip" Value="{Binding Tag, RelativeSource={RelativeSource Self}}" />
+            <Setter Property="ToolTipService.ShowOnDisabled" Value="True" />
+            <Style.Triggers>
+                <Trigger Property="IsEnabled" Value="False">
+                    <Setter Property="ToolTip" Value="{Binding MainViewDisabledReason}" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+        <Style TargetType="Path" x:Key="CanvasToolIcon">
+            <Setter Property="Stroke" Value="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ToggleButton}}" />
+            <Setter Property="StrokeThickness" Value="1.2" />
+            <Setter Property="Stretch" Value="None" />
+        </Style>
+        <Style TargetType="Button" x:Key="OverflowToolButton" BasedOn="{StaticResource ToolButton}">
+            <Style.Triggers>
+                <Trigger Property="ToolBar.IsOverflowItem" Value="True">
+                    <Setter Property="Width" Value="150" />
+                    <Setter Property="HorizontalContentAlignment" Value="Left" />
+                    <Setter Property="Padding" Value="28,4,10,4" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+        <Style TargetType="ToggleButton" x:Key="OverflowToolToggle" BasedOn="{StaticResource ToolToggle}">
+            <Setter Property="ToolTip" Value="{Binding Tag, RelativeSource={RelativeSource Self}}" />
+            <Setter Property="ToolTipService.ShowOnDisabled" Value="True" />
+            <Style.Triggers>
+                <Trigger Property="IsEnabled" Value="False">
+                    <Setter Property="ToolTip" Value="{Binding MainViewDisabledReason}" />
+                </Trigger>
+                <Trigger Property="ToolBar.IsOverflowItem" Value="True">
+                    <Setter Property="Width" Value="150" />
+                    <Setter Property="HorizontalContentAlignment" Value="Left" />
+                    <Setter Property="ContentTemplate">
+                        <Setter.Value>
+                            <DataTemplate>
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Width="18" Foreground="{StaticResource AccentBrush}">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Style.Triggers>
+                                                    <DataTrigger Value="True"
+                                                                 Binding="{Binding IsChecked, RelativeSource={RelativeSource AncestorType=ToggleButton}}">
+                                                        <Setter Property="Text" Value="✓" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                    <TextBlock Text="{Binding}" />
+                                </StackPanel>
+                            </DataTemplate>
+                        </Setter.Value>
+                    </Setter>
+                </Trigger>
+            </Style.Triggers>
         </Style>
         <Style TargetType="Border" x:Key="ToolSep">
             <Setter Property="Width" Value="1" />
@@ -30,31 +93,42 @@
             <Setter Property="Background" Value="{StaticResource BorderBrushDark}" />
             <Setter Property="Margin" Value="6,0" />
         </Style>
-        <Style TargetType="TextBlock" x:Key="SectionHeader">
-            <Setter Property="FontSize" Value="11" />
-            <Setter Property="FontWeight" Value="SemiBold" />
-            <Setter Property="Foreground" Value="{StaticResource TextFaint}" />
-            <Setter Property="Margin" Value="0,0,0,8" />
+        <Style TargetType="ToggleButton" x:Key="CompareToolToggle" BasedOn="{StaticResource OverflowToolToggle}">
+            <Setter Property="Margin" Value="12,0,0,0" />
+            <Style.Triggers>
+                <Trigger Property="ToolBar.IsOverflowItem" Value="True">
+                    <Setter Property="Margin" Value="0" />
+                </Trigger>
+            </Style.Triggers>
         </Style>
         <Style TargetType="TextBlock" x:Key="RowLabel">
-            <Setter Property="FontSize" Value="12" />
+            <Setter Property="FontSize" Value="{x:Static themes:ThemeTypography.FontSizeBody}" />
             <Setter Property="Foreground" Value="{StaticResource TextDim}" />
         </Style>
         <Style TargetType="TextBlock" x:Key="RowValue">
-            <Setter Property="FontSize" Value="12" />
+            <Setter Property="FontSize" Value="{x:Static themes:ThemeTypography.FontSizeBody}" />
             <Setter Property="FontFamily" Value="Consolas" />
             <Setter Property="FontWeight" Value="SemiBold" />
-            <Setter Property="Foreground" Value="#FFD8D8D4" />
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
         </Style>
         <Style TargetType="Border" x:Key="OverlayBox">
-            <Setter Property="Background" Value="#99000000" />
+            <Setter Property="Background" Value="{StaticResource OverlayScrimBrush}" />
             <Setter Property="CornerRadius" Value="4" />
             <Setter Property="Padding" Value="9,3" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding HasImage}" Value="False">
+                    <Setter Property="Visibility" Value="Collapsed" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding Tag, RelativeSource={RelativeSource Self}}" Value="">
+                    <Setter Property="Visibility" Value="Collapsed" />
+                </DataTrigger>
+            </Style.Triggers>
         </Style>
         <Style TargetType="TextBlock" x:Key="OverlayText">
             <Setter Property="FontFamily" Value="Consolas" />
-            <Setter Property="FontSize" Value="11" />
-            <Setter Property="Foreground" Value="#FFC9C9C4" />
+            <Setter Property="FontSize" Value="{x:Static themes:ThemeTypography.FontSizeCaption}" />
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+            <Setter Property="Text" Value="{Binding Tag, RelativeSource={RelativeSource AncestorType=Border}}" />
         </Style>
     </Window.Resources>
 
@@ -89,6 +163,8 @@
                           IsCheckable="True" IsChecked="{Binding LeftPanelVisible}" />
                 <MenuItem Header="調整パネル" InputGestureText="Ctrl+R"
                           IsCheckable="True" IsChecked="{Binding RightPanelVisible}" />
+                <MenuItem x:Name="NavigatorMenuItem" Header="ナビゲータ" IsCheckable="True"
+                          Click="OnNavigatorMenuClick" />
                 <Separator />
                 <MenuItem Header="ゼブラ (飽和/黒潰れ警告)" IsCheckable="True"
                           IsChecked="{Binding ZebraOn}"
@@ -103,9 +179,9 @@
             </MenuItem>
             <MenuItem Header="処理(_P)">
                 <MenuItem Header="自動コントラスト (0.35%クリップ)" Click="OnAutoContrastClick"
-                          IsEnabled="{Binding CanUseMainView}" />
+                          IsEnabled="{Binding CanUseAdjustPanel}" />
                 <MenuItem Header="表示調整をリセット" Click="OnResetDisplayClick"
-                          IsEnabled="{Binding CanUseMainView}" />
+                          IsEnabled="{Binding CanUseAdjustPanel}" />
                 <Separator />
                 <MenuItem Header="AWB (グレーワールド)" Click="OnGrayWorldClick"
                           IsEnabled="{Binding CanUseMainView}" />
@@ -173,94 +249,200 @@
         </Menu>
 
         <!-- ツールバー -->
-        <Border x:Name="ToolBarPanel" DockPanel.Dock="Top" Background="{StaticResource PanelBrush}"
-                BorderBrush="{StaticResource BorderBrushDark}" BorderThickness="0,1">
-            <StackPanel Orientation="Horizontal" Margin="10,5">
-                <Button Style="{StaticResource AccentButton}" Content="📄 開く" Click="OnOpenFileClick" />
-                <Button Style="{StaticResource ToolButton}" Content="📁 フォルダ" Click="OnOpenFolderClick" />
-                <Border Style="{StaticResource ToolSep}" />
-                <TextBlock Text="表示:" Foreground="{StaticResource TextDim}"
-                           VerticalAlignment="Center" Margin="0,0,4,0" FontSize="12" />
-                <!-- 表示モードの選択の IsEnabled はカラー画像でコードから設定する(バインドは上書きされる)。
-                     比較モード中(と画像がないとき)は外側で無効にする -->
-                <Border IsEnabled="{Binding CanUseMainView}">
-                    <ComboBox x:Name="DisplayModeCombo" SelectedIndex="0" VerticalAlignment="Center"
-                              FontSize="12" MinWidth="110" IsEnabled="{Binding HasImage}"
-                              SelectionChanged="OnDisplayModeChanged"
-                              DropDownClosed="OnSelectorDropDownClosed">
-                        <ComboBoxItem Content="Raw表示" />
-                        <ComboBoxItem Content="Bayerカラー" />
-                        <ComboBoxItem Content="カラー現像" />
-                        <ComboBoxItem Content="チャネル分割 (R/Gr/Gb/B)" />
-                        <ComboBoxItem Content="HDR分割 (長/短)" />
-                        <ComboBoxItem Content="HDR合成" />
-                    </ComboBox>
-                </Border>
-                <Border Style="{StaticResource ToolSep}" />
-                <Button Style="{StaticResource ToolButton}" Content="−" Click="OnZoomOutClick"
-                        IsEnabled="{Binding CanUseMainView}" />
-                <TextBlock Text="{Binding ZoomPercentText}" FontFamily="Consolas" FontSize="12"
-                           VerticalAlignment="Center" MinWidth="46" TextAlignment="Center" />
-                <Button Style="{StaticResource ToolButton}" Content="＋" Click="OnZoomInClick"
-                        IsEnabled="{Binding CanUseMainView}" />
-                <Button Style="{StaticResource ToolButton}" Content="1:1" Click="OnActualSizeClick"
-                        IsEnabled="{Binding CanUseMainView}" />
-                <Button Style="{StaticResource ToolButton}" Content="全体" Click="OnFitClick"
-                        IsEnabled="{Binding CanUseMainView}" />
-                <ToggleButton x:Name="ZebraToggle" Content="ゼブラ"
-                              Style="{StaticResource ToolToggle}" IsEnabled="{Binding CanUseMainView}"
-                              ToolTip="飽和(≥98%)を赤 / 黒潰れ(≤2%)を青のストライプで警告(Raw・チャネル分割・カラー画像の表示のみ)"
-                              ToolTipOpening="OnZebraToolTipOpening"
-                              IsChecked="{Binding ZebraOn, Mode=TwoWay}" />
-                <Border Style="{StaticResource ToolSep}" />
-                <ToggleButton x:Name="ProfileToggle" Content="ラインプロファイル"
-                              Style="{StaticResource ToolToggle}" IsEnabled="{Binding CanUseMainView}"
-                              Checked="OnProfileToggleChanged" Unchecked="OnProfileToggleChanged" />
-                <!-- 射影の窓(EMVA 1288 方式の向き)。押すとすぐ計算して窓を開き、もう一度押すと閉じる。
-                     ツールチップ(向きと流儀の説明)はコードで設定する(ProjectionText) -->
-                <ToggleButton x:Name="HorizontalProjectionToggle" Content="水平射影"
-                              Style="{StaticResource ToolToggle}" IsEnabled="{Binding CanUseMainView}"
-                              ToolTipService.ShowOnDisabled="True" ToolTipService.ShowDuration="60000"
-                              Checked="OnProjectionToggleChanged" Unchecked="OnProjectionToggleChanged" />
-                <ToggleButton x:Name="VerticalProjectionToggle" Content="垂直射影"
-                              Style="{StaticResource ToolToggle}" IsEnabled="{Binding CanUseMainView}"
-                              ToolTipService.ShowOnDisabled="True" ToolTipService.ShowDuration="60000"
-                              Checked="OnProjectionToggleChanged" Unchecked="OnProjectionToggleChanged" />
-                <ToggleButton x:Name="RoiToggle" Content="ROI"
-                              Style="{StaticResource ToolToggle}" IsEnabled="{Binding CanUseMainView}"
-                              Checked="OnRoiToggleChanged" Unchecked="OnRoiToggleChanged" />
-                <Border Style="{StaticResource ToolSep}" />
-                <Button Style="{StaticResource ToolButton}" Content="💾 保存"
-                        Click="OnSaveClick" IsEnabled="{Binding CanUseMainView}" />
+        <ToolBar x:Name="ToolBarPanel" DockPanel.Dock="Top" Background="{StaticResource PanelBrush}"
+                 BorderBrush="{StaticResource BorderBrushDark}" BorderThickness="0,1" Padding="10,5">
+            <ToolBar.Template>
+                <ControlTemplate TargetType="ToolBar">
+                    <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="{TemplateBinding BorderThickness}" Padding="{TemplateBinding Padding}">
+                        <DockPanel>
+                            <Grid DockPanel.Dock="Right">
+                                <ToggleButton x:Name="OverflowButton" Content="{x:Static themes:IconGlyphs.More}"
+                                              ContentTemplate="{StaticResource IconContent}" MinWidth="34" Margin="4,0,0,0"
+                                              ClickMode="Press"
+                                              AutomationProperties.Name="その他のツール"
+                                              ToolTip="その他のツール"
+                                              IsChecked="{Binding IsOverflowOpen, RelativeSource={RelativeSource TemplatedParent}, Mode=TwoWay}" />
+                                <Popup x:Name="OverflowPopup" Placement="Bottom" PlacementTarget="{Binding ElementName=OverflowButton}"
+                                       IsOpen="{Binding IsOverflowOpen, RelativeSource={RelativeSource TemplatedParent}, Mode=TwoWay}"
+                                       StaysOpen="False" AllowsTransparency="True">
+                                    <Border Background="{StaticResource PanelBrush}"
+                                            BorderBrush="{StaticResource BorderBrushDark}" BorderThickness="1"
+                                            CornerRadius="6" Padding="4">
+                                        <ToolBarOverflowPanel x:Name="PART_ToolBarOverflowPanel" WrapWidth="0"
+                                                              Focusable="True" KeyboardNavigation.TabNavigation="Cycle"
+                                                              KeyboardNavigation.DirectionalNavigation="Cycle" />
+                                    </Border>
+                                </Popup>
+                            </Grid>
+                            <controls:SpacedToolBarPanel x:Name="PART_ToolBarPanel" IsItemsHost="True" />
+                        </DockPanel>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="HasOverflowItems" Value="False">
+                            <Setter TargetName="OverflowButton" Property="Visibility" Value="Hidden" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </ToolBar.Template>
+            <StackPanel Orientation="Horizontal" ToolBar.OverflowMode="Never">
+                <Button Style="{StaticResource ToolButton}" Content="開く" Click="OnOpenFileClick"
+                        Tag="{x:Static themes:IconGlyphs.OpenFile}" ContentTemplate="{StaticResource IconLabelContent}" />
+                <Button Style="{StaticResource ToolButton}" Content="フォルダ" Click="OnOpenFolderClick"
+                        Tag="{x:Static themes:IconGlyphs.FolderOpen}" ContentTemplate="{StaticResource IconLabelContent}" />
+                <StackPanel x:Name="MainViewTools" Orientation="Horizontal"
+                            Visibility="{Binding ShowMainViewTools, Converter={StaticResource BoolToVis}}">
+                    <Border Style="{StaticResource ToolSep}" />
+                    <TextBlock Text="表示:" Foreground="{StaticResource TextDim}"
+                               VerticalAlignment="Center" Margin="0,0,4,0" FontSize="{x:Static themes:ThemeTypography.FontSizeBody}" />
+                    <!-- 表示モードの選択の IsEnabled はカラー画像でコードから設定する(バインドは上書きされる)。
+                         比較モード中(と画像がないとき)は外側で無効にする -->
+                    <Border IsEnabled="{Binding CanUseMainView}">
+                        <ComboBox x:Name="DisplayModeCombo" SelectedIndex="0" VerticalAlignment="Center"
+                                  FontSize="{x:Static themes:ThemeTypography.FontSizeBody}" MinWidth="110" IsEnabled="{Binding HasImage}"
+                                  SelectionChanged="OnDisplayModeChanged"
+                                  DropDownClosed="OnSelectorDropDownClosed">
+                            <ComboBoxItem Content="Raw表示" />
+                            <ComboBoxItem Content="Bayerカラー" />
+                            <ComboBoxItem Content="カラー現像" />
+                            <ComboBoxItem Content="チャネル分割 (R/Gr/Gb/B)" />
+                            <ComboBoxItem Content="HDR分割 (長/短)" />
+                            <ComboBoxItem Content="HDR合成" />
+                        </ComboBox>
+                    </Border>
+                    <Border Style="{StaticResource ToolSep}" />
+                    <Button Style="{StaticResource ToolButton}" Content="{x:Static themes:IconGlyphs.ZoomOut}"
+                            ContentTemplate="{StaticResource IconContent}" Click="OnZoomOutClick"
+                            AutomationProperties.Name="ズームアウト" ToolTip="ズームアウト"
+                            IsEnabled="{Binding CanUseMainView}" />
+                    <TextBlock Text="{Binding ZoomPercentText}" FontFamily="Consolas" FontSize="{x:Static themes:ThemeTypography.FontSizeBody}"
+                               VerticalAlignment="Center" MinWidth="46" TextAlignment="Center" />
+                    <Button Style="{StaticResource ToolButton}" Content="{x:Static themes:IconGlyphs.ZoomIn}"
+                            ContentTemplate="{StaticResource IconContent}" Click="OnZoomInClick"
+                            AutomationProperties.Name="ズームイン" ToolTip="ズームイン"
+                            IsEnabled="{Binding CanUseMainView}" />
+                    <Button Style="{StaticResource ToolButton}" Content="1:1" Click="OnActualSizeClick"
+                            AutomationProperties.Name="等倍表示" ToolTip="等倍表示 (1:1)"
+                            IsEnabled="{Binding CanUseMainView}" />
+                    <Button Style="{StaticResource ToolButton}" Content="全体" Click="OnFitClick"
+                            IsEnabled="{Binding CanUseMainView}" />
+                    <Border Style="{StaticResource ToolSep}" />
+                </StackPanel>
             </StackPanel>
-        </Border>
+            <!-- WPF は AsNeeded の末尾から順にポップアップへ移す。 -->
+            <ToggleButton x:Name="ZebraToggle" Content="ゼブラ" ToolBar.OverflowMode="AsNeeded"
+                          Visibility="{Binding ShowMainViewTools, Converter={StaticResource BoolToVis}}"
+                          Style="{StaticResource OverflowToolToggle}" IsEnabled="{Binding CanUseMainView}"
+                          ToolTipOpening="OnZebraToolTipOpening" IsChecked="{Binding ZebraOn, Mode=TwoWay}" />
+            <ToggleButton x:Name="CompareToolToggle" Content="比較" ToolBar.OverflowMode="AsNeeded"
+                          controls:SpacedToolBarPanel.StartsTrailingGroup="True"
+                          Style="{StaticResource CompareToolToggle}" Tag="比較モード · 複数の画像を並べて表示"
+                          IsChecked="{Binding IsCompareMode, Mode=OneWay}"
+                          Checked="OnCompareToolCheckedChanged" Unchecked="OnCompareToolCheckedChanged" />
+            <Button x:Name="SaveToolButton" Style="{StaticResource OverflowToolButton}" Content="保存" ToolBar.OverflowMode="AsNeeded"
+                    Visibility="{Binding ShowMainViewTools, Converter={StaticResource BoolToVis}}"
+                    Tag="{x:Static themes:IconGlyphs.Save}" ContentTemplate="{StaticResource IconLabelContent}"
+                    Click="OnSaveClick" IsEnabled="{Binding CanUseMainView}"
+                    ToolTip="{Binding MainViewDisabledReason}" ToolTipService.ShowOnDisabled="True" />
+            <Button x:Name="CommandSearchToolButton" Style="{StaticResource OverflowToolButton}"
+                    Content="コマンド検索" ToolBar.OverflowMode="AsNeeded" Click="OnCommandPaletteClick"
+                    ToolTip="コマンド検索 (Ctrl+Shift+P)" />
+        </ToolBar>
 
         <!-- ステータスバー -->
         <Border x:Name="StatusBarPanel" DockPanel.Dock="Bottom"
                 Background="{StaticResource PanelBrush}"
                 BorderBrush="{StaticResource BorderBrushDark}" BorderThickness="0,1,0,0">
             <DockPanel Margin="12,4">
-                <TextBlock DockPanel.Dock="Right" Text="{Binding ZoomStatusText}"
-                           FontFamily="Consolas" FontSize="11" Foreground="{StaticResource TextDim}" />
+                <TextBlock DockPanel.Dock="Right" FontFamily="Consolas" FontSize="{x:Static themes:ThemeTypography.FontSizeCaption}"
+                           Foreground="{StaticResource TextDim}">
+                    <TextBlock.Style>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="Text" Value="{Binding ZoomStatusText}" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding IsCompareMode}" Value="True">
+                                    <Setter Property="Text" Value="{Binding CompareZoomStatusText}" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBlock.Style>
+                </TextBlock>
 
                 <!-- 加工済みかどうかは一時メッセージで上書きされてはいけないので独立させる -->
-                <Border DockPanel.Dock="Right" Margin="12,0,12,0" Padding="6,1"
-                        CornerRadius="3" VerticalAlignment="Center"
-                        Background="{StaticResource AccentSoftBrush}"
-                        BorderBrush="{StaticResource AccentBrush}" BorderThickness="1"
-                        ToolTip="{Binding ProcessingStateTooltip}"
-                        Visibility="{Binding IsProcessed,
-                                     Converter={StaticResource BoolToVis}}">
-                    <TextBlock Text="{Binding ProcessingStateText}" FontFamily="Consolas"
-                               FontSize="11" Foreground="{StaticResource AccentBrush}" />
-                </Border>
-                <TextBlock Text="{Binding ImageInfoText}" FontFamily="Consolas" FontSize="11"
-                           Foreground="{StaticResource TextDim}" Margin="0,0,24,0" />
+                <Button x:Name="ProcessedBadge" DockPanel.Dock="Right" Margin="12,0" Padding="6,1"
+                        Style="{StaticResource AccentButton}" VerticalAlignment="Center" MaxWidth="165"
+                        Background="{StaticResource AccentSoftBrush}" FontFamily="Consolas"
+                        FontSize="{x:Static themes:ThemeTypography.FontSizeCaption}"
+                        Content="{Binding ProcessingStateText}" ToolTip="{Binding ProcessingStateTooltip}"
+                        IsEnabled="{Binding CanUseMainView}" Click="OnProcessedBadgeClick"
+                        Visibility="{Binding IsProcessed, Converter={StaticResource BoolToVis}}">
+                    <Button.ContentTemplate>
+                        <DataTemplate>
+                            <TextBlock Text="{Binding}" TextTrimming="CharacterEllipsis" />
+                        </DataTemplate>
+                    </Button.ContentTemplate>
+                    <Button.ContextMenu>
+                        <ContextMenu>
+                            <MenuItem x:Name="RestoreOriginalMenuItem" Header="元の画像に戻す" Click="OnRestoreOriginalClick" />
+                        </ContextMenu>
+                    </Button.ContextMenu>
+                </Button>
+                <TextBlock x:Name="CompareCursorStatus" DockPanel.Dock="Right" MaxWidth="360" Margin="8,0"
+                           FontFamily="Consolas" FontSize="{x:Static themes:ThemeTypography.FontSizeCaption}"
+                           Foreground="{StaticResource TextDim}" TextTrimming="CharacterEllipsis"
+                           ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}">
+                    <TextBlock.Style>
+                        <Style TargetType="TextBlock">
+                            <Style.Triggers>
+                                <Trigger Property="Text" Value="">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                </Trigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBlock.Style>
+                </TextBlock>
+                <Grid x:Name="CursorStatus" DockPanel.Dock="Right" Width="422" Margin="8,0"
+                      TextElement.FontFamily="Consolas" TextElement.Foreground="{StaticResource TextDim}"
+                      TextElement.FontSize="{x:Static themes:ThemeTypography.FontSizeCaption}">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="126" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="30" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Text="{Binding CursorCoordinatesText}" TextTrimming="CharacterEllipsis" />
+                    <TextBlock x:Name="CursorStatusValue" Grid.Column="1" Text="{Binding CursorValueText}"
+                               TextTrimming="CharacterEllipsis" ToolTip="{Binding CursorValueText}" />
+                    <TextBlock Grid.Column="2" Text="{Binding CursorChannelText}" TextAlignment="Center" />
+                    <Grid.Style>
+                        <Style TargetType="Grid">
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding CanUseMainView}" Value="False">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Grid.Style>
+                </Grid>
+                <TextBlock FontFamily="Consolas" FontSize="{x:Static themes:ThemeTypography.FontSizeCaption}" TextTrimming="CharacterEllipsis"
+                           Foreground="{StaticResource TextDim}">
+                    <TextBlock.Style>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="Text" Value="{Binding ImageInfoText}" />
+                            <Setter Property="ToolTip" Value="{Binding ImageInfoText}" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding IsCompareMode}" Value="True">
+                                    <Setter Property="Text" Value="{Binding CompareImageInfoText}" />
+                                    <Setter Property="ToolTip" Value="{Binding CompareImageInfoText}" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBlock.Style>
+                </TextBlock>
 
                 <!-- 同じサイズのファイルの記憶から推定して開いたこと。画像情報は読み込みの後や一時メッセージで
                      書き換わるので別の欄に出し、別のファイルを表示するまで見えるようにする -->
                 <TextBlock Text="{Binding FormatNoticeText}" ToolTip="{Binding FormatNoticeToolTip}"
-                           FontSize="11" Foreground="{StaticResource AccentBrush}" Margin="0,0,24,0"
+                           FontSize="{x:Static themes:ThemeTypography.FontSizeCaption}" Foreground="{StaticResource AccentBrush}" Margin="0,0,24,0"
                            VerticalAlignment="Center"
                            Visibility="{Binding HasFormatNotice,
                                         Converter={StaticResource BoolToVis}}" />
@@ -273,11 +455,9 @@
                                  VerticalAlignment="Center"
                                  Value="{Binding LoadProgress, Mode=OneWay}" />
                     <TextBlock Text="{Binding LoadProgressText}" FontFamily="Consolas"
-                               FontSize="11" Foreground="{StaticResource TextDim}"
+                               FontSize="{x:Static themes:ThemeTypography.FontSizeCaption}" Foreground="{StaticResource TextDim}"
                                Margin="6,0,0,0" VerticalAlignment="Center" MinWidth="30" />
                 </StackPanel>
-                <TextBlock Text="{Binding CursorStatusText}" FontFamily="Consolas" FontSize="11"
-                           Foreground="{StaticResource TextDim}" />
             </DockPanel>
         </Border>
 
@@ -296,12 +476,15 @@
             <!-- 左パネル折りたたみ時のストリップ -->
             <Button x:Name="LeftEdgeStrip" Grid.Column="0" Style="{StaticResource EdgeStripButton}"
                     Visibility="Collapsed" Click="OnShowLeftPanelClick"
+                    AutomationProperties.Name="ファイルパネルを表示"
                     ToolTip="ファイルパネルを表示 (Ctrl+L)">
-                <TextBlock Text="📂 ファイル" FontSize="11">
-                    <TextBlock.LayoutTransform>
+                <StackPanel Orientation="Horizontal">
+                    <StackPanel.LayoutTransform>
                         <RotateTransform Angle="90" />
-                    </TextBlock.LayoutTransform>
-                </TextBlock>
+                    </StackPanel.LayoutTransform>
+                    <TextBlock Style="{StaticResource IconText}" Text="{x:Static themes:IconGlyphs.ExpandPane}" Margin="0,0,5,0" />
+                    <TextBlock Text="ファイル" FontSize="{x:Static themes:ThemeTypography.FontSizeBody}" />
+                </StackPanel>
             </Button>
 
             <!-- 左: フォルダツリー + ファイルリスト -->
@@ -310,10 +493,22 @@
                 <DockPanel Margin="6,8">
                     <DockPanel DockPanel.Dock="Top" Margin="8,0,2,6">
                         <Button DockPanel.Dock="Right" Style="{StaticResource PinToggle}"
-                                Content="📌" Click="OnHideLeftPanelClick"
+                                Content="{x:Static themes:IconGlyphs.CollapsePane}"
+                                ContentTemplate="{StaticResource IconContent}" Click="OnHideLeftPanelClick"
                                 AutomationProperties.Name="ファイルパネルを隠す"
                                 ToolTip="ファイルパネルを隠す (Ctrl+L)" />
-                        <TextBlock Text="{Binding FolderPath}" FontSize="11"
+                        <TextBlock DockPanel.Dock="Left" Text="{x:Static themes:IconGlyphs.FolderOpen}" Margin="0,0,5,0">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock" BasedOn="{StaticResource IconText}">
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding FolderPath}" Value="">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                        <TextBlock Text="{Binding FolderPath}" FontSize="{x:Static themes:ThemeTypography.FontSizeCaption}"
                                    Foreground="{StaticResource TextFaint}"
                                    VerticalAlignment="Center"
                                    TextTrimming="CharacterEllipsis"
@@ -326,7 +521,8 @@
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="1.4*" MinHeight="80" />
                         </Grid.RowDefinitions>
-                        <TreeView x:Name="FolderTree" Grid.Row="0"
+                        <controls:FolderTreeView x:Name="FolderTree" Grid.Row="0"
+                                  Style="{StaticResource FolderTree}"
                                   ScrollViewer.VerticalScrollBarVisibility="Auto"
                                   TreeViewItem.Expanded="OnFolderTreeExpanded"
                                   SelectedItemChanged="OnFolderTreeSelected"
@@ -339,25 +535,26 @@
                                               Click="OnTreeRefreshClick" />
                                 </ContextMenu>
                             </TreeView.ContextMenu>
-                        </TreeView>
+                        </controls:FolderTreeView>
                         <GridSplitter Grid.Row="1" Height="3" HorizontalAlignment="Stretch"
                                       Margin="4,3" />
                         <!-- ファイル一覧の絞り込み。拡張子の候補はドロップダウンから、
                              ワイルドカードや /正規表現/ は直接入力する -->
                         <DockPanel Grid.Row="2" Margin="0,0,0,4">
                             <Button DockPanel.Dock="Right" Style="{StaticResource PinToggle}"
-                                    Content="✕" Click="OnFileFilterClearClick"
+                                    Content="{x:Static themes:IconGlyphs.Close}"
+                                ContentTemplate="{StaticResource IconContent}" Click="OnFileFilterClearClick"
                                     AutomationProperties.Name="フィルタを消去"
                                     ToolTip="フィルタを消去 (Esc)" />
                             <TextBlock DockPanel.Dock="Right" Text="{Binding FileFilterSummary}"
-                                       FontSize="11" Foreground="{StaticResource TextFaint}"
+                                       FontSize="{x:Static themes:ThemeTypography.FontSizeCaption}" Foreground="{StaticResource TextFaint}"
                                        VerticalAlignment="Center" Margin="6,0,2,0"
                                        ToolTip="表示中 / フォルダ内のファイル数" />
                             <Grid>
                                 <!-- 不正な条件(正規表現の誤り・時間切れ)は、数値入力欄と同じく
                                      InputFeedback.Error で赤枠にし、ツールチップを理由に差し替える -->
                                 <ComboBox x:Name="FileFilterCombo" IsEditable="True"
-                                          IsTextSearchEnabled="False" FontSize="11"
+                                          IsTextSearchEnabled="False" FontSize="{x:Static themes:ThemeTypography.FontSizeBody}"
                                           ItemsSource="{Binding FileExtensionPatterns}"
                                           Text="{Binding FileFilterText, UpdateSourceTrigger=PropertyChanged}"
                                           PreviewKeyDown="OnFileFilterKeyDown"
@@ -365,7 +562,7 @@
                                           controls:InputFeedback.Error="{Binding FileFilterError}"
                                           ToolTip="拡張子・ワイルドカード・正規表現で一覧を絞り込みます (Ctrl+F)&#x0a;例: *.raw   .tif .tiff   dark*   img_00?.raw&#x0a;空白・; ・, で区切ると、いずれかに一致するものを表示&#x0a;/.../ で囲むと正規表現 (例: /^img_\d{3}\.raw$/)&#x0a;大文字小文字は区別しません。Esc で消去、Enter で一覧へ" />
                                 <TextBlock IsHitTestVisible="False" Margin="8,0,24,0"
-                                           VerticalAlignment="Center" FontSize="11"
+                                           VerticalAlignment="Center" FontSize="{x:Static themes:ThemeTypography.FontSizeCaption}"
                                            Foreground="{StaticResource TextFaint}"
                                            TextTrimming="CharacterEllipsis"
                                            Text="絞り込み (*.raw、dark*、/正規表現/)">
@@ -384,10 +581,22 @@
                         </DockPanel>
                         <ListBox x:Name="FileListBox" Grid.Row="3" ItemsSource="{Binding FilteredFiles}"
                                  SelectedItem="{Binding SelectedFile}"
-                                 DisplayMemberPath="Name"
+                                 ScrollViewer.CanContentScroll="True" ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                 VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
                                  ScrollViewer.VerticalScrollBarVisibility="Auto"
                                  MouseDoubleClick="OnFileListDoubleClick"
                                  PreviewMouseRightButtonDown="OnFileListPreviewRightClick">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <StackPanel ToolTip="{Binding Name}" AutomationProperties.Name="{Binding Name}">
+                                        <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock x:Name="FileDetailsText" Foreground="{StaticResource TextDim}" TextTrimming="CharacterEllipsis"
+                                                   FontSize="{x:Static themes:ThemeTypography.FontSizeCaption}"
+                                                   Loaded="OnFileDetailsLoaded" Unloaded="OnFileDetailsUnloaded"
+                                                   DataContextChanged="OnFileDetailsDataContextChanged" />
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
                             <ListBox.ContextMenu>
                                 <ContextMenu>
                                     <MenuItem Header="開く" Click="OnFileCtxOpenClick" />
@@ -416,8 +625,65 @@
                           Cursor="SizeWE" ToolTip="ドラッグで幅を調整" />
 
             <!-- 中央: 画像キャンバス -->
-            <Grid Grid.Column="3" Background="#FF161618">
-                <controls:ImageViewport x:Name="Viewport">
+            <Grid x:Name="GraphLayout" Grid.Column="3" Background="{StaticResource CanvasBrush}"
+                  SizeChanged="OnGraphLayoutSizeChanged">
+                <Grid.RowDefinitions>
+                    <RowDefinition x:Name="ViewportRow" Height="*" />
+                    <RowDefinition x:Name="GraphSplitterRow" Height="0" />
+                    <RowDefinition x:Name="GraphDockRow" Height="0" />
+                </Grid.RowDefinitions>
+            <Grid x:Name="ViewportLayout">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <Border x:Name="CanvasToolStrip" Width="37"
+                        Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource BorderBrushDark}"
+                        BorderThickness="0,0,1,0" Padding="2,5">
+                    <Border.Style>
+                        <Style TargetType="Border">
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding IsCompareMode}" Value="True">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Border.Style>
+                    <StackPanel IsEnabled="{Binding CanUseMainView}">
+                        <ToggleButton x:Name="PanToggle" IsChecked="True"
+                                      Style="{StaticResource CanvasToolToggle}" AutomationProperties.Name="パン"
+                                      Content="{x:Static themes:IconGlyphs.PanMode}" ContentTemplate="{StaticResource IconContent}"
+                                      Tag="パン · ドラッグで画像を移動します (ツール使用中は Esc で終了)" />
+                        <ToggleButton x:Name="RoiToggle" Style="{StaticResource CanvasToolToggle}"
+                                      AutomationProperties.Name="ROI選択モード"
+                                      Content="{x:Static themes:IconGlyphs.SelectAll}" ContentTemplate="{StaticResource IconContent}"
+                                      Tag="ROI選択 (R) · ドラッグで範囲を選択します"
+                                      Checked="OnRoiToggleChanged" Unchecked="OnRoiToggleChanged" />
+                        <ToggleButton x:Name="ProfileToggle" Style="{StaticResource CanvasToolToggle}"
+                                      AutomationProperties.Name="ラインプロファイルモード"
+                                      Tag="ラインプロファイル (P) · クリックした行のプロファイルを表示します"
+                                      Checked="OnProfileToggleChanged" Unchecked="OnProfileToggleChanged">
+                            <Path Style="{StaticResource CanvasToolIcon}" Data="M 0,13 L 0,0 M 0,13 L 14,13 M 2,10 L 5,6 L 8,8 L 12,2" />
+                        </ToggleButton>
+                        <ToggleButton x:Name="CanvasWbPickToggle" Style="{StaticResource CanvasToolToggle}"
+                                      AutomationProperties.Name="WBスポイトモード"
+                                      Content="{x:Static themes:IconGlyphs.Eyedropper}" ContentTemplate="{StaticResource IconContent}"
+                                      Tag="WBスポイト (I) · 無彩色の点からホワイトバランスを合わせます"
+                                      IsChecked="{Binding IsChecked, ElementName=WbPickToggle, Mode=TwoWay}" />
+                        <Border Height="1" Margin="3,3,3,5" Background="{StaticResource BorderBrushDark}" />
+                        <ToggleButton x:Name="HorizontalProjectionToggle" Style="{StaticResource CanvasToolToggle}"
+                                      AutomationProperties.Name="水平射影" ToolTipService.ShowDuration="60000"
+                                      Checked="OnProjectionToggleChanged" Unchecked="OnProjectionToggleChanged">
+                            <Path Style="{StaticResource CanvasToolIcon}" Data="M 0,13 L 14,13 M 3,11 L 3,6 M 7,11 L 7,2 M 11,11 L 11,5" />
+                        </ToggleButton>
+                        <ToggleButton x:Name="VerticalProjectionToggle" Style="{StaticResource CanvasToolToggle}"
+                                      AutomationProperties.Name="垂直射影" ToolTipService.ShowDuration="60000"
+                                      Checked="OnProjectionToggleChanged" Unchecked="OnProjectionToggleChanged">
+                            <Path Style="{StaticResource CanvasToolIcon}" Data="M 0,0 L 0,14 M 2,3 L 7,3 M 2,7 L 12,7 M 2,11 L 9,11" />
+                        </ToggleButton>
+                    </StackPanel>
+                </Border>
+                <controls:ImageViewport x:Name="Viewport" Grid.Column="1">
                     <controls:ImageViewport.ContextMenu>
                         <ContextMenu>
                             <MenuItem Header="全体表示" Click="OnFitClick"
@@ -447,39 +713,113 @@
                         </ContextMenu>
                     </controls:ImageViewport.ContextMenu>
                 </controls:ImageViewport>
-                <Border Style="{StaticResource OverlayBox}" HorizontalAlignment="Left"
-                        VerticalAlignment="Top" Margin="14,12"
-                        Visibility="{Binding HasImage, Converter={StaticResource BoolToVis}}">
-                    <TextBlock Style="{StaticResource OverlayText}" Text="{Binding CursorOverlayText}" />
+                <Border x:Name="EmptyCanvas" Grid.Column="1" Margin="6" Padding="10" BorderThickness="2" CornerRadius="6"
+                        Visibility="{Binding ShowEmptyCanvas, Converter={StaticResource BoolToVis}}">
+                    <Border.Style>
+                        <Style TargetType="Border">
+                            <Setter Property="BorderBrush" Value="Transparent" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding Tag, RelativeSource={RelativeSource Self}}" Value="True">
+                                    <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Border.Style>
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+                                  VerticalAlignment="Center">
+                        <StackPanel MaxWidth="300" Margin="0,8">
+                            <TextBlock Style="{StaticResource IconText}" Text="{x:Static themes:IconGlyphs.OpenFile}"
+                                       FontSize="{x:Static themes:ThemeTypography.FontSizeHeroIcon}" HorizontalAlignment="Center"
+                                       Foreground="{StaticResource AccentBrush}" />
+                            <TextBlock Text="画像をここへドロップ" HorizontalAlignment="Center"
+                                       FontWeight="SemiBold" Margin="0,8,0,12" />
+                            <Button Content="開く… (Ctrl+O)" Style="{StaticResource PrimaryButton}"
+                                    HorizontalAlignment="Center" Click="OnOpenFileClick" />
+                            <Button Content="フォルダを開く…" HorizontalAlignment="Center"
+                                    Margin="0,6,0,0" Click="OnOpenFolderClick" />
+                            <TextBlock Text="最近使ったファイル" Foreground="{StaticResource TextDim}"
+                                       Margin="0,14,0,4"
+                                       Visibility="{Binding HasItems, ElementName=EmptyCanvasRecent,
+                                           Converter={StaticResource BoolToVis}}" />
+                            <ItemsControl x:Name="EmptyCanvasRecent">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Button Margin="0,0,0,3" HorizontalContentAlignment="Stretch"
+                                                AutomationProperties.Name="{Binding AccessibleName}"
+                                                ToolTip="{Binding FullPath}" Click="OnEmptyCanvasRecentClick">
+                                            <StackPanel>
+                                                <TextBlock Text="{Binding FileName}" TextTrimming="CharacterEllipsis" />
+                                                <TextBlock Text="{Binding Folder}" TextTrimming="CharacterEllipsis"
+                                                           Foreground="{StaticResource TextDim}"
+                                                           FontSize="{x:Static themes:ThemeTypography.FontSizeCaption}" />
+                                            </StackPanel>
+                                        </Button>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                    </ScrollViewer>
                 </Border>
-                <Border Style="{StaticResource OverlayBox}" HorizontalAlignment="Right"
-                        VerticalAlignment="Top" Margin="14,12"
-                        Visibility="{Binding HasRoi, Converter={StaticResource BoolToVis}}">
-                    <TextBlock Style="{StaticResource OverlayText}" Text="{Binding RoiOverlayText}" />
+                <Border x:Name="CursorOverlayBox" Grid.Column="1" HorizontalAlignment="Left" VerticalAlignment="Top"
+                        IsHitTestVisible="False" Tag="{Binding CursorOverlayText}">
+                    <Border.Style>
+                        <Style TargetType="Border" BasedOn="{StaticResource OverlayBox}">
+                            <Setter Property="Margin" Value="14,12" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding IsVisible, ElementName=InteractionHint}" Value="True">
+                                    <Setter Property="Margin" Value="14,46,14,12" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Border.Style>
+                    <TextBlock Style="{StaticResource OverlayText}" />
+                </Border>
+                <Border x:Name="RoiOverlayBox" Grid.Column="1" HorizontalAlignment="Right"
+                        VerticalAlignment="Top" IsHitTestVisible="False" Tag="{Binding RoiOverlayText}">
+                    <Border.Style>
+                        <Style TargetType="Border" BasedOn="{StaticResource OverlayBox}">
+                            <Setter Property="Margin" Value="14,12" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding IsVisible, ElementName=InteractionHint}" Value="True">
+                                    <Setter Property="Margin" Value="14,46,14,12" />
+                                </DataTrigger>
+                                <DataTrigger Binding="{Binding HasRoi}" Value="False">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Border.Style>
+                    <TextBlock Style="{StaticResource OverlayText}" />
                 </Border>
                 <!-- シーケンス再生バー -->
-                <Border VerticalAlignment="Bottom" HorizontalAlignment="Stretch"
-                        Background="#E62E2E32" BorderBrush="{StaticResource BorderBrushDark}"
+                <Border x:Name="PlaybackBar" Grid.Column="1" VerticalAlignment="Bottom" HorizontalAlignment="Stretch"
+                        Background="{StaticResource OverlayPanelBrush}" BorderBrush="{StaticResource BorderBrushDark}"
                         BorderThickness="0,1,0,0" Padding="10,6"
                         Visibility="{Binding HasSequence, Converter={StaticResource BoolToVis}}">
                     <DockPanel>
-                        <Button Style="{StaticResource ToolButton}" Content="⏮"
+                        <Button Style="{StaticResource ToolButton}" Content="{x:Static themes:IconGlyphs.FirstFrame}"
+                                ContentTemplate="{StaticResource IconContent}"
                                 Click="OnSeqFirstClick" Padding="8,3"
-                                AutomationProperties.Name="先頭フレームへ" ToolTip="先頭フレームへ" />
-                        <Button Style="{StaticResource ToolButton}" Content="◀"
+                                AutomationProperties.Name="先頭フレームへ" ToolTip="先頭フレームへ (Home)" />
+                        <Button x:Name="PreviousFrameButton" Style="{StaticResource ToolButton}" Content="{x:Static themes:IconGlyphs.StepBack}"
+                                ContentTemplate="{StaticResource IconContent}"
                                 Click="OnSeqPrevClick" Padding="8,3"
-                                AutomationProperties.Name="前のフレームへ" ToolTip="前のフレームへ" />
-                        <ToggleButton x:Name="PlayToggle" Content="▶ 再生"
+                                AutomationProperties.Name="前のフレームへ" ToolTip="前のフレームへ (Page Up)" />
+                        <ToggleButton x:Name="PlayToggle" Content="再生" Tag="{x:Static themes:IconGlyphs.Play}"
+                                      ContentTemplate="{StaticResource IconLabelContent}"
                                       Style="{StaticResource ToolToggle}" Padding="10,3"
+                                      ToolTip="再生 / 停止 (Space)"
                                       Checked="OnPlayToggleChanged" Unchecked="OnPlayToggleChanged" />
-                        <Button Style="{StaticResource ToolButton}" Content="▶"
+                        <Button x:Name="NextFrameButton" Style="{StaticResource ToolButton}" Content="{x:Static themes:IconGlyphs.StepForward}"
+                                ContentTemplate="{StaticResource IconContent}"
                                 Click="OnSeqNextClick" Padding="8,3"
-                                AutomationProperties.Name="次のフレームへ" ToolTip="次のフレームへ" />
-                        <Button Style="{StaticResource ToolButton}" Content="⏭"
+                                AutomationProperties.Name="次のフレームへ" ToolTip="次のフレームへ (Page Down)" />
+                        <Button Style="{StaticResource ToolButton}" Content="{x:Static themes:IconGlyphs.LastFrame}"
+                                ContentTemplate="{StaticResource IconContent}"
                                 Click="OnSeqLastClick" Padding="8,3"
-                                AutomationProperties.Name="最終フレームへ" ToolTip="最終フレームへ" />
+                                AutomationProperties.Name="最終フレームへ" ToolTip="最終フレームへ (End)" />
                         <ComboBox x:Name="FpsCombo" DockPanel.Dock="Right" MinWidth="76"
-                                  SelectedIndex="2" FontSize="11" VerticalAlignment="Center"
+                                  SelectedIndex="2" FontSize="{x:Static themes:ThemeTypography.FontSizeBody}" VerticalAlignment="Center"
                                   IsEditable="True" IsTextSearchEnabled="False"
                                   ToolTip="一覧から選ぶか、数値を直接入力できます (0.1〜240 fps)"
                                   TextBoxBase.TextChanged="OnFpsTextChanged"
@@ -491,7 +831,7 @@
                             <sys:String>30 fps</sys:String>
                         </ComboBox>
                         <TextBlock DockPanel.Dock="Right" Text="{Binding SequenceLabel}"
-                                   FontFamily="Consolas" FontSize="12" Margin="10,0"
+                                   FontFamily="Consolas" FontSize="{x:Static themes:ThemeTypography.FontSizeBody}" Margin="10,0"
                                    VerticalAlignment="Center"
                                    Foreground="{StaticResource TextDim}" />
                         <Slider x:Name="SeqSlider" Minimum="0" Maximum="{Binding SequenceMax}"
@@ -501,16 +841,60 @@
                                 ValueChanged="OnSeqSliderChanged" />
                     </DockPanel>
                 </Border>
-                <Border Style="{StaticResource OverlayBox}" HorizontalAlignment="Right"
-                        VerticalAlignment="Bottom" Margin="14,44"
-                        Visibility="{Binding HasImage, Converter={StaticResource BoolToVis}}">
-                    <TextBlock Style="{StaticResource OverlayText}" Text="{Binding LevelOverlayText}"
-                               Foreground="#FF8A8A85" />
+                <Border x:Name="NavigatorBox" Grid.Column="1" HorizontalAlignment="Right" VerticalAlignment="Bottom"
+                        Visibility="Collapsed" BorderThickness="1" Padding="2"
+                        Background="{StaticResource OverlayPanelBrush}" BorderBrush="{StaticResource BorderBrushLight}"
+                        ToolTip="クリックまたはドラッグして表示位置を移動">
+                    <Canvas x:Name="NavigatorSurface" ClipToBounds="True" Cursor="Hand"
+                            MouseLeftButtonDown="OnNavigatorMouseDown" MouseMove="OnNavigatorMouseMove"
+                            MouseLeftButtonUp="OnNavigatorMouseUp">
+                        <Image x:Name="NavigatorImage" Stretch="None" />
+                        <Rectangle x:Name="NavigatorFrame" Stroke="{StaticResource AccentBrush}" StrokeThickness="2"
+                                   Fill="{StaticResource AccentSoftBrush}" IsHitTestVisible="False" />
+                    </Canvas>
+                </Border>
+                <Border x:Name="LevelOverlayBox" Grid.Column="1" HorizontalAlignment="Right"
+                        VerticalAlignment="Bottom" IsHitTestVisible="False" Tag="{Binding LevelOverlayText}">
+                    <Border.Style>
+                        <Style TargetType="Border" BasedOn="{StaticResource OverlayBox}">
+                            <Setter Property="Margin" Value="14,12" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding Visibility, ElementName=PlaybackBar}" Value="Visible">
+                                    <Setter Property="Margin" Value="14,44" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Border.Style>
+                    <TextBlock Style="{StaticResource OverlayText}" Foreground="{StaticResource TextFaint}" />
+                </Border>
+
+                <Border x:Name="InteractionHint" Grid.Column="1" HorizontalAlignment="Center" VerticalAlignment="Top"
+                        Margin="8,12" IsHitTestVisible="False">
+                    <Border.Style>
+                        <Style TargetType="Border" BasedOn="{StaticResource OverlayBox}">
+                            <Style.Triggers>
+                                <Trigger Property="Tag" Value="{x:Null}">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                </Trigger>
+                                <DataTrigger Binding="{Binding IsCompareMode}" Value="True">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Border.Style>
+                    <TextBlock Style="{StaticResource OverlayText}" TextAlignment="Center" TextWrapping="Wrap" />
                 </Border>
 
                 <!-- 比較モード(表示中は通常ビューを覆う) -->
-                <compare:CompareView x:Name="CompareArea" Visibility="Collapsed"
+                <compare:CompareView x:Name="CompareArea" Grid.Column="1" Visibility="Collapsed"
                                      IsFullscreen="{Binding IsFullscreen, Mode=TwoWay}" />
+            </Grid>
+                <GridSplitter x:Name="GraphDockSplitter" Grid.Row="1" Height="5" Visibility="Collapsed"
+                              HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
+                              ResizeDirection="Rows" ResizeBehavior="PreviousAndNext"
+                              Cursor="SizeNS" AutomationProperties.Name="グラフドックの高さ"
+                              ToolTip="ドラッグまたは矢印キーでグラフドックの高さを調整" />
+                <views:GraphDock x:Name="AnalysisGraphDock" Grid.Row="2" Margin="37,0,0,0" Visibility="Collapsed" />
             </Grid>
 
             <GridSplitter x:Name="RightSplitter" Grid.Column="4" Width="5"
@@ -526,114 +910,117 @@
                             BorderBrush="{StaticResource BorderBrushDark}"
                             BorderThickness="0,0,0,1" Padding="10,4">
                         <DockPanel>
-                            <Button DockPanel.Dock="Right" Style="{StaticResource PinToggle}"
-                                    Content="📌" Click="OnHideRightPanelClick"
+                            <Button x:Name="HideRightPanelButton" DockPanel.Dock="Right" Style="{StaticResource PinToggle}"
+                                    Content="{x:Static themes:IconGlyphs.CollapsePane}"
+                                    ContentTemplate="{StaticResource IconContent}" Click="OnHideRightPanelClick"
                                     AutomationProperties.Name="調整パネルを隠す"
                                     ToolTip="調整パネルを隠す (Ctrl+R)" />
-                            <TextBlock Text="調整パネル" FontSize="11" FontWeight="SemiBold"
+                            <TextBlock Text="調整パネル" FontSize="{x:Static themes:ThemeTypography.FontSizeCaption}" FontWeight="SemiBold"
                                        Foreground="{StaticResource TextDim}"
                                        VerticalAlignment="Center" />
                         </DockPanel>
                     </Border>
-                    <!-- 比較モード中は中身ごと無効にし(比較画面に隠れた通常表示に効かせない)、理由を上端に示す -->
-                    <Border DockPanel.Dock="Top" Background="{StaticResource AccentSoftBrush}"
+                    <Border x:Name="AdjustPanelReasonBanner" DockPanel.Dock="Top" Background="{StaticResource AccentSoftBrush}"
                             BorderBrush="{StaticResource BorderBrushDark}" BorderThickness="0,0,0,1"
-                            Padding="10,6"
-                            Visibility="{Binding IsCompareMode, Converter={StaticResource BoolToVis}}">
-                        <TextBlock Text="{Binding AdjustPanelDisabledReason}" FontSize="11"
+                            Padding="10,6">
+                        <Border.Style>
+                            <Style TargetType="Border">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding CanUseAdjustPanel}" Value="True">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Border.Style>
+                        <TextBlock Text="{Binding AdjustPanelDisabledReason}" FontSize="{x:Static themes:ThemeTypography.FontSizeCaption}"
                                    TextWrapping="Wrap" Foreground="{StaticResource AccentBrush}" />
                     </Border>
                     <ScrollViewer VerticalScrollBarVisibility="Auto">
-                        <StackPanel IsEnabled="{Binding CanUseAdjustPanel}">
-                        <!-- 表示調整 -->
-                        <Border BorderBrush="{StaticResource BorderBrushDark}"
-                                BorderThickness="0,0,0,1" Padding="12,10">
+                        <StackPanel>
+                        <Expander x:Name="DisplaySection" Header="{Binding DisplayAdjustmentTitle}"
+                                  IsEnabled="{Binding CanUseAdjustPanel}">
                             <StackPanel>
-                                <TextBlock Style="{StaticResource SectionHeader}" Text="表示調整" />
-                                <!-- 範囲はVM側の定義を参照する(二重定義でずれないように) -->
-                                <controls:NumericSliderRow Label="ゲイン" Value="{Binding GainDb}"
-                                                           Minimum="{Binding MinGainDb}"
-                                                           Maximum="{Binding MaxGainDb}" Step="0.5"
-                                                           Decimals="1" DefaultValue="0"
-                                                           TickFrequency="6" Unit="dB"
-                                                           Note="{Binding GainNote}" />
-                                <controls:NumericSliderRow Label="ガンマ" Value="{Binding Gamma}"
-                                                           Minimum="0.2" Maximum="3" Step="0.05"
-                                                           Decimals="2" DefaultValue="1"
-                                                           TickFrequency="0.5" />
-                                <controls:NumericSliderRow Label="コントラスト" Value="{Binding Contrast}"
-                                                           Minimum="0" Maximum="3" Step="0.05"
-                                                           Decimals="2" DefaultValue="1"
-                                                           TickFrequency="0.5" />
-                                <controls:NumericSliderRow Label="黒レベル" Value="{Binding BlackLevel}"
-                                                           Minimum="0" Maximum="{Binding BlackLevelMax}"
-                                                           Step="1" Decimals="0" DefaultValue="0"
-                                                           Unit="LSB" />
-                                <controls:NumericSliderRow Label="白レベル" Value="{Binding WhiteLevel}"
-                                                           Minimum="0" Maximum="{Binding BlackLevelMax}"
-                                                           Step="1" Decimals="0"
-                                                           DefaultValue="{Binding BlackLevelMax}"
-                                                           Unit="LSB" />
-                                <DockPanel Margin="0,6,0,0"
-                                           Visibility="{Binding HdrTargetVisible,
+                                <StackPanel DataContext="{Binding DisplayAdjustmentSource}">
+                                    <!-- 範囲はVM側の定義を参照する(二重定義でずれないように) -->
+                                    <controls:NumericSliderRow x:Name="DisplayGainRow" Label="ゲイン" Value="{Binding GainDb}"
+                                                               Minimum="{Binding MinGainDb}"
+                                                               Maximum="{Binding MaxGainDb}" Step="0.5"
+                                                               Decimals="1" DefaultValue="0"
+                                                               TickFrequency="6" Unit="dB"
+                                                               Note="{Binding GainNote}" />
+                                    <controls:NumericSliderRow x:Name="DisplayGammaRow" Label="ガンマ" Value="{Binding Gamma}"
+                                                               Minimum="0.2" Maximum="3" Step="0.05"
+                                                               Decimals="2" DefaultValue="1"
+                                                               TickFrequency="0.5" />
+                                    <controls:NumericSliderRow x:Name="DisplayContrastRow" Label="コントラスト" Value="{Binding Contrast}"
+                                                               Minimum="0" Maximum="3" Step="0.05"
+                                                               Decimals="2" DefaultValue="1"
+                                                               TickFrequency="0.5" />
+                                    <controls:NumericSliderRow x:Name="DisplayBlackRow" Label="黒レベル" Value="{Binding BlackLevel}"
+                                                               Minimum="0" Maximum="{Binding BlackLevelMax}"
+                                                               Step="1" Decimals="0" DefaultValue="0"
+                                                               Unit="LSB" />
+                                    <controls:NumericSliderRow x:Name="DisplayWhiteRow" Label="白レベル" Value="{Binding WhiteLevel}"
+                                                               Minimum="0" Maximum="{Binding BlackLevelMax}"
+                                                               Step="1" Decimals="0"
+                                                               DefaultValue="{Binding BlackLevelMax}"
+                                                               Unit="LSB" />
+                                </StackPanel>
+                                <DockPanel x:Name="HdrAdjustTargetRow" Margin="0,6,0,0"
+                                           Visibility="{Binding ShowHdrAdjustTarget,
                                                Converter={StaticResource BoolToVis}}">
                                     <TextBlock Style="{StaticResource RowLabel}" Text="調整対象"
                                                Width="64" VerticalAlignment="Center" />
-                                    <ComboBox x:Name="HdrTargetCombo" FontSize="11"
+                                    <ComboBox x:Name="HdrTargetCombo" FontSize="{x:Static themes:ThemeTypography.FontSizeBody}"
                                               DropDownClosed="OnSelectorDropDownClosed" />
                                 </DockPanel>
-                                <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
-                                    <Button Style="{StaticResource ToolButton}" Content="自動 (0.35%クリップ)"
-                                            Click="OnAutoContrastClick" FontSize="11" />
-                                    <Button Style="{StaticResource ToolButton}" Content="リセット"
-                                            Click="OnResetDisplayClick" FontSize="11" />
-                                </StackPanel>
+                                <WrapPanel x:Name="DisplayActionRow" Margin="0,8,0,0">
+                                    <Button x:Name="DisplayAutoButton" Style="{StaticResource RightPanelButton}" Content="自動 (0.35%クリップ)"
+                                            Click="OnAutoContrastClick" FontSize="{x:Static themes:ThemeTypography.FontSizeBody}" />
+                                    <Button x:Name="DisplayResetButton" Style="{StaticResource RightPanelButton}" Content="リセット"
+                                            Tag="{x:Static themes:IconGlyphs.Refresh}" ContentTemplate="{StaticResource IconLabelContent}"
+                                            Click="OnResetDisplayClick" FontSize="{x:Static themes:ThemeTypography.FontSizeBody}" />
+                                </WrapPanel>
                             </StackPanel>
-                        </Border>
+                        </Expander>
 
-                        <!-- ヒストグラム -->
-                        <Border BorderBrush="{StaticResource BorderBrushDark}"
-                                BorderThickness="0,0,0,1" Padding="12,10">
+                        <Expander x:Name="HistogramSection" Header="ヒストグラム"
+                                  Style="{StaticResource MainViewAdjustmentSection}">
                             <StackPanel>
-                                <DockPanel Margin="0,0,0,8">
-                                    <CheckBox DockPanel.Dock="Right" Content="log" FontSize="11"
-                                              Foreground="{StaticResource TextDim}"
-                                              IsChecked="{Binding HistogramIsLog}"
-                                              VerticalAlignment="Center" />
-                                    <CheckBox DockPanel.Dock="Right" Content="累積" FontSize="11"
-                                              Foreground="{StaticResource TextDim}"
-                                              IsChecked="{Binding HistogramIsCumulative}"
-                                              Margin="0,0,8,0" VerticalAlignment="Center"
-                                              ToolTip="累積頻度表示 (傷の出力ピーク解析用)" />
-                                    <CheckBox DockPanel.Dock="Right" Content="ch" FontSize="11"
+                                <WrapPanel Margin="0,0,0,8">
+                                    <CheckBox Content="ch" FontSize="{x:Static themes:ThemeTypography.FontSizeBody}"
                                               Foreground="{StaticResource TextDim}"
                                               IsChecked="{Binding HistogramByChannel}"
                                               Margin="0,0,8,0" VerticalAlignment="Center"
                                               ToolTip="Bayerチャネル別 (R/Gr/Gb/B) 表示" />
-                                    <TextBlock DockPanel.Dock="Right" Text="sampled" FontSize="10"
-                                               Foreground="#FFD99B5B" Margin="0,0,8,0"
+                                    <CheckBox Content="累積" FontSize="{x:Static themes:ThemeTypography.FontSizeBody}"
+                                              Foreground="{StaticResource TextDim}"
+                                              Margin="0,0,8,0" VerticalAlignment="Center"
+                                              IsChecked="{Binding HistogramIsCumulative}"
+                                              ToolTip="累積頻度表示 (傷の出力ピーク解析用)" />
+                                    <CheckBox Content="log" FontSize="{x:Static themes:ThemeTypography.FontSizeBody}"
+                                              Foreground="{StaticResource TextDim}"
+                                              IsChecked="{Binding HistogramIsLog}"
+                                              VerticalAlignment="Center" />
+                                    <TextBlock Text="sampled" FontSize="{x:Static themes:ThemeTypography.FontSizeCaption}"
+                                               Foreground="{StaticResource WarningBrush}" Margin="8,0,0,0"
                                                VerticalAlignment="Center"
                                                Visibility="{Binding HistogramIsSampled,
                                                    Converter={StaticResource BoolToVis}}" />
-                                    <!-- パネルが狭いと sampled バッジと重なるため省略表示にする -->
-                                    <TextBlock FontSize="11" FontWeight="SemiBold"
-                                               Foreground="{StaticResource TextFaint}"
-                                               Text="ヒストグラム" Margin="0,0,6,0"
-                                               TextTrimming="CharacterEllipsis"
-                                               ToolTip="ヒストグラム" />
-                                </DockPanel>
-                                <Image Source="{Binding HistogramSource}" Height="70" Stretch="Fill"
-                                       SnapsToDevicePixels="True" Cursor="Hand"
-                                       ToolTip="右クリックでデータ保存/コピー">
-                                    <Image.ContextMenu>
+                                </WrapPanel>
+                                <controls:HistogramView x:Name="HistogramChart" Height="87" SnapsToDevicePixels="True"
+                                                        BlackLevel="{Binding BlackLevel}" WhiteLevel="{Binding WhiteLevel}"
+                                                        MaxCode="{Binding BlackLevelMax, Mode=OneWay}"
+                                                        ToolTip="ハンドルをドラッグして黒・白レベルを調整。右クリックでデータ保存/コピー">
+                                    <controls:HistogramView.ContextMenu>
                                         <ContextMenu>
                                             <MenuItem Header="データをコピー (Excel貼り付け用)"
                                                       Click="OnHistogramCopyClick" />
                                             <MenuItem Header="CSVで保存…"
                                                       Click="OnHistogramSaveCsvClick" />
                                         </ContextMenu>
-                                    </Image.ContextMenu>
-                                </Image>
+                                    </controls:HistogramView.ContextMenu>
+                                </controls:HistogramView>
                                 <DockPanel Margin="0,6,0,0">
                                     <TextBlock Style="{StaticResource RowLabel}" Text="mean / σ" />
                                     <TextBlock DockPanel.Dock="Right" Style="{StaticResource RowValue}"
@@ -676,7 +1063,7 @@
                                         Converter={StaticResource BoolToVis}}" Margin="0,4,0,0">
                                     <DockPanel Margin="0,1">
                                         <TextBlock Style="{StaticResource RowLabel}" Text="R"
-                                                   Foreground="#FFE0524E" Width="28" />
+                                                   Foreground="{StaticResource ChannelRBrush}" Width="28" />
                                         <TextBlock DockPanel.Dock="Right"
                                                    Style="{StaticResource RowValue}"
                                                    Text="{Binding ChRText}" />
@@ -684,7 +1071,7 @@
                                     </DockPanel>
                                     <DockPanel Margin="0,1">
                                         <TextBlock Style="{StaticResource RowLabel}" Text="Gr"
-                                                   Foreground="#FF7ECB72" Width="28" />
+                                                   Foreground="{StaticResource ChannelGrBrush}" Width="28" />
                                         <TextBlock DockPanel.Dock="Right"
                                                    Style="{StaticResource RowValue}"
                                                    Text="{Binding ChGrText}" />
@@ -692,7 +1079,7 @@
                                     </DockPanel>
                                     <DockPanel Margin="0,1">
                                         <TextBlock Style="{StaticResource RowLabel}" Text="Gb"
-                                                   Foreground="#FF4E9A4E" Width="28" />
+                                                   Foreground="{StaticResource ChannelGbBrush}" Width="28" />
                                         <TextBlock DockPanel.Dock="Right"
                                                    Style="{StaticResource RowValue}"
                                                    Text="{Binding ChGbText}" />
@@ -700,7 +1087,7 @@
                                     </DockPanel>
                                     <DockPanel Margin="0,1">
                                         <TextBlock Style="{StaticResource RowLabel}" Text="B"
-                                                   Foreground="#FF5B9DD9" Width="28" />
+                                                   Foreground="{StaticResource ChannelBBrush}" Width="28" />
                                         <TextBlock DockPanel.Dock="Right"
                                                    Style="{StaticResource RowValue}"
                                                    Text="{Binding ChBText}" />
@@ -708,13 +1095,11 @@
                                     </DockPanel>
                                 </StackPanel>
                             </StackPanel>
-                        </Border>
+                        </Expander>
 
-                        <!-- ホワイトバランス -->
-                        <Border BorderBrush="{StaticResource BorderBrushDark}"
-                                BorderThickness="0,0,0,1" Padding="12,10">
+                        <Expander x:Name="WhiteBalanceSection" Header="ホワイトバランス"
+                                  Style="{StaticResource MainViewAdjustmentSection}">
                             <StackPanel>
-                                <TextBlock Style="{StaticResource SectionHeader}" Text="ホワイトバランス" />
                                 <controls:NumericSliderRow Label="Rゲイン" Value="{Binding WbGainR}"
                                                            Minimum="0.5" Maximum="4" Step="0.01"
                                                            Decimals="3" DefaultValue="1" Unit="×"
@@ -727,64 +1112,60 @@
                                                            Minimum="0.5" Maximum="4" Step="0.01"
                                                            Decimals="3" DefaultValue="1" Unit="×"
                                                            TickFrequency="0.5" />
-                                <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
-                                    <Button Style="{StaticResource ToolButton}"
+                                <WrapPanel x:Name="WhiteBalanceActionRow" Margin="0,6,0,0">
+                                    <Button Style="{StaticResource RightPanelButton}"
                                             Content="AWB (グレーワールド)"
-                                            Click="OnGrayWorldClick" FontSize="11"
+                                            Click="OnGrayWorldClick" FontSize="{x:Static themes:ThemeTypography.FontSizeBody}"
                                             IsEnabled="{Binding HasImage}"
                                             ToolTip="画像全体の平均からR/Bゲインを自動計算" />
-                                    <ToggleButton x:Name="WbPickToggle" Content="スポイト"
-                                                  Style="{StaticResource ToolToggle}"
-                                                  FontSize="11"
+                                    <ToggleButton x:Name="WbPickToggle" Content="スポイト" Tag="{x:Static themes:IconGlyphs.Eyedropper}"
+                                                  ContentTemplate="{StaticResource IconLabelContent}"
+                                                  Style="{StaticResource RightPanelToggle}"
+                                                  FontSize="{x:Static themes:ThemeTypography.FontSizeBody}"
                                                   IsEnabled="{Binding HasImage}"
                                                   ToolTip="クリックした画素を無彩色とみなしてWBを合わせる"
                                                   Checked="OnWbPickToggleChanged"
                                                   Unchecked="OnWbPickToggleChanged" />
-                                </StackPanel>
+                                </WrapPanel>
                             </StackPanel>
-                        </Border>
+                        </Expander>
 
-                        <!-- カラーマトリクス (発展機能) -->
-                        <Border BorderBrush="{StaticResource BorderBrushDark}"
-                                BorderThickness="0,0,0,1" Padding="12,10">
+                        <Expander x:Name="ColorMatrixSection" Header="カラーマトリクス (現像時)"
+                                  Style="{StaticResource MainViewAdjustmentSection}">
                             <StackPanel IsEnabled="{Binding HasImage}">
-                                <TextBlock Style="{StaticResource SectionHeader}"
-                                           Text="カラーマトリクス (現像時)" />
                                 <UniformGrid Columns="3" Rows="3">
-                                    <TextBox x:Name="M11Box" Text="1.00" FontSize="11" Margin="1"
+                                    <TextBox x:Name="M11Box" Text="1.00" FontSize="{x:Static themes:ThemeTypography.FontSizeBody}" Margin="1"
                                              TextAlignment="Right" TextChanged="OnMatrixChanged" />
-                                    <TextBox x:Name="M12Box" Text="0.00" FontSize="11" Margin="1"
+                                    <TextBox x:Name="M12Box" Text="0.00" FontSize="{x:Static themes:ThemeTypography.FontSizeBody}" Margin="1"
                                              TextAlignment="Right" TextChanged="OnMatrixChanged" />
-                                    <TextBox x:Name="M13Box" Text="0.00" FontSize="11" Margin="1"
+                                    <TextBox x:Name="M13Box" Text="0.00" FontSize="{x:Static themes:ThemeTypography.FontSizeBody}" Margin="1"
                                              TextAlignment="Right" TextChanged="OnMatrixChanged" />
-                                    <TextBox x:Name="M21Box" Text="0.00" FontSize="11" Margin="1"
+                                    <TextBox x:Name="M21Box" Text="0.00" FontSize="{x:Static themes:ThemeTypography.FontSizeBody}" Margin="1"
                                              TextAlignment="Right" TextChanged="OnMatrixChanged" />
-                                    <TextBox x:Name="M22Box" Text="1.00" FontSize="11" Margin="1"
+                                    <TextBox x:Name="M22Box" Text="1.00" FontSize="{x:Static themes:ThemeTypography.FontSizeBody}" Margin="1"
                                              TextAlignment="Right" TextChanged="OnMatrixChanged" />
-                                    <TextBox x:Name="M23Box" Text="0.00" FontSize="11" Margin="1"
+                                    <TextBox x:Name="M23Box" Text="0.00" FontSize="{x:Static themes:ThemeTypography.FontSizeBody}" Margin="1"
                                              TextAlignment="Right" TextChanged="OnMatrixChanged" />
-                                    <TextBox x:Name="M31Box" Text="0.00" FontSize="11" Margin="1"
+                                    <TextBox x:Name="M31Box" Text="0.00" FontSize="{x:Static themes:ThemeTypography.FontSizeBody}" Margin="1"
                                              TextAlignment="Right" TextChanged="OnMatrixChanged" />
-                                    <TextBox x:Name="M32Box" Text="0.00" FontSize="11" Margin="1"
+                                    <TextBox x:Name="M32Box" Text="0.00" FontSize="{x:Static themes:ThemeTypography.FontSizeBody}" Margin="1"
                                              TextAlignment="Right" TextChanged="OnMatrixChanged" />
-                                    <TextBox x:Name="M33Box" Text="1.00" FontSize="11" Margin="1"
+                                    <TextBox x:Name="M33Box" Text="1.00" FontSize="{x:Static themes:ThemeTypography.FontSizeBody}" Margin="1"
                                              TextAlignment="Right" TextChanged="OnMatrixChanged" />
                                 </UniformGrid>
-                                <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                                <WrapPanel Margin="0,6,0,0">
                                     <Button Style="{StaticResource ToolButton}" Content="リセット"
-                                            Click="OnMatrixResetClick" FontSize="11" />
+                                            Click="OnMatrixResetClick" FontSize="{x:Static themes:ThemeTypography.FontSizeBody}" />
                                     <TextBlock x:Name="MatrixStateText" Style="{StaticResource RowLabel}"
-                                               FontSize="10" VerticalAlignment="Center"
+                                               FontSize="{x:Static themes:ThemeTypography.FontSizeCaption}" VerticalAlignment="Center"
                                                Margin="8,0,0,0" Text="単位行列 (無効)" />
-                                </StackPanel>
+                                </WrapPanel>
                             </StackPanel>
-                        </Border>
+                        </Expander>
 
-                        <!-- フォーマット -->
-                        <Border BorderBrush="{StaticResource BorderBrushDark}"
-                                BorderThickness="0,0,0,1" Padding="12,10">
+                        <Expander x:Name="FormatSection" Header="フォーマット"
+                                  Style="{StaticResource MainViewAdjustmentSection}">
                             <StackPanel>
-                                <TextBlock Style="{StaticResource SectionHeader}" Text="フォーマット" />
                                 <DockPanel Margin="0,2">
                                     <TextBlock Style="{StaticResource RowLabel}" Text="ビット深度" />
                                     <TextBlock DockPanel.Dock="Right" Style="{StaticResource RowValue}"
@@ -804,7 +1185,7 @@
                                          表示中・計算中も、派生ビューが計算を始めたときの Bayer のまま右パネルと
                                          食い違うので指定させない(無効の理由はツールチップで示す) -->
                                     <ComboBox x:Name="FmtBayerCombo" DockPanel.Dock="Right"
-                                              MinWidth="96" FontSize="11"
+                                              MinWidth="96" FontSize="{x:Static themes:ThemeTypography.FontSizeBody}"
                                               IsEnabled="{Binding CanEditBayer}"
                                               SelectionChanged="OnFmtBayerChanged"
                                               DropDownClosed="OnSelectorDropDownClosed"
@@ -824,15 +1205,15 @@
                                                Text="{Binding FmtHdrText}" />
                                     <Border />
                                 </DockPanel>
-                                <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                                <WrapPanel Margin="0,6,0,0">
                                     <Button Style="{StaticResource ToolButton}" Content="変更…"
-                                            Click="OnChangeFormatClick" FontSize="11"
+                                            Click="OnChangeFormatClick" FontSize="{x:Static themes:ThemeTypography.FontSizeBody}"
                                             IsEnabled="{Binding CanChangeFormat}"
                                             ToolTip="{Binding ChangeFormatToolTip}"
                                             ToolTipService.ShowOnDisabled="True" />
-                                </StackPanel>
+                                </WrapPanel>
                             </StackPanel>
-                        </Border>
+                        </Expander>
                         </StackPanel>
                     </ScrollViewer>
                 </DockPanel>
@@ -842,12 +1223,15 @@
             <Button x:Name="RightEdgeStrip" Grid.Column="6"
                     Style="{StaticResource EdgeStripButton}"
                     Visibility="Collapsed" Click="OnShowRightPanelClick"
+                    AutomationProperties.Name="調整パネルを表示"
                     ToolTip="調整パネルを表示 (Ctrl+R)">
-                <TextBlock Text="⚙ 調整パネル" FontSize="11">
-                    <TextBlock.LayoutTransform>
+                <StackPanel Orientation="Horizontal">
+                    <StackPanel.LayoutTransform>
                         <RotateTransform Angle="90" />
-                    </TextBlock.LayoutTransform>
-                </TextBlock>
+                    </StackPanel.LayoutTransform>
+                    <TextBlock Style="{StaticResource IconText}" Text="{x:Static themes:IconGlyphs.Settings}" Margin="0,0,5,0" />
+                    <TextBlock Text="調整パネル" FontSize="{x:Static themes:ThemeTypography.FontSizeBody}" />
+                </StackPanel>
             </Button>
         </Grid>
     </DockPanel>

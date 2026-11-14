@@ -1,5 +1,7 @@
 ﻿using System.IO;
 using System.Text.Json;
+using RawAnalyzer.App.Compare;
+using RawAnalyzer.App.Views;
 using RawAnalyzer.Core;
 
 namespace RawAnalyzer.App.Services;
@@ -41,6 +43,19 @@ internal sealed class SessionState
 
     /// <summary>右パネルを表示していたか。</summary>
     public bool RightPanelVisible { get; set; } = true;
+
+    /// <summary>比較ペインの配置。未保存なら表示領域に応じて選ぶ。</summary>
+    public CompareLayoutMode CompareLayoutMode { get; set; }
+
+    public bool DisplayExpanded { get; set; } = true;
+    public bool HistogramExpanded { get; set; } = true;
+    public bool WhiteBalanceExpanded { get; set; } = true;
+    public bool ColorMatrixExpanded { get; set; }
+    public bool FormatExpanded { get; set; }
+    public bool NavigatorVisible { get; set; } = true;
+    public string[]? RecentCommands { get; set; }
+    public double? GraphDockHeight { get; set; }
+    public GraphKind[]? FloatingGraphs { get; set; }
 
     /// <summary>ファイルパス(小文字正規化)→ 最後に使ったRawFormat。</summary>
     public Dictionary<string, RawFormat> FileFormats { get; set; } = new();
@@ -106,6 +121,14 @@ internal sealed class SessionStore
             return _state;
         }
     }
+
+    // 一覧のスクロールでは設定ファイルを読み直さず、最後に読み書きした記憶を使う。
+    internal IReadOnlyDictionary<string, RawFormat> CachedFileFormats => _state.FileFormats;
+
+    internal static RawFormat? FindRememberedFormat(
+        IReadOnlyDictionary<string, RawFormat> fileFormats, string path, long fileSize) =>
+        fileFormats.TryGetValue(NormalizeKey(path), out RawFormat? format)
+        && format is not null && FormatHistory.CanOpen(format, fileSize) ? format : null;
 
     /// <summary>状態を読み込む(起動時)。ファイルがない・壊れている・読めない場合は既定値。</summary>
     /// <returns>読み込んだ状態。</returns>

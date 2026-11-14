@@ -86,7 +86,7 @@ public partial class MainWindow
         if (_derivedImage is null && _currentFormat is not null
             && HdrExposureMix.DefectDetectionRefusal(_currentFormat, derivedViewShown: false) is { } hdrRefusal)
         {
-            MessageBox.Show(this, hdrRefusal, "欠陥画素検出", MessageBoxButton.OK, MessageBoxImage.Information);
+            AppMessage.Show(this, hdrRefusal, "欠陥画素検出", MessageBoxButton.OK, MessageBoxImage.Information);
             _defectWindow?.ResetRunButton();
             return;
         }
@@ -108,18 +108,23 @@ public partial class MainWindow
 
         // 巨大画像では数十秒かかるため、進捗表示とキャンセルを付ける
         DefectDetectionResult? result = null;
+        DefectPixelWindow.ResultRows? rows = null;
         ProgressWindow progress = ProgressWindow.Run(
             this,
             "欠陥画素を検出中…",
             (report, ct) => Task.Run(
-                () => result = DefectPixelDetector.Detect(
+                () =>
+                {
+                    result = DefectPixelDetector.Detect(
                     image, frame, sigma, detectHot, detectDead,
-                    pattern: pattern, progress: report, cancellationToken: ct, segmentWidth: segmentWidth),
+                    pattern: pattern, progress: report, cancellationToken: ct, segmentWidth: segmentWidth);
+                    rows = DefectPixelWindow.PrepareRows(result, ct);
+                },
                 ct));
 
         if (progress.Error is not null)
         {
-            MessageBox.Show(this, $"検出に失敗しました: {progress.Error.Message}", "欠陥画素検出",
+            AppMessage.Show(this, $"検出に失敗しました: {progress.Error.Message}", "欠陥画素検出",
                 MessageBoxButton.OK, MessageBoxImage.Error);
             _defectWindow?.ResetRunButton();
             return;
@@ -127,7 +132,7 @@ public partial class MainWindow
 
         // 検出中に表示中の画像・フレーム・Bayerパターンが替わっていたら、結果は表示中の画像を
         // いまの条件で検出したものではないので採用しない(旧条件の一覧で補正させない)
-        if (progress.WasCanceled || result is null || _defectWindow is null
+        if (progress.WasCanceled || result is null || rows is null || _defectWindow is null
             || !source.IsCurrent(ActiveImage, Viewport.Frame, ActiveFormat?.Bayer ?? BayerPattern.None))
         {
             _defectWindow?.ResetRunButton();
@@ -136,7 +141,7 @@ public partial class MainWindow
 
         // HDR表示中の検出結果は派生ビューの座標・画素のもので、HDR素材(Raw表示を含む)の補正は断る。
         // 一覧・移動・コピー・CSV は使えるようにし、断られるだけの補正ボタンは有効にせず理由を示す
-        _defectWindow.ShowResult(result, maxCode,
+        _defectWindow.ShowResult(result, rows, maxCode,
             correctionUnavailableReason: _currentFormat is null ? null
                 : DefectCorrectionAvailability.Refusal(
                     _compareMode, _currentFormat, _derivedImage is not null, _colorImage is not null));
@@ -160,6 +165,7 @@ public partial class MainWindow
     // ---- ノイズ / ダイナミックレンジ測定 ----
 
     private NoiseMeasureDialog? _noiseWindow;
+    private readonly System.Collections.ObjectModel.ObservableCollection<NoiseHistoryEntry> _noiseHistory = [];
 
     private void OnNoiseMeasureClick(object sender, RoutedEventArgs e)
     {
@@ -180,6 +186,7 @@ public partial class MainWindow
                 TargetRawFileSize())
             {
                 Owner = this,
+                History = _noiseHistory,
             };
             _noiseWindow.MeasureRequested += OnNoiseMeasureRequested;
             _noiseWindow.Closed += (_, _) => _noiseWindow = null;
@@ -304,7 +311,7 @@ public partial class MainWindow
         if (rawReference
             && NoiseReference.RawReferenceRefusal(_correctionLabel is not null, mergedView) is { } rawRefusal)
         {
-            MessageBox.Show(this, rawRefusal, "ノイズ測定", MessageBoxButton.OK, MessageBoxImage.Warning);
+            AppMessage.Show(this, rawRefusal, "ノイズ測定", MessageBoxButton.OK, MessageBoxImage.Warning);
             _noiseWindow?.ResetRunButton();
             return;
         }
@@ -321,7 +328,7 @@ public partial class MainWindow
                     splitFormat, _hdrSourceFrame.Frame),
                 _tiffPageIndex))
         {
-            MessageBox.Show(this,
+            AppMessage.Show(this,
                 "2枚目に対象Aと同じファイルが指定されています。同一データ同士の差分は" +
                 "常に0になり、時間ノイズを測定できません。別撮りのフレームを指定するか、" +
                 "マルチフレーム・複数ページのファイルなら表示フレーム・ページを変えてください" +
@@ -338,7 +345,7 @@ public partial class MainWindow
         RoiAnalysisTarget target = ResolveRoiTarget(image, roi);
         if (target is UnsupportedRoiTarget unsupported)
         {
-            MessageBox.Show(this, unsupported.Reason, "ノイズ測定",
+            AppMessage.Show(this, unsupported.Reason, "ノイズ測定",
                 MessageBoxButton.OK, MessageBoxImage.Warning);
             _noiseWindow?.ResetRunButton();
             return;
@@ -351,7 +358,7 @@ public partial class MainWindow
                 _derivedImage is not null && !mergedView ? _hdrSegmentWidth : 0,
                 target) is { } hdrRefusal)
         {
-            MessageBox.Show(this, hdrRefusal, "ノイズ測定", MessageBoxButton.OK, MessageBoxImage.Warning);
+            AppMessage.Show(this, hdrRefusal, "ノイズ測定", MessageBoxButton.OK, MessageBoxImage.Warning);
             _noiseWindow?.ResetRunButton();
             return;
         }
@@ -383,7 +390,7 @@ public partial class MainWindow
 
         if (result.Error is not null)
         {
-            MessageBox.Show(this, $"測定に失敗しました: {result.Error.Message}", "ノイズ測定",
+            AppMessage.Show(this, $"測定に失敗しました: {result.Error.Message}", "ノイズ測定",
                 MessageBoxButton.OK, MessageBoxImage.Error);
             _noiseWindow?.ResetRunButton();
             return;
@@ -418,7 +425,7 @@ public partial class MainWindow
         if (DefectCorrectionAvailability.Refusal(
                 _compareMode, _currentFormat, _derivedImage is not null, _colorImage is not null) is { } refusal)
         {
-            MessageBox.Show(this, refusal,
+            AppMessage.Show(this, refusal,
                 "欠陥画素補正", MessageBoxButton.OK, MessageBoxImage.Information);
             _defectWindow?.ResetRunButton();
             return;
@@ -433,7 +440,7 @@ public partial class MainWindow
         if (_defectSource is null
             || !_defectSource.IsCurrent(_currentImage, Viewport.Frame, _currentFormat.Bayer))
         {
-            MessageBox.Show(this,
+            AppMessage.Show(this,
                 "この検出結果は現在表示中の画像・フレーム・Bayerパターンで検出したものではないため" +
                 "適用できません。再度「検出実行」を行ってください。",
                 "欠陥画素補正", MessageBoxButton.OK, MessageBoxImage.Information);
@@ -471,7 +478,7 @@ public partial class MainWindow
         if (result.Error is not null)
         {
             corrected?.Dispose();
-            MessageBox.Show(this, $"欠陥補正に失敗しました: {result.Error.Message}", "欠陥画素補正",
+            AppMessage.Show(this, $"欠陥補正に失敗しました: {result.Error.Message}", "欠陥画素補正",
                 MessageBoxButton.OK, MessageBoxImage.Error);
             _defectWindow?.ResetRunButton();
             return;

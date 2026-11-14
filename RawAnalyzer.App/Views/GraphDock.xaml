@@ -1,0 +1,55 @@
+<UserControl x:Class="RawAnalyzer.App.Views.GraphDock"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:themes="clr-namespace:RawAnalyzer.App.Themes">
+    <DockPanel Background="{StaticResource PanelBrush}">
+        <DockPanel x:Name="TabBand" DockPanel.Dock="Top" Background="{StaticResource Panel2Brush}" Height="32">
+            <Button x:Name="CloseGraphButton" DockPanel.Dock="Right" Style="{StaticResource ToolButton}"
+                    Margin="0,2,3,2" Content="{x:Static themes:IconGlyphs.Close}"
+                    ContentTemplate="{StaticResource IconContent}" ToolTip="グラフを閉じる"
+                    AutomationProperties.Name="グラフを閉じる" Click="OnCloseGraph" />
+            <Button x:Name="PopOutGraphButton" DockPanel.Dock="Right" Style="{StaticResource ToolButton}"
+                    Margin="0,2,3,2" Content="{x:Static themes:IconGlyphs.OpenInNewWindow}"
+                    ContentTemplate="{StaticResource IconContent}" AutomationProperties.Name="別ウィンドウに表示"
+                    ToolTip="別ウィンドウに表示" Click="OnPopOutGraph" />
+            <TabControl x:Name="GraphTabs" SelectionChanged="OnTabSelectionChanged"
+                        AutomationProperties.Name="解析グラフ">
+                <TabControl.Template>
+                    <ControlTemplate TargetType="TabControl">
+                        <UniformGrid IsItemsHost="True" Rows="1" MaxWidth="300" HorizontalAlignment="Left" />
+                    </ControlTemplate>
+                </TabControl.Template>
+                <TabControl.ItemContainerStyle>
+                    <Style TargetType="TabItem">
+                        <Setter Property="Foreground" Value="{StaticResource TextDim}" />
+                        <Setter Property="Padding" Value="5,3" />
+                        <Setter Property="ToolTip" Value="{Binding (AutomationProperties.Name), RelativeSource={RelativeSource Self}}" />
+                        <Setter Property="FocusVisualStyle" Value="{StaticResource AccentFocusVisual}" />
+                        <Setter Property="Template">
+                            <Setter.Value>
+                                <ControlTemplate TargetType="TabItem">
+                                    <Border x:Name="TabBorder" Background="Transparent" BorderThickness="0,0,0,2"
+                                            Padding="{TemplateBinding Padding}">
+                                        <TextBlock Text="{TemplateBinding Header}" TextTrimming="CharacterEllipsis"
+                                                   HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                    </Border>
+                                    <ControlTemplate.Triggers>
+                                        <Trigger Property="IsSelected" Value="True">
+                                            <Setter TargetName="TabBorder" Property="Background" Value="{StaticResource AccentSoftBrush}" />
+                                            <Setter TargetName="TabBorder" Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+                                            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+                                        </Trigger>
+                                        <Trigger Property="IsMouseOver" Value="True">
+                                            <Setter TargetName="TabBorder" Property="Background" Value="{StaticResource HoverBrush}" />
+                                        </Trigger>
+                                    </ControlTemplate.Triggers>
+                                </ControlTemplate>
+                            </Setter.Value>
+                        </Setter>
+                    </Style>
+                </TabControl.ItemContainerStyle>
+            </TabControl>
+        </DockPanel>
+        <Border x:Name="GraphContent" ClipToBounds="True" />
+    </DockPanel>
+</UserControl>

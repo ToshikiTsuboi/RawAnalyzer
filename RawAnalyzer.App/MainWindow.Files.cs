@@ -13,7 +13,7 @@ public partial class MainWindow
     private readonly FormatPresetStore _presetStore = new();
 
     // サイズ別フォーマット記憶(format-history.json)。raw の読み込みに成功するたびに記録・保存する
-    private readonly FormatMemory _formatMemory = new(new FormatHistoryStore());
+    private readonly FormatMemory _formatMemory;
     private bool _updatingFormatPanel;
 
     // 表示中のファイルを同じサイズの記憶から推定して開いたことの通知(比較モードを抜けたら表示し直す)
@@ -78,17 +78,9 @@ public partial class MainWindow
         _sessionStore.Update(session => SessionStore.TouchFileFormat(session, key, format));
     }
 
-    private RawFormat? TryGetRememberedFormat(string path, long fileSize)
-    {
-        // 別のインスタンスが記憶した・F2 で直したフォーマットも使う(古い記憶で開いて記憶し直し、直したものを巻き戻さない)
-        if (!_sessionStore.Current.FileFormats.TryGetValue(SessionStore.NormalizeKey(path), out RawFormat? format))
-        {
-            return null;
-        }
-
-        // 手で編集した・壊れた session.json の未定義の列挙値などは、サイズ別の記憶と同じ基準で使わない
-        return FormatHistory.CanOpen(format, fileSize) ? format : null;
-    }
+    // 別のインスタンスが記憶した・F2 で直したフォーマットも使う。
+    private RawFormat? TryGetRememberedFormat(string path, long fileSize) =>
+        SessionStore.FindRememberedFormat(_sessionStore.Current.FileFormats, path, fileSize);
 
     /// <summary>
     /// 表示中のファイルを同じサイズの記憶から推定して開いたことをステータスバーに示す(空文字で消す)。
@@ -167,7 +159,7 @@ public partial class MainWindow
         // 黙って何もしないのではなく同じ理由を知らせる
         if (_currentImage is not null)
         {
-            MessageBox.Show(this, FormatChangeAvailability.ExplainUnavailable(_colorImage is not null),
+            AppMessage.Show(this, FormatChangeAvailability.ExplainUnavailable(_colorImage is not null),
                 "フォーマット変更", MessageBoxButton.OK, MessageBoxImage.Information);
         }
     }
@@ -211,8 +203,34 @@ public partial class MainWindow
         OpenPathCore(path, chooseFormat: true, initialFormat, correctFrom);
     }
 
+    private int _processedSourceFrame;
+
+    private void OnRestoreOriginalClick(object sender, RoutedEventArgs e)
+    {
+        if (_compareMode || !_vm.IsProcessed || _currentPath is not { } path)
+        {
+            return;
+        }
+
+        OpenPathCore(path, chooseFormat: false, initialFormat: null, correctFrom: null,
+            reopenFormat: _openedRawFormat, reopenPage: _tiffPageIndex,
+            reopenFrame: _derivedImage is not null && _currentImage is { } original
+                ? _hdrSourceFrame.ResolveRestoreFrame(original.FrameCount) : _processedSourceFrame,
+            reopenBayer: _tiffStack?.BayerOverride);
+    }
+
+    private void OnProcessedBadgeClick(object sender, RoutedEventArgs e)
+    {
+        var button = (System.Windows.Controls.Button)sender;
+        button.ContextMenu.PlacementTarget = button;
+        button.ContextMenu.Placement = System.Windows.Controls.Primitives.PlacementMode.Top;
+        button.ContextMenu.IsOpen = true;
+    }
+
     private async void OpenPathCore(
-        string path, bool chooseFormat, RawFormat? initialFormat, RawFormat? correctFrom)
+        string path, bool chooseFormat, RawFormat? initialFormat, RawFormat? correctFrom,
+        RawFormat? reopenFormat = null, int reopenPage = 0, int reopenFrame = 0,
+        BayerPattern? reopenBayer = null)
     {
         // フォルダの一覧を待ってから開く要求(ドロップなど)は、待つ間にこの要求が来たら開かない
         int openRequest = ++_openRequests;
@@ -243,7 +261,7 @@ public partial class MainWindow
             }
 
             RawOpenPlan plan = RawOpenPlanner.Plan(
-                path, size, chooseFormat ? null : TryGetRememberedFormat(path, size),
+                path, size, chooseFormat ? null : reopenFormat ?? TryGetRememberedFormat(path, size),
                 _formatMemory.History, _currentFormat, initialFormat, chooseFormat);
             origin = plan.Origin;
             format = plan.Format;
@@ -256,6 +274,7 @@ public partial class MainWindow
                 };
                 if (dialog.ShowDialog() != true || dialog.Result is null)
                 {
+                    RefreshFileDetails();
                     return;
                 }
 
@@ -299,7 +318,7 @@ public partial class MainWindow
             {
                 DecodedImage decoded;
                 (decoded, fileSize) = await Task.Run(
-                    () => (ImageFileLoader.Load(path, cts.Token, loadProgress), SafeFileSize(path)), cts.Token);
+                    () => (ImageFileLoader.Load(path, cts.Token, loadProgress, reopenPage), SafeFileSize(path)), cts.Token);
                 image = decoded.Luminance;
                 color = decoded.Color;
                 pageCount = decoded.PageCount;
@@ -329,7 +348,7 @@ public partial class MainWindow
             // 縮小表示なしで等倍の行を読んで描き、ヒストグラム欄には前に表示していた画像の統計が残る
             // (縮小表示は表示中の画像の世代として、取り消されていないこの読み込みのトークンで作る)
             RefreshAfterSequenceMove();
-            MessageBox.Show(this, $"読み込みに失敗しました: {ex.Message}", "RawAnalyzer",
+            AppMessage.Show(this, $"読み込みに失敗しました: {ex.Message}", "RawAnalyzer",
                 MessageBoxButton.OK, MessageBoxImage.Error);
             return;
         }
@@ -391,7 +410,9 @@ public partial class MainWindow
         _currentImage?.Dispose();
         _currentImage = image;
         ClearDefectSource();
-        _currentFormat = image.Format;
+        RawFormat displayFormat = reopenBayer is { } bayer
+            ? ImageFileBayer.Apply(image.Format, color is not null, bayer) : image.Format;
+        _currentFormat = displayFormat;
         _currentPath = path;
         _currentFileSize = fileSize;
 
@@ -399,12 +420,13 @@ public partial class MainWindow
         // 送る(SequenceScanner)ので、開いたときに決めれば送りの後も変わらない
         _vm.IsRawFile = IsRawFile(path);
         _tiffStack = pageCount > 1
-            ? new TiffStackSource(path, pageCount) { BayerOverride = image.Format.Bayer } : null;
-        _sequenceBayerOverride = image.Format.Bayer;
-        _tiffPageIndex = 0;
+            ? new TiffStackSource(path, pageCount) { BayerOverride = reopenBayer ?? displayFormat.Bayer } : null;
+        _sequenceBayerOverride = reopenBayer ?? displayFormat.Bayer;
+        _tiffPageIndex = reopenPage;
         _valueNote = ValueMappingNote.FromFile(valueNote, valueScaling);
         _valueScaling = valueScaling;
         _histogram = null;
+        RedrawHistogram();
         _vm.HasRoi = false;
         ClearCursorReadout();
         _vm.BlackLevelMax = (1 << image.Format.BitDepth) - 1;
@@ -422,7 +444,7 @@ public partial class MainWindow
             // 同じパスの記憶は従来どおり記録する。ただし同じサイズの記憶から推定して開いたときは記録しない
             // (推定した形式をこのファイルの記憶として固定すると、同じサイズの記憶を後から F2 で直しても
             // このファイルだけ古い形式で開き続ける。一覧を次々に開いて上限の50件を使い切ることもない)
-            if (!guessedFromSize)
+            if (!guessedFromSize && reopenFormat is null)
             {
                 RememberFileFormat(path, image.Format);
             }
@@ -435,13 +457,14 @@ public partial class MainWindow
         {
             _openedRawFormat = null;
         }
+        UpdateOpenedFileDetails(displayFormat, color is not null);
 
         // 読み込み後の画像情報とは別の欄に出し、このファイルを表示している間は見えるようにする
         SetMainFormatNotice(
             guessedFromSize ? RawOpenPlanner.AutoOpenNotice : "",
             guessedFromSize ? RawOpenPlanner.AutoOpenToolTip(path, fileSize, image.Format) : "");
 
-        UpdateFormatPanel(image.Format);
+        UpdateFormatPanel(displayFormat);
         _vm.ImageInfoText =
             $"{image.Width}×{image.Height} · {image.Format.BitDepth}bit"
             + (color is not null ? " · RGB" : "")
@@ -452,7 +475,8 @@ public partial class MainWindow
         DisplayModeCombo.SelectedIndex = 0;
         DisplayModeCombo.IsEnabled = color is null;
         Viewport.SetDisplayMode(ViewportDisplayMode.Raw);
-        Viewport.SetImage(image, image.Format);
+        int frame = Math.Clamp(reopenFrame, 0, image.FrameCount - 1);
+        Viewport.SetImage(image, displayFormat, frame);
         Viewport.SetColorImage(color);
         Viewport.SetLut(BuildLut());
         DetectSequence();
@@ -468,7 +492,7 @@ public partial class MainWindow
         // 差し替えを終えたので、以降の操作は新しい画像を対象に始めてよい
         // (ピラミッド生成は差し替え後の画像を検証してから取り付ける。二重の Dispose は無視される)
         pendingLoad.Dispose();
-        await BuildPyramidAsync(image, cts.Token);
+        await BuildPyramidAsync(image, cts.Token, frame);
     }
 
     private void UpdateFormatPanel(RawFormat format)

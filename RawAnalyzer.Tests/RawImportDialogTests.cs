@@ -1,8 +1,14 @@
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
+using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using System.Windows.Threading;
+using RawAnalyzer.App;
+using RawAnalyzer.App.Compare;
+using RawAnalyzer.App.Controls;
 using RawAnalyzer.App.Services;
 using RawAnalyzer.App.Views;
 using RawAnalyzer.Core;
@@ -66,23 +72,378 @@ public class RawImportDialogTests : IDisposable
     }
 
     [Fact]
-    public Task FileSize_IsTheOnePassedIn_WithoutTouchingTheFile()
+    public Task InputFields_HaveAccessibleNamesAndFollowVisualTabOrder() => WpfTestHost.Run(async () =>
     {
-        // 残課題 2026-10-02 I1。ダイアログはコンストラクタ(UI スレッド)で FileInfo.Length を取っていたので、切断した
-        // NAS の raw を開くと SMB のタイムアウトまでウィンドウが固まった。サイズは呼び出し側が UI スレッドの外で
-        // 取って渡し、ダイアログはファイルに触れない(ここではファイルを作らずに渡したサイズで照合されることを見る)
-        return WpfTestHost.Run(() =>
+        string path = CreateFile("settings.raw", FileSize);
+        FormatMemory memory = CreateMemory();
+        RawFormat format = Fmt(640, 480) with
         {
-            string path = Path.Combine(_directory, "unreachable.raw");
-            FormatMemory memory = CreateMemory();
+            Hdr = HdrMode.LineInterleaved,
+            HdrStages = 2,
+            Endianness = Endianness.Big,
+        };
+        memory.RememberLoaded(path, FileSize, format, autoOpen: true);
+        RawImportDialog dialog = CreateDialog(path, memory, format);
+        try
+        {
+            dialog.Show();
+            await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+            var fields = LogicalInputs(dialog).ToArray();
+            Assert.Equal(16, fields.Length);
+            Assert.All(fields, field => Assert.True(
+                !string.IsNullOrWhiteSpace(AutomationProperties.GetName(field))
+                    || AutomationProperties.GetLabeledBy(field) is not null, field.Name));
+            var details = Find<Expander>(dialog, "DetailsExpander");
+            var header = Assert.IsType<ToggleButton>(details.Template.FindName("HeaderSite", details));
+            Assert.Equal("詳細", new System.Windows.Automation.Peers.ToggleButtonAutomationPeer(header).GetName());
 
-            RawImportDialog dialog = CreateDialog(path, memory, initial: Fmt(640, 480, bitDepth: 16), size: FileSize);
+            string[] expected =
+            [
+                "CandidateList", "WidthBox", "HeightBox", "BitDepthCombo", "BayerCombo", "HeaderSite",
+                "PackingCombo", "EndianCombo", "HeaderOffsetBox", "FrameCountBox", "HdrCombo", "HdrStagesCombo",
+                "ExposureRatioBox", "HdrLineBlockBox", "HdrRowOffsetBox", "GuessButton", "AutoOpenCheck",
+                "ForgetSizeButton", "PresetCombo", "SavePresetButton",
+            ];
+            Control width = Find<Control>(dialog, "WidthBox");
+            Assert.True(width.Focus());
+            Assert.True(width.MoveFocus(new TraversalRequest(FocusNavigationDirection.Previous)));
+            var traversed = new List<string>();
+            for (int step = 0; step < expected.Length; step++)
+            {
+                var focused = Assert.IsAssignableFrom<Control>(Keyboard.FocusedElement);
+                traversed.Add(focused is ListBoxItem ? "CandidateList" : focused.Name);
+                if (step < expected.Length - 1)
+                {
+                    Assert.True(focused.MoveFocus(new TraversalRequest(FocusNavigationDirection.Next)));
+                }
+            }
+            Assert.Equal(expected, traversed);
+        }
+        finally
+        {
+            dialog.Close();
+        }
+    });
 
+    private static IEnumerable<FrameworkElement> LogicalInputs(DependencyObject root)
+    {
+        foreach (DependencyObject child in LogicalTreeHelper.GetChildren(root).OfType<DependencyObject>())
+        {
+            if (child is TextBox or ComboBox or ListBox or CheckBox)
+            {
+                yield return (FrameworkElement)child;
+            }
+            foreach (FrameworkElement input in LogicalInputs(child)) yield return input;
+        }
+    }
+
+    [Fact]
+    public Task FileSize_IsTheOnePassedIn_WithoutTouchingTheFile() => WpfTestHost.Run(async () =>
+    {
+        string path = Path.Combine(_directory, "unreachable.raw");
+        FormatMemory memory = CreateMemory();
+        RawImportDialog dialog = CreateDialog(path, memory, initial: Fmt(640, 480, bitDepth: 16), size: FileSize);
+        try
+        {
             Assert.False(File.Exists(path));
             Assert.Equal(FormatCandidates.Build(FileSize, ".raw", path, memory.History, null), dialog.Candidates);
-            Assert.StartsWith("✓", Find<TextBlock>(dialog, "SizeNoteText").Text);
-            Assert.True(Find<Button>(dialog, "OpenButton").IsEnabled);
-        });
+            var sizeNote = Find<TextBlock>(dialog, "SizeNoteText");
+            var previewNote = Find<TextBlock>(dialog, "PreviewNote");
+            var open = Find<Button>(dialog, "OpenButton");
+            int reads = 0;
+            int uiThread = Environment.CurrentManagedThreadId;
+            var read = dialog.ReadPreview;
+            dialog.ReadPreview = (rawPath, format, width, height, token) =>
+            {
+                Assert.NotEqual(uiThread, Environment.CurrentManagedThreadId);
+                Interlocked.Increment(ref reads);
+                return read(rawPath, format, width, height, token);
+            };
+            await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+            Assert.Equal(0, Volatile.Read(ref reads));
+            Assert.StartsWith("✓", sizeNote.Text);
+            Assert.True(open.IsEnabled);
+
+            dialog.Show();
+            await WaitForPreviewAsync(() => previewNote.Text.StartsWith("プレビューを読み取れませんでした。"));
+            Assert.Equal(1, Volatile.Read(ref reads));
+            Assert.StartsWith("✓", sizeNote.Text);
+            Assert.True(open.IsEnabled);
+        }
+        finally
+        {
+            dialog.Close();
+        }
+    });
+
+    [Fact]
+    public Task Preview_WidthChangesAndInvalidInputKeepsLastBitmap() => WpfTestHost.Run(async () =>
+    {
+        string path = CreatePreviewFile();
+        RawImportDialog dialog = CreateDialog(path, null, initial: Fmt(192, 128));
+        try
+        {
+            dialog.Show();
+            var preview = Find<Image>(dialog, "PreviewImage");
+            await WaitForPreviewAsync(() => preview.Source is not null);
+            var correct = Assert.IsAssignableFrom<BitmapSource>(preview.Source);
+            Assert.Equal((192, 128), (correct.PixelWidth, correct.PixelHeight));
+            Assert.Equal("グレー表示 · 間引きなし", Find<TextBlock>(dialog, "PreviewNote").Text);
+            await CaptureVisibleAsync(dialog, "import-preview-correct-width");
+
+            var width = Find<TextBox>(dialog, "WidthBox");
+            width.Text = "181";
+            await WaitForPreviewAsync(() => preview.Source is not null && preview.Source != correct);
+            var wrong = Assert.IsAssignableFrom<BitmapSource>(preview.Source);
+            Assert.Equal((181, 128), (wrong.PixelWidth, wrong.PixelHeight));
+            await CaptureVisibleAsync(dialog, "import-preview-wrong-width");
+
+            width.Text = "不正";
+            Assert.Same(wrong, preview.Source);
+            Assert.InRange(preview.Opacity, 0.01, 0.99);
+            Assert.Contains("幅は1以上の整数", Find<TextBlock>(dialog, "PreviewNote").Text);
+            Assert.False(Find<Button>(dialog, "OpenButton").IsEnabled);
+            await CaptureVisibleAsync(dialog, "import-preview-invalid");
+        }
+        finally
+        {
+            dialog.Close();
+        }
+    });
+
+    [Fact]
+    public Task Preview_ShortFileShowsOnlyCompleteRowsAndKeepsExpectedShape() => WpfTestHost.Run(async () =>
+    {
+        const int width = 8;
+        const int height = 6;
+        string path = CreateFile("short.raw", width * 2 * 3 + 1);
+        RawImportDialog dialog = CreateDialog(path, null, initial: Fmt(width, height));
+        try
+        {
+            dialog.Show();
+            var preview = Find<Image>(dialog, "PreviewImage");
+            await WaitForPreviewAsync(() => preview.Source is not null);
+            var bitmap = Assert.IsAssignableFrom<BitmapSource>(preview.Source);
+            Assert.Equal((width, height), (bitmap.PixelWidth, bitmap.PixelHeight));
+            Assert.Contains("3/6 行", Find<TextBlock>(dialog, "PreviewNote").Text);
+            byte[] pixels = new byte[width * height * 4];
+            bitmap.CopyPixels(pixels, width * 4, 0);
+            Assert.Equal(255, pixels[3]);
+            Assert.Equal(0, pixels[3 * width * 4 + 3]);
+            Assert.False(Find<Button>(dialog, "OpenButton").IsEnabled);
+        }
+        finally
+        {
+            dialog.Close();
+        }
+    });
+
+    [Fact]
+    public Task Preview_BlockedReadKeepsOnlyLatestFormatAndCannotOverwriteIt() => WpfTestHost.Run(async () =>
+    {
+        string path = Path.Combine(_directory, "blocked.raw");
+        RawImportDialog dialog = CreateDialog(path, null, initial: Fmt(192, 128), size: 192L * 128 * 2);
+        var firstStarted = new TaskCompletionSource<CancellationToken>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseFirst = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var readWidths = new System.Collections.Concurrent.ConcurrentQueue<int>();
+        dialog.ReadPreview = (_, format, _, _, token) =>
+        {
+            readWidths.Enqueue(format.Width);
+            if (format.Width == 192)
+            {
+                firstStarted.SetResult(token);
+                releaseFirst.Task.WaitAsync(TimeSpan.FromSeconds(10)).GetAwaiter().GetResult();
+            }
+            return new RawPreview(format.Width, 1, new ushort[format.Width], 1, 1);
+        };
+
+        try
+        {
+            dialog.Show();
+            CancellationToken firstToken = await firstStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            var width = Find<TextBox>(dialog, "WidthBox");
+            width.Text = "180";
+            await Task.Delay(200);
+            width.Text = "179";
+            await Task.Delay(200);
+            Assert.True(firstToken.IsCancellationRequested);
+            Assert.Equal(new[] { 192 }, readWidths.ToArray());
+            var preview = Find<Image>(dialog, "PreviewImage");
+            var published = new List<int>();
+            var descriptor = System.ComponentModel.DependencyPropertyDescriptor.FromProperty(Image.SourceProperty, typeof(Image));
+            EventHandler capture = (_, _) =>
+            {
+                if (preview.Source is BitmapSource bitmap)
+                {
+                    published.Add(bitmap.PixelWidth);
+                }
+            };
+            descriptor.AddValueChanged(preview, capture);
+            try
+            {
+                releaseFirst.SetResult();
+                await WaitForPreviewAsync(() => preview.Source is not null);
+                Assert.Equal(new[] { 192, 179 }, readWidths.ToArray());
+                Assert.Equal(new[] { 179 }, published);
+            }
+            finally
+            {
+                descriptor.RemoveValueChanged(preview, capture);
+            }
+        }
+        finally
+        {
+            releaseFirst.TrySetResult();
+            dialog.Close();
+        }
+    });
+
+    [Fact]
+    public Task Preview_CloseCancelsWithoutWaitingAndNextDialogWaitsForTheReadSlot() => WpfTestHost.Run(async () =>
+    {
+        string path = Path.Combine(_directory, "blocked.raw");
+        RawImportDialog first = CreateDialog(path, null, initial: Fmt(2, 2), size: 8);
+        RawImportDialog next = CreateDialog(path, null, initial: Fmt(2, 2), size: 8);
+        var started = new TaskCompletionSource<CancellationToken>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        int nextReads = 0;
+        first.ReadPreview = (_, _, _, _, token) =>
+        {
+            started.SetResult(token);
+            release.Task.WaitAsync(TimeSpan.FromSeconds(10)).GetAwaiter().GetResult();
+            return new RawPreview(2, 2, [0, 0, 0, 0], 2, 1);
+        };
+        next.ReadPreview = (_, _, _, _, _) =>
+        {
+            Interlocked.Increment(ref nextReads);
+            return new RawPreview(2, 2, [0, 0, 0, 0], 2, 1);
+        };
+
+        try
+        {
+            first.Show();
+            CancellationToken token = await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            first.Close();
+            Assert.True(token.IsCancellationRequested);
+            Assert.False(first.IsVisible);
+            next.Show();
+            await Task.Delay(250);
+            Assert.Equal(0, Volatile.Read(ref nextReads));
+            release.SetResult();
+            await WaitForPreviewAsync(() => Find<Image>(next, "PreviewImage").Source is not null);
+            Assert.Null(Find<Image>(first, "PreviewImage").Source);
+            Assert.Equal(1, Volatile.Read(ref nextReads));
+        }
+        finally
+        {
+            release.TrySetResult();
+            first.Close();
+            next.Close();
+        }
+    });
+
+    private string CreatePreviewFile()
+    {
+        string path = Path.Combine(_directory, "sample_192x128_12bit.raw");
+        using var writer = new BinaryWriter(File.Create(path));
+        for (int y = 0; y < 128; y++)
+        {
+            for (int x = 0; x < 192; x++)
+            {
+                int radiusSquared = (x - 96) * (x - 96) + (y - 64) * (y - 64);
+                int value = 160 + x * 8 + y * 4;
+                if (radiusSquared < 42 * 42)
+                {
+                    value += 900;
+                }
+                if (x is >= 16 and < 56 && y is >= 35 and < 93)
+                {
+                    value += ((x / 8 + y / 8) & 1) * 600;
+                }
+                writer.Write((ushort)value);
+            }
+        }
+        return path;
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public Task Preview_WorksFromNormalOpenAndCompareAdd(bool comparing) => WpfTestHost.Run(async () =>
+    {
+        string path = CreatePreviewFile();
+        string settings = Path.Combine(_directory, "settings");
+        new RecentFilesStore(settings).Add(path);
+        var window = new MainWindow(settings) { ShowActivated = false };
+        var compare = Find<CompareView>(window, "CompareArea");
+        var viewport = Find<ImageViewport>(window, "Viewport");
+        RawImportDialog? shown = null;
+        EventHandler? closeOnTimeout = null;
+        var watchdog = new DispatcherTimer { Interval = TimeSpan.FromSeconds(8) };
+        RawImportDialog? OwnedImport() => window.OwnedWindows.OfType<RawImportDialog>().SingleOrDefault();
+        closeOnTimeout = (_, _) =>
+        {
+            watchdog.Stop();
+            OwnedImport()?.Close();
+        };
+        watchdog.Tick += closeOnTimeout;
+        try
+        {
+            window.Show();
+            await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+            watchdog.Start();
+            Task<bool>? add = null;
+            if (comparing)
+            {
+                WpfTestHost.Toggle(Find<ToggleButton>(window, "CompareToolToggle"));
+                // ShowDialog のネストしたフレームの中でテストがプレビューを操作できるように送る。
+                add = window.Dispatcher.InvokeAsync(() => compare.AddPaneFromPathAsync(path)).Task.Unwrap();
+            }
+            else
+            {
+                var recent = Find<ItemsControl>(window, "EmptyCanvasRecent");
+                var item = Assert.IsType<ContentPresenter>(recent.ItemContainerGenerator.ContainerFromIndex(0));
+                WpfTestHost.Invoke(Assert.IsType<Button>(VisualTreeHelper.GetChild(item, 0)));
+            }
+
+            await WaitForPreviewAsync(() => (shown = OwnedImport())?.IsLoaded == true);
+            RawImportDialog dialog = Assert.IsType<RawImportDialog>(shown);
+            await WaitForPreviewAsync(() => Find<Image>(dialog, "PreviewImage").Source is not null);
+            var bitmap = Assert.IsAssignableFrom<BitmapSource>(Find<Image>(dialog, "PreviewImage").Source);
+            Assert.Equal((192, 128), (bitmap.PixelWidth, bitmap.PixelHeight));
+            WpfTestHost.Invoke(Find<Button>(dialog, "OpenButton"));
+            if (add is not null)
+            {
+                Assert.True(await add.WaitAsync(TimeSpan.FromSeconds(5)));
+                Assert.Equal(192, compare.ActivePane?.Pane?.Image.Width);
+            }
+            else
+            {
+                await WaitForPreviewAsync(() => viewport.Image is not null);
+                Assert.Equal(192, viewport.Image!.Width);
+            }
+        }
+        finally
+        {
+            watchdog.Stop();
+            watchdog.Tick -= closeOnTimeout;
+            if (shown?.IsVisible == true)
+            {
+                shown.Close();
+            }
+            await compare.CloseAllAsync();
+            window.Close();
+        }
+    });
+
+    private static async Task WaitForPreviewAsync(Func<bool> isReady)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (!isReady())
+        {
+            Assert.False(timeout.IsCancellationRequested, "プレビューが時間内に更新されませんでした。");
+            await Task.Delay(20);
+        }
     }
 
     [Fact]
@@ -132,31 +493,33 @@ public class RawImportDialogTests : IDisposable
             RawFormat displayed = Fmt(480, 640, bitDepth: 16);
 
             RawImportDialog dialog = CreateDialog(path, memory, displayed: displayed);
-            var combo = Find<ComboBox>(dialog, "CandidateCombo");
+            var list = Find<ListBox>(dialog, "CandidateList");
 
-            // 一覧は Core の候補そのもの(先頭の行は案内)
+            // 一覧は Core の候補そのもの。
             IReadOnlyList<FormatCandidate> expected = FormatCandidates.Build(
                 FileSize, ".raw", path, memory.History, displayed);
             Assert.Equal(expected, dialog.Candidates);
-            Assert.True(combo.IsEnabled);
-            Assert.Equal(expected.Count + 1, combo.Items.Count);
-            Assert.Equal($"候補から選ぶ…({expected.Count} 件)", combo.Items[0]);
-            Assert.Equal("記憶(同じサイズ): 640×480 12bit RGGB 上詰め Big", combo.Items[1]);
-            Assert.Equal("表示中の画像: 480×640 16bit モノクロ", combo.Items[2]);
-            Assert.Contains("ファイル名: 320×960 12bit RGGB 上詰め Big", combo.Items.Cast<string>());
-            Assert.Contains("解像度表: 640×480 12bit モノクロ", combo.Items.Cast<string>());
+            Assert.True(list.IsEnabled);
+            var rows = list.Items.Cast<RawImportDialog.CandidateRow>().ToArray();
+            Assert.Equal(expected.Count, rows.Length);
+            Assert.Contains($"{expected.Count} 件", Find<TextBlock>(dialog, "CandidateHeading").Text);
+            Assert.Equal(new RawImportDialog.CandidateRow("記憶(同じサイズ)", "640×480 12bit RGGB 上詰め Big"), rows[0]);
+            Assert.Equal(new RawImportDialog.CandidateRow("表示中の画像", "480×640 16bit モノクロ"), rows[1]);
+            Assert.Contains(new RawImportDialog.CandidateRow("ファイル名", "320×960 12bit RGGB 上詰め Big"), rows);
+            Assert.Contains(new RawImportDialog.CandidateRow("解像度表", "640×480 12bit モノクロ"), rows);
+            Assert.InRange(rows.Length, 5, 10);
 
             // 初期値は候補の先頭。一覧もその候補を指す
             Assert.Equal("640", Find<TextBox>(dialog, "WidthBox").Text);
             Assert.Equal(1, Find<ComboBox>(dialog, "PackingCombo").SelectedIndex);
             Assert.Equal(1, Find<ComboBox>(dialog, "EndianCombo").SelectedIndex);
             Assert.Equal(0, Find<ComboBox>(dialog, "BayerCombo").SelectedIndex);
-            Assert.Equal(1, combo.SelectedIndex);
+            Assert.Equal(0, list.SelectedIndex);
             CaptureIfRequested(dialog, "import-candidates");
 
             // 選ぶと全項目にその形式が入る(プリセットの選択と同じ)
-            int index = combo.Items.IndexOf("表示中の画像: 480×640 16bit モノクロ");
-            combo.SelectedIndex = index;
+            const int index = 1;
+            list.SelectedIndex = index;
             Assert.Equal("480", Find<TextBox>(dialog, "WidthBox").Text);
             Assert.Equal("640", Find<TextBox>(dialog, "HeightBox").Text);
             Assert.Equal("16bit", Find<ComboBox>(dialog, "BitDepthCombo").SelectedItem);
@@ -165,13 +528,13 @@ public class RawImportDialogTests : IDisposable
             Assert.Equal(4, Find<ComboBox>(dialog, "BayerCombo").SelectedIndex);
             Assert.StartsWith("✓", Find<TextBlock>(dialog, "SizeNoteText").Text);
             Assert.True(Find<Button>(dialog, "OpenButton").IsEnabled);
-            Assert.Equal(index, combo.SelectedIndex);
+            Assert.Equal(index, list.SelectedIndex);
 
-            // 手で変えて候補と違う値になったら、一覧は案内の行に戻る(戻せばまたその候補を指す)
+            // 手で変えて候補と違う値になったら、未選択に戻る(値を戻せばまたその候補を指す)。
             Find<TextBox>(dialog, "HeightBox").Text = "641";
-            Assert.Equal(0, combo.SelectedIndex);
+            Assert.Equal(-1, list.SelectedIndex);
             Find<TextBox>(dialog, "HeightBox").Text = "640";
-            Assert.Equal(index, combo.SelectedIndex);
+            Assert.Equal(index, list.SelectedIndex);
             dialog.Close();
         });
     }
@@ -267,6 +630,11 @@ public class RawImportDialogTests : IDisposable
             FieldFeedback.AssertValid(Find<TextBox>(dialog, "HeaderOffsetBox"));
             Assert.Equal($"✕ {widthReason}", note.Text); // サイズ欄には最初の理由
             Assert.False(Find<Button>(dialog, "OpenButton").IsEnabled);
+            var details = Find<Expander>(dialog, "DetailsExpander");
+            Assert.True(details.IsExpanded);
+            details.IsExpanded = false;
+            Assert.True(details.IsExpanded);
+            Assert.Equal(Visibility.Visible, Find<Grid>(dialog, "HdrDetails").Visibility);
 
             width.Text = "640";
             height.Text = "480";
@@ -277,9 +645,63 @@ public class RawImportDialogTests : IDisposable
             FieldFeedback.AssertValid(frames);
             FieldFeedback.AssertValid(ratio);
             Assert.StartsWith("✓", note.Text);
+            Assert.Equal(Visibility.Collapsed, Find<Grid>(dialog, "HdrDetails").Visibility);
             dialog.Close();
         });
     }
+
+    [Fact]
+    public Task Disclosure_ShowsHdrFieldsAndOpensNonDefaultPresetOnlyOnApply() => WpfTestHost.Run(async () =>
+    {
+        string path = CreatePreviewFile();
+        new FormatPresetStore(Path.Combine(_directory, "settings")).Save(new Dictionary<string, RawFormat>
+        {
+            ["SensorA"] = Fmt(192, 128) with { Packing = BitPacking.Msb, Endianness = Endianness.Big },
+        });
+        RawImportDialog dialog = CreateDialog(path, null, initial: Fmt(192, 128));
+        try
+        {
+            dialog.Show();
+            await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+            var details = Find<Expander>(dialog, "DetailsExpander");
+            var hdr = Find<Grid>(dialog, "HdrDetails");
+            Assert.False(details.IsExpanded);
+            Assert.Equal(Visibility.Collapsed, hdr.Visibility);
+            var image = Find<Image>(dialog, "PreviewImage");
+            await WaitForPreviewAsync(() => image.Source is not null);
+            await CaptureVisibleAsync(dialog, "import-basic");
+
+            ImageSource? previous = image.Source;
+            Find<ComboBox>(dialog, "PresetCombo").SelectedItem = "SensorA";
+            Assert.True(details.IsExpanded);
+            await WaitForPreviewAsync(() => image.Source is not null && image.Source != previous);
+            await CaptureVisibleAsync(dialog, "import-details");
+            var header = Assert.IsType<ToggleButton>(details.Template.FindName("HeaderSite", details));
+            WpfTestHost.Toggle(header);
+            Assert.False(details.IsExpanded);
+            // プリセットで開いた詳細は再入力で開き直さない。
+            Find<TextBox>(dialog, "HeightBox").Text = "127";
+            Assert.False(details.IsExpanded);
+            Assert.Equal(1, Find<ComboBox>(dialog, "PackingCombo").SelectedIndex);
+            Find<TextBox>(dialog, "HeightBox").Text = "128";
+
+            var layout = Find<ComboBox>(dialog, "HdrCombo");
+            layout.SelectedIndex = 2;
+            Assert.True(hdr.IsVisible);
+            var lineBlock = Find<TextBox>(dialog, "HdrLineBlockBox");
+            previous = image.Source;
+            lineBlock.Text = "2";
+            await WaitForPreviewAsync(() => image.Source is not null && image.Source != previous);
+            await CaptureVisibleAsync(dialog, "import-hdr-line-interleaved");
+            layout.SelectedIndex = 0;
+            Assert.False(hdr.IsVisible);
+            Assert.Equal("2", lineBlock.Text);
+        }
+        finally
+        {
+            dialog.Close();
+        }
+    });
 
     [Fact]
     public Task EditingAfterPreset_ReturnsPresetListToGuideRowSoReselectingRestoresIt()
@@ -312,9 +734,9 @@ public class RawImportDialogTests : IDisposable
             Assert.Equal("SensorA", presets.SelectedItem);
 
             // 候補を選んでプリセットと違う値になっても案内の行へ戻る
-            var candidates = Find<ComboBox>(dialog, "CandidateCombo");
-            int other = Enumerable.Range(1, dialog.Candidates.Count)
-                .First(i => dialog.Candidates[i - 1].Format != Fmt(640, 480, bayer: BayerPattern.Gbrg));
+            var candidates = Find<ListBox>(dialog, "CandidateList");
+            int other = Enumerable.Range(0, dialog.Candidates.Count)
+                .First(i => dialog.Candidates[i].Format != Fmt(640, 480, bayer: BayerPattern.Gbrg));
             candidates.SelectedIndex = other;
             Assert.Equal(0, presets.SelectedIndex);
             dialog.Close();
@@ -376,9 +798,10 @@ public class RawImportDialogTests : IDisposable
 
             RawImportDialog dialog = CreateDialog(path, CreateMemory());
 
-            var combo = Find<ComboBox>(dialog, "CandidateCombo");
-            Assert.False(combo.IsEnabled);
-            Assert.Single(combo.Items);
+            var list = Find<ListBox>(dialog, "CandidateList");
+            Assert.False(list.IsEnabled);
+            Assert.Empty(list.Items);
+            Assert.Equal(-1, list.SelectedIndex);
             Assert.Empty(dialog.Candidates);
 
             // 候補も初期値もなければ従来どおりの既定値
@@ -387,6 +810,122 @@ public class RawImportDialogTests : IDisposable
             dialog.Close();
         });
     }
+
+    [Fact]
+    public Task CandidateList_ArrowKeysApplyAndScrollToTheSelectedRow() => WpfTestHost.Run(async () =>
+    {
+        string path = CreateFile("cap_320x960.raw", FileSize);
+        FormatMemory memory = CreateMemory();
+        foreach (int width in new[] { 80, 96, 100, 120, 128, 160, 192, 200, 240, 256, 300, 320 })
+        {
+            memory.RememberLoaded(path, FileSize, Fmt(width, 307200 / width), autoOpen: false);
+        }
+        RawImportDialog dialog = CreateDialog(path, memory, initial: Fmt(640, 480, 8));
+        try
+        {
+            dialog.Show();
+            await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+            var list = Find<ListBox>(dialog, "CandidateList");
+            Assert.Equal(10, list.Items.Count);
+            Assert.Equal(-1, list.SelectedIndex);
+            var widthBox = Find<TextBox>(dialog, "WidthBox");
+            Assert.True(widthBox.Focus());
+            Assert.True(widthBox.MoveFocus(new TraversalRequest(FocusNavigationDirection.Previous)));
+            Assert.IsType<ListBoxItem>(Keyboard.FocusedElement);
+
+            for (int i = 0; i < list.Items.Count; i++)
+            {
+                var focused = Assert.IsType<ListBoxItem>(Keyboard.FocusedElement);
+                focused.RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(list),
+                    Environment.TickCount, Key.Down) { RoutedEvent = Keyboard.KeyDownEvent });
+            }
+            await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+            Assert.Equal(9, list.SelectedIndex);
+            Assert.Equal(dialog.Candidates[9].Format.Width.ToString(), widthBox.Text);
+            var selected = Assert.IsType<ListBoxItem>(list.ItemContainerGenerator.ContainerFromIndex(9));
+            Rect bounds = selected.TransformToAncestor(list).TransformBounds(new Rect(selected.RenderSize));
+            Assert.InRange(bounds.Bottom, 1, list.ActualHeight);
+        }
+        finally
+        {
+            dialog.Close();
+        }
+    });
+
+    [Theory]
+    [InlineData(5)]
+    [InlineData(6)]
+    public Task CandidateList_ScrollbarStartsAtSixRows(int count) => WpfTestHost.Run(async () =>
+    {
+        string path = CreateFile("cap_320x960.raw", FileSize);
+        FormatMemory memory = CreateMemory();
+        memory.RememberLoaded(path, FileSize, Fmt(640, 480, bayer: BayerPattern.Rggb) with
+        {
+            Packing = BitPacking.Msb, Endianness = Endianness.Big,
+        }, autoOpen: true);
+        if (count == 6)
+        {
+            memory.RememberLoaded(path, FileSize, Fmt(100, 3072), autoOpen: false);
+        }
+
+        RawImportDialog dialog = CreateDialog(path, memory, displayed: Fmt(480, 640, 16));
+        try
+        {
+            dialog.Show();
+            await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+            var list = Find<ListBox>(dialog, "CandidateList");
+            Assert.Equal(count, list.Items.Count);
+            var scroll = Assert.IsType<ScrollViewer>(list.Template.FindName("PART_ScrollViewer", list)
+                ?? VisualTreeHelper.GetChild(VisualTreeHelper.GetChild(list, 0), 0));
+            Assert.Equal(count == 5 ? Visibility.Collapsed : Visibility.Visible, scroll.ComputedVerticalScrollBarVisibility);
+
+            var fifth = Assert.IsType<ListBoxItem>(list.ItemContainerGenerator.ContainerFromIndex(4));
+            Rect bounds = fifth.TransformToAncestor(scroll).TransformBounds(new Rect(fifth.RenderSize));
+            Assert.InRange(bounds.Bottom, 1, scroll.ActualHeight);
+            if (count == 5)
+            {
+                await WaitForPreviewAsync(() => Find<Image>(dialog, "PreviewImage").Source is not null);
+                await CaptureVisibleAsync(dialog, "candidate-list-five-rows");
+            }
+        }
+        finally
+        {
+            dialog.Close();
+        }
+    });
+
+    [Fact]
+    public Task Disclosure_CollapsedHeadingShowsAndAnnouncesNonDefaultValues() => WpfTestHost.Run(async () =>
+    {
+        string path = CreatePreviewFile();
+        RawImportDialog dialog = CreateDialog(path, null, initial: Fmt(192, 128) with
+        {
+            Packing = BitPacking.Msb, Endianness = Endianness.Big,
+        });
+        try
+        {
+            dialog.Show();
+            await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+            var details = Find<Expander>(dialog, "DetailsExpander");
+            var header = Assert.IsType<ToggleButton>(details.Template.FindName("HeaderSite", details));
+            var peer = new System.Windows.Automation.Peers.ToggleButtonAutomationPeer(header);
+            Assert.True(details.IsExpanded);
+            Assert.Equal("詳細", peer.GetName());
+            WpfTestHost.Toggle(header);
+            Assert.False(details.IsExpanded);
+            Assert.Equal("詳細 · 上詰め · Big", details.Header);
+            Assert.Equal(details.Header, peer.GetName());
+            await WaitForPreviewAsync(() => Find<Image>(dialog, "PreviewImage").Source is not null);
+            await CaptureVisibleAsync(dialog, "details-collapsed-summary");
+            WpfTestHost.Toggle(header);
+            Assert.True(details.IsExpanded);
+            Assert.Equal("詳細", peer.GetName());
+        }
+        finally
+        {
+            dialog.Close();
+        }
+    });
 
     [Fact]
     public Task AutoOpenCheck_StartsFromRememberedFlagAndIsReturned()
@@ -455,7 +994,6 @@ public class RawImportDialogTests : IDisposable
             Assert.DoesNotContain(dialog.Candidates, c => c.Source == FormatCandidateSource.SameSizeMemory);
             Assert.Equal("640", Find<TextBox>(dialog, "WidthBox").Text);
             Assert.Equal(0, Find<ComboBox>(dialog, "BayerCombo").SelectedIndex);
-            CaptureIfRequested(dialog, "import-forgotten");
             dialog.Close();
 
             // 記憶がないサイズでは押せない
@@ -492,5 +1030,11 @@ public class RawImportDialogTests : IDisposable
         encoder.Frames.Add(BitmapFrame.Create(bitmap));
         using var output = File.Create(Path.Combine(directory, $"{name}-dialog.png"));
         encoder.Save(output);
+    }
+
+    private static async Task CaptureVisibleAsync(Window window, string name)
+    {
+        await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+        WpfTestHost.CaptureIfRequested((FrameworkElement)window.Content, $"{name}-dialog");
     }
 }

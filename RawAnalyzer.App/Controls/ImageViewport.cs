@@ -6,6 +6,7 @@ using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using RawAnalyzer.App.Rendering;
 using RawAnalyzer.Core;
+using RawAnalyzer.App.Themes;
 
 namespace RawAnalyzer.App.Controls;
 
@@ -68,7 +69,7 @@ public sealed partial class ImageViewport : FrameworkElement
     private const int MaxOverlayCells = 8192;
 
     private static readonly Brush CanvasBrush =
-        new SolidColorBrush(Color.FromRgb(0x16, 0x16, 0x18));
+        ThemeColors.Brush(ThemeColors.Canvas);
 
     private readonly DispatcherTimer _idleTimer;
 
@@ -198,6 +199,8 @@ public sealed partial class ImageViewport : FrameworkElement
     /// <summary>カーソル下の画素が変化したときに発火する。</summary>
     public event EventHandler<CursorPixelEventArgs>? CursorPixelChanged;
 
+    internal event Action? KeyboardCursorCleared;
+
     /// <summary>ROIが確定・解除されたときに発火する。</summary>
     public event EventHandler? RoiChanged;
 
@@ -257,6 +260,8 @@ public sealed partial class ImageViewport : FrameworkElement
             sourceX, sourceY, _image.Width & ~1, _image.Height & ~1, out displayX, out displayY);
     }
 
+    internal event EventHandler? InteractionModeChanged;
+
     /// <summary>
     /// マウス操作モード。設定するとカーソル形状も切り替わる
     /// (右パネルを畳んでいてもモードが分かるようにするため)。
@@ -279,6 +284,7 @@ public sealed partial class ImageViewport : FrameworkElement
                 ViewportInteractionMode.WhiteBalancePick => Cursors.UpArrow,
                 _ => Cursors.Arrow,
             };
+            InteractionModeChanged?.Invoke(this, EventArgs.Empty);
         }
     }
 
@@ -452,6 +458,7 @@ public sealed partial class ImageViewport : FrameworkElement
         _overlay = null;
         _demosaicCache.Clear();
         _bitmap = null;
+        NavigatorStateChanged?.Invoke(this, EventArgs.Empty);
         try
         {
             await _renderTask;
@@ -576,6 +583,7 @@ public sealed partial class ImageViewport : FrameworkElement
     {
         _renderCts?.Cancel();
         _bayerPyramid = null;
+        NavigatorStateChanged?.Invoke(this, EventArgs.Empty);
         try
         {
             await _renderTask;

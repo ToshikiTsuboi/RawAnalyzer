@@ -4,6 +4,7 @@ using System.Windows.Threading;
 using RawAnalyzer.App.Controls;
 using RawAnalyzer.App.Rendering;
 using RawAnalyzer.App.Services;
+using RawAnalyzer.App.Themes;
 using RawAnalyzer.Core;
 
 namespace RawAnalyzer.App;
@@ -415,6 +416,7 @@ public partial class MainWindow
                 // カラー画像は輝度と一緒に差し替える。片方だけだと前フレームの色が残る
                 _colorImage = color;
                 _vm.IsColorImage = color is not null;
+                UpdateOpenedFileDetails(format, color is not null);
                 Task<RawImage?> pending = Viewport.ReplaceImageAsync(image, format, color: color);
 
                 // 表示モードはツールバーの選択を保つ。新しい画像で成立しないモード(カラー画像への
@@ -431,6 +433,7 @@ public partial class MainWindow
                     SyncLevelControlsToActiveBitDepth();
                     UpdateFormatPanel(format);
                     _histogram = null;
+                    RedrawHistogram();
                     _channelHistograms = null;
 
                     // 現像LUT(白飛びの判定に素材のビット深度を使う)は、カラー現像のまま送った場合に
@@ -529,7 +532,8 @@ public partial class MainWindow
                 return;
             }
 
-            PlayToggle.Content = "⏸ 停止";
+            PlayToggle.Content = "停止";
+            PlayToggle.Tag = IconGlyphs.Pause;
             _playTimer ??= new DispatcherTimer();
             _playTimer.Tick -= OnPlayTick;
             _playTimer.Tick += OnPlayTick;
@@ -600,7 +604,8 @@ public partial class MainWindow
         if (PlayToggle is not null)
         {
             PlayToggle.IsChecked = false;
-            PlayToggle.Content = "▶ 再生";
+            PlayToggle.Content = "再生";
+            PlayToggle.Tag = IconGlyphs.Play;
         }
 
         if (wasPlaying)

@@ -32,11 +32,17 @@ public partial class MainWindow
     /// <remarks>表示モードを変える経路は多いので、変わるたびではなく見せるときに決める。</remarks>
     private void OnZebraToolTipOpening(object sender, System.Windows.Controls.ToolTipEventArgs e)
     {
-        ZebraToggle.ToolTip = ZebraToolTip.For(Viewport.DisplayMode);
+        ZebraToggle.Tag = ZebraToolTip.For(Viewport.DisplayMode);
     }
 
     private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
+        if (e.PropertyName == nameof(MainViewModel.IsCompareMode))
+        {
+            UpdateNavigator();
+            return;
+        }
+
         if (e.PropertyName is nameof(MainViewModel.HistogramIsLog)
             or nameof(MainViewModel.HistogramIsCumulative))
         {
@@ -54,7 +60,7 @@ public partial class MainWindow
             {
                 _ = Dispatcher.InvokeAsync(() =>
                 {
-                    MessageBox.Show(this, refusal, "ヒストグラム", MessageBoxButton.OK, MessageBoxImage.Information);
+                    AppMessage.Show(this, refusal, "ヒストグラム", MessageBoxButton.OK, MessageBoxImage.Information);
                     _vm.HistogramByChannel = false;
                 });
                 return;
@@ -80,6 +86,12 @@ public partial class MainWindow
         if (e.PropertyName is nameof(MainViewModel.LeftPanelVisible)
             or nameof(MainViewModel.RightPanelVisible))
         {
+            if (e.PropertyName == nameof(MainViewModel.RightPanelVisible))
+            {
+                // 比較中に利用者が開閉した場合は、その状態を終了時にも維持する。
+                _rightPanelBeforeCompare = null;
+            }
+
             CapturePanelWidths();
             UpdatePanelLayout();
             return;
@@ -96,6 +108,11 @@ public partial class MainWindow
             or nameof(MainViewModel.BlackLevel)
             or nameof(MainViewModel.WhiteLevel))
         {
+            if (_compareMode)
+            {
+                return;
+            }
+
             if (e.PropertyName is nameof(MainViewModel.BlackLevel)
                 or nameof(MainViewModel.WhiteLevel))
             {
@@ -294,7 +311,7 @@ public partial class MainWindow
                 isRawFile: _currentPath is not null && IsRawFile(_currentPath));
             if (hdrRefusal != DisplayModeSelection.Refusal.None)
             {
-                MessageBox.Show(this, DisplayModeSelection.Explain(hdrRefusal),
+                AppMessage.Show(this, DisplayModeSelection.Explain(hdrRefusal),
                     "RawAnalyzer", MessageBoxButton.OK, MessageBoxImage.Information);
                 DisplayModeCombo.SelectedIndex = 0;
                 return;
@@ -317,7 +334,7 @@ public partial class MainWindow
         {
             if (ActiveFormat?.Bayer is null or BayerPattern.None)
             {
-                MessageBox.Show(this,
+                AppMessage.Show(this,
                     "HDR合成結果にBayerパターンがありません。\n" +
                     "元rawのフォーマットでBayerパターンを指定してからHDR合成してください。",
                     "RawAnalyzer", MessageBoxButton.OK, MessageBoxImage.Information);
@@ -355,7 +372,7 @@ public partial class MainWindow
             HdrExposureMix.BayerPhaseMismatch(_currentFormat));
         if (selected.Refusal != DisplayModeSelection.Refusal.None)
         {
-            MessageBox.Show(this, DisplayModeSelection.Explain(selected.Refusal),
+            AppMessage.Show(this, DisplayModeSelection.Explain(selected.Refusal),
                 "RawAnalyzer", MessageBoxButton.OK, MessageBoxImage.Information);
             DisplayModeCombo.SelectedIndex = 0;
             return;
@@ -534,7 +551,7 @@ public partial class MainWindow
             return false;
         }
 
-        MessageBox.Show(this, reason, "ホワイトバランス", MessageBoxButton.OK, MessageBoxImage.Information);
+        AppMessage.Show(this, reason, "ホワイトバランス", MessageBoxButton.OK, MessageBoxImage.Information);
         return true;
     }
 
@@ -588,12 +605,27 @@ public partial class MainWindow
 
     private void OnResetDisplayClick(object sender, RoutedEventArgs e)
     {
+        if (_compareMode)
+        {
+            CompareArea.ActivePane?.ResetDisplay();
+            return;
+        }
+
         ResetDisplayParameters();
         ApplyDisplayParametersToViews();
     }
 
-    private void OnAutoContrastClick(object sender, RoutedEventArgs e)
+    private async void OnAutoContrastClick(object sender, RoutedEventArgs e)
     {
+        if (_compareMode)
+        {
+            if (CompareArea.ActivePane is { } active)
+            {
+                await active.AutoContrastAsync();
+            }
+            return;
+        }
+
         if (_currentFormat is null)
         {
             return;
@@ -694,6 +726,7 @@ public partial class MainWindow
             _formatMemory.Correct(_currentPath, _currentFileSize, previous, _currentFormat);
             _openedRawFormat = _currentFormat;
         }
+        UpdateOpenedFileDetails(format, _colorImage is not null);
 
         // チャネル別統計はパターンに依存するため作り直す。
         // 放置すると RGGB→BGGR で R と B を入れ替えた値を表示したままになる

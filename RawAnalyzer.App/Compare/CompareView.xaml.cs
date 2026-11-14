@@ -1,6 +1,10 @@
 ﻿using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Threading;
+using RawAnalyzer.App.Rendering;
+using RawAnalyzer.App.Services;
+using RawAnalyzer.App.Themes;
 
 namespace RawAnalyzer.App.Compare;
 
@@ -37,10 +41,17 @@ public partial class CompareView : UserControl
 
     private readonly List<ComparePaneView> _panes = new();
     private ComparePaneView? _active;
+    private (int Count, ComparePaneStatus? Active) _lastStatus;
     private bool _loading;
     private bool _closing;
     private CompareSyncMode _syncMode = CompareSyncMode.FieldOfView;
     private bool _syncing;
+    private (ComparePaneView Source, int X, int Y)? _cursorPosition;
+    private CursorRequest? _cursorRequest;
+    private bool _readingCursor;
+
+    private sealed record CursorRequest(int X, int Y,
+        (string Label, ComparePane Pane, (int X, int Y)? Pixel)[] Samples);
 
     // 等倍同期で、未操作のまま全体表示に追従している基準(FitBaseを参照)と、
     // その再フィット後の揃え直しをレイアウト確定待ちで予約済みか
@@ -56,11 +67,43 @@ public partial class CompareView : UserControl
     public CompareView()
     {
         InitializeComponent();
+        LayoutMode = CompareLayoutMode.Auto;
+        PaneGrid.SizeChanged += (_, _) => UpdateGridDimensions();
         Relayout();
     }
 
+    private CompareLayoutMode _layoutMode;
+
+    internal CompareLayoutMode LayoutMode
+    {
+        get => _layoutMode;
+        set
+        {
+            _layoutMode = Enum.IsDefined(value) ? value : CompareLayoutMode.Auto;
+            var selected = LayoutButton.ContextMenu.Items.OfType<MenuItem>()
+                .Single(item => Equals(item.Tag, _layoutMode));
+            LayoutButton.Content = $"配置: {selected.Header}";
+            UpdateGridDimensions();
+        }
+    }
+
+    private void OnLayoutMenuClick(object sender, RoutedEventArgs e)
+    {
+        LayoutButton.ContextMenu.PlacementTarget = LayoutButton;
+        LayoutButton.ContextMenu.IsOpen = true;
+    }
+
+    private void OnLayoutSelected(object sender, RoutedEventArgs e) =>
+        LayoutMode = (CompareLayoutMode)((MenuItem)sender).Tag;
+
     /// <summary>「比較モードを終了」が押されたときに発火する。</summary>
     public event EventHandler? ExitRequested;
+
+    internal event Action? StatusChanged;
+    internal event Action? ActiveDisplayChanged;
+    internal ComparePaneView? ActivePane => _active;
+    internal event Action<string>? CursorReadoutChanged;
+    internal ComparePaneStatus? ActivePaneStatus => _lastStatus.Active;
 
     /// <summary>
     /// ペインを追加できなかった(上限・読み込み中)ときに、理由と追加しなかったファイルを知らせる(ホストが利用者へ示す)。
@@ -144,6 +187,12 @@ public partial class CompareView : UserControl
         }
 
         _closing = true;
+        foreach (ComparePaneView pane in _panes)
+        {
+            pane.CancelAutoContrast();
+        }
+        SetActive(null);
+        ClearCursor();
         _loading = false;
         UpdateAddControls();
         // 進行中の読み込みを打ち切り、完了しても追加されないようにする
@@ -166,22 +215,11 @@ public partial class CompareView : UserControl
         finally
         {
             _panes.Clear();
-            _active = null;
+            PaneGrid.Children.Clear();
             _fitBase = null;
             _closing = false;
             Relayout();
         }
-    }
-
-    /// <summary>
-    /// 開いている画像数に応じたグリッド列数。
-    /// 1〜3枚は横一列、4枚は2×2。追加用の空き枠は数えない。
-    /// </summary>
-    /// <param name="paneCount">表示する画像数。</param>
-    /// <returns>UniformGridの列数。</returns>
-    private static int ColumnsFor(int paneCount)
-    {
-        return paneCount <= 3 ? Math.Max(1, paneCount) : 2;
     }
 
     /// <summary>
@@ -303,16 +341,37 @@ public partial class CompareView : UserControl
     {
         var view = new ComparePaneView();
         view.CloseRequested += OnPaneCloseRequested;
-        view.ActivateRequested += SetActive;
+        view.ActivateRequested += ActivatePane;
         view.ViewChanged += OnPaneViewChanged;
         view.CursorMoved += OnPaneCursorMoved;
         view.CursorLeft += OnPaneCursorLeft;
         view.DisplayChanged += OnPaneDisplayChanged;
         view.ViewportControl.SizeChanged += (_, _) => OnPaneViewportResized(view);
+        view.ViewportControl.ViewportStateChanged += (_, _) =>
+        {
+            if (ReferenceEquals(view, _active))
+            {
+                UpdateStatus();
+            }
+        };
+        view.PaneAttached += () =>
+        {
+            ClearCursor();
+            UpdateFileNames();
+            UpdateGridDimensions();
+            UpdateStatus();
+            if (ReferenceEquals(_active, view))
+            {
+                ActiveDisplayChanged?.Invoke();
+            }
+        };
         _panes.Add(view);
-        Relayout();
+        PaneGrid.Children.Add(view);
+        view.SetLabel(((char)('A' + _panes.Count - 1)).ToString());
         view.Attach(pane, cancellationToken);
         SetActive(view);
+        EmptyAddButton.Visibility = Visibility.Collapsed;
+        UpdateAddControls();
         RefreshChips();
 
         // 新規ペインはまだレイアウト前でサイズが0のため、ここでは既存ペインの
@@ -386,6 +445,11 @@ public partial class CompareView : UserControl
             2 => CompareSyncMode.Off,
             _ => CompareSyncMode.FieldOfView,
         };
+
+        if (_syncMode == CompareSyncMode.Off)
+        {
+            ClearCursor();
+        }
 
         // モードを入れたら即座に揃える。基準は等倍で未操作の基準が残っていればそれ
         // (その倍率に揃えただけの他ペインを基準にすると未操作の扱いが失われる)、
@@ -538,41 +602,97 @@ public partial class CompareView : UserControl
 
     private void OnPaneCursorMoved(ComparePaneView source, int x, int y)
     {
-        if (_syncMode == CompareSyncMode.Off || source.Pane is null)
+        if (_closing || _syncMode == CompareSyncMode.Off || source.Pane is not { } sourcePane
+            || _cursorPosition == (source, x, y))
         {
             return;
         }
 
-        (int Width, int Height) sourceSize = (source.Pane.Image.Width, source.Pane.Image.Height);
-        foreach (ComparePaneView pane in _panes)
+        _cursorPosition = (source, x, y);
+        var sourceSize = (sourcePane.Image.Width, sourcePane.Image.Height);
+        var samples = new List<(string, ComparePane, (int, int)?)>(_panes.Count);
+        foreach (ComparePaneView view in _panes)
         {
-            if (ReferenceEquals(pane, source) || pane.Pane is null)
+            if (view.Pane is not { } pane)
             {
                 continue;
             }
 
-            (double gx, double gy) = CompareSync.MapCursor(
-                x, y, sourceSize, (pane.Pane.Image.Width, pane.Pane.Image.Height));
-            pane.ShowGhostCursor(gx, gy);
+            if (ReferenceEquals(view, source))
+            {
+                view.HideGhostCursor();
+                samples.Add((view.Label, pane, (x, y)));
+                continue;
+            }
+
+            var targetSize = (pane.Image.Width, pane.Image.Height);
+            (double gx, double gy) = CompareSync.MapCursor(x, y, sourceSize, targetSize);
+            view.ShowGhostCursor(gx, gy);
+            samples.Add((view.Label, pane,
+                CompareCursorReadout.CorrespondingPixel(gx, gy, targetSize.Width, targetSize.Height)));
+        }
+
+        _cursorRequest = new CursorRequest(x, y, samples.ToArray());
+        if (!_readingCursor)
+        {
+            _ = ReadLatestCursorAsync();
+        }
+    }
+
+    private async Task ReadLatestCursorAsync()
+    {
+        // マップ済み画像の読み取りを UI から外し、計算中に届いた移動は最新の位置だけを残す。
+        _readingCursor = true;
+        try
+        {
+            while (_cursorRequest is { } request)
+            {
+                string text = await Task.Run(() => CompareCursorReadout.Format(request.X, request.Y,
+                    request.Samples.Select(sample => (sample.Label, sample.Pixel is { } pixel
+                        ? CursorReadout.ReadCode(sample.Pane.Image, sample.Pane.Format, pixel.X, pixel.Y, frame: 0)
+                        : null, sample.Pane.Format.BitDepth)).ToArray()));
+                if (ReferenceEquals(_cursorRequest, request))
+                {
+                    _cursorRequest = null;
+                    CursorReadoutChanged?.Invoke(text);
+                }
+            }
+        }
+        finally
+        {
+            _readingCursor = false;
         }
     }
 
     private void OnPaneCursorLeft(ComparePaneView source)
     {
+        if (_cursorPosition?.Source == source)
+        {
+            ClearCursor();
+        }
+    }
+
+    private void ClearCursor()
+    {
+        if (_cursorPosition is null)
+        {
+            return;
+        }
+
+        _cursorPosition = null;
+        _cursorRequest = null;
         foreach (ComparePaneView pane in _panes)
         {
-            if (!ReferenceEquals(pane, source))
-            {
-                pane.HideGhostCursor();
-            }
+            pane.HideGhostCursor();
         }
+        CursorReadoutChanged?.Invoke("");
     }
 
     // ---- 表示条件(条件チップと調整リンク) ----
 
     private void OnPaneDisplayChanged(ComparePaneView source)
     {
-        // 🔗同士なら操作結果を他ペインへ転写(ApplyDisplayはDisplayChangedを発火しない)
+        // 調整リンクがオンのペイン同士なら操作結果を他ペインへ転写(ApplyDisplayはDisplayChangedを発火しない)
         if (source.IsLinked && source.Pane is not null)
         {
             DisplaySettings settings = source.Pane.Display;
@@ -590,6 +710,7 @@ public partial class CompareView : UserControl
         }
 
         RefreshChips();
+        ActiveDisplayChanged?.Invoke();
     }
 
     private void OnAlignConditionsClick(object sender, RoutedEventArgs e)
@@ -646,6 +767,7 @@ public partial class CompareView : UserControl
         {
             return;
         }
+        PaneGrid.Children.Remove(view);
         if (ReferenceEquals(_active, view))
         {
             SetActive(_panes.LastOrDefault());
@@ -689,27 +811,89 @@ public partial class CompareView : UserControl
 
     private void SetActive(ComparePaneView? view)
     {
+        if ((_closing && view is not null) || ReferenceEquals(_active, view))
+        {
+            return;
+        }
+
         _active = view;
         foreach (ComparePaneView pane in _panes)
         {
             pane.IsActive = ReferenceEquals(pane, view);
         }
+        UpdateStatus();
+        ActiveDisplayChanged?.Invoke();
     }
 
-    /// <summary>開いているペインだけをグリッドへ並べ直し、ラベルを振り直す。</summary>
+    private void ActivatePane(ComparePaneView view)
+    {
+        if (!ReferenceEquals(_active, view))
+        {
+            // PreviewMouseDown はフォーカスの移動より先に届くので、編集中の数値は旧ペインで確定する。
+            Controls.NumericSliderRow.CommitPendingEdit(Keyboard.FocusedElement);
+            SetActive(view);
+        }
+    }
+
+    /// <summary>開いているペインの見出しと配置を更新する。</summary>
     private void Relayout()
     {
-        PaneGrid.Children.Clear();
+        ClearCursor();
+        string? previousLabel = _active?.Label;
         for (int i = 0; i < _panes.Count; i++)
         {
             _panes[i].SetLabel(((char)('A' + i)).ToString());
-            PaneGrid.Children.Add(_panes[i]);
         }
 
-        PaneGrid.Columns = ColumnsFor(_panes.Count);
-        PaneGrid.Rows = _panes.Count <= 3 ? 1 : 2;
+        UpdateFileNames();
+        UpdateGridDimensions();
+        UpdateStatus();
+        if (previousLabel != _active?.Label)
+        {
+            ActiveDisplayChanged?.Invoke();
+        }
         EmptyAddButton.Visibility = _panes.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         UpdateAddControls();
+    }
+
+    private void UpdateFileNames()
+    {
+        var loaded = _panes.Where(view => view.Pane is not null).ToArray();
+        PaneNameDisplay[] names = PaneNameDisplay.ForFiles(loaded.Select(view => view.Pane!.FileName).ToArray());
+        for (int i = 0; i < loaded.Length; i++)
+        {
+            loaded[i].SetFileNameDisplay(names[i]);
+        }
+    }
+
+    private void UpdateGridDimensions()
+    {
+        Size insets = _panes.FirstOrDefault()?.ImageAreaInsets ?? default;
+        double[] aspects = _panes.Select(view => view.Pane is { } pane
+            ? (double)pane.Image.Width / pane.Image.Height
+            : 1).ToArray();
+        (int rows, int columns) = CompareLayout.Choose(PaneGrid.ActualWidth, PaneGrid.ActualHeight,
+            aspects, insets.Width, insets.Height, (PaneGrid.Rows, PaneGrid.Columns), LayoutMode);
+        PaneGrid.Rows = rows;
+        PaneGrid.Columns = columns;
+    }
+
+    private void UpdateStatus()
+    {
+        ComparePaneStatus? active = null;
+        if (_active?.Pane is { } pane)
+        {
+            var viewport = _active.ViewportControl;
+            active = new ComparePaneStatus(_active.Label, pane.FileName, pane.Image.Width, pane.Image.Height,
+                pane.Format.BitDepth, DeviceScaling.ToDeviceZoom(viewport.Zoom, viewport.DeviceScale));
+        }
+
+        var status = (_panes.Count, active);
+        if (status != _lastStatus)
+        {
+            _lastStatus = status;
+            StatusChanged?.Invoke();
+        }
     }
 
     private void UpdateAddControls()
@@ -717,7 +901,8 @@ public partial class CompareView : UserControl
         PaneCountText.Text = $"{_panes.Count} / {MaxPanes}枚";
         AddImageButton.IsEnabled = CanAddPane;
         EmptyAddButton.IsEnabled = CanAddPane;
-        AddImageButton.Content = _loading ? "読込中…" : "＋ 画像を追加";
+        AddImageButton.Content = _loading ? "読込中…" : "画像を追加";
+        AddImageButton.Tag = _loading ? "" : IconGlyphs.Add;
         AddImageButton.ToolTip = AddRefusal
             ?? "画像を選んで比較に追加。比較領域のどこへドロップしても追加できます (最大4枚)。";
         ToolTipService.SetShowOnDisabled(AddImageButton, true);

@@ -1,4 +1,5 @@
 using System.Windows;
+using RawAnalyzer.App.Services;
 using RawAnalyzer.Core;
 
 namespace RawAnalyzer.App.Views;
@@ -64,6 +65,8 @@ public partial class SaveDialog : Window
     private readonly long _totalPixels;
     private readonly bool _allowFloatRaw;
     private readonly bool _hasBayer;
+    private readonly int _frameCount;
+    private readonly bool _isColor;
 
     // 8bit 以下の画像の raw は1画素1バイトで書く(RawSaver)。16bitコンテナではなく、詰め方向・エンディアンもない
     private readonly bool _byteRaw;
@@ -73,12 +76,17 @@ public partial class SaveDialog : Window
     /// <param name="allowFloatRaw">HDR合成中のfloat raw保存を選択肢に含めるか。</param>
     /// <param name="hasBayer">Bayerパターンが指定されている(デモザイク可能)か。</param>
     /// <param name="bitDepth">対象画像のビット深度。</param>
-    public SaveDialog(long totalPixels, bool allowFloatRaw = false, bool hasBayer = false, int bitDepth = 16)
+    /// <param name="frameCount">raw に書き出すフレーム数。</param>
+    /// <param name="isColor">デコード済みのRGB画像か。</param>
+    public SaveDialog(long totalPixels, bool allowFloatRaw = false, bool hasBayer = false, int bitDepth = 16,
+        int frameCount = 1, bool isColor = false)
     {
         InitializeComponent();
         _totalPixels = totalPixels;
         _allowFloatRaw = allowFloatRaw;
         _hasBayer = hasBayer;
+        _frameCount = frameCount;
+        _isColor = isColor;
         _byteRaw = bitDepth <= 8;
         if (_byteRaw)
         {
@@ -129,6 +137,9 @@ public partial class SaveDialog : Window
         WbCheck.IsEnabled = processed && _hasBayer;
         MatrixCheck.IsEnabled = processed && _hasBayer;
         DemosaicCheck.IsEnabled = processed && _hasBayer;
+        ProcessingOptions.Visibility = processed ? Visibility.Visible : Visibility.Collapsed;
+        WbCheck.Visibility = MatrixCheck.Visibility = DemosaicCheck.Visibility =
+            processed && _hasBayer ? Visibility.Visible : Visibility.Collapsed;
         if (!processed)
         {
             LutCheck.IsChecked = false;
@@ -168,11 +179,14 @@ public partial class SaveDialog : Window
         }
 
         SummaryText.Text = BuildSummary();
-        SummaryText.Foreground = System.Windows.Media.Brushes.LightGreen;
-        if (IsEightBitOutput)
+        SummaryText.Foreground = (System.Windows.Media.Brush)FindResource(
+            IsEightBitOutput ? "WarningBrush" : "SuccessBrush");
+        if (SizeEstimateText is not null)
         {
-            SummaryText.Foreground = new System.Windows.Media.SolidColorBrush(
-                System.Windows.Media.Color.FromRgb(0xD9, 0x9B, 0x5B));
+            var estimate = ExportSize.ForSave(SelectedFormat, _totalPixels, _frameCount, _byteRaw ? 1 : 2,
+                _isColor, DemosaicCheck.IsChecked == true);
+            SizeEstimateText.Text = estimate is { } size ? $"{size.Label} · {size.Bytes:N0} バイト"
+                : "出力サイズを計算できません";
         }
     }
 

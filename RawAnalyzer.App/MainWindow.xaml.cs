@@ -59,10 +59,31 @@ public partial class MainWindow : Window
     private bool _closed;
 
     /// <summary>メインウィンドウを生成する。</summary>
-    public MainWindow()
+    public MainWindow() : this(null)
     {
+    }
+
+    internal MainWindow(string? settingsDirectory, FolderTreeNavigator? folderTreeNavigator = null)
+    {
+        _sessionStore = settingsDirectory is null ? new SessionStore() : new SessionStore(settingsDirectory);
+        _recentFiles = settingsDirectory is null ? new RecentFilesStore() : new RecentFilesStore(settingsDirectory);
+        _formatMemory = new FormatMemory(settingsDirectory is null
+            ? new FormatHistoryStore()
+            : new FormatHistoryStore(settingsDirectory));
+        _folderTreeNavigator = folderTreeNavigator ?? new FolderTreeNavigator();
         InitializeComponent();
+        PanToggle.Checked += OnPanCheckedChanged;
+        PanToggle.Unchecked += OnPanCheckedChanged;
+        Viewport.InteractionModeChanged += OnViewportInteractionModeChanged;
+        HistogramChart.PlotSizeChanged += (_, _) => RedrawHistogram();
         _session = _sessionStore.Load();
+        UpdateFileDetailsMemory();
+        NavigatorEnabled = _session.NavigatorVisible;
+        Viewport.NavigatorStateChanged += (_, _) => UpdateNavigator();
+        PlaybackBar.SizeChanged += (_, _) => UpdateNavigatorMargin();
+        PlaybackBar.IsVisibleChanged += (_, _) => UpdateNavigatorMargin();
+        LevelOverlayBox.SizeChanged += (_, _) => UpdateNavigatorMargin();
+        LevelOverlayBox.IsVisibleChanged += (_, _) => UpdateNavigatorMargin();
         ApplyWindowPlacement();
 
         // パネルの表示状態は、変更通知(隠す前に今の幅を控える CapturePanelWidths)を購読する前に入れ、
@@ -70,6 +91,11 @@ public partial class MainWindow : Window
         // XAML の既定幅(220/240)のままの列の幅を控え、保存していた幅を(表示したままの側の幅も)上書きしていた
         _vm.LeftPanelVisible = _session.LeftPanelVisible;
         _vm.RightPanelVisible = _session.RightPanelVisible;
+        DisplaySection.IsExpanded = _session.DisplayExpanded;
+        HistogramSection.IsExpanded = _session.HistogramExpanded;
+        WhiteBalanceSection.IsExpanded = _session.WhiteBalanceExpanded;
+        ColorMatrixSection.IsExpanded = _session.ColorMatrixExpanded;
+        FormatSection.IsExpanded = _session.FormatExpanded;
         UpdatePanelLayout();
         DataContext = _vm;
         _vm.PropertyChanged += OnViewModelPropertyChanged;
@@ -90,23 +116,36 @@ public partial class MainWindow : Window
 
             RefreshProjections();
         };
-        HorizontalProjectionToggle.ToolTip = ProjectionText.ToolbarToolTip(ProjectionDirection.Horizontal);
-        VerticalProjectionToggle.ToolTip = ProjectionText.ToolbarToolTip(ProjectionDirection.Vertical);
+        HorizontalProjectionToggle.Tag = ProjectionText.ToolbarToolTip(ProjectionDirection.Horizontal);
+        VerticalProjectionToggle.Tag = ProjectionText.ToolbarToolTip(ProjectionDirection.Vertical);
+        ZebraToggle.Tag = ZebraToolTip.For(Viewport.DisplayMode);
         HorizontalProjectionMenu.ToolTip = ProjectionText.Explanation(ProjectionDirection.Horizontal);
         VerticalProjectionMenu.ToolTip = ProjectionText.Explanation(ProjectionDirection.Vertical);
 
         // ショートカットはコマンド表(MainWindow.Commands.cs)から一括で捌く。
-        // Escだけはビューポートの画素カーソル解除を優先するため個別に扱う(バブルの KeyDown で、
-        // フォーカス中のコントロールが使わなかったときだけフルスクリーンを解除する)
+        // Esc はフォーカス中のコントロール、画素カーソル、ツールモード、フルスクリーンの順で扱う。
         PreviewKeyDown += OnWindowPreviewKeyDown;
-        FullscreenEscape.Attach(this, () => _vm.IsFullscreen, () => _vm.IsFullscreen = false);
+        FullscreenEscape.Attach(this, () => _vm.IsFullscreen, () => _vm.IsFullscreen = false,
+            CancelViewportInteraction);
         RebuildRecentMenu();
         InitFolderTree();
+        FolderTree.IsVisibleChanged += (_, _) =>
+        {
+            if (FolderTree.IsVisible && _currentFolder is { } folder)
+            {
+                _ = _folderTreeNavigator.SyncToFolderAsync(FolderTree, folder);
+            }
+        };
         CompareArea.PanePicker = PickComparePaneAsync;
         CompareArea.PaneLoader = LoadComparePaneAsync;
+        CompareArea.LayoutMode = _session.CompareLayoutMode;
+        CompareArea.StatusChanged += () => _vm.UpdateCompareStatus(CompareArea.PaneCount, CompareArea.ActivePaneStatus);
+        CompareArea.ActiveDisplayChanged += RefreshCompareAdjustment;
+        _vm.CompareAdjustment.Edited += OnCompareAdjustmentEdited;
+        CompareArea.CursorReadoutChanged += text => CompareCursorStatus.Text = text;
         CompareArea.ExitRequested += async (_, _) => await ExitCompareModeAsync();
         CompareArea.AddRefused += reason =>
-            MessageBox.Show(this, reason, "比較モード", MessageBoxButton.OK, MessageBoxImage.Information);
+            AppMessage.Show(this, reason, "比較モード", MessageBoxButton.OK, MessageBoxImage.Information);
         Loaded += async (_, _) =>
         {
             // 起動時に構築してショートカット重複を早期に検出する
@@ -151,14 +190,16 @@ public partial class MainWindow : Window
                 }
             }
         };
+        InitializeGraphDock();
         Closing += (_, _) => SaveWindowPlacement();
         Closed += async (_, _) =>
         {
             _closed = true;
+            _navigatorCts?.Cancel();
             ReplaceLoadCts(null);
             CancelAnalysis();
-            _profileWindow?.Close();
             _projections?.Shutdown();
+            AnalysisGraphDock.Shutdown();
             await CompareArea.CloseAllAsync();
             await Viewport.ClearImageAsync();
             _mainBayerPyramid?.Dispose();

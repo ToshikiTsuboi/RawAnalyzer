@@ -8,6 +8,12 @@ namespace RawAnalyzer.Core;
 /// </summary>
 public static class TiffWriter
 {
+    /// <summary>標準ストリップ構成で非圧縮の16bitグレー TIFF を出力したときのバイト数。</summary>
+    /// <param name="width">画像の幅(画素数)。</param>
+    /// <param name="height">画像の高さ(画素数)。</param>
+    /// <returns>ヘッダ、タグ、ストリップ表、画素データを含むバイト数。</returns>
+    public static long Gray16FileSize(int width, int height) => Layout.Create(width, height, 1, null).TotalSize;
+
     // TIFF6.0のグレースケール必須フィールド一式
     // (ImageWidth/Length, BitsPerSample, Compression, Photometric,
     //  StripOffsets, SamplesPerPixel, RowsPerStrip, StripByteCounts,

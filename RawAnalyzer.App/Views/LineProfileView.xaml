@@ -1,23 +1,23 @@
-<Window x:Class="RawAnalyzer.App.Views.LineProfileWindow"
+<views:GraphView x:Class="RawAnalyzer.App.Views.LineProfileView"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:themes="clr-namespace:RawAnalyzer.App.Themes"
         xmlns:views="clr-namespace:RawAnalyzer.App.Views"
-        Title="ラインプロファイル" Width="820" Height="480" MinWidth="620" MinHeight="360"
-        Background="#FF2E2E32" Foreground="#FFD8D8D4"
-        WindowStartupLocation="CenterOwner" ShowInTaskbar="False">
+        Foreground="{StaticResource TextBrush}">
     <DockPanel Margin="10">
-        <WrapPanel DockPanel.Dock="Top" Margin="0,0,0,6">
+        <WrapPanel x:Name="ProfileHeader" DockPanel.Dock="Top" Margin="0,0,0,6">
             <RadioButton x:Name="HorizontalRadio" Content="水平" IsChecked="True"
                          Margin="0,0,12,0" VerticalAlignment="Center"
                          Checked="OnDirectionChanged" />
             <RadioButton x:Name="VerticalRadio" Content="垂直"
                          Margin="0,0,16,0" VerticalAlignment="Center"
                          Checked="OnDirectionChanged" />
-            <TextBlock x:Name="InfoText" FontFamily="Consolas" FontSize="12"
-                       Foreground="#FF9A9A95" VerticalAlignment="Center" />
+            <TextBlock x:Name="InfoText" FontFamily="Consolas" FontSize="{x:Static themes:ThemeTypography.FontSizeBody}"
+                       Foreground="{StaticResource TextDim}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
+                       ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" />
         </WrapPanel>
 
         <!-- 統計・グラフ・縦軸の設定・コピー/CSV は射影の窓と共有する -->
         <views:ProfilePlotView x:Name="Plot" />
     </DockPanel>
-</Window>
+</views:GraphView>

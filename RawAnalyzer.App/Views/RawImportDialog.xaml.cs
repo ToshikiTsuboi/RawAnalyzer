@@ -6,6 +6,7 @@ using System.Windows.Media;
 using RawAnalyzer.App.Controls;
 using RawAnalyzer.App.Services;
 using RawAnalyzer.Core;
+using RawAnalyzer.App.Themes;
 
 namespace RawAnalyzer.App.Views;
 
@@ -17,8 +18,8 @@ namespace RawAnalyzer.App.Views;
 public partial class RawImportDialog : Window
 {
     private static readonly int[] BitDepths = { 12, 10, 14, 16, 8 };
-    private static readonly Brush OkBrush = new SolidColorBrush(Color.FromRgb(0x7F, 0xBF, 0x7F));
-    private static readonly Brush WarnBrush = new SolidColorBrush(Color.FromRgb(0xD9, 0x9B, 0x5B));
+    private static readonly Brush OkBrush = ThemeColors.Brush(ThemeColors.Success);
+    private static readonly Brush WarnBrush = ThemeColors.Brush(ThemeColors.Warning);
 
     private readonly string _filePath;
     private readonly long _fileSize;
@@ -31,6 +32,11 @@ public partial class RawImportDialog : Window
     private bool _initializing = true;
     private bool _syncingCandidates;
 
+    internal sealed record CandidateRow(string Source, string Format)
+    {
+        public string AccessibleName => $"{Source}: {Format}";
+    }
+
     // 選択中のプリセットを適用した直後の入力値。入力がこれと食い違ったら一覧を案内の行へ戻す
     private RawFormat? _presetFormat;
     private bool _syncingPresets;
@@ -38,8 +44,8 @@ public partial class RawImportDialog : Window
     /// <summary>ダイアログを生成する。</summary>
     /// <param name="filePath">開こうとしているRawファイルのパス。</param>
     /// <param name="fileSize">
-    /// ファイルサイズ(バイト)。取得できなければ -1(照合できないことを示す)。ダイアログはファイルに触れないので、
-    /// 呼び出し側が UI スレッドの外で取って渡す(切断したネットワーク上のファイルでもダイアログの表示で固まらない)。
+    /// ファイルサイズ(バイト)。取得できなければ -1(照合できないことを示す)。呼び出し側が UI スレッドの外で取って渡す。
+    /// プレビューの読み取りはダイアログを表示してから別スレッドで行い、サイズ照合とは独立している。
     /// </param>
     /// <param name="presetStore">プリセットストア。</param>
     /// <param name="initialFormat">
@@ -99,7 +105,7 @@ public partial class RawImportDialog : Window
         AutoOpenCheck.IsChecked = RememberedEntry(format)?.AutoOpen ?? true;
         UpdateMemoryNote(removed: null);
         _initializing = false;
-        UpdateSizeNote();
+        UpdateSizeNote(applyingFormat: true);
     }
 
     /// <summary>「開く」で確定されたフォーマット。</summary>
@@ -111,7 +117,7 @@ public partial class RawImportDialog : Window
     /// </summary>
     public bool AutoOpenNextTime => AutoOpenCheck.IsChecked == true;
 
-    /// <summary>候補一覧の中身(先頭ほど有力。一覧の2行目以降に対応する)。</summary>
+    /// <summary>候補一覧の中身(先頭ほど有力)。</summary>
     internal IReadOnlyList<FormatCandidate> Candidates => _candidates;
 
     private IReadOnlyDictionary<string, RawFormat> LoadPresetsSafe()
@@ -127,7 +133,7 @@ public partial class RawImportDialog : Window
             // ロック・共有違反などで読めないだけなら、ファイルは退避も上書きもしない(保存は最新を読み直してから当てる)。
             // 一覧が空の理由を知らせる
             AppLog.Warn($"プリセットファイルを読み込めませんでした: {ex.Message}");
-            MessageBox.Show(
+            AppMessage.Show(
                 this,
                 "プリセットファイルを読み込めませんでした(ほかのアプリが使用中の可能性があります)。" +
                 $"ファイルはそのまま残しています。{Environment.NewLine}{ex.Message}",
@@ -140,7 +146,7 @@ public partial class RawImportDialog : Window
         if (corrupted)
         {
             AppLog.Warn($"プリセットファイルが破損していたため退避: {_presetStore.BackupPath}");
-            MessageBox.Show(
+            AppMessage.Show(
                 this,
                 "プリセットファイルが読み込めなかったため退避しました。" +
                 $"{Environment.NewLine}{_presetStore.BackupPath}",
@@ -233,8 +239,8 @@ public partial class RawImportDialog : Window
             Width = width,
             Height = height,
             BitDepth = BitDepths[Math.Max(0, BitDepthCombo.SelectedIndex)],
-            Packing = PackingCombo.SelectedIndex == 1 ? BitPacking.Msb : BitPacking.Lsb,
-            Endianness = EndianCombo.SelectedIndex == 1 ? Endianness.Big : Endianness.Little,
+            Packing = SelectedPacking,
+            Endianness = SelectedEndianness,
             Bayer = BayerCombo.SelectedIndex switch
             {
                 0 => BayerPattern.Rggb,
@@ -245,13 +251,7 @@ public partial class RawImportDialog : Window
             },
             HeaderOffset = headerOffset,
             FrameCount = frameCount,
-            Hdr = HdrCombo.SelectedIndex switch
-            {
-                1 => HdrMode.Auto,
-                2 => HdrMode.LineInterleaved,
-                3 => HdrMode.FrameSequential,
-                _ => HdrMode.None,
-            },
+            Hdr = SelectedHdrMode,
             HdrStages = HdrStagesCombo.SelectedIndex == 1 ? 3 : 2,
             ExposureRatio = exposureRatio,
             HdrLineBlock = lineBlock,
@@ -259,9 +259,70 @@ public partial class RawImportDialog : Window
         };
     }
 
-    private void UpdateSizeNote()
+    private BitPacking SelectedPacking => PackingCombo.SelectedIndex == 1 ? BitPacking.Msb : BitPacking.Lsb;
+    private Endianness SelectedEndianness => EndianCombo.SelectedIndex == 1 ? Endianness.Big : Endianness.Little;
+    private HdrMode SelectedHdrMode => HdrCombo.SelectedIndex switch
+    {
+        1 => HdrMode.Auto,
+        2 => HdrMode.LineInterleaved,
+        3 => HdrMode.FrameSequential,
+        _ => HdrMode.None,
+    };
+
+    private bool HasInvalidDetails => InputFeedback.GetHasError(HeaderOffsetBox) || InputFeedback.GetHasError(FrameCountBox);
+
+    private void UpdateDisclosure(bool applyingFormat)
+    {
+        var (header, frames) = ReadDetailsValues();
+        if (RawImportDisclosure.ShouldExpandDetails(applyingFormat, HasInvalidDetails,
+            SelectedPacking, SelectedEndianness, header > 0, frames > 1))
+        {
+            DetailsExpander.IsExpanded = true;
+        }
+
+        bool invalidHdr = InputFeedback.GetHasError(ExposureRatioBox) || InputFeedback.GetHasError(HdrLineBlockBox)
+            || InputFeedback.GetHasError(HdrRowOffsetBox);
+        HdrDetails.Visibility = RawImportDisclosure.ShowHdrDetails(SelectedHdrMode, invalidHdr)
+            ? Visibility.Visible : Visibility.Collapsed;
+        UpdateDetailsHeading(header, frames);
+    }
+
+    private (long Header, int Frames) ReadDetailsValues()
+    {
+        NumericInput.TryParseInteger(HeaderOffsetBox.Text, out long header);
+        NumericInput.TryParseInteger(FrameCountBox.Text, out int frames);
+        return (header, frames);
+    }
+
+    private void UpdateDetailsHeading(long header, int frames) =>
+        DetailsExpander.Header = RawImportDisclosure.DetailsHeading(DetailsExpander.IsExpanded,
+            SelectedPacking, SelectedEndianness, header, frames);
+
+    private void OnDetailsExpanded(object sender, RoutedEventArgs e)
+    {
+        DetailsExpander.Header = "詳細";
+    }
+
+    private void OnDetailsCollapsed(object sender, RoutedEventArgs e)
+    {
+        if (!_initializing && HasInvalidDetails)
+        {
+            DetailsExpander.IsExpanded = true;
+            return;
+        }
+
+        if (!_initializing)
+        {
+            var (header, frames) = ReadDetailsValues();
+            UpdateDetailsHeading(header, frames);
+        }
+    }
+
+    private void UpdateSizeNote(bool applyingFormat = false)
     {
         RawFormat? format = TryBuildFormat(out string error);
+        UpdateDisclosure(applyingFormat);
+        RequestPreview(format, error);
         SyncCandidateSelection(format);
         SyncPresetSelection(format);
         if (format is null)
@@ -319,7 +380,7 @@ public partial class RawImportDialog : Window
     }
 
     /// <summary>
-    /// 候補一覧を作り直す(先頭の行は案内。候補がなければ一覧を無効にする)。
+    /// 候補一覧を作り直す(候補がなければ一覧を無効にする)。
     /// </summary>
     private void RefreshCandidates()
     {
@@ -329,18 +390,11 @@ public partial class RawImportDialog : Window
         _syncingCandidates = true;
         try
         {
-            CandidateCombo.Items.Clear();
-            CandidateCombo.Items.Add(_candidates.Count > 0
-                ? $"候補から選ぶ…({_candidates.Count} 件)"
-                : "候補なし(ファイルサイズに合う形式が見つかりません)");
-            foreach (FormatCandidate candidate in _candidates)
-            {
-                CandidateCombo.Items.Add(FormatCandidateText.Display(candidate));
-            }
-
-            CandidateCombo.SelectedIndex = 0;
-            CandidateCombo.IsEnabled = _candidates.Count > 0;
-            CandidateCombo.ToolTip =
+            CandidateHeading.Text = $"候補 (ファイルサイズに合う形式・{_candidates.Count} 件)";
+            CandidateList.ItemsSource = _candidates.Select(candidate => new CandidateRow(
+                FormatCandidateText.SourceLabel(candidate.Source), FormatCandidateText.Describe(candidate.Format))).ToArray();
+            CandidateList.IsEnabled = _candidates.Count > 0;
+            CandidateList.ToolTip =
                 "ファイルサイズにちょうど合う形式を、同じサイズの記憶 → 表示中の画像 → 記憶から推定 → " +
                 "ファイル名の「幅x高さ」 → 解像度表 の順に並べます。選ぶと全項目に入ります。";
         }
@@ -350,23 +404,27 @@ public partial class RawImportDialog : Window
         }
     }
 
-    /// <summary>入力中の値と同じ候補を一覧で選択状態にする(なければ先頭の案内の行)。</summary>
+    /// <summary>入力中の値と同じ候補を一覧で選択状態にする(なければ未選択)。</summary>
     /// <param name="current">入力中の値(不正なら null)。</param>
     private void SyncCandidateSelection(RawFormat? current)
     {
-        int index = 0;
+        int index = -1;
         for (int i = 0; current is not null && i < _candidates.Count; i++)
         {
             if (_candidates[i].Format == current)
             {
-                index = i + 1;
+                index = i;
                 break;
             }
         }
 
         _syncingCandidates = true;
-        CandidateCombo.SelectedIndex = index;
+        CandidateList.SelectedIndex = index;
         _syncingCandidates = false;
+        if (CandidateList.SelectedItem is { } row)
+        {
+            CandidateList.ScrollIntoView(row);
+        }
     }
 
     /// <summary>
@@ -392,17 +450,16 @@ public partial class RawImportDialog : Window
 
     private void OnCandidateSelected(object sender, SelectionChangedEventArgs e)
     {
-        if (_initializing || _syncingCandidates || CandidateCombo.SelectedIndex <= 0
-            || CandidateCombo.SelectedIndex > _candidates.Count)
+        if (_initializing || _syncingCandidates || CandidateList.SelectedIndex < 0)
         {
             return;
         }
 
         // プリセットの選択と同じく、全項目にその形式を入れる
         _initializing = true;
-        ApplyFormat(_candidates[CandidateCombo.SelectedIndex - 1].Format);
+        ApplyFormat(_candidates[CandidateList.SelectedIndex].Format);
         _initializing = false;
-        UpdateSizeNote();
+        UpdateSizeNote(applyingFormat: true);
     }
 
     /// <summary>このファイルのキー(サイズ・拡張子)でフォーマットが記憶されていればその記憶。</summary>
@@ -480,7 +537,7 @@ public partial class RawImportDialog : Window
 
             // 照合は入力欄に入った値で行う(入力欄で表せない項目の違いで、適用した直後に案内の行へ戻さない)
             _presetFormat = TryBuildFormat(out _);
-            UpdateSizeNote();
+            UpdateSizeNote(applyingFormat: true);
         }
     }
 
@@ -504,8 +561,11 @@ public partial class RawImportDialog : Window
         int current = candidates.ToList().FindIndex(
             c => c.Width == format.Width && c.Height == format.Height);
         DimensionCandidate next = candidates[(current + 1) % candidates.Count];
+        _initializing = true;
         WidthBox.Text = next.Width.ToString(CultureInfo.InvariantCulture);
         HeightBox.Text = next.Height.ToString(CultureInfo.InvariantCulture);
+        _initializing = false;
+        UpdateSizeNote(applyingFormat: true);
     }
 
     private void OnSavePresetClick(object sender, RoutedEventArgs e)
@@ -513,7 +573,7 @@ public partial class RawImportDialog : Window
         RawFormat? format = TryBuildFormat(out string error);
         if (format is null)
         {
-            MessageBox.Show(this, error, "プリセット保存", MessageBoxButton.OK, MessageBoxImage.Warning);
+            AppMessage.Show(this, error, "プリセット保存", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
 
@@ -544,7 +604,7 @@ public partial class RawImportDialog : Window
         }
         catch (Exception ex)
         {
-            MessageBox.Show(this, $"保存に失敗しました: {ex.Message}", "プリセット保存",
+            AppMessage.Show(this, $"保存に失敗しました: {ex.Message}", "プリセット保存",
                 MessageBoxButton.OK, MessageBoxImage.Error);
             return;
         }
@@ -607,7 +667,7 @@ public partial class RawImportDialog : Window
         RawFormat? format = TryBuildFormat(out string error);
         if (format is null)
         {
-            MessageBox.Show(this, error, "Rawファイルを開く", MessageBoxButton.OK, MessageBoxImage.Warning);
+            AppMessage.Show(this, error, "Rawファイルを開く", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
 

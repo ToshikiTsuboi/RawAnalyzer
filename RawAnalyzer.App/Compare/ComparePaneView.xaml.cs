@@ -1,11 +1,14 @@
 ﻿using System.Windows;
+using System.Globalization;
 using System.Windows.Controls;
+using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
 using RawAnalyzer.App.Controls;
 using RawAnalyzer.App.Services;
 using RawAnalyzer.Core;
+using RawAnalyzer.App.Themes;
 
 namespace RawAnalyzer.App.Compare;
 
@@ -15,7 +18,13 @@ namespace RawAnalyzer.App.Compare;
 /// </summary>
 public partial class ComparePaneView : UserControl
 {
-    private bool _adjusting;
+    private CancellationTokenSource? _autoContrast;
+    internal Func<ComparePane, CancellationToken, Task<AutoLevels?>> CalculateAutoLevelsAsync { get; set; } =
+        static (pane, token) => Task.Run(() => HistogramTools.ComputeAutoLevels(
+            ImageAnalysis.ComputeHistogram(pane.Image, frame: 0, cancellationToken: token).Bins), token);
+    private PaneNameDisplay _nameDisplay = new("", "", "");
+    private double _fullNameWidth;
+    private PaneNameDisplay? _shownName;
 
     // ユーザーがズーム/パン操作をするまでは全体表示を維持する。
     // Attach時点はレイアウト前でサイズが決まっておらず、その後もペインの
@@ -30,6 +39,7 @@ public partial class ComparePaneView : UserControl
 
         // ペイン内のどこをクリックしてもアクティブ化の対象にする
         PreviewMouseDown += (_, _) => ActivateRequested?.Invoke(this);
+        FileNameText.SizeChanged += (_, _) => RefreshFileName();
 
         Viewport.SizeChanged += (_, e) =>
         {
@@ -75,6 +85,7 @@ public partial class ComparePaneView : UserControl
                 CursorLeft?.Invoke(this);
             }
         };
+        Viewport.KeyboardCursorCleared += () => CursorLeft?.Invoke(this);
         Viewport.MouseLeave += (_, _) => CursorLeft?.Invoke(this);
     }
 
@@ -132,6 +143,16 @@ public partial class ComparePaneView : UserControl
     /// <summary>ビューポート(同期計算がビュー状態とサイズを読むために公開)。</summary>
     internal ImageViewport ViewportControl => Viewport;
 
+    internal Size ImageAreaInsets => new(
+        ActiveBorder.Margin.Left + ActiveBorder.Margin.Right
+            + ActiveBorder.BorderThickness.Left + ActiveBorder.BorderThickness.Right,
+        ActiveBorder.Margin.Top + ActiveBorder.Margin.Bottom
+            + ActiveBorder.BorderThickness.Top + ActiveBorder.BorderThickness.Bottom
+            + PaneHeader.Height + ChipsBar.Height);
+
+    internal string Label => LabelText.Text;
+    internal event Action? PaneAttached;
+
     /// <summary>
     /// 未操作で、全体表示をサイズ変化へ追従させている間はtrue
     /// (ズーム/パン操作や同期の適用で解除され、<see cref="ResumeAutoFit"/> で再開する)。
@@ -181,7 +202,7 @@ public partial class ComparePaneView : UserControl
         Viewport.ClearGhostCursor();
     }
 
-    /// <summary>調整リンク(🔗)がONか。</summary>
+    /// <summary>調整リンクがONか。</summary>
     internal bool IsLinked => LinkToggle.IsChecked == true;
 
     /// <summary>
@@ -191,25 +212,19 @@ public partial class ComparePaneView : UserControl
     /// <param name="settings">適用する表示調整。</param>
     internal void ApplyDisplay(DisplaySettings settings)
     {
-        if (Pane is null)
+        if (Pane is null || Pane.Display == settings)
         {
             return;
         }
 
+        CancelAutoContrast();
         Pane.Display = settings;
         Viewport.SetLut(Pane.BuildLut());
     }
 
     // 不一致チップの強調色(ゴーストカーソルと同系の暖色)
-    private static readonly Brush ChipDiffForeground = CreateFrozen(0xFF, 0xE8, 0xA3, 0x4B);
-    private static readonly Brush ChipDiffBackground = CreateFrozen(0x28, 0xE8, 0xA3, 0x4B);
-
-    private static Brush CreateFrozen(byte a, byte r, byte g, byte b)
-    {
-        var brush = new SolidColorBrush(Color.FromArgb(a, r, g, b));
-        brush.Freeze();
-        return brush;
-    }
+    private static readonly Brush ChipDiffForeground = ThemeColors.Brush(ThemeColors.Warning);
+    private static readonly Brush ChipDiffBackground = ThemeColors.Brush(ThemeColors.CompareDifferenceFill);
 
     /// <summary>条件チップを表示し直す(不一致判定の計算はCompareView側)。</summary>
     /// <param name="chips">テキストと不一致フラグの列。</param>
@@ -227,7 +242,7 @@ public partial class ComparePaneView : UserControl
                 Child = new TextBlock
                 {
                     Text = text,
-                    FontSize = 11,
+                    FontSize = ThemeTypography.FontSizeCaption,
                     Foreground = differs
                         ? ChipDiffForeground
                         : (Brush)FindResource("TextDim"),
@@ -251,6 +266,34 @@ public partial class ComparePaneView : UserControl
         LabelText.Text = label;
     }
 
+    internal void SetFileNameDisplay(PaneNameDisplay display)
+    {
+        _nameDisplay = display;
+        _fullNameWidth = MeasureFileName(display.FullName);
+        RefreshFileName();
+    }
+
+    private double MeasureFileName(string text) =>
+        new FormattedText(text, CultureInfo.CurrentUICulture,
+            FileNameText.FlowDirection, new Typeface(FileNameText.FontFamily, FileNameText.FontStyle,
+                FileNameText.FontWeight, FileNameText.FontStretch), FileNameText.FontSize,
+            FileNameText.Foreground, VisualTreeHelper.GetDpi(FileNameText).PixelsPerDip).WidthIncludingTrailingWhitespace;
+
+    private void RefreshFileName()
+    {
+        PaneNameDisplay display = _nameDisplay.ForWidth(FileNameText.ActualWidth, _fullNameWidth, MeasureFileName);
+        if (_shownName == display)
+        {
+            return;
+        }
+
+        _shownName = display;
+        FileNameText.Inlines.Clear();
+        FileNameText.Inlines.Add(new Run(display.Prefix));
+        FileNameText.Inlines.Add(new Run(display.Difference) { Foreground = (Brush)FindResource("AccentBrush") });
+        FileNameText.Inlines.Add(new Run(display.Suffix));
+    }
+
     /// <summary>
     /// 資源を装着して表示を開始する。所有権はこのビューに移る
     /// (<see cref="DetachAndDisposeAsync"/> で破棄する)。
@@ -260,9 +303,10 @@ public partial class ComparePaneView : UserControl
     /// <param name="cancellationToken">キャンセルトークン。</param>
     internal void Attach(ComparePane pane, CancellationToken cancellationToken = default)
     {
+        CancelAutoContrast();
         Pane = pane;
-        FileNameText.Text = pane.FileName;
         FileNameText.ToolTip = pane.Path;
+        SetFileNameDisplay(new PaneNameDisplay(pane.FileName, "", ""));
         ChipsBar.Visibility = Visibility.Visible;
 
         Viewport.SetImage(pane.Image, pane.Format);
@@ -277,6 +321,7 @@ public partial class ComparePaneView : UserControl
         // 縮小表示用ピラミッドは表示開始を待たせない。
         // 待つと次のファイルの読み込み開始まで止まり、複数枚ドロップで待ち時間が累積する
         _ = BuildPyramidAsync(pane, cancellationToken);
+        PaneAttached?.Invoke();
     }
 
     /// <summary>縮小表示用ピラミッドを裏で用意する(失敗しても等倍表示はできる)。</summary>
@@ -309,6 +354,7 @@ public partial class ComparePaneView : UserControl
     /// <returns>破棄完了を表すタスク。</returns>
     internal async Task DetachAndDisposeAsync()
     {
+        CancelAutoContrast();
         ComparePane? pane = Pane;
         Pane = null;
         await Viewport.ClearImageAsync();
@@ -320,59 +366,88 @@ public partial class ComparePaneView : UserControl
         CloseRequested?.Invoke(this);
     }
 
+    private void OnLinkChanged(object sender, RoutedEventArgs e) => ActivateRequested?.Invoke(this);
+
     private async void OnAutoClick(object sender, RoutedEventArgs e)
     {
-        ComparePane? pane = Pane;
-        if (pane is null || _adjusting)
+        ActivateRequested?.Invoke(this);
+        await AutoContrastAsync();
+    }
+
+    internal void CancelAutoContrast()
+    {
+        CancellationTokenSource? job = _autoContrast;
+        _autoContrast = null;
+        job?.Cancel();
+    }
+
+    internal async Task AutoContrastAsync()
+    {
+        if (Pane is not { } pane || _autoContrast is not null)
         {
             return;
         }
 
-        _adjusting = true;
+        using var job = new CancellationTokenSource();
+        _autoContrast = job;
         try
         {
-            // カラー画像でも輝度ヒストグラムからのクリップで実用上十分
-            DisplaySettings requested = pane.Display;
-            HistogramResult histogram = await Task.Run(
-                () => ImageAnalysis.ComputeHistogram(pane.Image, frame: 0));
-
-            // 計算中に閉じられた、または表示調整が変わった(リセット・リンクや「揃える」による適用)なら、
-            // 後からの変更を残して結果は捨てる。以前は表示調整を照合せず、後から終わった自動の黒/白がリセットを上書きした
-            if (!ReferenceEquals(pane, Pane) || pane.Display != requested)
+            // 同じ画像に対して、計算開始後に表示調整が変わっていなければ適用する。
+            AutoLevels? result = await CalculateAutoLevelsAsync(pane, job.Token);
+            if (job.IsCancellationRequested || !ReferenceEquals(pane, Pane))
             {
                 return;
             }
 
-            if (HistogramTools.ComputeAutoLevels(histogram.Bins) is { } levels)
+            if (result is { } levels)
             {
-                pane.Display = pane.Display with
+                _autoContrast = null;
+                EditDisplay(pane.Display with
                 {
                     BlackCode = levels.BlackCode,
                     WhiteCode = levels.WhiteCode,
-                };
-                Viewport.SetLut(pane.BuildLut());
-                DisplayChanged?.Invoke(this);
+                });
             }
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (OperationCanceledException) when (job.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
         {
             AppLog.Warn($"比較ペインの自動コントラストに失敗: {ex.Message}");
         }
         finally
         {
-            _adjusting = false;
+            if (ReferenceEquals(_autoContrast, job))
+            {
+                _autoContrast = null;
+            }
         }
     }
 
     private void OnResetClick(object sender, RoutedEventArgs e)
     {
-        if (Pane is null)
-        {
-            return;
-        }
+        ActivateRequested?.Invoke(this);
+        ResetDisplay();
+    }
 
-        Pane.Display = DisplaySettings.CreateDefault(Pane.Format.BitDepth);
-        Viewport.SetLut(Pane.BuildLut());
-        DisplayChanged?.Invoke(this);
+    internal void ResetDisplay()
+    {
+        if (Pane is { } pane)
+        {
+            // リセットは明示的な操作なので、値が既定のままでも計算中の自動コントラストを取り消す
+            // (ApplyDisplay は値が変わらないと何もしないため、ここで取り消さないと後から自動の結果が適用される)
+            CancelAutoContrast();
+            EditDisplay(DisplaySettings.CreateDefault(pane.Format.BitDepth));
+        }
+    }
+
+    internal void EditDisplay(DisplaySettings settings)
+    {
+        if (Pane is not null)
+        {
+            ApplyDisplay(settings);
+            DisplayChanged?.Invoke(this);
+        }
     }
 }

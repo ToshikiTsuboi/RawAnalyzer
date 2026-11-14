@@ -1,6 +1,8 @@
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Interop;
+using System.Windows.Media;
+using RawAnalyzer.App.Themes;
 
 namespace RawAnalyzer.App.Native;
 
@@ -14,8 +16,7 @@ internal static class WindowTheme
     private const int DwmwaTextColor = 36;
 
     // COLORREF (0x00BBGGRR)
-    private const int CaptionColor = 0x00322E2E;   // #2E2E32
-    private const int CaptionTextColor = 0x00D4D8D8; // #D8D8D4
+    private static int ToColorRef(Color color) => color.R | (color.G << 8) | (color.B << 16);
 
     [DllImport("dwmapi.dll", ExactSpelling = true)]
     private static extern int DwmSetWindowAttribute(
@@ -36,9 +37,9 @@ internal static class WindowTheme
 
         int dark = 1;
         _ = DwmSetWindowAttribute(handle, DwmwaUseImmersiveDarkMode, ref dark, sizeof(int));
-        int caption = CaptionColor;
+        int caption = ToColorRef(ThemeColors.Panel);
         _ = DwmSetWindowAttribute(handle, DwmwaCaptionColor, ref caption, sizeof(int));
-        int text = CaptionTextColor;
+        int text = ToColorRef(ThemeColors.Text);
         _ = DwmSetWindowAttribute(handle, DwmwaTextColor, ref text, sizeof(int));
     }
 }

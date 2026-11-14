@@ -1,4 +1,5 @@
 ﻿using System.Globalization;
+using System.Collections.ObjectModel;
 using System.IO;
 using System.Text;
 using System.Windows;
@@ -9,6 +10,8 @@ using RawAnalyzer.App.Services;
 using RawAnalyzer.Core;
 
 namespace RawAnalyzer.App.Views;
+
+internal sealed record NoiseHistoryEntry(string Source, string Method, string Range, string Temporal, string Fpn);
 
 /// <summary>ノイズ測定の実行要求。</summary>
 /// <param name="ReferencePath">2枚目フレームのパス(単一測定ならnull)。</param>
@@ -41,6 +44,15 @@ public partial class NoiseMeasureDialog : Window
 
     // ダイアログを閉じた。2枚目を確かめる間に閉じられたら測定を依頼しない
     private bool _closed;
+    private ObservableCollection<NoiseHistoryEntry> _history = [];
+    internal ObservableCollection<NoiseHistoryEntry> History
+    {
+        init
+        {
+            _history = value;
+            HistoryList.ItemsSource = value;
+        }
+    }
 
     /// <summary>ダイアログを生成する。</summary>
     /// <param name="sourceName">対象画像(A)の表示名。</param>
@@ -57,6 +69,7 @@ public partial class NoiseMeasureDialog : Window
         long expectedReferenceSize, object? source = null, long targetFileSize = 0)
     {
         InitializeComponent();
+        HistoryList.ItemsSource = _history;
         Closed += (_, _) => _closed = true;
         _initialResultText = ResultText.Text;
         UpdateSource(
@@ -108,6 +121,7 @@ public partial class NoiseMeasureDialog : Window
             _source = source;
             _lastResultText = "";
             ResultText.Text = _initialResultText;
+            MeasurementCards.Visibility = Visibility.Collapsed;
         }
 
         // 前の画像の飽和コードが別のビット深度の単位のまま、または上限を超えて残らないようにする。
@@ -211,7 +225,24 @@ public partial class NoiseMeasureDialog : Window
 
         _lastResultText = sb.ToString();
         ResultText.Text = _lastResultText;
+        bool pair = pairPath is not null;
+        string measurementRange = pair
+            ? Range(measurement.DynamicRangeTemporalDb, measurement.DynamicRangeTemporalStops)
+            : Range(measurement.DynamicRangeTotalDb, measurement.DynamicRangeTotalStops);
+        string temporal = pair ? Sigma(measurement.SigmaTemporal) : "—";
+        string fpn = pair ? Sigma(measurement.SigmaFpn) : "—";
+        DrLabel.Text = pair ? "DR (時間ノイズ基準)" : "DR (総ノイズ基準)";
+        DrValue.Text = measurementRange;
+        TemporalValue.Text = temporal;
+        FpnValue.Text = fpn;
+        MeasurementCards.Visibility = Visibility.Visible;
+        _history.Insert(0, new NoiseHistoryEntry(_sourceName, pair ? "2枚差分" : "単一",
+            measurementRange, temporal, fpn));
         RunButton.IsEnabled = true;
+
+        static string Range(double db, double stops) =>
+            double.IsFinite(db) && double.IsFinite(stops) ? $"{db:F2} dB / {stops:F2} stop" : "—";
+        static string Sigma(double value) => double.IsFinite(value) ? $"{value:F3} LSB" : "—";
     }
 
     /// <summary>実行失敗時にボタンを戻す。</summary>
@@ -309,7 +340,7 @@ public partial class NoiseMeasureDialog : Window
         RunSettings settings = CaptureRunSettings();
         if (!NumericInput.TryParsePositive(settings.Saturation, out double saturation))
         {
-            MessageBox.Show(this, "飽和信号レベルは正の数値で指定してください。", "ノイズ測定",
+            AppMessage.Show(this, "飽和信号レベルは正の数値で指定してください。", "ノイズ測定",
                 MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
@@ -338,7 +369,7 @@ public partial class NoiseMeasureDialog : Window
 
         if (!exists)
         {
-            MessageBox.Show(this, "2枚目のファイルが見つかりません。", "ノイズ測定",
+            AppMessage.Show(this, "2枚目のファイルが見つかりません。", "ノイズ測定",
                 MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
@@ -360,7 +391,7 @@ public partial class NoiseMeasureDialog : Window
                     $"{Environment.NewLine}{Environment.NewLine}" +
                     "対象Aのフォーマットで強制的に読み込むため、測定値が正しくない可能性があります。" +
                     $"{Environment.NewLine}続行しますか?";
-                if (MessageBox.Show(this, message, "ノイズ測定",
+                if (AppMessage.Show(this, message, "ノイズ測定",
                         MessageBoxButton.OKCancel, MessageBoxImage.Warning) != MessageBoxResult.OK
                     || IsSuperseded(settings))
                 {

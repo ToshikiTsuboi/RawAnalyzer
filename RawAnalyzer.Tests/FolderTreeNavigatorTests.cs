@@ -1,5 +1,12 @@
+using System.Diagnostics;
+using System.Windows;
+using System.Windows.Automation;
+using System.Windows.Threading;
+using RawAnalyzer.App.Controls;
+using Xunit.Abstractions;
 using System.Windows.Controls;
 using RawAnalyzer.App.Services;
+using RawAnalyzer.App.Themes;
 using Xunit;
 
 namespace RawAnalyzer.Tests;
@@ -8,10 +15,10 @@ namespace RawAnalyzer.Tests;
 /// 左パネルのフォルダツリー(子フォルダの列挙、表示中のフォルダまでの展開と選択)。
 /// </summary>
 [Collection("WPF UI")]
-public class FolderTreeNavigatorTests
+public class FolderTreeNavigatorTests(ITestOutputHelper output)
 {
-    private static string[] ChildPaths(TreeViewItem item) =>
-        item.Items.OfType<TreeViewItem>().Select(i => (string)i.Tag).ToArray();
+    private static string[] ChildPaths(FolderTreeNode node) =>
+        node.Children.OfType<FolderTreeNode>().Select(child => child.FullPath).ToArray();
 
     private static FolderTreeEntry Entry(string fullPath) => new(Path.GetFileName(fullPath), fullPath);
 
@@ -29,13 +36,13 @@ public class FolderTreeNavigatorTests
             gate.Wait(TimeSpan.FromSeconds(10));
             return [Entry(@"Z:\proj\a10"), Entry(@"Z:\proj\a2")];
         });
-        TreeViewItem item = FolderTreeNavigator.CreateItem("📁 proj", @"Z:\proj");
+        FolderTreeNode item = new("proj", @"Z:\proj");
 
         Task populate = navigator.PopulateAsync(item);
 
         // 列挙の完了を待たずに戻り、列挙中であることを示す
         Assert.False(populate.IsCompleted);
-        Assert.Equal(FolderTreeNavigator.LoadingText, Assert.Single(item.Items.Cast<object>()).ToString());
+        Assert.Equal(FolderTreeNode.LoadingText, Assert.Single(item.Children).ToString());
 
         gate.Set();
         await populate;
@@ -45,8 +52,13 @@ public class FolderTreeNavigatorTests
 
         // 子は列挙の順に並び、それぞれ展開できる(ダミーの子を持つ)
         Assert.Equal([@"Z:\proj\a10", @"Z:\proj\a2"], ChildPaths(item));
-        Assert.All(item.Items.OfType<TreeViewItem>(), child =>
-            Assert.Equal(FolderTreeNavigator.Placeholder, Assert.Single(child.Items.Cast<object>())));
+        Assert.All(item.Children.OfType<FolderTreeNode>(), child =>
+        {
+            Assert.Equal(FolderTreeNode.Placeholder, Assert.Single(child.Children));
+            Assert.Equal(Path.GetFileName(child.FullPath), child.Name);
+            Assert.Equal(IconGlyphs.Folder, child.Glyph);
+            Assert.Null(child.Container);
+        });
     });
 
     [Fact]
@@ -61,7 +73,7 @@ public class FolderTreeNavigatorTests
             gate.Wait(TimeSpan.FromSeconds(10));
             return [Entry(@"Z:\proj\run03")];
         });
-        TreeViewItem item = FolderTreeNavigator.CreateItem("📁 proj", @"Z:\proj");
+        FolderTreeNode item = new("proj", @"Z:\proj");
 
         Task first = navigator.PopulateAsync(item);
         Task second = navigator.PopulateAsync(item);
@@ -92,7 +104,7 @@ public class FolderTreeNavigatorTests
 
             return [Entry(@"Z:\proj\new")];
         });
-        TreeViewItem item = FolderTreeNavigator.CreateItem("📁 proj", @"Z:\proj");
+        FolderTreeNode item = new("proj", @"Z:\proj");
         item.IsExpanded = true;
 
         Task first = navigator.PopulateAsync(item);
@@ -113,13 +125,13 @@ public class FolderTreeNavigatorTests
             Interlocked.Increment(ref calls);
             return [Entry(@"Z:\proj\run03")];
         });
-        TreeViewItem item = FolderTreeNavigator.CreateItem("📁 proj", @"Z:\proj");
+        FolderTreeNode item = new("proj", @"Z:\proj");
         await navigator.PopulateAsync(item);
 
         await navigator.RefreshAsync(item);
 
         Assert.Equal(1, calls);
-        Assert.Equal(FolderTreeNavigator.Placeholder, Assert.Single(item.Items.Cast<object>()));
+        Assert.Equal(FolderTreeNode.Placeholder, Assert.Single(item.Children));
     });
 
     [Fact]
@@ -136,10 +148,10 @@ public class FolderTreeNavigatorTests
 
             return [Entry(@"Z:\proj\run03")];
         });
-        TreeViewItem item = FolderTreeNavigator.CreateItem("📁 proj", @"Z:\proj");
+        FolderTreeNode item = new("proj", @"Z:\proj");
 
         await Assert.ThrowsAsync<InvalidOperationException>(() => navigator.PopulateAsync(item));
-        Assert.Equal(FolderTreeNavigator.Placeholder, Assert.Single(item.Items.Cast<object>()));
+        Assert.Equal(FolderTreeNode.Placeholder, Assert.Single(item.Children));
 
         await navigator.PopulateAsync(item);
         Assert.Equal([@"Z:\proj\run03"], ChildPaths(item));
@@ -170,20 +182,29 @@ public class FolderTreeNavigatorTests
 
             return children[path];
         });
-        var tree = new TreeView();
-        tree.Items.Add(FolderTreeNavigator.CreateItem("💽 Z:", @"Z:\"));
-        var selectionWhileSyncing = new List<bool>();
-        tree.SelectedItemChanged += (_, _) => selectionWhileSyncing.Add(navigator.IsSyncingSelection);
+        var root = new FolderTreeNode("Z:", @"Z:\");
+        var tree = CreateTree(navigator, root);
+        var window = ShowTree(tree);
+        try
+        {
+            var selectionWhileSyncing = new List<bool>();
+            tree.SelectedItemChanged += (_, _) => selectionWhileSyncing.Add(navigator.IsSyncingSelection);
 
-        await navigator.SyncToFolderAsync(tree, @"Z:\proj\2026\run03");
+            await navigator.SyncToFolderAsync(tree, @"Z:\proj\2026\run03");
 
-        Assert.Empty(enumeratedOnUi);
-        TreeViewItem selected = Assert.IsType<TreeViewItem>(tree.SelectedItem);
-        Assert.Equal(@"Z:\proj\2026\run03", selected.Tag);
+            Assert.Empty(enumeratedOnUi);
+            FolderTreeNode selected = Assert.IsType<FolderTreeNode>(tree.SelectedItem);
+            Assert.Equal(@"Z:\proj\2026\run03", selected.FullPath);
+            Assert.Equal("run03", AutomationProperties.GetName(Assert.IsAssignableFrom<TreeViewItem>(selected.Container)));
 
-        // プログラムからの選択は、選択の変更でフォルダを開き直さないよう同期中として知らせる
-        Assert.Equal([true], selectionWhileSyncing);
-        Assert.False(navigator.IsSyncingSelection);
+            // プログラムからの選択は、選択の変更でフォルダを開き直さないよう同期中として知らせる
+            Assert.Equal([true], selectionWhileSyncing);
+            Assert.False(navigator.IsSyncingSelection);
+        }
+        finally
+        {
+            window.Close();
+        }
     });
 
     [Fact]
@@ -205,19 +226,26 @@ public class FolderTreeNavigatorTests
                 ? [Entry(@"Z:\slow"), Entry(@"Z:\fast")]
                 : [];
         });
-        var tree = new TreeView();
-        tree.Items.Add(FolderTreeNavigator.CreateItem("💽 Z:", @"Z:\"));
+        var root = new FolderTreeNode("Z:", @"Z:\");
+        var tree = CreateTree(navigator, root);
+        var window = ShowTree(tree);
+        try
+        {
+            Task slow = navigator.SyncToFolderAsync(tree, @"Z:\slow\deep");
 
-        Task slow = navigator.SyncToFolderAsync(tree, @"Z:\slow\deep");
+            // 前の同期が遅い階層(Z:\slow)の列挙に入ってから、別のフォルダへ同期する
+            await Task.Run(() => slowEntered.Wait(TimeSpan.FromSeconds(10)));
+            await navigator.SyncToFolderAsync(tree, @"Z:\fast");
+            slowGate.Set();
+            await slow;
 
-        // 前の同期が遅い階層(Z:\slow)の列挙に入ってから、別のフォルダへ同期する
-        await Task.Run(() => slowEntered.Wait(TimeSpan.FromSeconds(10)));
-        await navigator.SyncToFolderAsync(tree, @"Z:\fast");
-        slowGate.Set();
-        await slow;
-
-        TreeViewItem selected = Assert.IsType<TreeViewItem>(tree.SelectedItem);
-        Assert.Equal(@"Z:\fast", selected.Tag);
+            FolderTreeNode selected = Assert.IsType<FolderTreeNode>(tree.SelectedItem);
+            Assert.Equal(@"Z:\fast", selected.FullPath);
+        }
+        finally
+        {
+            window.Close();
+        }
     });
 
     [Fact]
@@ -242,33 +270,149 @@ public class FolderTreeNavigatorTests
                 ? [Entry(@"Z:\A"), Entry(@"Z:\B")]
                 : [];
         });
-        var tree = new TreeView();
-        TreeViewItem root = FolderTreeNavigator.CreateItem("💽 Z:", @"Z:\");
-        tree.Items.Add(root);
-        await navigator.PopulateAsync(root);
-        TreeViewItem b = root.Items.OfType<TreeViewItem>().Single(i => (string)i.Tag == @"Z:\B");
-        var userSelections = new List<object>();
-        tree.SelectedItemChanged += (_, e) =>
+        var root = new FolderTreeNode("Z:", @"Z:\");
+        var tree = CreateTree(navigator, root);
+        var window = ShowTree(tree);
+        try
         {
-            if (!navigator.IsSyncingSelection)
+            root.IsExpanded = true;
+            await navigator.PopulateAsync(root);
+            FolderTreeNode b = root.Children.OfType<FolderTreeNode>().Single(i => i.FullPath == @"Z:\B");
+            await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+            var userSelections = new List<object>();
+            tree.SelectedItemChanged += (_, e) =>
             {
-                userSelections.Add(e.NewValue);
-            }
-        };
+                if (!navigator.IsSyncingSelection)
+                {
+                    userSelections.Add(e.NewValue);
+                }
+            };
 
-        Task syncA = navigator.SyncToFolderAsync(tree, @"Z:\A");
-        await Task.Run(() => entered.Wait(TimeSpan.FromSeconds(10)));
-        b.IsSelected = true; // 利用者のクリック
-        gate.Set();
-        await syncA;
+            Task syncA = navigator.SyncToFolderAsync(tree, @"Z:\A");
+            await Task.Run(() => entered.Wait(TimeSpan.FromSeconds(10)));
+            Assert.IsAssignableFrom<TreeViewItem>(b.Container).IsSelected = true; // 利用者のクリック
+            gate.Set();
+            await syncA;
 
-        Assert.Same(b, tree.SelectedItem);
-        Assert.Equal([b], userSelections);
+            Assert.Same(b, tree.SelectedItem);
+            Assert.Equal([b], userSelections);
 
-        // 次に表示中のフォルダが替わったら(B を開いた)、同期はこれまでどおり選択する
-        await navigator.SyncToFolderAsync(tree, @"Z:\A");
-        Assert.Equal(@"Z:\A", Assert.IsType<TreeViewItem>(tree.SelectedItem).Tag);
+            // 次に表示中のフォルダが替わったら(B を開いた)、同期はこれまでどおり選択する
+            await navigator.SyncToFolderAsync(tree, @"Z:\A");
+            Assert.Equal(@"Z:\A", Assert.IsType<FolderTreeNode>(tree.SelectedItem).FullPath);
+        }
+        finally
+        {
+            window.Close();
+        }
     });
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public Task Expand_10000Children_KeepsTheDispatcherResponsive(bool syncToLastChild) => WpfTestHost.Run(async () =>
+    {
+        const int count = 10_000;
+        var navigator = new FolderTreeNavigator(path => path == @"Z:\"
+            ? Enumerable.Range(0, count).Select(i => Entry($@"Z:\run{i:D5}")).ToArray() : []);
+        var root = new FolderTreeNode("Z:", @"Z:\", IconGlyphs.Drive);
+        var tree = CreateTree(navigator, root);
+        var window = ShowTree(tree);
+        var timer = new DispatcherTimer(DispatcherPriority.Input) { Interval = TimeSpan.FromMilliseconds(10) };
+        long previous = 0;
+        TimeSpan longest = TimeSpan.Zero;
+        void Sample()
+        {
+            long now = Stopwatch.GetTimestamp();
+            TimeSpan elapsed = Stopwatch.GetElapsedTime(previous, now);
+            if (elapsed > longest)
+            {
+                longest = elapsed;
+            }
+
+            previous = now;
+        }
+
+        timer.Tick += (_, _) => Sample();
+        try
+        {
+            await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+            previous = Stopwatch.GetTimestamp();
+            timer.Start();
+            if (syncToLastChild)
+            {
+                await navigator.SyncToFolderAsync(tree, @"Z:\run09999");
+            }
+            else
+            {
+                Assert.IsAssignableFrom<TreeViewItem>(root.Container).IsExpanded = true;
+                await navigator.PopulateAsync(root);
+            }
+
+            // Children の通知だけでなく、最初のレイアウトと入力が処理されるまでを測る。
+            await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+            Sample();
+            timer.Stop();
+            output.WriteLine($"10,000 children, {(syncToLastChild ? "sync" : "expand")}: max input gap {longest.TotalMilliseconds:F1} ms");
+            Assert.InRange(longest.TotalMilliseconds, 0, 200);
+            Assert.Equal(count, root.Children.Count);
+            Assert.InRange(root.Children.OfType<FolderTreeNode>().Count(node => node.Container is not null), 1, 100);
+            if (syncToLastChild)
+            {
+                var selected = Assert.IsType<FolderTreeNode>(tree.SelectedItem);
+                Assert.Equal(@"Z:\run09999", selected.FullPath);
+                var selectedContainer = Assert.IsAssignableFrom<TreeViewItem>(selected.Container);
+                var header = (FrameworkElement)selectedContainer.Template.FindName("PART_Header", selectedContainer);
+                var scroll = (ScrollViewer)tree.Template.FindName("_tv_scrollviewer_", tree);
+                Rect headerBounds = header.TransformToAncestor(scroll).TransformBounds(new Rect(header.RenderSize));
+                Assert.InRange(headerBounds.Bottom, 0, scroll.ViewportHeight + 1);
+                WpfTestHost.CaptureIfRequested(tree, "folder-tree-sync-10000");
+
+                // 選択済みの末尾が画面外に出ても、ツリーに存在しない場所へ移ると選択を外せる。
+                scroll.ScrollToTop();
+                await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+                await navigator.SyncToFolderAsync(tree, @"Q:\missing");
+                Assert.Null(tree.SelectedItem);
+            }
+            else
+            {
+                WpfTestHost.CaptureIfRequested(tree, "folder-tree-expand-10000");
+            }
+        }
+        finally
+        {
+            timer.Stop();
+            window.Close();
+        }
+    });
+
+    private static FolderTreeView CreateTree(FolderTreeNavigator navigator, FolderTreeNode root)
+    {
+        var tree = new FolderTreeView
+        {
+            Style = (Style)Application.Current.FindResource("FolderTree"),
+            ItemsSource = new[] { root },
+        };
+        tree.AddHandler(TreeViewItem.ExpandedEvent, new RoutedEventHandler((_, e) =>
+        {
+            if (e.OriginalSource is TreeViewItem { DataContext: FolderTreeNode node })
+            {
+                _ = navigator.PopulateAsync(node);
+            }
+        }));
+        return tree;
+    }
+
+    private static Window ShowTree(FolderTreeView tree)
+    {
+        var window = new Window
+        {
+            Content = tree, Width = 380, Height = 420, ShowActivated = false,
+            Background = (System.Windows.Media.Brush)Application.Current.FindResource("PanelBrush"),
+        };
+        window.Show();
+        return window;
+    }
 
     [Theory]
     [InlineData(@"\\server\share\run03")] // UNC パス(ツリーはドライブだけ)
@@ -281,21 +425,30 @@ public class FolderTreeNavigatorTests
         // 一覧が X に戻らなかった(別の項目を一度選ぶ必要があった)
         var navigator = new FolderTreeNavigator(path =>
             path.Equals(@"Z:\", StringComparison.OrdinalIgnoreCase) ? [Entry(@"Z:\x")] : []);
-        var tree = new TreeView();
-        tree.Items.Add(FolderTreeNavigator.CreateItem("💽 Z:", @"Z:\"));
-        await navigator.SyncToFolderAsync(tree, @"Z:\x");
-        TreeViewItem x = Assert.IsType<TreeViewItem>(tree.SelectedItem);
-        var changes = new List<(object? NewValue, bool Syncing)>();
-        tree.SelectedItemChanged += (_, e) => changes.Add((e.NewValue, navigator.IsSyncingSelection));
+        var root = new FolderTreeNode("Z:", @"Z:\");
+        var tree = CreateTree(navigator, root);
+        var window = ShowTree(tree);
+        try
+        {
+            await navigator.SyncToFolderAsync(tree, @"Z:\x");
+            FolderTreeNode x = Assert.IsType<FolderTreeNode>(tree.SelectedItem);
+            TreeViewItem xContainer = Assert.IsAssignableFrom<TreeViewItem>(x.Container);
+            var changes = new List<(object? NewValue, bool Syncing)>();
+            tree.SelectedItemChanged += (_, e) => changes.Add((e.NewValue, navigator.IsSyncingSelection));
 
-        await navigator.SyncToFolderAsync(tree, folder);
+            await navigator.SyncToFolderAsync(tree, folder);
 
-        Assert.Null(tree.SelectedItem);
-        Assert.False(x.IsSelected);
+            Assert.Null(tree.SelectedItem);
+            Assert.False(xContainer.IsSelected);
 
-        // 選択を外したのは同期(フォルダを開き直さない)。その後で X をクリックすると、X を開く選択の変更が届く
-        x.IsSelected = true;
-        Assert.Equal(new (object?, bool)[] { (null, true), (x, false) }, changes);
+            // 選択を外したのは同期(フォルダを開き直さない)。その後で X をクリックすると、X を開く選択の変更が届く
+            xContainer.IsSelected = true;
+            Assert.Equal(new (object?, bool)[] { (null, true), (x, false) }, changes);
+        }
+        finally
+        {
+            window.Close();
+        }
     });
 
     [Fact]

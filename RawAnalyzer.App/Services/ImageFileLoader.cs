@@ -79,6 +79,21 @@ internal static class ImageFileLoader
             || string.Equals(extension, ".dng", StringComparison.OrdinalIgnoreCase);
     }
 
+    internal static IReadOnlyList<(int Width, int Height)> ReadPageDimensions(string path, CancellationToken token)
+    {
+        if (IsTiff(path) && TiffLoader.ReadPageDimensions(path, token) is { } dimensions)
+            return dimensions;
+
+        token.ThrowIfCancellationRequested();
+        using var stream = File.OpenRead(path);
+        var decoder = BitmapDecoder.Create(stream, BitmapCreateOptions.DelayCreation, BitmapCacheOption.None);
+        return decoder.Frames.Select(frame =>
+        {
+            token.ThrowIfCancellationRequested();
+            return (frame.PixelWidth, frame.PixelHeight);
+        }).ToArray();
+    }
+
     /// <summary>
     /// 展開後の画素形式から、出力とWIC内部バッファの保守的な合計バイト数を見積もる。
     /// </summary>

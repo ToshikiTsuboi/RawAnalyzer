@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -21,19 +22,49 @@ public partial class CommandPaletteWindow : Window
 {
     private readonly IReadOnlyList<AppCommand> _commands;
     private readonly Brush _hintBrush;
+    private readonly IReadOnlyList<string> _recent;
+    private bool _closing;
 
     /// <summary>パレットを生成する。</summary>
     /// <param name="commands">対象コマンド。</param>
-    internal CommandPaletteWindow(IReadOnlyList<AppCommand> commands)
+    internal CommandPaletteWindow(IReadOnlyList<AppCommand> commands, IReadOnlyList<string>? recent = null)
     {
         InitializeComponent();
         _commands = commands;
+        _recent = recent ?? [];
         _hintBrush = HintText.Foreground;
         ApplyFilter("");
         Loaded += (_, _) => FilterBox.Focus();
 
-        // パレットを開いたまま本体を操作できる(画像を開くなど)。戻ったときに実行できるかを表示し直す
         Activated += (_, _) => RefreshAvailability();
+        Deactivated += (_, _) =>
+        {
+            if (ShouldCloseOnDeactivated(IsLoaded, _closing))
+                Close();
+        };
+    }
+
+    internal static bool ShouldCloseOnDeactivated(bool loaded, bool closing) => loaded && !closing;
+
+    protected override void OnClosing(CancelEventArgs e)
+    {
+        _closing = true;
+        base.OnClosing(e);
+        if (e.Cancel)
+            _closing = false;
+    }
+
+    internal void PositionOverOwner()
+    {
+        if (Owner is { } owner && PresentationSource.FromVisual(owner)?.CompositionTarget is { } composition)
+        {
+            Point anchor = composition.TransformFromDevice.Transform(
+                owner.PointToScreen(new Point(owner.ActualWidth / 2, 48)));
+            Left = Math.Clamp(anchor.X - Width / 2, SystemParameters.VirtualScreenLeft,
+                Math.Max(SystemParameters.VirtualScreenLeft,
+                    SystemParameters.VirtualScreenLeft + SystemParameters.VirtualScreenWidth - Width));
+            Top = anchor.Y;
+        }
     }
 
     /// <summary>Enterで選ばれたコマンド(閉じただけならnull)。</summary>
@@ -72,10 +103,14 @@ public partial class CommandPaletteWindow : Window
     {
         // 実行できないコマンドも一覧には出す(なぜ使えないかを探せるように)が、
         // 実行可能なものを先に並べる。実行できないものは薄く表示し、選ぶと理由を下に示す
+        Dictionary<string, int> ranks = string.IsNullOrWhiteSpace(query)
+            ? PaletteHistory.Combine(_recent, []).Select((id, rank) => (id, rank)).ToDictionary(x => x.id, x => x.rank)
+            : [];
         List<PaletteRow> matched = _commands
-            .Where(c => Matches(query, c.SearchText))
+            .Where(c => c.Id != PaletteHistory.PaletteId && Matches(query, c.SearchText))
             .Select(c => new PaletteRow(c))
-            .OrderByDescending(r => r.IsAvailable)
+            .OrderBy(r => ranks.GetValueOrDefault(r.Command.Id, int.MaxValue))
+            .ThenByDescending(r => r.IsAvailable)
             .ToList();
 
         CommandList.ItemsSource = matched;
@@ -113,7 +148,7 @@ public partial class CommandPaletteWindow : Window
             HintText.Text = reason;
             if (rejected)
             {
-                HintText.Foreground = (Brush)FindResource("RejectBrush");
+                HintText.Foreground = (Brush)FindResource("WarningBrush");
             }
         }
         else
@@ -124,7 +159,8 @@ public partial class CommandPaletteWindow : Window
 
     private void OnFilterChanged(object sender, TextChangedEventArgs e)
     {
-        ApplyFilter(FilterBox.Text.Trim());
+        if (_commands is not null)
+            ApplyFilter(FilterBox.Text.Trim());
     }
 
     private void OnSelectionChanged(object sender, SelectionChangedEventArgs e)

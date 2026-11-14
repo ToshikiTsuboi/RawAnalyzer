@@ -1,4 +1,7 @@
 using System.Windows.Controls;
+using System.Collections.ObjectModel;
+using System.Globalization;
+using System.Windows;
 using RawAnalyzer.App.Services;
 using RawAnalyzer.App.Views;
 using RawAnalyzer.Core;
@@ -70,6 +73,52 @@ public class NoiseMeasureDialogTests
     private static TextBlock Result(NoiseMeasureDialog dialog) => (TextBlock)dialog.FindName("ResultText");
 
     private static readonly NoiseMeasurement Measured = new(10_000, 64.2, 3.1, 2.1, 2.28, 4095);
+
+    [Fact]
+    public Task CardsAndSessionHistoryPreserveTheOriginalCopyText() => WpfTestHost.Run(() =>
+    {
+        CultureInfo previous = CultureInfo.CurrentCulture;
+        CultureInfo.CurrentCulture = CultureInfo.InvariantCulture;
+        var history = new ObservableCollection<NoiseHistoryEntry>();
+        var dialog = new NoiseMeasureDialog("dark_001.raw", null, 4095, false, 0) { History = history };
+        try
+        {
+            dialog.Show();
+            dialog.ShowResult(Measured with { SigmaTemporal = double.NaN, SigmaFpn = double.NaN }, 12, null);
+            Assert.Equal("—", ((TextBlock)dialog.FindName("TemporalValue")).Text);
+            Assert.Equal("—", ((TextBlock)dialog.FindName("FpnValue")).Text);
+            dialog.ShowResult(Measured, 12, "dark_100.raw", perChannel: true);
+            string[] lines =
+            [
+                "対象 A: dark_001.raw",
+                "評価画素数: 10,000    平均: 64.20",
+                "測定方法: 2枚差分 (B = dark_100.raw)",
+                "空間統計: Bayerチャネル別に算出して合成(チャネル間の感度差を除外)",
+                "",
+                "σ_total  (時間+FPN) : 3.100 LSB",
+                "σ_temporal (σ_diff/√2): 2.100 LSB",
+                "σ_FPN    (固定パターン) : 2.280 LSB",
+                "",
+                "飽和信号レベル: 4095 LSB (12bit)",
+                "DR (時間ノイズ基準) : 65.80 dB  /  10.93 stop",
+                "DR (FPN込み総ノイズ): 62.42 dB  /  10.37 stop",
+                "",
+            ];
+            Assert.Equal(string.Join(Environment.NewLine, lines), dialog.CopyText);
+            Assert.Equal("65.80 dB / 10.93 stop", ((TextBlock)dialog.FindName("DrValue")).Text);
+            WpfTestHost.CaptureDialogIfRequested(dialog, "d6-noise-measurement");
+        }
+        finally
+        {
+            dialog.Close();
+            CultureInfo.CurrentCulture = previous;
+        }
+
+        var reopened = new NoiseMeasureDialog("dark_002.raw", null, 4095, false, 0) { History = history };
+        Assert.Equal(2, ((ListView)reopened.FindName("HistoryList")).Items.Count);
+        Assert.Empty(reopened.CopyText);
+        reopened.Close();
+    });
 
     [Fact]
     public Task ResultOfPreviousImage_IsClearedWhenTargetChanges() => WpfTestHost.Run(() =>

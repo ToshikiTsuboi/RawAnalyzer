@@ -18,6 +18,33 @@ namespace RawAnalyzer.Tests;
 public class ProjectionWindowTests
 {
     [Fact]
+    public Task Hover_ReadsMeanAndVisibleExtremesAtTheRoiCoordinate() => WpfTestHost.Run(() =>
+    {
+        var window = NewWindow(ProjectionDirection.Horizontal);
+        try
+        {
+            ShowRoiResult(window);
+            var plot = (ProfilePlotView)window.View.FindName("Plot");
+            var canvas = Find<Canvas>(window, "PlotCanvas");
+            plot.ShowHover(canvas.ActualWidth / 2);
+            var hover = Find<TextBlock>(window, "HoverText");
+            Assert.Contains("101 px", hover.Text);
+            Assert.Contains("平均", hover.Text);
+            Assert.Contains("最大", hover.Text);
+            Assert.Contains("最小", hover.Text);
+            CaptureIfRequested(window, "projection-hover");
+            Find<CheckBox>(window, "ExtremesCheck").IsChecked = false;
+            plot.ShowHover(canvas.ActualWidth / 2);
+            Assert.DoesNotContain("最大", hover.Text);
+            Assert.DoesNotContain("最小", hover.Text);
+        }
+        finally
+        {
+            window.Close();
+        }
+    });
+
+    [Fact]
     public Task Result_DrawsMeanWithMaxAndMinAndNamesTheDirection() => WpfTestHost.Run(() =>
     {
         var window = NewWindow(ProjectionDirection.Horizontal);
@@ -55,13 +82,13 @@ public class ProjectionWindowTests
         var window = NewWindow(ProjectionDirection.Vertical);
         try
         {
-            window.ShowResult("対象: ROI (100, 200, 1000×3)", Profile(40, 50, 60),
+            window.View.ShowResult("対象: ROI (100, 200, 1000×3)", Profile(40, 50, 60),
                 new ProjectionAxis(200, null), 255);
 
             Assert.Equal("垂直射影 — y 座標(行ごとの平均) [px・画像座標]", Find<TextBlock>(window, "XAxisTitle").Text);
             Assert.Equal(new[] { "200", "201", "202" },
                 Find<Canvas>(window, "XAxisCanvas").Children.OfType<TextBlock>().Select(t => t.Text));
-            Assert.StartsWith("y,mean,min,max" + Environment.NewLine + "200,40,39,41", window.BuildTable(','));
+            Assert.StartsWith("y,mean,min,max" + Environment.NewLine + "200,40,39,41", window.View.BuildTable(','));
             Assert.Contains("各行 1000 画素の平均", Find<TextBlock>(window, "TargetText").Text);
             Assert.Equal(ProjectionText.WindowHelp(ProjectionDirection.Vertical), Find<Border>(window, "HelpMark").ToolTip);
         }
@@ -82,10 +109,10 @@ public class ProjectionWindowTests
             string nl = Environment.NewLine;
             Assert.Equal(
                 $"x,mean,min,max{nl}100,1000.4,998,1003{nl}101,1000.55,999,1002{nl}102,1000.6,997,1004{nl}",
-                window.BuildTable(','));
+                window.View.BuildTable(','));
 
             // 統計(平均の線の)のコピー。最小・最大は平均の線の値
-            string statistics = window.BuildStatisticsTable()!;
+            string statistics = window.View.BuildStatisticsTable()!;
             Assert.Contains($"N\t3{nl}", statistics);
             Assert.Contains($"min\t1000.4{nl}", statistics);
             Assert.Contains($"max\t1000.6{nl}", statistics);
@@ -104,7 +131,7 @@ public class ProjectionWindowTests
         var window = NewWindow(ProjectionDirection.Horizontal);
         try
         {
-            window.ShowResult("対象: ROI (10, 20, 3×1000)",
+            window.View.ShowResult("対象: ROI (10, 20, 3×1000)",
                 new ProjectionProfile
                 {
                     Mean = new[] { 40000.43, 40000.57, 40001.25 },
@@ -117,8 +144,8 @@ public class ProjectionWindowTests
             string nl = Environment.NewLine;
             Assert.Equal(
                 $"x,mean,min,max{nl}10,40000.43,39990,40010{nl}11,40000.57,39991,40011{nl}12,40001.25,39992,40012{nl}",
-                window.BuildTable(','));
-            string statistics = window.BuildStatisticsTable()!;
+                window.View.BuildTable(','));
+            string statistics = window.View.BuildStatisticsTable()!;
             Assert.Contains($"mean	40000.75{nl}", statistics);
             Assert.Contains($"min	40000.43{nl}", statistics);
         }
@@ -138,9 +165,9 @@ public class ProjectionWindowTests
         var vertical = NewWindow(ProjectionDirection.Vertical);
         try
         {
-            horizontal.ShowResult("対象: ROI (2100, 100, 3×3・チャネル分割表示の座標) · チャネル Gr",
+            horizontal.View.ShowResult("対象: ROI (2100, 100, 3×3・チャネル分割表示の座標) · チャネル Gr",
                 Profile(10, 20, 30), new ProjectionAxis(2100, 201), 4095);
-            vertical.ShowResult("対象: ROI (2100, 100, 3×3・チャネル分割表示の座標) · チャネル Gr",
+            vertical.View.ShowResult("対象: ROI (2100, 100, 3×3・チャネル分割表示の座標) · チャネル Gr",
                 Profile(40, 50, 60), new ProjectionAxis(100, 200), 4095);
 
             var title = Find<TextBlock>(horizontal, "XAxisTitle");
@@ -154,17 +181,17 @@ public class ProjectionWindowTests
             string nl = Environment.NewLine;
             Assert.Equal(
                 $"x_display,x_source,mean,min,max{nl}2100,201,10,9,11{nl}2101,203,20,19,21{nl}2102,205,30,29,31{nl}",
-                horizontal.BuildTable(','));
+                horizontal.View.BuildTable(','));
             Assert.Equal(
                 $"y_display\ty_source\tmean\tmin\tmax{nl}100\t200\t40\t39\t41{nl}101\t202\t50\t49\t51{nl}" +
                 $"102\t204\t60\t59\t61{nl}",
-                vertical.BuildTable('\t'));
+                vertical.View.BuildTable('\t'));
 
             // 分割表示でない結果に替えると画像座標へ戻る
-            horizontal.ShowResult("対象: 画像全体 (3×10)", Profile(1, 2, 3), new ProjectionAxis(0, null), 4095);
+            horizontal.View.ShowResult("対象: 画像全体 (3×10)", Profile(1, 2, 3), new ProjectionAxis(0, null), 4095);
             Assert.EndsWith("[px・画像座標]", title.Text);
             Assert.Contains("元画像上の画素座標", (string)axis.ToolTip);
-            Assert.StartsWith("x,mean,min,max" + nl + "0,1,0,2", horizontal.BuildTable(','));
+            Assert.StartsWith("x,mean,min,max" + nl + "0,1,0,2", horizontal.View.BuildTable(','));
         }
         finally
         {
@@ -208,7 +235,7 @@ public class ProjectionWindowTests
         var window = NewWindow(ProjectionDirection.Horizontal);
         try
         {
-            window.ShowResult("対象: 画像全体 (3×3)",
+            window.View.ShowResult("対象: 画像全体 (3×3)",
                 new ProjectionProfile
                 {
                     Mean = new[] { 1000.001, 1000.002, 1000.003 },
@@ -219,26 +246,26 @@ public class ProjectionWindowTests
                 new ProjectionAxis(0, null), 4095);
             var mode = Find<ComboBox>(window, "YScaleCombo");
             mode.SelectedIndex = 1;
-            Assert.InRange(window.AxisRange.Minimum, 988, 990);
-            Assert.InRange(window.AxisRange.Maximum, 1012, 1014);
+            Assert.InRange(window.View.AxisRange.Minimum, 988, 990);
+            Assert.InRange(window.View.AxisRange.Maximum, 1012, 1014);
             CaptureIfRequested(window, "projection-auto-extremes");
 
             Find<CheckBox>(window, "ExtremesCheck").IsChecked = false;
             var canvas = Find<Canvas>(window, "PlotCanvas");
             Assert.Single(canvas.Children.OfType<Path>());
-            ProfileAxisRange original = window.AxisRange;
+            ProfileAxisRange original = window.View.AxisRange;
             double span = original.Maximum - original.Minimum;
             Assert.InRange(span, 0.001, 0.01);
             CaptureIfRequested(window, "projection-auto-mean");
             var center = new Point(canvas.ActualWidth / 2, canvas.ActualHeight / 2);
-            for (int i = 0; i < 20; i++) window.ZoomAt(center, 1200, false, true);
-            Assert.Equal(original, window.AxisRange);
+            for (int i = 0; i < 20; i++) window.View.ZoomAt(center, 1200, false, true);
+            Assert.Equal(original, window.View.AxisRange);
             Assert.Equal(1, mode.SelectedIndex);
-            window.ZoomAt(center, -120, false, true);
-            Assert.Equal(span * 1.2, window.AxisRange.Maximum - window.AxisRange.Minimum, 8);
+            window.View.ZoomAt(center, -120, false, true);
+            Assert.Equal(span * 1.2, window.View.AxisRange.Maximum - window.View.AxisRange.Minimum, 8);
 
             // 線を消しても表(コピー・CSV)には最大・最小を出す
-            Assert.StartsWith("x,mean,min,max" + Environment.NewLine + "0,1000.001,990,1010", window.BuildTable(','));
+            Assert.StartsWith("x,mean,min,max" + Environment.NewLine + "0,1000.001,990,1010", window.View.BuildTable(','));
         }
         finally
         {
@@ -253,16 +280,16 @@ public class ProjectionWindowTests
         var window = NewWindow(ProjectionDirection.Horizontal);
         try
         {
-            window.ShowResult("対象: 画像全体 (2000×10)", Ramp(2000), new ProjectionAxis(0, null), 4095);
+            window.View.ShowResult("対象: 画像全体 (2000×10)", Ramp(2000), new ProjectionAxis(0, null), 4095);
             var canvas = Find<Canvas>(window, "PlotCanvas");
-            window.ZoomAt(new Point(canvas.ActualWidth / 2, canvas.ActualHeight / 2), 240, true, false);
-            ProfileAxisRange zoomed = window.HorizontalRange;
+            window.View.ZoomAt(new Point(canvas.ActualWidth / 2, canvas.ActualHeight / 2), 240, true, false);
+            ProfileAxisRange zoomed = window.View.HorizontalRange;
 
-            window.ShowBusy("対象: 画像全体 (2000×10) · フレーム 2/3");
+            window.View.ShowBusy("対象: 画像全体 (2000×10) · フレーム 2/3");
 
-            Assert.True(window.IsBusy);
-            Assert.Null(window.BuildTable(','));
-            Assert.Null(window.BuildStatisticsTable());
+            Assert.True(window.View.IsBusy);
+            Assert.Null(window.View.BuildTable(','));
+            Assert.Null(window.View.BuildStatisticsTable());
             var overlay = Find<TextBlock>(window, "OverlayText");
             Assert.Equal(Visibility.Visible, overlay.Visibility);
             Assert.StartsWith("計算中", overlay.Text);
@@ -270,17 +297,17 @@ public class ProjectionWindowTests
             Assert.Equal(0.35, canvas.Opacity, 3);
             Assert.Equal("対象: 画像全体 (2000×10) · フレーム 2/3", Find<TextBlock>(window, "TargetText").Text);
 
-            window.ReportProgress(0.427);
+            window.View.ReportProgress(0.427);
             Assert.StartsWith("計算中… 42%", overlay.Text);
             CaptureIfRequested(window, "projection-busy");
 
             // 同じ長さの結果なら横軸の拡大を保つ
-            window.ShowResult("対象: 画像全体 (2000×10) · フレーム 2/3", Ramp(2000), new ProjectionAxis(0, null), 4095);
-            Assert.False(window.IsBusy);
-            Assert.Equal(zoomed, window.HorizontalRange);
+            window.View.ShowResult("対象: 画像全体 (2000×10) · フレーム 2/3", Ramp(2000), new ProjectionAxis(0, null), 4095);
+            Assert.False(window.View.IsBusy);
+            Assert.Equal(zoomed, window.View.HorizontalRange);
             Assert.Equal(Visibility.Collapsed, overlay.Visibility);
             Assert.Equal(1, canvas.Opacity);
-            Assert.NotNull(window.BuildTable(','));
+            Assert.NotNull(window.View.BuildTable(','));
         }
         finally
         {
@@ -294,12 +321,12 @@ public class ProjectionWindowTests
         var window = NewWindow(ProjectionDirection.Horizontal);
         try
         {
-            window.BusyDelay = TimeSpan.FromSeconds(10);
+            window.View.BusyDelay = TimeSpan.FromSeconds(10);
             ShowRoiResult(window);
-            window.ShowBusy("対象: 画像全体 (3×3)");
+            window.View.ShowBusy("対象: 画像全体 (3×3)");
 
             // コピーはすぐ止めるが、見た目(薄くする・知らせ)は遅らせる
-            Assert.Null(window.BuildTable(','));
+            Assert.Null(window.View.BuildTable(','));
             Assert.Equal(Visibility.Collapsed, Find<TextBlock>(window, "OverlayText").Visibility);
             Assert.Equal(1, Find<Canvas>(window, "PlotCanvas").Opacity);
             Assert.StartsWith("N=3", Find<TextBlock>(window, "StatsText").Text);
@@ -325,18 +352,18 @@ public class ProjectionWindowTests
             Find<Button>(window, "ApplyAxisFormatButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             ShowRoiResult(window);
 
-            window.ShowMessage("対象: ROI なし", ProjectionTargets.ChannelSplitWithoutRoi, 1023);
+            window.View.ShowMessage("対象: ROI なし", ProjectionTargets.ChannelSplitWithoutRoi, 1023);
 
-            Assert.Null(window.BuildTable(','));
+            Assert.Null(window.View.BuildTable(','));
             Assert.Empty(Find<Canvas>(window, "PlotCanvas").Children.OfType<Path>());
             Assert.Equal(ProjectionTargets.ChannelSplitWithoutRoi, Find<TextBlock>(window, "StatsText").Text);
             Assert.Equal("対象: ROI なし", Find<TextBlock>(window, "TargetText").Text);
-            Assert.False(window.IsBusy);
+            Assert.False(window.View.IsBusy);
             CaptureIfRequested(window, "projection-message");
 
             ShowRoiResult(window);
-            Assert.Equal(new ProfileAxisRange(100, 300), window.AxisRange);
-            Assert.NotNull(window.BuildTable(','));
+            Assert.Equal(new ProfileAxisRange(100, 300), window.View.AxisRange);
+            Assert.NotNull(window.View.BuildTable(','));
         }
         finally
         {
@@ -357,20 +384,20 @@ public class ProjectionWindowTests
             var priority = Find<TextBlock>(window, "RoiPriorityText");
             Assert.Equal(Visibility.Collapsed, panel.Visibility);
 
-            window.SetChannelChoice(ProjectionChannelChoice.Choosable, null);
+            window.View.SetChannelChoice(ProjectionChannelChoice.Choosable, null);
             Assert.Equal(Visibility.Visible, panel.Visibility);
             Assert.True(combo.IsEnabled);
             Assert.Equal("未選択", ((ComboBoxItem)combo.SelectedItem).Content);
             Assert.Equal(Visibility.Collapsed, priority.Visibility);
 
-            window.SetChannelChoice(ProjectionChannelChoice.RoiTakesPriority, BayerChannel.Gb);
+            window.View.SetChannelChoice(ProjectionChannelChoice.RoiTakesPriority, BayerChannel.Gb);
             Assert.False(combo.IsEnabled);
             Assert.Equal("Gb", ((ComboBoxItem)combo.SelectedItem).Content);
             Assert.Equal(Visibility.Visible, priority.Visibility);
             Assert.Contains("ROI", (string)priority.ToolTip);
             CaptureIfRequested(window, "projection-channel-roi-priority");
 
-            window.SetChannelChoice(ProjectionChannelChoice.None, BayerChannel.Gb);
+            window.View.SetChannelChoice(ProjectionChannelChoice.None, BayerChannel.Gb);
             Assert.Equal(Visibility.Collapsed, panel.Visibility);
         }
         finally
@@ -384,10 +411,10 @@ public class ProjectionWindowTests
     {
         var window = NewWindow(ProjectionDirection.Vertical);
         var reported = new List<BayerChannel?>();
-        window.ChannelSelectionChanged += reported.Add;
+        window.View.ChannelSelectionChanged += reported.Add;
         try
         {
-            window.SetChannelChoice(ProjectionChannelChoice.Choosable, BayerChannel.R);
+            window.View.SetChannelChoice(ProjectionChannelChoice.Choosable, BayerChannel.R);
             Assert.Empty(reported); // 共有の選択を映しただけ
 
             var combo = Find<ComboBox>(window, "ChannelCombo");
@@ -403,7 +430,7 @@ public class ProjectionWindowTests
 
     private static void ShowRoiResult(ProjectionWindow window)
     {
-        window.ShowResult(
+        window.View.ShowResult(
             "対象: ROI (100, 200, 3×1000)",
             new ProjectionProfile
             {
@@ -429,7 +456,7 @@ public class ProjectionWindowTests
 
     private static ProjectionWindow NewWindow(ProjectionDirection direction)
     {
-        var window = new ProjectionWindow(direction) { BusyDelay = TimeSpan.Zero };
+        var window = new ProjectionWindow(direction) { View = { BusyDelay = TimeSpan.Zero } };
         Layout(window);
         return window;
     }

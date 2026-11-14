@@ -6,6 +6,7 @@ using System.Windows.Media;
 using System.Windows.Shapes;
 using RawAnalyzer.App.Controls;
 using RawAnalyzer.App.Services;
+using RawAnalyzer.App.Themes;
 
 namespace RawAnalyzer.App.Views;
 
@@ -32,9 +33,10 @@ public partial class ProfilePlotView
     private const string YAxisHelp = "右クリック: 縦軸の範囲・軸の書式\nホイール: 縦軸のみ拡大・縮小";
     private const string XAxisHelp = "右クリック: 横軸の範囲・軸の書式";
 
-    private static readonly Brush TickBrush = Frozen(Brushes.Gray);
-    private static readonly Brush MajorGridBrush = Frozen(new SolidColorBrush(Color.FromArgb(0x28, 0x9A, 0x9A, 0x95)));
-    private static readonly Brush MinorGridBrush = Frozen(new SolidColorBrush(Color.FromArgb(0x12, 0x9A, 0x9A, 0x95)));
+    private static readonly Brush AxisLabelBrush = ThemeColors.Brush(ThemeColors.PlotLabel);
+    private static readonly Brush TickBrush = ThemeColors.Brush(ThemeColors.PlotTick);
+    private static readonly Brush MajorGridBrush = ThemeColors.Brush(ThemeColors.MajorGrid);
+    private static readonly Brush MinorGridBrush = ThemeColors.Brush(ThemeColors.MinorGrid);
 
     // 手動の横軸の範囲(表示する座標で)。自動へ戻しても覚えておき、手動へ戻したときに使う
     private ProfileAxisRange? _manualHorizontal;
@@ -80,12 +82,6 @@ public partial class ProfilePlotView
 
     private static ProfileAxisRange Shift(ProfileAxisRange range, double offset) =>
         new(range.Minimum + offset, range.Maximum + offset);
-
-    private static Brush Frozen(Brush brush)
-    {
-        if (brush.CanFreeze) brush.Freeze();
-        return brush;
-    }
 
     private void InitializeAxisFormat()
     {
@@ -536,8 +532,8 @@ public partial class ProfilePlotView
         {
             Text = ticks.Format(value, CultureInfo.CurrentCulture),
             FontFamily = new FontFamily("Consolas"),
-            FontSize = 10,
-            Foreground = Brushes.DarkGray,
+            FontSize = ThemeTypography.FontSizeCaption,
+            Foreground = AxisLabelBrush,
             Tag = value,
         };
         label.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));

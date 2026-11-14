@@ -2,7 +2,9 @@
 using System.Windows;
 using System.Windows.Media;
 using RawAnalyzer.App.Rendering;
+using RawAnalyzer.App.Services;
 using RawAnalyzer.Core;
+using RawAnalyzer.App.Themes;
 
 namespace RawAnalyzer.App.Controls;
 
@@ -29,6 +31,100 @@ public sealed partial class ImageViewport
         DrawProfileMarker(dc);
         DrawKeyboardCursor(dc);
         DrawGhostCursor(dc);
+        DrawSplitLabels(dc);
+    }
+
+    private static readonly Brush SplitLabelBackground = ThemeColors.Brush(ThemeColors.SplitLabelBackground);
+    private static readonly Brush SplitLabelRed = ThemeColors.Brush(ThemeColors.ChannelR);
+    private static readonly Brush SplitLabelGr = ThemeColors.Brush(ThemeColors.ChannelGr);
+    private static readonly Brush SplitLabelGb = ThemeColors.Brush(ThemeColors.ChannelGb);
+    private static readonly Brush SplitLabelBlue = ThemeColors.Brush(ThemeColors.ChannelB);
+    private static readonly Typeface SplitLabelTypeface = new(new FontFamily("Segoe UI"),
+        FontStyles.Normal, FontWeights.SemiBold, FontStretches.Normal);
+    private readonly Dictionary<string, FormattedText> _splitLabelText = new();
+    private double _splitLabelScale;
+
+    private void DrawSplitLabels(DrawingContext dc)
+    {
+        if (_bitmap is null || _image is null)
+        {
+            return;
+        }
+
+        if (IsChannelSplitLayout && _format is { } format)
+        {
+            // ChannelSplitRenderSource の象限は、元画像の行列の偶奇順。奇数寸法の端は描かない。
+            int width = _image.Width / 2;
+            int height = _image.Height / 2;
+            for (int y = 0; y < 2; y++)
+            {
+                for (int x = 0; x < 2; x++)
+                {
+                    BayerChannel channel = BayerHelper.GetChannel(format.Bayer, x, y);
+                    Brush color = channel switch
+                    {
+                        BayerChannel.R => SplitLabelRed,
+                        BayerChannel.Gr => SplitLabelGr,
+                        BayerChannel.Gb => SplitLabelGb,
+                        _ => SplitLabelBlue,
+                    };
+                    DrawSplitLabel(dc, new Rect(x * width, y * height, width, height),
+                        BayerHelper.GetLabel(channel), color);
+                }
+            }
+        }
+        else if (_segmentLuts is { Length: > 1 } luts && _segmentWidth > 0)
+        {
+            for (int stage = 0; stage < luts.Length; stage++)
+            {
+                double left = (double)stage * _segmentWidth;
+                double width = Math.Clamp(_image.Width - left, 0, _segmentWidth);
+                DrawSplitLabel(dc, new Rect(left, 0, width, _image.Height),
+                    HdrFormatText.StageName(stage, luts.Length), Brushes.White);
+            }
+        }
+    }
+
+    private void DrawSplitLabel(DrawingContext dc, Rect section, string label, Brush color)
+    {
+        var screen = new Rect((section.X - _presentedOriginX) * _presentedZoom,
+            (section.Y - _presentedOriginY) * _presentedZoom,
+            section.Width * _presentedZoom, section.Height * _presentedZoom);
+        Rect visible = Rect.Intersect(screen, new Rect(RenderSize));
+        if (visible.IsEmpty)
+        {
+            return;
+        }
+
+        double pixelsPerDip = VisualTreeHelper.GetDpi(this).PixelsPerDip;
+        if (pixelsPerDip != _splitLabelScale)
+        {
+            _splitLabelText.Clear();
+            _splitLabelScale = pixelsPerDip;
+        }
+
+        if (!_splitLabelText.TryGetValue(label, out FormattedText? text))
+        {
+            text = new FormattedText(label, CultureInfo.CurrentUICulture, FlowDirection.LeftToRight,
+                SplitLabelTypeface, ThemeTypography.FontSizeBody, color, pixelsPerDip);
+            _splitLabelText.Add(label, text);
+        }
+
+        var size = new Size(text.Width + 10, text.Height + 4);
+        if (SplitLabelPlacement.Find(visible, size) is { } position)
+        {
+            bool needsClip = size.Width > visible.Width || size.Height > visible.Height;
+            if (needsClip)
+            {
+                dc.PushClip(new RectangleGeometry(visible));
+            }
+            dc.DrawRoundedRectangle(SplitLabelBackground, null, new Rect(position, size), 3, 3);
+            dc.DrawText(text, position + new Vector(5, 2));
+            if (needsClip)
+            {
+                dc.Pop();
+            }
+        }
     }
 
     private static readonly GuidelineSet BitmapGuidelines = CreateBitmapGuidelines();
@@ -41,29 +137,18 @@ public sealed partial class ImageViewport
         return guidelines;
     }
 
-    private static readonly Pen KeyCursorPen = CreateKeyCursorPen(0xE6);
-    private static readonly Pen KeyCursorGuidePen = CreateKeyCursorPen(0x50);
+    private static readonly Pen KeyCursorPen = CreateCursorPen(ThemeColors.KeyCursor);
+    private static readonly Pen KeyCursorGuidePen = CreateCursorPen(ThemeColors.KeyCursorGuide);
 
-    private static Pen CreateKeyCursorPen(byte alpha)
+    private static Pen CreateCursorPen(Color color)
     {
-        var brush = new SolidColorBrush(Color.FromArgb(alpha, 0x7E, 0xCB, 0x72));
-        brush.Freeze();
+        var brush = ThemeColors.Brush(color);
         var pen = new Pen(brush, 1.2);
         pen.Freeze();
         return pen;
     }
 
-    private static readonly Pen GhostCursorPen = CreateGhostCursorPen();
-
-    private static Pen CreateGhostCursorPen()
-    {
-        // キーボードカーソル(緑)と区別できる暖色。控えめな太さで実画素を隠さない
-        var brush = new SolidColorBrush(Color.FromArgb(0xC8, 0xE8, 0xA3, 0x4B));
-        brush.Freeze();
-        var pen = new Pen(brush, 1.2);
-        pen.Freeze();
-        return pen;
-    }
+    private static readonly Pen GhostCursorPen = CreateCursorPen(ThemeColors.GhostCursor);
 
     /// <summary>他ペインのカーソル位置を示すクロスヘアを描く(比較モード用)。</summary>
     private void DrawGhostCursor(DrawingContext dc)
@@ -109,9 +194,7 @@ public sealed partial class ImageViewport
 
     private static Pen CreateProfilePen(bool dashed)
     {
-        var brush = new SolidColorBrush(Color.FromArgb(
-            dashed ? (byte)0x60 : (byte)0xE6, 0xD9, 0x9B, 0x5B));
-        brush.Freeze();
+        var brush = ThemeColors.Brush(dashed ? ThemeColors.ProfileInactive : ThemeColors.ProfileActive);
         var pen = new Pen(brush, dashed ? 1.0 : 1.4);
         if (dashed)
         {
@@ -175,8 +258,8 @@ public sealed partial class ImageViewport
         return BayerSplit.TryMapSourceToTiledAxis(source, sourceLength & ~1, out display);
     }
 
-    private static readonly Pen HotMarkerPen = CreateMarkerPen(Color.FromRgb(0xE6, 0x50, 0x3C));
-    private static readonly Pen DeadMarkerPen = CreateMarkerPen(Color.FromRgb(0x3C, 0x78, 0xE6));
+    private static readonly Pen HotMarkerPen = CreateMarkerPen(ThemeColors.HotPixel);
+    private static readonly Pen DeadMarkerPen = CreateMarkerPen(ThemeColors.DeadPixel);
 
     private static Pen CreateMarkerPen(Color color)
     {
@@ -283,16 +366,14 @@ public sealed partial class ImageViewport
 
     private static Pen CreateRoiPen()
     {
-        var pen = new Pen(new SolidColorBrush(Color.FromRgb(0x5B, 0x9D, 0xD9)), 1.5);
+        var pen = new Pen(ThemeColors.Brush(ThemeColors.Accent), 1.5);
         pen.Freeze();
         return pen;
     }
 
     private static Brush CreateRoiFill()
     {
-        var brush = new SolidColorBrush(Color.FromArgb(0x20, 0x5B, 0x9D, 0xD9));
-        brush.Freeze();
-        return brush;
+        return ThemeColors.Brush(ThemeColors.RoiFill);
     }
 
     private void DrawRoi(DrawingContext dc)

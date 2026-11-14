@@ -1,3 +1,4 @@
+using RawAnalyzer.App.Compare;
 using RawAnalyzer.App.Services;
 using RawAnalyzer.App.ViewModels;
 using Xunit;
@@ -13,6 +14,20 @@ namespace RawAnalyzer.Tests;
 /// </remarks>
 public class CompareModeCommandTests
 {
+    [Fact]
+    public void CompareStatus_ReportsActiveImageAndPreservesNormalStatus()
+    {
+        var vm = new MainViewModel { IsCompareMode = true };
+        vm.UpdateCompareStatus(3, new ComparePaneStatus("A", "scene_a.raw", 1920, 1080, 12, 0.5));
+
+        Assert.Equal("比較 3 枚 · A: scene_a.raw · 1920×1080 · 12bit", vm.CompareImageInfoText);
+        Assert.DoesNotContain("画像未読込", vm.CompareImageInfoText);
+        Assert.Equal("Zoom 50%", vm.CompareZoomStatusText);
+
+        vm.IsCompareMode = false;
+        Assert.Equal("画像未読込", vm.ImageInfoText);
+    }
+
     [Fact]
     public void MainView_IsUnavailableWhileComparing()
     {
@@ -56,21 +71,34 @@ public class CompareModeCommandTests
     }
 
     [Fact]
-    public void AdjustPanel_IsUnavailableWhileComparing_WithTheReason()
+    public void AdjustPanel_UsesActiveComparePaneWithoutEnablingMainView()
     {
-        // 右の調整パネル(表示調整のスライダー・ボタン、ヒストグラムの切替・コピー、ホワイトバランス、カラーマトリクス、
-        // フォーマット)は通常表示を対象にする。以前は比較モード中も操作でき、比較画面に隠れた通常表示に効いた。
-        // 比較モードでなければ、画像がなくても従来どおり操作できる(比較モードの間だけ無効にして理由を示す)
         var vm = new MainViewModel();
-        Assert.True(vm.CanUseAdjustPanel);
-        Assert.Null(vm.AdjustPanelDisabledReason);
+        Assert.False(vm.CanUseAdjustPanel);
+        Assert.Equal("画像を開くと調整できます", vm.AdjustPanelDisabledReason);
 
         var changed = new List<string>();
         vm.PropertyChanged += (_, e) => changed.Add(e.PropertyName ?? "");
+        vm.HasImage = true;
+        Assert.True(vm.CanUseAdjustPanel);
+        Assert.Null(vm.AdjustPanelDisabledReason);
+        Assert.Contains(nameof(MainViewModel.CanUseAdjustPanel), changed);
+        Assert.Contains(nameof(MainViewModel.AdjustPanelDisabledReason), changed);
+
+        changed.Clear();
         vm.IsCompareMode = true;
         Assert.False(vm.CanUseAdjustPanel);
-        Assert.Equal(CommandDisabledReasons.AdjustPanelInCompareMode, vm.AdjustPanelDisabledReason);
-        Assert.StartsWith("比較モード中は調整パネルを使えません", vm.AdjustPanelDisabledReason);
+        Assert.Equal(CommandDisabledReasons.NoActiveComparePane, vm.AdjustPanelDisabledReason);
+        Assert.Contains(nameof(MainViewModel.CanUseAdjustPanel), changed);
+        Assert.Contains(nameof(MainViewModel.AdjustPanelDisabledReason), changed);
+
+        changed.Clear();
+        vm.SetCompareAdjustTarget("A");
+        Assert.True(vm.CanUseAdjustPanel);
+        Assert.False(vm.CanUseMainView);
+        Assert.Null(vm.AdjustPanelDisabledReason);
+        Assert.Equal("表示調整 · 調整対象: A", vm.DisplayAdjustmentTitle);
+        Assert.Same(vm.CompareAdjustment, vm.DisplayAdjustmentSource);
         Assert.Contains(nameof(MainViewModel.CanUseAdjustPanel), changed);
         Assert.Contains(nameof(MainViewModel.AdjustPanelDisabledReason), changed);
 
@@ -80,6 +108,25 @@ public class CompareModeCommandTests
         Assert.Null(vm.AdjustPanelDisabledReason);
         Assert.Contains(nameof(MainViewModel.CanUseAdjustPanel), changed);
         Assert.Contains(nameof(MainViewModel.AdjustPanelDisabledReason), changed);
+        Assert.Same(vm, vm.DisplayAdjustmentSource);
+    }
+
+    [Fact]
+    public void EmptyCanvas_IsAvailableOnlyWithoutImageCompareOrLoading()
+    {
+        var vm = new MainViewModel();
+        Assert.True(vm.ShowEmptyCanvas);
+        vm.IsLoading = true;
+        Assert.False(vm.ShowEmptyCanvas);
+        vm.IsLoading = false;
+        vm.IsCompareMode = true;
+        Assert.False(vm.ShowEmptyCanvas);
+        Assert.Equal(CommandDisabledReasons.NoActiveComparePane, vm.AdjustPanelDisabledReason);
+        vm.IsCompareMode = false;
+        vm.HasImage = true;
+        Assert.False(vm.ShowEmptyCanvas);
+        vm.HasImage = false;
+        Assert.True(vm.ShowEmptyCanvas);
     }
 
     [Fact]

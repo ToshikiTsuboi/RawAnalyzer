@@ -84,7 +84,7 @@ public partial class MainWindow
                 && generation == _openGeneration)
             {
                 StopPlayback();
-                MessageBox.Show(this, $"TIFFの{index + 1}ページ目を読み込めません: {ex.Message}",
+                AppMessage.Show(this, $"TIFFの{index + 1}ページ目を読み込めません: {ex.Message}",
                     "TIFFスタック", MessageBoxButton.OK, MessageBoxImage.Warning);
             }
         }
@@ -134,11 +134,13 @@ public partial class MainWindow
         _currentFormat = format;
         _colorImage = decoded.Color;
         _vm.IsColorImage = decoded.Color is not null;
+        UpdateOpenedFileDetails(format, decoded.Color is not null);
         _valueNote = ValueMappingNote.FromFile(decoded.ValueNote, decoded.Scaling);
         _valueScaling = decoded.Scaling;
         _tiffPageIndex = index;
         _sequenceIndex = index;
         _histogram = null;
+        RedrawHistogram();
         _channelHistograms = null;
         ClearDefectSource();
         Viewport.SetDefectMarkers(null);

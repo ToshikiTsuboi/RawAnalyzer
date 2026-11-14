@@ -77,6 +77,9 @@ internal sealed class FormatMemory
         }
     }
 
+    // UI で記憶のスナップショットを取得し、別スレッドには独立した配列だけを渡す。
+    internal FormatHistoryEntry[] SnapshotEntries() => _history.Entries.ToArray();
+
     /// <summary>
     /// raw の読み込みに成功したフォーマットを記録して保存する。
     /// </summary>

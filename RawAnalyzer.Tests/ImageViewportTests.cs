@@ -15,6 +15,56 @@ namespace RawAnalyzer.Tests;
 [Collection("WPF UI")]
 public class ImageViewportTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public Task SplitViews_DrawChannelOrExposureLabelsInViewport(bool hdr) => WpfTestHost.Run(async () =>
+    {
+        const int width = 300;
+        const int height = 160;
+        var format = new RawFormat
+        {
+            Width = width, Height = height, BitDepth = 16,
+            Bayer = hdr ? BayerPattern.None : BayerPattern.Bggr,
+        };
+        var pixels = new ushort[width * height];
+        for (int y = 0; y < height; y++)
+        {
+            for (int x = 0; x < width; x++)
+            {
+                pixels[y * width + x] = (ushort)(x * 145 + y * 105);
+            }
+        }
+        using RawImage image = RawImage.FromPixels(format, pixels);
+        var viewport = new ImageViewport();
+        viewport.Measure(new Size(450, 240));
+        viewport.Arrange(new Rect(0, 0, 450, 240));
+        var presented = new TaskCompletionSource();
+        viewport.ViewportStateChanged += (_, _) => presented.TrySetResult();
+        try
+        {
+            viewport.SetImage(image, format);
+            if (hdr)
+            {
+                var lut = DisplayLut.Create(new DisplayParameters());
+                viewport.SetSplitLuts([lut, lut, lut], width / 3);
+            }
+            else
+            {
+                viewport.SetDisplayMode(ViewportDisplayMode.ChannelSplit);
+            }
+            await presented.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            viewport.UpdateLayout();
+            Assert.Equal(hdr ? new[] { "長秒", "中秒", "短秒" } : new[] { "B", "Gb", "Gr", "R" },
+                CollectTexts(VisualTreeHelper.GetDrawing(viewport)));
+            WpfTestHost.CaptureIfRequested(viewport, hdr ? "hdr-split-labels" : "channel-split-labels");
+        }
+        finally
+        {
+            await viewport.ClearImageAsync();
+        }
+    });
+
     [Fact]
     public Task ZoomedIn_DrawsRawCodeOverlay() => WpfTestHost.Run(async () =>
     {
@@ -935,31 +985,28 @@ public class ImageViewportTests
     /// ほかのスレッドと共有されることがあり(同じ机上で別のアプリの入力が進むなど)、全体を流すとまれに直後の
     /// Keyboard.Modifiers が None に戻って失敗していた(OS の入力状態に頼らない)。
     /// </remarks>
-    private static void PressWithControl(UIElement target, Key key)
+    internal static void PressWithControl(UIElement target, Key key, bool shift = false)
     {
-        _controlHeld ??= new ControlHeldKeyboard();
-        Assert.Equal(ModifierKeys.Control, _controlHeld.Modifiers);
+        var keyboard = new ControlHeldKeyboard(shift);
+        Assert.Equal(shift ? ModifierKeys.Control | ModifierKeys.Shift : ModifierKeys.Control, keyboard.Modifiers);
         var source = new TestInputSource();
-        var preview = new KeyEventArgs(_controlHeld, source, Environment.TickCount, key)
+        var preview = new KeyEventArgs(keyboard, source, Environment.TickCount, key)
         {
             RoutedEvent = Keyboard.PreviewKeyDownEvent,
         };
         target.RaiseEvent(preview);
-        target.RaiseEvent(new KeyEventArgs(_controlHeld, source, Environment.TickCount, key)
+        target.RaiseEvent(new KeyEventArgs(keyboard, source, Environment.TickCount, key)
         {
             RoutedEvent = Keyboard.KeyDownEvent,
             Handled = preview.Handled,
         });
     }
 
-    // UI テストのスレッド(InputManager はスレッドごと)で初めて使うときに作る
-    private static ControlHeldKeyboard? _controlHeld;
-
-    /// <summary>左 Ctrl だけを押した状態を返すキーボード(OS のキーボード状態を読まない)。</summary>
-    private sealed class ControlHeldKeyboard() : KeyboardDevice(InputManager.Current)
+    /// <summary>左 Ctrl と必要なら左 Shift を押した状態を返すキーボード。</summary>
+    private sealed class ControlHeldKeyboard(bool shift) : KeyboardDevice(InputManager.Current)
     {
         protected override KeyStates GetKeyStatesFromSystem(Key key) =>
-            key == Key.LeftCtrl ? KeyStates.Down : KeyStates.None;
+            key == Key.LeftCtrl || (shift && key == Key.LeftShift) ? KeyStates.Down : KeyStates.None;
     }
 
     /// <summary>ウィンドウを表示せずにキー入力イベントを作るための入力元。</summary>

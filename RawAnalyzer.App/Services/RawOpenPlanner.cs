@@ -57,27 +57,31 @@ internal static class RawOpenPlanner
         string path, long fileSize, RawFormat? pathMemory, IReadOnlyFormatHistory history,
         RawFormat? displayedFormat, RawFormat? requestedInitial = null, bool chooseFormat = false)
     {
-        string extension = FormatHistory.ExtensionOf(path);
-        if (!chooseFormat)
+        if (!chooseFormat && PlanFromMemory(path, fileSize, pathMemory, history) is { } remembered)
         {
-            if (pathMemory is not null)
-            {
-                return new RawOpenPlan(RawFormatOrigin.PathMemory, pathMemory, null);
-            }
-
-            if (fileSize > 0 && history.FindAutoOpenFormat(fileSize, extension) is { } remembered)
-            {
-                return new RawOpenPlan(RawFormatOrigin.SizeMemory, remembered, null);
-            }
+            return remembered;
         }
 
         IReadOnlyList<FormatCandidate> candidates = FormatCandidates.Build(
-            fileSize, extension, path, history, displayedFormat);
+            fileSize, FormatHistory.ExtensionOf(path), path, history, displayedFormat);
         RawFormat? first = candidates.Count > 0 ? candidates[0].Format : null;
         RawFormat? initial = chooseFormat
             ? requestedInitial ?? first ?? displayedFormat
             : first ?? requestedInitial ?? displayedFormat;
         return new RawOpenPlan(RawFormatOrigin.Dialog, null, initial);
+    }
+
+    internal static RawOpenPlan? PlanFromMemory(
+        string path, long fileSize, RawFormat? pathMemory, IReadOnlyFormatHistory history)
+    {
+        if (pathMemory is not null)
+        {
+            return new RawOpenPlan(RawFormatOrigin.PathMemory, pathMemory, null);
+        }
+
+        return fileSize > 0 && history.FindAutoOpenFormat(fileSize, FormatHistory.ExtensionOf(path)) is { } remembered
+            ? new RawOpenPlan(RawFormatOrigin.SizeMemory, remembered, null)
+            : null;
     }
 
     /// <summary>比較ペインを記憶から推定して開いたときにステータスバーへ出す文。</summary>

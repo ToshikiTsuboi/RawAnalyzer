@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
 using RawAnalyzer.App.Controls;
@@ -13,6 +14,49 @@ namespace RawAnalyzer.Tests;
 [Collection("WPF UI")]
 public class NumericSliderRowTests
 {
+    [Fact]
+    public Task ResetButton_AppearsOnlyWhenValueDiffersAndRestoresDefault() => WpfTestHost.Run(() =>
+    {
+        var row = NewRow(decimals: 2, step: 0.05, maximum: 4);
+        row.DefaultValue = row.Value = 1;
+        var reset = (Button)row.FindName("ResetButton");
+        Assert.Equal(Visibility.Hidden, reset.Visibility);
+
+        row.Value = 1.75;
+        Assert.Equal(Visibility.Visible, reset.Visibility);
+        row.DefaultValue = 1.75;
+        Assert.Equal(Visibility.Hidden, reset.Visibility);
+
+        row.DefaultValue = 2.25;
+        Assert.Equal(Visibility.Visible, reset.Visibility);
+        reset.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Assert.Equal(2.25, row.Value);
+        Assert.Equal("2.25", row.ValueBox.Text);
+        Assert.Equal(Visibility.Hidden, reset.Visibility);
+    });
+
+    [Fact]
+    public Task StandardLayout_CentersLabelThumbAndValueBox() => WpfTestHost.Run(() =>
+    {
+        var row = NewRow(decimals: 0, step: 1, maximum: 65535);
+        row.Label = "白レベル";
+        row.Unit = "LSB";
+        row.Value = 32768;
+        row.Measure(new Size(204, double.PositiveInfinity));
+        row.Arrange(new Rect(0, 0, 204, row.DesiredSize.Height));
+        row.UpdateLayout();
+        Assert.False(row.IsCompact);
+
+        var label = (TextBlock)row.FindName("LabelText");
+        var track = (Track)row.ValueSlider.Template.FindName("PART_Track", row.ValueSlider);
+        FrameworkElement[] controls = [label, track.Thumb, row.ValueBox];
+        double[] centers = controls.Select(element =>
+            element.TranslatePoint(new Point(element.ActualWidth / 2, element.ActualHeight / 2), row).Y).ToArray();
+        Assert.InRange(centers.Max() - centers.Min(), 0, 1);
+        var minText = (TextBlock)row.FindName("MinText");
+        Assert.True(minText.TranslatePoint(new Point(), row).Y >= centers[1] + track.Thumb.ActualHeight / 2);
+    });
+
     [Theory]
     [InlineData(0, 1.0, 4095.0, 137.6, 138.0)] // 黒レベル: 表示 "138" のまま 137 コードで適用されていた
     [InlineData(0, 1.0, 4095.0, 4094.6, 4095.0)] // 白レベル: 表示 "4095" のまま 4094 の上端で適用されていた

@@ -31,7 +31,7 @@ public partial class MainWindow
         if (ImageCalculationAvailability.Refusal(_compareMode, _derivedImage is not null, _colorImage is not null)
             is { } refusal)
         {
-            MessageBox.Show(this, refusal, "画像演算", MessageBoxButton.OK, MessageBoxImage.Information);
+            AppMessage.Show(this, refusal, "画像演算", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
 
@@ -39,22 +39,30 @@ public partial class MainWindow
         if ((long)_currentFormat.Width * _currentFormat.Height
             > RawLoader.DefaultInMemoryPixelThreshold)
         {
-            MessageBox.Show(this, "1億画素を超える画像の演算はサポートされていません。",
+            AppMessage.Show(this, "1億画素を超える画像の演算はサポートされていません。",
                 "画像演算", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
 
         // 参照画像は1フレームだけ読むため、期待サイズも1フレーム分。raw の参照はファイルを読んだ形式で読む
         // (ビニング・フィルタの結果の 16bit 形式で読むと下詰めNbitの参照が正規化されない)
-        long expectedSize = ReferenceImage.ExpectedRawSize(
-            ReferenceImage.RawReadFormat(_currentFormat, _openedRawFormat));
+        RawFormat rawReadFormat = ReferenceImage.RawReadFormat(_currentFormat, _openedRawFormat);
+        long expectedSize = ReferenceImage.ExpectedRawSize(rawReadFormat);
+        string sourceDescription = FormatCandidateText.Describe(_currentFormat, " · ");
+        string referenceDescription = FormatCandidateText.Describe(rawReadFormat, " · ");
+        if (referenceDescription != FormatCandidateText.Describe(_currentFormat with { FrameCount = 1 }, " · "))
+            sourceDescription += $"\n参照 raw の読み込み形式 · {referenceDescription}";
 
         // 対象名には演算するフレーム・TIFFページも示す(ビニング・フィルタと同じ。演算は表示中の1フレームだけ)
         var dialog = new ImageCalculatorDialog(
             NoiseSourceName() + (_tiffStack is null ? CalculationFrameNote(_currentImage, Viewport.Frame) : ""),
-            _currentFolder, expectedSize, TargetRawFileSize())
+            _currentFolder, expectedSize, TargetRawFileSize(),
+            sourceDescription: sourceDescription,
+            sourceBytes: _currentFileSize,
+            folderFiles: _vm.Files.Where(file => !file.IsDirectory).Select(file => file.FullPath).ToArray())
         {
             Owner = this,
+            LoadRecent = _recentFiles.Load,
         };
         if (dialog.ShowDialog() != true || dialog.Result is null)
         {
@@ -94,7 +102,7 @@ public partial class MainWindow
         if (result.Error is not null)
         {
             corrected?.Dispose();
-            MessageBox.Show(this, $"画像演算に失敗しました: {result.Error.Message}", "画像演算",
+            AppMessage.Show(this, $"画像演算に失敗しました: {result.Error.Message}", "画像演算",
                 MessageBoxButton.OK, MessageBoxImage.Error);
             return;
         }
@@ -194,6 +202,11 @@ public partial class MainWindow
         _mainBayerPyramid = null;
         _derivedBayerPyramid?.Dispose();
         _derivedBayerPyramid = null;
+        if (_correctionLabel is null)
+        {
+            _processedSourceFrame = Viewport.Frame;
+        }
+
         _currentImage?.Dispose();
         _currentImage = processed;
         ClearDefectSource();
@@ -206,6 +219,7 @@ public partial class MainWindow
         _valueNote = _valueNote?.After(valueChange ?? ValueMappingChange.None);
         _histogram = null;
         _channelHistograms = null;
+        RedrawHistogram();
         _vm.HasRoi = false;
         ClearCursorReadout();
         // 演算結果の16bit化や寸法変更に合わせてUIを更新する。
@@ -279,7 +293,7 @@ public partial class MainWindow
         }
 
         processed.Dispose();
-        MessageBox.Show(this, ProcessedImageReplacement.Explain(refusal, label),
+        AppMessage.Show(this, ProcessedImageReplacement.Explain(refusal, label),
             "RawAnalyzer", MessageBoxButton.OK, MessageBoxImage.Information);
         return true;
     }
@@ -336,7 +350,7 @@ public partial class MainWindow
 
         if (_compareMode || _derivedImage is not null || _currentFormat.Hdr != HdrMode.None)
         {
-            MessageBox.Show(this,
+            AppMessage.Show(this,
                 "通常の単画像表示で実行してください。HDR素材は先に露光ごとに分割し、" +
                 "単独の画像として開いてください。比較表示とHDR表示は直接処理できません。",
                 "ビニング・フィルタ", MessageBoxButton.OK, MessageBoxImage.Information);
@@ -351,7 +365,13 @@ public partial class MainWindow
         string frameNote = _tiffStack is not null ? TiffPageNote
             : source.FrameCount > 1 ? $" [フレーム {frame + 1}/{source.FrameCount}]" : "";
         var dialog = new ImageProcessingDialog(NoiseSourceName() + (_tiffStack is null ? frameNote : ""), source.Width, source.Height,
-            pattern, sourceColor is not null, binning) { Owner = this };
+            pattern, sourceColor is not null, binning)
+        {
+            Owner = this,
+            ReadPreviewRegion = (area, token) => ProcessingPreview.ReadRaw(source, frame, area, token),
+            ReadColorPreviewRegion = sourceColor is null ? null : (area, token) => ProcessingPreview.ReadColor(sourceColor, area, token),
+            PreviewDisplay = new DisplayParameters(_blackPoint, _whitePoint, _vm.Gain, _vm.Gamma, _vm.Contrast),
+        };
         if (dialog.ShowDialog() != true || dialog.Result is not { } choice)
         {
             return;
@@ -364,16 +384,12 @@ public partial class MainWindow
             IProgress<double> pixelsProgress = new PixelProgress(progress, sourceColor is null ? 1 : 0.9);
             if (sourceColor is not null)
             {
-                processedColor = choice.Filter is { } filter
-                    ? ImageFilters.Apply(sourceColor, filter, pixelsProgress, ct)
-                    : ImageBinning.Apply(sourceColor, choice.Factor, choice.Mode, pixelsProgress, ct);
+                processedColor = ProcessingPreview.Apply(sourceColor, choice, pixelsProgress, ct);
                 processed = processedColor.ToLuminance(ct);
             }
             else
             {
-                processed = choice.Filter is { } filter
-                    ? ImageFilters.Apply(source, filter, frame, pattern, pixelsProgress, ct)
-                    : ImageBinning.Apply(source, choice.Factor, choice.Mode, frame, pattern, pixelsProgress, ct);
+                processed = ProcessingPreview.Apply(source, choice, frame, pattern, pixelsProgress, ct);
             }
 
             ct.ThrowIfCancellationRequested();
@@ -386,7 +402,7 @@ public partial class MainWindow
             processed?.Dispose();
             if (result.Error is not null)
             {
-                MessageBox.Show(this, $"画像処理に失敗しました: {result.Error.Message}", "ビニング・フィルタ",
+                AppMessage.Show(this, $"画像処理に失敗しました: {result.Error.Message}", "ビニング・フィルタ",
                     MessageBoxButton.OK, MessageBoxImage.Error);
             }
 
@@ -407,7 +423,7 @@ public partial class MainWindow
                 processed.Dispose();
             }
 
-            MessageBox.Show(this, $"処理結果の表示更新に失敗しました: {ex.Message}", "ビニング・フィルタ",
+            AppMessage.Show(this, $"処理結果の表示更新に失敗しました: {ex.Message}", "ビニング・フィルタ",
                 MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }

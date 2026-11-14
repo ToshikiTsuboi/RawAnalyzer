@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Controls;
+using RawAnalyzer.App.Services;
 using RawAnalyzer.App.Views;
 using Xunit;
 
@@ -25,6 +26,39 @@ public class ImageCalculatorDialogTests : IDisposable
         {
             Directory.Delete(_directory, recursive: true);
         }
+    }
+
+    [Fact]
+    public Task FolderAndRecentChoicesShowTheReferenceSizeAlongsideTheSource()
+    {
+        string dark = CreateFile("dark_64x48_12bit_rggb.raw", 6144);
+        string other = CreateFile("other.raw", 200);
+        var recent = new RecentFilesStore(_directory);
+        recent.Add(other);
+        return WpfTestHost.Run(async () =>
+        {
+            var dialog = new ImageCalculatorDialog("scene_64x48_12bit_rggb.raw", _directory, 6144, 6144,
+                "64×48 · 12bit · RGGB", 6144, [dark]) { LoadRecent = recent.Load };
+            try
+            {
+                dialog.Show();
+                var history = (ComboBox)dialog.FindName("RecentFiles");
+                var folder = (ComboBox)dialog.FindName("FolderFiles");
+                await WaitUntil(() => history.IsEnabled);
+                Assert.Equal(other, history.Items[1]);
+                Assert.Equal(2, folder.Items.Count);
+                folder.SelectedIndex = 1;
+                var details = (TextBlock)dialog.FindName("ReferenceDetails");
+                await WaitUntil(() => details.Text.Contains("A の参照 raw 形式で読めるサイズ"));
+                Assert.Contains("6,144", details.Text);
+                Assert.Contains("RGGB", ((TextBlock)dialog.FindName("SourceDetails")).Text);
+                WpfTestHost.CaptureDialogIfRequested(dialog, "d3-image-calculator");
+            }
+            finally
+            {
+                dialog.Close();
+            }
+        });
     }
 
     [Fact]

@@ -19,6 +19,10 @@ internal static class HdrFormatText
 {
     private static readonly CultureInfo Invariant = CultureInfo.InvariantCulture;
 
+    /// <summary>左からの段番号に対応する露光名。</summary>
+    internal static string StageName(int stage, int stages) =>
+        stage == 0 ? "長秒" : stage == stages - 1 ? "短秒" : "中秒";
+
     /// <summary>フォーマット欄のHDR設定の要約。</summary>
     /// <param name="format">表示中の画像のフォーマット(右パネルで指定した Bayer を含む)。</param>
     /// <returns>要約(HDRでなければ「なし」)。</returns>
