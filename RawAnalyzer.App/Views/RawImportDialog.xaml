@@ -3,8 +3,9 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:themes="clr-namespace:RawAnalyzer.App.Themes"
         Title="Rawファイルを開く"
-        Width="460" SizeToContent="Height"
+        Width="760" SizeToContent="Height"
         WindowStartupLocation="CenterOwner"
+        Loaded="OnPreviewLoaded" Closed="OnPreviewClosed"
         Background="{StaticResource PanelBrush}" Foreground="{StaticResource TextBrush}"
         ShowInTaskbar="False" ResizeMode="NoResize">
     <Window.Resources>
@@ -19,7 +20,12 @@
             <Setter Property="Margin" Value="0,3,0,0" />
         </Style>
     </Window.Resources>
-    <StackPanel>
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="288" />
+        </Grid.ColumnDefinitions>
+        <StackPanel>
         <TextBlock x:Name="FileNameText" Margin="16,12,16,0" FontWeight="SemiBold"
                    Foreground="{StaticResource TextBrush}" TextTrimming="CharacterEllipsis" />
 
@@ -197,5 +203,18 @@
                 </StackPanel>
             </StackPanel>
         </Border>
-    </StackPanel>
+        </StackPanel>
+        <Border Grid.Column="1" BorderBrush="{StaticResource BorderBrushDark}" BorderThickness="1,0,0,0"
+                Background="{StaticResource Panel2Brush}" Padding="15,12">
+            <StackPanel>
+                <TextBlock Text="プレビュー · 先頭フレーム" FontWeight="SemiBold" Foreground="{StaticResource TextBrush}" />
+                <Border Margin="0,8,0,0" Width="256" Height="256" Background="{StaticResource CanvasBrush}">
+                    <Image x:Name="PreviewImage" Stretch="Uniform" RenderOptions.BitmapScalingMode="NearestNeighbor"
+                           AutomationProperties.Name="RAW プレビュー" />
+                </Border>
+                <TextBlock x:Name="PreviewNote" Text="プレビューを準備中…" Margin="0,8,0,0"
+                           TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" />
+            </StackPanel>
+        </Border>
+    </Grid>
 </Window>

@@ -44,8 +44,8 @@ public partial class RawImportDialog : Window
     /// <summary>ダイアログを生成する。</summary>
     /// <param name="filePath">開こうとしているRawファイルのパス。</param>
     /// <param name="fileSize">
-    /// ファイルサイズ(バイト)。取得できなければ -1(照合できないことを示す)。ダイアログはファイルに触れないので、
-    /// 呼び出し側が UI スレッドの外で取って渡す(切断したネットワーク上のファイルでもダイアログの表示で固まらない)。
+    /// ファイルサイズ(バイト)。取得できなければ -1(照合できないことを示す)。呼び出し側が UI スレッドの外で取って渡す。
+    /// プレビューの読み取りはダイアログを表示してから別スレッドで行い、サイズ照合とは独立している。
     /// </param>
     /// <param name="presetStore">プリセットストア。</param>
     /// <param name="initialFormat">
@@ -299,6 +299,7 @@ public partial class RawImportDialog : Window
     {
         RawFormat? format = TryBuildFormat(out string error);
         UpdateDisclosure(applyingFormat);
+        RequestPreview(format, error);
         SyncCandidateSelection(format);
         SyncPresetSelection(format);
         if (format is null)

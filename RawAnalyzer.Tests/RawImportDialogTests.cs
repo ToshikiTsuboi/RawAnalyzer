@@ -6,6 +6,9 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
+using RawAnalyzer.App;
+using RawAnalyzer.App.Compare;
+using RawAnalyzer.App.Controls;
 using RawAnalyzer.App.Services;
 using RawAnalyzer.App.Views;
 using RawAnalyzer.Core;
@@ -115,7 +118,6 @@ public class RawImportDialogTests : IDisposable
                 }
             }
             Assert.Equal(expected, traversed);
-            WpfTestHost.CaptureIfRequested((FrameworkElement)dialog.Content, "raw-import-accessibility");
         }
         finally
         {
@@ -136,23 +138,311 @@ public class RawImportDialogTests : IDisposable
     }
 
     [Fact]
-    public Task FileSize_IsTheOnePassedIn_WithoutTouchingTheFile()
+    public Task FileSize_IsTheOnePassedIn_WithoutTouchingTheFile() => WpfTestHost.Run(async () =>
     {
-        // 残課題 2026-10-02 I1。ダイアログはコンストラクタ(UI スレッド)で FileInfo.Length を取っていたので、切断した
-        // NAS の raw を開くと SMB のタイムアウトまでウィンドウが固まった。サイズは呼び出し側が UI スレッドの外で
-        // 取って渡し、ダイアログはファイルに触れない(ここではファイルを作らずに渡したサイズで照合されることを見る)
-        return WpfTestHost.Run(() =>
+        string path = Path.Combine(_directory, "unreachable.raw");
+        FormatMemory memory = CreateMemory();
+        RawImportDialog dialog = CreateDialog(path, memory, initial: Fmt(640, 480, bitDepth: 16), size: FileSize);
+        try
         {
-            string path = Path.Combine(_directory, "unreachable.raw");
-            FormatMemory memory = CreateMemory();
-
-            RawImportDialog dialog = CreateDialog(path, memory, initial: Fmt(640, 480, bitDepth: 16), size: FileSize);
-
             Assert.False(File.Exists(path));
             Assert.Equal(FormatCandidates.Build(FileSize, ".raw", path, memory.History, null), dialog.Candidates);
-            Assert.StartsWith("✓", Find<TextBlock>(dialog, "SizeNoteText").Text);
-            Assert.True(Find<Button>(dialog, "OpenButton").IsEnabled);
-        });
+            var sizeNote = Find<TextBlock>(dialog, "SizeNoteText");
+            var previewNote = Find<TextBlock>(dialog, "PreviewNote");
+            var open = Find<Button>(dialog, "OpenButton");
+            int reads = 0;
+            int uiThread = Environment.CurrentManagedThreadId;
+            var read = dialog.ReadPreview;
+            dialog.ReadPreview = (rawPath, format, width, height, token) =>
+            {
+                Assert.NotEqual(uiThread, Environment.CurrentManagedThreadId);
+                Interlocked.Increment(ref reads);
+                return read(rawPath, format, width, height, token);
+            };
+            await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+            Assert.Equal(0, Volatile.Read(ref reads));
+            Assert.StartsWith("✓", sizeNote.Text);
+            Assert.True(open.IsEnabled);
+
+            dialog.Show();
+            await WaitForPreviewAsync(() => previewNote.Text.StartsWith("プレビューを読み取れませんでした。"));
+            Assert.Equal(1, Volatile.Read(ref reads));
+            Assert.StartsWith("✓", sizeNote.Text);
+            Assert.True(open.IsEnabled);
+        }
+        finally
+        {
+            dialog.Close();
+        }
+    });
+
+    [Fact]
+    public Task Preview_WidthChangesAndInvalidInputKeepsLastBitmap() => WpfTestHost.Run(async () =>
+    {
+        string path = CreatePreviewFile();
+        RawImportDialog dialog = CreateDialog(path, null, initial: Fmt(192, 128));
+        try
+        {
+            dialog.Show();
+            var preview = Find<Image>(dialog, "PreviewImage");
+            await WaitForPreviewAsync(() => preview.Source is not null);
+            var correct = Assert.IsAssignableFrom<BitmapSource>(preview.Source);
+            Assert.Equal((192, 128), (correct.PixelWidth, correct.PixelHeight));
+            await CaptureVisibleAsync(dialog, "import-preview-correct-width");
+
+            var width = Find<TextBox>(dialog, "WidthBox");
+            width.Text = "181";
+            await WaitForPreviewAsync(() => preview.Source is not null && preview.Source != correct);
+            var wrong = Assert.IsAssignableFrom<BitmapSource>(preview.Source);
+            Assert.Equal((181, 128), (wrong.PixelWidth, wrong.PixelHeight));
+            await CaptureVisibleAsync(dialog, "import-preview-wrong-width");
+
+            width.Text = "不正";
+            Assert.Same(wrong, preview.Source);
+            Assert.InRange(preview.Opacity, 0.01, 0.99);
+            Assert.Contains("幅は1以上の整数", Find<TextBlock>(dialog, "PreviewNote").Text);
+            Assert.False(Find<Button>(dialog, "OpenButton").IsEnabled);
+            await CaptureVisibleAsync(dialog, "import-preview-invalid");
+        }
+        finally
+        {
+            dialog.Close();
+        }
+    });
+
+    [Fact]
+    public Task Preview_ShortFileShowsOnlyCompleteRowsAndKeepsExpectedShape() => WpfTestHost.Run(async () =>
+    {
+        const int width = 8;
+        const int height = 6;
+        string path = CreateFile("short.raw", width * 2 * 3 + 1);
+        RawImportDialog dialog = CreateDialog(path, null, initial: Fmt(width, height));
+        try
+        {
+            dialog.Show();
+            var preview = Find<Image>(dialog, "PreviewImage");
+            await WaitForPreviewAsync(() => preview.Source is not null);
+            var bitmap = Assert.IsAssignableFrom<BitmapSource>(preview.Source);
+            Assert.Equal((width, height), (bitmap.PixelWidth, bitmap.PixelHeight));
+            Assert.Contains("3/6 行", Find<TextBlock>(dialog, "PreviewNote").Text);
+            byte[] pixels = new byte[width * height * 4];
+            bitmap.CopyPixels(pixels, width * 4, 0);
+            Assert.Equal(255, pixels[3]);
+            Assert.Equal(0, pixels[3 * width * 4 + 3]);
+            Assert.False(Find<Button>(dialog, "OpenButton").IsEnabled);
+        }
+        finally
+        {
+            dialog.Close();
+        }
+    });
+
+    [Fact]
+    public Task Preview_BlockedReadKeepsOnlyLatestFormatAndCannotOverwriteIt() => WpfTestHost.Run(async () =>
+    {
+        string path = Path.Combine(_directory, "blocked.raw");
+        RawImportDialog dialog = CreateDialog(path, null, initial: Fmt(192, 128), size: 192L * 128 * 2);
+        var firstStarted = new TaskCompletionSource<CancellationToken>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseFirst = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var readWidths = new System.Collections.Concurrent.ConcurrentQueue<int>();
+        dialog.ReadPreview = (_, format, _, _, token) =>
+        {
+            readWidths.Enqueue(format.Width);
+            if (format.Width == 192)
+            {
+                firstStarted.SetResult(token);
+                releaseFirst.Task.WaitAsync(TimeSpan.FromSeconds(10)).GetAwaiter().GetResult();
+            }
+            return new RawPreview(format.Width, 1, new ushort[format.Width], 1, 1);
+        };
+
+        try
+        {
+            dialog.Show();
+            CancellationToken firstToken = await firstStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            var width = Find<TextBox>(dialog, "WidthBox");
+            width.Text = "180";
+            await Task.Delay(200);
+            width.Text = "179";
+            await Task.Delay(200);
+            Assert.True(firstToken.IsCancellationRequested);
+            Assert.Equal(new[] { 192 }, readWidths.ToArray());
+            var preview = Find<Image>(dialog, "PreviewImage");
+            var published = new List<int>();
+            var descriptor = System.ComponentModel.DependencyPropertyDescriptor.FromProperty(Image.SourceProperty, typeof(Image));
+            EventHandler capture = (_, _) =>
+            {
+                if (preview.Source is BitmapSource bitmap)
+                {
+                    published.Add(bitmap.PixelWidth);
+                }
+            };
+            descriptor.AddValueChanged(preview, capture);
+            try
+            {
+                releaseFirst.SetResult();
+                await WaitForPreviewAsync(() => preview.Source is not null);
+                Assert.Equal(new[] { 192, 179 }, readWidths.ToArray());
+                Assert.Equal(new[] { 179 }, published);
+            }
+            finally
+            {
+                descriptor.RemoveValueChanged(preview, capture);
+            }
+        }
+        finally
+        {
+            releaseFirst.TrySetResult();
+            dialog.Close();
+        }
+    });
+
+    [Fact]
+    public Task Preview_CloseCancelsWithoutWaitingAndNextDialogWaitsForTheReadSlot() => WpfTestHost.Run(async () =>
+    {
+        string path = Path.Combine(_directory, "blocked.raw");
+        RawImportDialog first = CreateDialog(path, null, initial: Fmt(2, 2), size: 8);
+        RawImportDialog next = CreateDialog(path, null, initial: Fmt(2, 2), size: 8);
+        var started = new TaskCompletionSource<CancellationToken>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        int nextReads = 0;
+        first.ReadPreview = (_, _, _, _, token) =>
+        {
+            started.SetResult(token);
+            release.Task.WaitAsync(TimeSpan.FromSeconds(10)).GetAwaiter().GetResult();
+            return new RawPreview(2, 2, [0, 0, 0, 0], 2, 1);
+        };
+        next.ReadPreview = (_, _, _, _, _) =>
+        {
+            Interlocked.Increment(ref nextReads);
+            return new RawPreview(2, 2, [0, 0, 0, 0], 2, 1);
+        };
+
+        try
+        {
+            first.Show();
+            CancellationToken token = await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            first.Close();
+            Assert.True(token.IsCancellationRequested);
+            Assert.False(first.IsVisible);
+            next.Show();
+            await Task.Delay(250);
+            Assert.Equal(0, Volatile.Read(ref nextReads));
+            release.SetResult();
+            await WaitForPreviewAsync(() => Find<Image>(next, "PreviewImage").Source is not null);
+            Assert.Null(Find<Image>(first, "PreviewImage").Source);
+            Assert.Equal(1, Volatile.Read(ref nextReads));
+        }
+        finally
+        {
+            release.TrySetResult();
+            first.Close();
+            next.Close();
+        }
+    });
+
+    private string CreatePreviewFile()
+    {
+        string path = Path.Combine(_directory, "sample_192x128_12bit.raw");
+        using var writer = new BinaryWriter(File.Create(path));
+        for (int y = 0; y < 128; y++)
+        {
+            for (int x = 0; x < 192; x++)
+            {
+                int radiusSquared = (x - 96) * (x - 96) + (y - 64) * (y - 64);
+                int value = 160 + x * 8 + y * 4;
+                if (radiusSquared < 42 * 42)
+                {
+                    value += 900;
+                }
+                if (x is >= 16 and < 56 && y is >= 35 and < 93)
+                {
+                    value += ((x / 8 + y / 8) & 1) * 600;
+                }
+                writer.Write((ushort)value);
+            }
+        }
+        return path;
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public Task Preview_WorksFromNormalOpenAndCompareAdd(bool comparing) => WpfTestHost.Run(async () =>
+    {
+        string path = CreatePreviewFile();
+        string settings = Path.Combine(_directory, "settings");
+        new RecentFilesStore(settings).Add(path);
+        var window = new MainWindow(settings) { ShowActivated = false };
+        var compare = Find<CompareView>(window, "CompareArea");
+        var viewport = Find<ImageViewport>(window, "Viewport");
+        RawImportDialog? shown = null;
+        EventHandler? closeOnTimeout = null;
+        var watchdog = new DispatcherTimer { Interval = TimeSpan.FromSeconds(8) };
+        RawImportDialog? OwnedImport() => window.OwnedWindows.OfType<RawImportDialog>().SingleOrDefault();
+        closeOnTimeout = (_, _) =>
+        {
+            watchdog.Stop();
+            OwnedImport()?.Close();
+        };
+        watchdog.Tick += closeOnTimeout;
+        try
+        {
+            window.Show();
+            await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+            watchdog.Start();
+            Task<bool>? add = null;
+            if (comparing)
+            {
+                WpfTestHost.Toggle(Find<ToggleButton>(window, "CompareToolToggle"));
+                // ShowDialog のネストしたフレームの中でテストがプレビューを操作できるように送る。
+                add = window.Dispatcher.InvokeAsync(() => compare.AddPaneFromPathAsync(path)).Task.Unwrap();
+            }
+            else
+            {
+                var recent = Find<ItemsControl>(window, "EmptyCanvasRecent");
+                var item = Assert.IsType<ContentPresenter>(recent.ItemContainerGenerator.ContainerFromIndex(0));
+                WpfTestHost.Invoke(Assert.IsType<Button>(VisualTreeHelper.GetChild(item, 0)));
+            }
+
+            await WaitForPreviewAsync(() => (shown = OwnedImport())?.IsLoaded == true);
+            RawImportDialog dialog = Assert.IsType<RawImportDialog>(shown);
+            await WaitForPreviewAsync(() => Find<Image>(dialog, "PreviewImage").Source is not null);
+            var bitmap = Assert.IsAssignableFrom<BitmapSource>(Find<Image>(dialog, "PreviewImage").Source);
+            Assert.Equal((192, 128), (bitmap.PixelWidth, bitmap.PixelHeight));
+            WpfTestHost.Invoke(Find<Button>(dialog, "OpenButton"));
+            if (add is not null)
+            {
+                Assert.True(await add.WaitAsync(TimeSpan.FromSeconds(5)));
+                Assert.Equal(192, compare.ActivePane?.Pane?.Image.Width);
+            }
+            else
+            {
+                await WaitForPreviewAsync(() => viewport.Image is not null);
+                Assert.Equal(192, viewport.Image!.Width);
+            }
+        }
+        finally
+        {
+            watchdog.Stop();
+            watchdog.Tick -= closeOnTimeout;
+            if (shown?.IsVisible == true)
+            {
+                shown.Close();
+            }
+            await compare.CloseAllAsync();
+            window.Close();
+        }
+    });
+
+    private static async Task WaitForPreviewAsync(Func<bool> isReady)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (!isReady())
+        {
+            Assert.False(timeout.IsCancellationRequested, "プレビューが時間内に更新されませんでした。");
+            await Task.Delay(20);
+        }
     }
 
     [Fact]
@@ -362,12 +652,12 @@ public class RawImportDialogTests : IDisposable
     [Fact]
     public Task Disclosure_ShowsHdrFieldsAndOpensNonDefaultPresetOnlyOnApply() => WpfTestHost.Run(async () =>
     {
-        string path = CreateFile("disclosure.raw", FileSize);
+        string path = CreatePreviewFile();
         new FormatPresetStore(Path.Combine(_directory, "settings")).Save(new Dictionary<string, RawFormat>
         {
-            ["SensorA"] = Fmt(640, 480) with { Packing = BitPacking.Msb, Endianness = Endianness.Big },
+            ["SensorA"] = Fmt(192, 128) with { Packing = BitPacking.Msb, Endianness = Endianness.Big },
         });
-        RawImportDialog dialog = CreateDialog(path, null, initial: Fmt(640, 480));
+        RawImportDialog dialog = CreateDialog(path, null, initial: Fmt(192, 128));
         try
         {
             dialog.Show();
@@ -376,24 +666,32 @@ public class RawImportDialogTests : IDisposable
             var hdr = Find<Grid>(dialog, "HdrDetails");
             Assert.False(details.IsExpanded);
             Assert.Equal(Visibility.Collapsed, hdr.Visibility);
-            CaptureIfRequested(dialog, "import-basic");
+            var image = Find<Image>(dialog, "PreviewImage");
+            await WaitForPreviewAsync(() => image.Source is not null);
+            await CaptureVisibleAsync(dialog, "import-basic");
 
+            ImageSource? previous = image.Source;
             Find<ComboBox>(dialog, "PresetCombo").SelectedItem = "SensorA";
             Assert.True(details.IsExpanded);
-            CaptureIfRequested(dialog, "import-details");
+            await WaitForPreviewAsync(() => image.Source is not null && image.Source != previous);
+            await CaptureVisibleAsync(dialog, "import-details");
             var header = Assert.IsType<ToggleButton>(details.Template.FindName("HeaderSite", details));
             WpfTestHost.Toggle(header);
             Assert.False(details.IsExpanded);
-            Find<TextBox>(dialog, "WidthBox").Text = "641";
+            // プリセットで開いた詳細は再入力で開き直さない。
+            Find<TextBox>(dialog, "HeightBox").Text = "127";
             Assert.False(details.IsExpanded);
             Assert.Equal(1, Find<ComboBox>(dialog, "PackingCombo").SelectedIndex);
+            Find<TextBox>(dialog, "HeightBox").Text = "128";
 
             var layout = Find<ComboBox>(dialog, "HdrCombo");
             layout.SelectedIndex = 2;
             Assert.True(hdr.IsVisible);
             var lineBlock = Find<TextBox>(dialog, "HdrLineBlockBox");
+            previous = image.Source;
             lineBlock.Text = "2";
-            CaptureIfRequested(dialog, "import-hdr-line-interleaved");
+            await WaitForPreviewAsync(() => image.Source is not null && image.Source != previous);
+            await CaptureVisibleAsync(dialog, "import-hdr-line-interleaved");
             layout.SelectedIndex = 0;
             Assert.False(hdr.IsVisible);
             Assert.Equal("2", lineBlock.Text);
@@ -620,7 +918,6 @@ public class RawImportDialogTests : IDisposable
             Assert.DoesNotContain(dialog.Candidates, c => c.Source == FormatCandidateSource.SameSizeMemory);
             Assert.Equal("640", Find<TextBox>(dialog, "WidthBox").Text);
             Assert.Equal(0, Find<ComboBox>(dialog, "BayerCombo").SelectedIndex);
-            CaptureIfRequested(dialog, "import-forgotten");
             dialog.Close();
 
             // 記憶がないサイズでは押せない
@@ -657,5 +954,11 @@ public class RawImportDialogTests : IDisposable
         encoder.Frames.Add(BitmapFrame.Create(bitmap));
         using var output = File.Create(Path.Combine(directory, $"{name}-dialog.png"));
         encoder.Save(output);
+    }
+
+    private static async Task CaptureVisibleAsync(Window window, string name)
+    {
+        await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+        WpfTestHost.CaptureIfRequested((FrameworkElement)window.Content, $"{name}-dialog");
     }
 }
