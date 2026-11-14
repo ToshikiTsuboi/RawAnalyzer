@@ -77,6 +77,17 @@ public class PaneNameDisplayTests
         Assert.Equal("…👩‍🔬ae\u0301…", Fit(display, 5));
     }
 
+    [Fact]
+    public void ForWidth_KeepsAnEndWhenEllipsisSavesNoSpace()
+    {
+        PaneNameDisplay dark = PaneNameDisplay.ForFiles(MixedNames)[2];
+        Assert.Equal("dark_a_1920x1080_12bit…", Fit(dark, dark.Difference.Length + 2));
+
+        var suffix = new PaneNameDisplay("prefix_", "A", "i");
+        double MeasureWideEllipsis(string text) => text.Length + text.Count(c => c == '…');
+        Assert.Equal("…Ai", suffix.ForWidth(4, MeasureWideEllipsis(suffix.FullName), MeasureWideEllipsis).FullName);
+    }
+
     private static string Fit(PaneNameDisplay display, int width) =>
         display.ForWidth(width, Measure(display.FullName), Measure).FullName;
 

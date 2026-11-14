@@ -17,6 +17,8 @@ internal readonly record struct PaneNameDisplay(string Prefix, string Difference
         var (prefixText, difference, suffixText) = this;
         int[] prefixStarts = StringInfo.ParseCombiningCharacters(prefixText);
         int[] suffixStarts = StringInfo.ParseCombiningCharacters(suffixText);
+        const string ellipsis = "…";
+        double ellipsisWidth = measure(ellipsis);
         int prefixCount = 0;
         int suffixCount = 0;
         PaneNameDisplay shown = Slice(0, 0);
@@ -54,9 +56,12 @@ internal readonly record struct PaneNameDisplay(string Prefix, string Difference
 
         PaneNameDisplay Slice(int left, int right)
         {
-            string prefix = left == prefixStarts.Length ? prefixText
-                : left == 0 ? "…" : "…" + prefixText[prefixStarts[^left]..];
-            string suffix = right == suffixStarts.Length ? suffixText : suffixText[..suffixStarts[right]] + "…";
+            int prefixEnd = left == 0 ? prefixText.Length : prefixStarts[^left];
+            int suffixStart = right == suffixStarts.Length ? suffixText.Length : suffixStarts[right];
+            string prefix = prefixEnd > 0 && measure(prefixText[..prefixEnd]) > ellipsisWidth
+                ? ellipsis + prefixText[prefixEnd..] : prefixText;
+            string suffix = suffixStart < suffixText.Length && measure(suffixText[suffixStart..]) > ellipsisWidth
+                ? suffixText[..suffixStart] + ellipsis : suffixText;
             return new PaneNameDisplay(prefix, difference, suffix);
         }
     }

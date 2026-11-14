@@ -82,6 +82,7 @@ public partial class ComparePaneView : UserControl
                 CursorLeft?.Invoke(this);
             }
         };
+        Viewport.KeyboardCursorCleared += () => CursorLeft?.Invoke(this);
         Viewport.MouseLeave += (_, _) => CursorLeft?.Invoke(this);
     }
 

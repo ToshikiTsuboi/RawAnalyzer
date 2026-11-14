@@ -426,12 +426,13 @@ public class MainWindowPhaseOneUiTests
         }
     });
 
-    [Fact]
-    public Task CompareCursor_ReportsSynchronizedCodesAndClearsWhenComparisonEnds() => WpfTestHost.Run(async () =>
+    [Theory]
+    [InlineData(40)]
+    [InlineData(20)]
+    public Task CompareCursor_ReportsSynchronizedEdgeCodesAndClearsWhenComparisonEnds(int secondSize) => WpfTestHost.Run(async () =>
     {
         using var settings = new TemporaryDirectory();
         Directory.CreateDirectory(settings.Path);
-        var format = new RawFormat { Width = 16, Height = 16, BitDepth = 12 };
         var window = new MainWindow(settings.Path) { Width = 720, ShowActivated = false };
         var compare = (CompareView)window.FindName("CompareArea");
         try
@@ -442,13 +443,15 @@ public class MainWindowPhaseOneUiTests
             var add = (Button)compare.FindName("AddImageButton");
             for (int i = 0; i < 2; i++)
             {
+                int size = i == 0 ? 40 : secondSize;
+                var format = new RawFormat { Width = size, Height = size, BitDepth = 12 };
                 string path = Path.Combine(settings.Path, $"cursor-{i}.raw");
                 using (var file = new BinaryWriter(File.Create(path)))
                 {
-                    ushort value = (ushort)(1432 - 34 * i);
-                    for (int pixel = 0; pixel < format.Width * format.Height; pixel++)
+                    file.Write((ushort)(1432 - 34 * i)); // 左上だけに値を置いて、読んだ位置も検証する。
+                    for (int pixel = 1; pixel < size * size; pixel++)
                     {
-                        file.Write(value);
+                        file.Write((ushort)0);
                     }
                 }
 
@@ -460,18 +463,21 @@ public class MainWindowPhaseOneUiTests
 
             await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
             var grid = (UniformGrid)compare.FindName("PaneGrid");
-            var second = (ComparePaneView)grid.Children[1];
-            ImageViewportTests.PressWithControl(second.ViewportControl, Key.Right);
+            var first = (ComparePaneView)grid.Children[0];
+            for (int step = 0; step <= 40; step++)
+            {
+                ImageViewportTests.PressWithControl(first.ViewportControl, Key.Left);
+                ImageViewportTests.PressWithControl(first.ViewportControl, Key.Up);
+            }
             var status = (TextBlock)window.FindName("CompareCursorStatus");
-            await WaitUntilAsync(() => status.Text.EndsWith("A 1432 · B 1398 · Δ −34"));
-            Assert.Matches(@"^x \d+ · y \d+ · A 1432 · B 1398 · Δ −34$", status.Text);
+            await WaitUntilAsync(() => status.Text.StartsWith("x 0 · y 0 · "));
+            Assert.Equal("x 0 · y 0 · A 1432 · B 1398 · Δ −34", status.Text);
             Assert.True(status.IsVisible);
-            WpfTestHost.CaptureIfRequested((FrameworkElement)window.Content, "compare-cursor-status-720");
 
-            ImageViewportTests.PressWithControl(second.ViewportControl, Key.Escape);
+            ImageViewportTests.PressWithControl(first.ViewportControl, Key.Escape);
             Assert.Empty(status.Text);
             Assert.False(status.IsVisible);
-            ImageViewportTests.PressWithControl(second.ViewportControl, Key.Right);
+            ImageViewportTests.PressWithControl(first.ViewportControl, Key.Right);
             await WaitUntilAsync(() => status.IsVisible);
 
             WpfTestHost.Invoke((Button)compare.FindName("ExitCompareButton"));

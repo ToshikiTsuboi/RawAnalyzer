@@ -282,7 +282,7 @@ public sealed partial class ImageViewport
 
         _keyCursorVisible = false;
         InvalidateVisual();
-        CursorPixelChanged?.Invoke(this, new CursorPixelEventArgs { IsInsideImage = false });
+        KeyboardCursorCleared?.Invoke();
         return true;
     }
 

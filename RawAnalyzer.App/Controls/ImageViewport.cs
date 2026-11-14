@@ -199,6 +199,8 @@ public sealed partial class ImageViewport : FrameworkElement
     /// <summary>カーソル下の画素が変化したときに発火する。</summary>
     public event EventHandler<CursorPixelEventArgs>? CursorPixelChanged;
 
+    internal event Action? KeyboardCursorCleared;
+
     /// <summary>ROIが確定・解除されたときに発火する。</summary>
     public event EventHandler? RoiChanged;
 

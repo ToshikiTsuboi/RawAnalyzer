@@ -639,7 +639,7 @@ public partial class CompareView : UserControl
                 string text = await Task.Run(() => CompareCursorReadout.Format(request.X, request.Y,
                     request.Samples.Select(sample => (sample.Label, sample.Pixel is { } pixel
                         ? CursorReadout.ReadCode(sample.Pane.Image, sample.Pane.Format, pixel.X, pixel.Y, frame: 0)
-                        : null)).ToArray()));
+                        : null, sample.Pane.Format.BitDepth)).ToArray()));
                 if (ReferenceEquals(_cursorRequest, request))
                 {
                     _cursorRequest = null;
