@@ -10,6 +10,10 @@
         AllowDrop="True" Drop="OnFileDrop" DragOver="OnFileDragOver" PreviewDragLeave="OnFileDragLeave">
     <Window.Resources>
         <BooleanToVisibilityConverter x:Key="BoolToVis" />
+        <Style x:Key="MainViewAdjustmentSection" TargetType="Expander" BasedOn="{StaticResource {x:Type Expander}}">
+            <Setter Property="IsEnabled" Value="{Binding CanUseMainView}" />
+            <Setter Property="Visibility" Value="{Binding ShowMainViewTools, Converter={StaticResource BoolToVis}}" />
+        </Style>
 
         <Style TargetType="Button" x:Key="AccentButton" BasedOn="{StaticResource ToolButton}">
             <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}" />
@@ -174,9 +178,9 @@
             </MenuItem>
             <MenuItem Header="処理(_P)">
                 <MenuItem Header="自動コントラスト (0.35%クリップ)" Click="OnAutoContrastClick"
-                          IsEnabled="{Binding CanUseMainView}" />
+                          IsEnabled="{Binding CanUseAdjustPanel}" />
                 <MenuItem Header="表示調整をリセット" Click="OnResetDisplayClick"
-                          IsEnabled="{Binding CanUseMainView}" />
+                          IsEnabled="{Binding CanUseAdjustPanel}" />
                 <Separator />
                 <MenuItem Header="AWB (グレーワールド)" Click="OnGrayWorldClick"
                           IsEnabled="{Binding CanUseMainView}" />
@@ -917,35 +921,38 @@
                                    TextWrapping="Wrap" Foreground="{StaticResource AccentBrush}" />
                     </Border>
                     <ScrollViewer VerticalScrollBarVisibility="Auto">
-                        <StackPanel IsEnabled="{Binding CanUseAdjustPanel}">
-                        <Expander x:Name="DisplaySection" Header="表示調整">
+                        <StackPanel>
+                        <Expander x:Name="DisplaySection" Header="{Binding DisplayAdjustmentTitle}"
+                                  IsEnabled="{Binding CanUseAdjustPanel}">
                             <StackPanel>
-                                <!-- 範囲はVM側の定義を参照する(二重定義でずれないように) -->
-                                <controls:NumericSliderRow Label="ゲイン" Value="{Binding GainDb}"
-                                                           Minimum="{Binding MinGainDb}"
-                                                           Maximum="{Binding MaxGainDb}" Step="0.5"
-                                                           Decimals="1" DefaultValue="0"
-                                                           TickFrequency="6" Unit="dB"
-                                                           Note="{Binding GainNote}" />
-                                <controls:NumericSliderRow Label="ガンマ" Value="{Binding Gamma}"
-                                                           Minimum="0.2" Maximum="3" Step="0.05"
-                                                           Decimals="2" DefaultValue="1"
-                                                           TickFrequency="0.5" />
-                                <controls:NumericSliderRow Label="コントラスト" Value="{Binding Contrast}"
-                                                           Minimum="0" Maximum="3" Step="0.05"
-                                                           Decimals="2" DefaultValue="1"
-                                                           TickFrequency="0.5" />
-                                <controls:NumericSliderRow Label="黒レベル" Value="{Binding BlackLevel}"
-                                                           Minimum="0" Maximum="{Binding BlackLevelMax}"
-                                                           Step="1" Decimals="0" DefaultValue="0"
-                                                           Unit="LSB" />
-                                <controls:NumericSliderRow Label="白レベル" Value="{Binding WhiteLevel}"
-                                                           Minimum="0" Maximum="{Binding BlackLevelMax}"
-                                                           Step="1" Decimals="0"
-                                                           DefaultValue="{Binding BlackLevelMax}"
-                                                           Unit="LSB" />
-                                <DockPanel Margin="0,6,0,0"
-                                           Visibility="{Binding HdrTargetVisible,
+                                <StackPanel DataContext="{Binding DisplayAdjustmentSource}">
+                                    <!-- 範囲はVM側の定義を参照する(二重定義でずれないように) -->
+                                    <controls:NumericSliderRow x:Name="DisplayGainRow" Label="ゲイン" Value="{Binding GainDb}"
+                                                               Minimum="{Binding MinGainDb}"
+                                                               Maximum="{Binding MaxGainDb}" Step="0.5"
+                                                               Decimals="1" DefaultValue="0"
+                                                               TickFrequency="6" Unit="dB"
+                                                               Note="{Binding GainNote}" />
+                                    <controls:NumericSliderRow x:Name="DisplayGammaRow" Label="ガンマ" Value="{Binding Gamma}"
+                                                               Minimum="0.2" Maximum="3" Step="0.05"
+                                                               Decimals="2" DefaultValue="1"
+                                                               TickFrequency="0.5" />
+                                    <controls:NumericSliderRow x:Name="DisplayContrastRow" Label="コントラスト" Value="{Binding Contrast}"
+                                                               Minimum="0" Maximum="3" Step="0.05"
+                                                               Decimals="2" DefaultValue="1"
+                                                               TickFrequency="0.5" />
+                                    <controls:NumericSliderRow x:Name="DisplayBlackRow" Label="黒レベル" Value="{Binding BlackLevel}"
+                                                               Minimum="0" Maximum="{Binding BlackLevelMax}"
+                                                               Step="1" Decimals="0" DefaultValue="0"
+                                                               Unit="LSB" />
+                                    <controls:NumericSliderRow x:Name="DisplayWhiteRow" Label="白レベル" Value="{Binding WhiteLevel}"
+                                                               Minimum="0" Maximum="{Binding BlackLevelMax}"
+                                                               Step="1" Decimals="0"
+                                                               DefaultValue="{Binding BlackLevelMax}"
+                                                               Unit="LSB" />
+                                </StackPanel>
+                                <DockPanel x:Name="HdrAdjustTargetRow" Margin="0,6,0,0"
+                                           Visibility="{Binding ShowHdrAdjustTarget,
                                                Converter={StaticResource BoolToVis}}">
                                     <TextBlock Style="{StaticResource RowLabel}" Text="調整対象"
                                                Width="64" VerticalAlignment="Center" />
@@ -953,16 +960,17 @@
                                               DropDownClosed="OnSelectorDropDownClosed" />
                                 </DockPanel>
                                 <WrapPanel x:Name="DisplayActionRow" Margin="0,8,0,0">
-                                    <Button Style="{StaticResource RightPanelButton}" Content="自動 (0.35%クリップ)"
+                                    <Button x:Name="DisplayAutoButton" Style="{StaticResource RightPanelButton}" Content="自動 (0.35%クリップ)"
                                             Click="OnAutoContrastClick" FontSize="{x:Static themes:ThemeTypography.FontSizeBody}" />
-                                    <Button Style="{StaticResource RightPanelButton}" Content="リセット"
+                                    <Button x:Name="DisplayResetButton" Style="{StaticResource RightPanelButton}" Content="リセット"
                                             Tag="{x:Static themes:IconGlyphs.Refresh}" ContentTemplate="{StaticResource IconLabelContent}"
                                             Click="OnResetDisplayClick" FontSize="{x:Static themes:ThemeTypography.FontSizeBody}" />
                                 </WrapPanel>
                             </StackPanel>
                         </Expander>
 
-                        <Expander x:Name="HistogramSection" Header="ヒストグラム">
+                        <Expander x:Name="HistogramSection" Header="ヒストグラム"
+                                  Style="{StaticResource MainViewAdjustmentSection}">
                             <StackPanel>
                                 <WrapPanel Margin="0,0,0,8">
                                     <CheckBox Content="ch" FontSize="{x:Static themes:ThemeTypography.FontSizeBody}"
@@ -1074,7 +1082,8 @@
                             </StackPanel>
                         </Expander>
 
-                        <Expander x:Name="WhiteBalanceSection" Header="ホワイトバランス">
+                        <Expander x:Name="WhiteBalanceSection" Header="ホワイトバランス"
+                                  Style="{StaticResource MainViewAdjustmentSection}">
                             <StackPanel>
                                 <controls:NumericSliderRow Label="Rゲイン" Value="{Binding WbGainR}"
                                                            Minimum="0.5" Maximum="4" Step="0.01"
@@ -1106,7 +1115,8 @@
                             </StackPanel>
                         </Expander>
 
-                        <Expander x:Name="ColorMatrixSection" Header="カラーマトリクス (現像時)">
+                        <Expander x:Name="ColorMatrixSection" Header="カラーマトリクス (現像時)"
+                                  Style="{StaticResource MainViewAdjustmentSection}">
                             <StackPanel IsEnabled="{Binding HasImage}">
                                 <UniformGrid Columns="3" Rows="3">
                                     <TextBox x:Name="M11Box" Text="1.00" FontSize="{x:Static themes:ThemeTypography.FontSizeBody}" Margin="1"
@@ -1138,7 +1148,8 @@
                             </StackPanel>
                         </Expander>
 
-                        <Expander x:Name="FormatSection" Header="フォーマット">
+                        <Expander x:Name="FormatSection" Header="フォーマット"
+                                  Style="{StaticResource MainViewAdjustmentSection}">
                             <StackPanel>
                                 <DockPanel Margin="0,2">
                                     <TextBlock Style="{StaticResource RowLabel}" Text="ビット深度" />

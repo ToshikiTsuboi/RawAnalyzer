@@ -140,6 +140,8 @@ public partial class MainWindow : Window
         CompareArea.PaneLoader = LoadComparePaneAsync;
         CompareArea.LayoutMode = _session.CompareLayoutMode;
         CompareArea.StatusChanged += () => _vm.UpdateCompareStatus(CompareArea.PaneCount, CompareArea.ActivePaneStatus);
+        CompareArea.ActiveDisplayChanged += RefreshCompareAdjustment;
+        _vm.CompareAdjustment.Edited += OnCompareAdjustmentEdited;
         CompareArea.CursorReadoutChanged += text => CompareCursorStatus.Text = text;
         CompareArea.ExitRequested += async (_, _) => await ExitCompareModeAsync();
         CompareArea.AddRefused += reason =>

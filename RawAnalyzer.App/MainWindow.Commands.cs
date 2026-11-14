@@ -35,7 +35,7 @@ public partial class MainWindow
 
         Key key = e.Key == Key.System ? e.SystemKey : e.Key;
         AppCommand? command = ShortcutRouting.Resolve(
-            Commands, key, Keyboard.Modifiers, ShortcutRouting.Classify(Keyboard.FocusedElement));
+            Commands, key, e.KeyboardDevice.Modifiers, ShortcutRouting.Classify(Keyboard.FocusedElement));
         if (command is null)
         {
             return;
@@ -150,14 +150,11 @@ public partial class MainWindow
     /// <summary>メインの画像・通常表示を対象にするコマンドの理由。比較モードなら画像の有無より先に示す。</summary>
     private string MainViewReason() => CommandDisabledReasons.ForMainView(_compareMode);
 
-    /// <summary>
-    /// 右の調整パネルの切替(ヒストグラムの表示の切替)の前提。比較モード中はパネルごと無効にするので、キー・パレットも断る。
-    /// 通常表示に画像があるときだけ切り替えられる。
-    /// </summary>
+    /// <summary>現在の表示調整の対象があるか。</summary>
     private bool AdjustPanelAvailable() => _vm.CanUseAdjustPanel;
 
-    /// <summary>右の調整パネルの切替を実行できない理由。</summary>
-    private string AdjustPanelReason() => _vm.AdjustPanelDisabledReason ?? "";
+    /// <summary>自動コントラスト・表示調整のリセットを実行できない理由。</summary>
+    private string AdjustPanelReason() => _compareMode ? CommandDisabledReasons.NoActiveComparePane : MainViewReason();
 
     /// <summary>フレーム送り・再生(送れるフレームがあり、比較モードでないこと)の理由。</summary>
     private string NoSequenceReason() => CommandDisabledReasons.ForSequence(_vm.HasImage, _compareMode);
@@ -440,8 +437,8 @@ public partial class MainWindow
                 Title = "自動コントラスト (0.35%クリップ)",
                 Key = Key.A,
                 Modifiers = ModifierKeys.Control,
-                CanExecute = MainViewAvailable,
-                DisabledReason = MainViewReason,
+                CanExecute = AdjustPanelAvailable,
+                DisabledReason = AdjustPanelReason,
                 Execute = () => OnAutoContrastClick(this, empty),
             },
             new()
@@ -451,8 +448,8 @@ public partial class MainWindow
                 Title = "表示調整をリセット",
                 Key = Key.R,
                 Modifiers = ModifierKeys.Control | ModifierKeys.Shift,
-                CanExecute = MainViewAvailable,
-                DisabledReason = MainViewReason,
+                CanExecute = AdjustPanelAvailable,
+                DisabledReason = AdjustPanelReason,
                 Execute = () => OnResetDisplayClick(this, empty),
             },
             new()
@@ -656,8 +653,8 @@ public partial class MainWindow
                 Id = "hist-log",
                 Category = "解析",
                 Title = "ヒストグラムのlog表示切替",
-                CanExecute = AdjustPanelAvailable,
-                DisabledReason = AdjustPanelReason,
+                CanExecute = MainViewAvailable,
+                DisabledReason = MainViewReason,
                 Execute = () => _vm.HistogramIsLog = !_vm.HistogramIsLog,
             },
             new()
@@ -665,8 +662,8 @@ public partial class MainWindow
                 Id = "hist-cumulative",
                 Category = "解析",
                 Title = "累積ヒストグラム切替",
-                CanExecute = AdjustPanelAvailable,
-                DisabledReason = AdjustPanelReason,
+                CanExecute = MainViewAvailable,
+                DisabledReason = MainViewReason,
                 Execute = () => _vm.HistogramIsCumulative = !_vm.HistogramIsCumulative,
             },
             new()
@@ -674,8 +671,8 @@ public partial class MainWindow
                 Id = "hist-channel",
                 Category = "解析",
                 Title = "チャネル別ヒストグラム切替",
-                CanExecute = AdjustPanelAvailable,
-                DisabledReason = AdjustPanelReason,
+                CanExecute = MainViewAvailable,
+                DisabledReason = MainViewReason,
                 Execute = () => _vm.HistogramByChannel = !_vm.HistogramByChannel,
             },
             new()

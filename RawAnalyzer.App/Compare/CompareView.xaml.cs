@@ -1,5 +1,6 @@
 ﻿using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Threading;
 using RawAnalyzer.App.Rendering;
 using RawAnalyzer.App.Services;
@@ -99,6 +100,8 @@ public partial class CompareView : UserControl
     public event EventHandler? ExitRequested;
 
     internal event Action? StatusChanged;
+    internal event Action? ActiveDisplayChanged;
+    internal ComparePaneView? ActivePane => _active;
     internal event Action<string>? CursorReadoutChanged;
     internal ComparePaneStatus? ActivePaneStatus => _lastStatus.Active;
 
@@ -184,6 +187,7 @@ public partial class CompareView : UserControl
         }
 
         _closing = true;
+        SetActive(null);
         ClearCursor();
         _loading = false;
         UpdateAddControls();
@@ -208,7 +212,6 @@ public partial class CompareView : UserControl
         {
             _panes.Clear();
             PaneGrid.Children.Clear();
-            _active = null;
             _fitBase = null;
             _closing = false;
             Relayout();
@@ -334,7 +337,7 @@ public partial class CompareView : UserControl
     {
         var view = new ComparePaneView();
         view.CloseRequested += OnPaneCloseRequested;
-        view.ActivateRequested += SetActive;
+        view.ActivateRequested += ActivatePane;
         view.ViewChanged += OnPaneViewChanged;
         view.CursorMoved += OnPaneCursorMoved;
         view.CursorLeft += OnPaneCursorLeft;
@@ -353,6 +356,10 @@ public partial class CompareView : UserControl
             UpdateFileNames();
             UpdateGridDimensions();
             UpdateStatus();
+            if (ReferenceEquals(_active, view))
+            {
+                ActiveDisplayChanged?.Invoke();
+            }
         };
         _panes.Add(view);
         PaneGrid.Children.Add(view);
@@ -699,6 +706,7 @@ public partial class CompareView : UserControl
         }
 
         RefreshChips();
+        ActiveDisplayChanged?.Invoke();
     }
 
     private void OnAlignConditionsClick(object sender, RoutedEventArgs e)
@@ -799,18 +807,36 @@ public partial class CompareView : UserControl
 
     private void SetActive(ComparePaneView? view)
     {
+        if ((_closing && view is not null) || ReferenceEquals(_active, view))
+        {
+            return;
+        }
+
+        _active?.CancelAutoContrast();
         _active = view;
         foreach (ComparePaneView pane in _panes)
         {
             pane.IsActive = ReferenceEquals(pane, view);
         }
         UpdateStatus();
+        ActiveDisplayChanged?.Invoke();
+    }
+
+    private void ActivatePane(ComparePaneView view)
+    {
+        if (!ReferenceEquals(_active, view))
+        {
+            // PreviewMouseDown はフォーカスの移動より先に届くので、編集中の数値は旧ペインで確定する。
+            Controls.NumericSliderRow.CommitPendingEdit(Keyboard.FocusedElement);
+            SetActive(view);
+        }
     }
 
     /// <summary>開いているペインの見出しと配置を更新する。</summary>
     private void Relayout()
     {
         ClearCursor();
+        string? previousLabel = _active?.Label;
         for (int i = 0; i < _panes.Count; i++)
         {
             _panes[i].SetLabel(((char)('A' + i)).ToString());
@@ -819,6 +845,10 @@ public partial class CompareView : UserControl
         UpdateFileNames();
         UpdateGridDimensions();
         UpdateStatus();
+        if (previousLabel != _active?.Label)
+        {
+            ActiveDisplayChanged?.Invoke();
+        }
         EmptyAddButton.Visibility = _panes.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         UpdateAddControls();
     }

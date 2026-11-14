@@ -985,31 +985,28 @@ public class ImageViewportTests
     /// ほかのスレッドと共有されることがあり(同じ机上で別のアプリの入力が進むなど)、全体を流すとまれに直後の
     /// Keyboard.Modifiers が None に戻って失敗していた(OS の入力状態に頼らない)。
     /// </remarks>
-    internal static void PressWithControl(UIElement target, Key key)
+    internal static void PressWithControl(UIElement target, Key key, bool shift = false)
     {
-        _controlHeld ??= new ControlHeldKeyboard();
-        Assert.Equal(ModifierKeys.Control, _controlHeld.Modifiers);
+        var keyboard = new ControlHeldKeyboard(shift);
+        Assert.Equal(shift ? ModifierKeys.Control | ModifierKeys.Shift : ModifierKeys.Control, keyboard.Modifiers);
         var source = new TestInputSource();
-        var preview = new KeyEventArgs(_controlHeld, source, Environment.TickCount, key)
+        var preview = new KeyEventArgs(keyboard, source, Environment.TickCount, key)
         {
             RoutedEvent = Keyboard.PreviewKeyDownEvent,
         };
         target.RaiseEvent(preview);
-        target.RaiseEvent(new KeyEventArgs(_controlHeld, source, Environment.TickCount, key)
+        target.RaiseEvent(new KeyEventArgs(keyboard, source, Environment.TickCount, key)
         {
             RoutedEvent = Keyboard.KeyDownEvent,
             Handled = preview.Handled,
         });
     }
 
-    // UI テストのスレッド(InputManager はスレッドごと)で初めて使うときに作る
-    private static ControlHeldKeyboard? _controlHeld;
-
-    /// <summary>左 Ctrl だけを押した状態を返すキーボード(OS のキーボード状態を読まない)。</summary>
-    private sealed class ControlHeldKeyboard() : KeyboardDevice(InputManager.Current)
+    /// <summary>左 Ctrl と必要なら左 Shift を押した状態を返すキーボード。</summary>
+    private sealed class ControlHeldKeyboard(bool shift) : KeyboardDevice(InputManager.Current)
     {
         protected override KeyStates GetKeyStatesFromSystem(Key key) =>
-            key == Key.LeftCtrl ? KeyStates.Down : KeyStates.None;
+            key == Key.LeftCtrl || (shift && key == Key.LeftShift) ? KeyStates.Down : KeyStates.None;
     }
 
     /// <summary>ウィンドウを表示せずにキー入力イベントを作るための入力元。</summary>

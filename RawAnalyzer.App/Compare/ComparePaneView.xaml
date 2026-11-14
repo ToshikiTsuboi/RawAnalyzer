@@ -89,7 +89,7 @@
                         <TextBlock x:Name="LabelText" FontSize="{x:Static themes:ThemeTypography.FontSizeBody}" FontWeight="Bold"
                                    Foreground="{StaticResource AccentBrush}" />
                     </Border>
-                    <Button DockPanel.Dock="Right" Content="{x:Static themes:IconGlyphs.Close}" ContentTemplate="{StaticResource IconContent}" Style="{StaticResource HeaderButton}"
+                    <Button x:Name="CloseButton" DockPanel.Dock="Right" Content="{x:Static themes:IconGlyphs.Close}" ContentTemplate="{StaticResource IconContent}" Style="{StaticResource HeaderButton}"
                             Click="OnCloseClick" AutomationProperties.Name="ペインを閉じる"
                             ToolTip="このペインを閉じる" />
                     <Button x:Name="AutoButton" DockPanel.Dock="Right" Content="{x:Static themes:IconGlyphs.Brightness}"

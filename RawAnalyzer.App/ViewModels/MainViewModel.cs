@@ -37,6 +37,7 @@ public sealed class MainViewModel : ObservableObject
     private bool _isLoading;
     private double _loadProgress;
     private bool _isCompareMode;
+    private string? _compareAdjustTarget;
     private string _compareImageInfoText = "比較 0 枚";
     private string _compareZoomStatusText = "";
     private bool _isProcessed;
@@ -314,6 +315,9 @@ public sealed class MainViewModel : ObservableObject
             if (SetProperty(ref _isCompareMode, value))
             {
                 OnPropertyChanged(nameof(ShowMainViewTools));
+                OnPropertyChanged(nameof(DisplayAdjustmentSource));
+                OnPropertyChanged(nameof(ShowHdrAdjustTarget));
+                OnPropertyChanged(nameof(DisplayAdjustmentTitle));
                 OnPropertyChanged(nameof(CanUseMainView));
                 OnPropertyChanged(nameof(MainViewDisabledReason));
                 OnPropertyChanged(nameof(CanChangeFormat));
@@ -332,13 +336,34 @@ public sealed class MainViewModel : ObservableObject
     /// <summary>通常表示用のツールバー項目を表示するか。</summary>
     public bool ShowMainViewTools => !IsCompareMode;
 
-    /// <summary>右の調整パネルを操作できるか。通常表示に画像があるときだけ操作できる。</summary>
-    public bool CanUseAdjustPanel => CanUseMainView;
+    /// <summary>表示調整の対象となる画像があるか。</summary>
+    public bool CanUseAdjustPanel => IsCompareMode ? _compareAdjustTarget is not null : CanUseMainView;
 
     /// <summary>調整パネルを使えない理由(パネルの上端に示す)。使えるときは null。</summary>
     public string? AdjustPanelDisabledReason =>
-        IsCompareMode ? CommandDisabledReasons.AdjustPanelInCompareMode
+        IsCompareMode ? (CanUseAdjustPanel ? null : CommandDisabledReasons.NoActiveComparePane)
         : HasImage ? null : "画像を開くと調整できます";
+
+    internal CompareDisplayEditor CompareAdjustment { get; } = new();
+
+    /// <summary>表示調整のスライダーが参照する設定。</summary>
+    public object DisplayAdjustmentSource => IsCompareMode ? CompareAdjustment : this;
+
+    /// <summary>表示調整の見出し。比較中は調整対象のペインを添える。</summary>
+    public string DisplayAdjustmentTitle => IsCompareMode && _compareAdjustTarget is { } label
+        ? $"表示調整 · 調整対象: {label}" : "表示調整";
+
+    /// <summary>通常表示の HDR 調整対象の行を表示するか。</summary>
+    public bool ShowHdrAdjustTarget => !IsCompareMode && HdrTargetVisible;
+
+    internal void SetCompareAdjustTarget(string? label)
+    {
+        if (SetProperty(ref _compareAdjustTarget, label, nameof(DisplayAdjustmentTitle)))
+        {
+            OnPropertyChanged(nameof(CanUseAdjustPanel));
+            OnPropertyChanged(nameof(AdjustPanelDisabledReason));
+        }
+    }
 
     /// <summary>空のキャンバスに画像の開き方を示すか。</summary>
     public bool ShowEmptyCanvas => !HasImage && !IsCompareMode && !IsLoading;
@@ -516,7 +541,7 @@ public sealed class MainViewModel : ObservableObject
     public double MinGainDb => DisplayLevels.MinGainDb;
 
     /// <summary>ゲインスライダーの上限[dB](×1000)。</summary>
-    public double MaxGainDb => 60;
+    public double MaxGainDb => DisplayLevels.MaxGainDb;
 
     /// <summary>表示ガンマ(LUTパラメータ)。</summary>
     public double Gamma
@@ -665,7 +690,13 @@ public sealed class MainViewModel : ObservableObject
     public bool HdrTargetVisible
     {
         get => _hdrTargetVisible;
-        set => SetProperty(ref _hdrTargetVisible, value);
+        set
+        {
+            if (SetProperty(ref _hdrTargetVisible, value))
+            {
+                OnPropertyChanged(nameof(ShowHdrAdjustTarget));
+            }
+        }
     }
 
     /// <summary>再生可能なシーケンス(連番ファイル/マルチフレーム)があるか。</summary>

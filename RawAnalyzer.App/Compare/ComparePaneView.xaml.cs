@@ -18,7 +18,10 @@ namespace RawAnalyzer.App.Compare;
 /// </summary>
 public partial class ComparePaneView : UserControl
 {
-    private bool _adjusting;
+    private CancellationTokenSource? _autoContrast;
+    internal Func<ComparePane, CancellationToken, Task<AutoLevels?>> CalculateAutoLevelsAsync { get; set; } =
+        static (pane, token) => Task.Run(() => HistogramTools.ComputeAutoLevels(
+            ImageAnalysis.ComputeHistogram(pane.Image, frame: 0, cancellationToken: token).Bins), token);
     private PaneNameDisplay _nameDisplay = new("", "", "");
     private double _fullNameWidth;
     private PaneNameDisplay? _shownName;
@@ -209,11 +212,12 @@ public partial class ComparePaneView : UserControl
     /// <param name="settings">適用する表示調整。</param>
     internal void ApplyDisplay(DisplaySettings settings)
     {
-        if (Pane is null)
+        if (Pane is null || Pane.Display == settings)
         {
             return;
         }
 
+        CancelAutoContrast();
         Pane.Display = settings;
         Viewport.SetLut(Pane.BuildLut());
     }
@@ -299,6 +303,7 @@ public partial class ComparePaneView : UserControl
     /// <param name="cancellationToken">キャンセルトークン。</param>
     internal void Attach(ComparePane pane, CancellationToken cancellationToken = default)
     {
+        CancelAutoContrast();
         Pane = pane;
         FileNameText.ToolTip = pane.Path;
         SetFileNameDisplay(new PaneNameDisplay(pane.FileName, "", ""));
@@ -349,6 +354,7 @@ public partial class ComparePaneView : UserControl
     /// <returns>破棄完了を表すタスク。</returns>
     internal async Task DetachAndDisposeAsync()
     {
+        CancelAutoContrast();
         ComparePane? pane = Pane;
         Pane = null;
         await Viewport.ClearImageAsync();
@@ -364,59 +370,82 @@ public partial class ComparePaneView : UserControl
 
     private async void OnAutoClick(object sender, RoutedEventArgs e)
     {
-        ComparePane? pane = Pane;
-        if (pane is null || _adjusting)
+        ActivateRequested?.Invoke(this);
+        await AutoContrastAsync();
+    }
+
+    internal void CancelAutoContrast()
+    {
+        CancellationTokenSource? job = _autoContrast;
+        _autoContrast = null;
+        job?.Cancel();
+    }
+
+    internal async Task AutoContrastAsync()
+    {
+        if (Pane is not { } pane || _autoContrast is not null)
         {
             return;
         }
 
-        ActivateRequested?.Invoke(this);
-        _adjusting = true;
+        using var job = new CancellationTokenSource();
+        _autoContrast = job;
         try
         {
-            // カラー画像でも輝度ヒストグラムからのクリップで実用上十分
-            DisplaySettings requested = pane.Display;
-            HistogramResult histogram = await Task.Run(
-                () => ImageAnalysis.ComputeHistogram(pane.Image, frame: 0));
-
-            // 計算中に閉じられた、または表示調整が変わった(リセット・リンクや「揃える」による適用)なら、
-            // 後からの変更を残して結果は捨てる。以前は表示調整を照合せず、後から終わった自動の黒/白がリセットを上書きした
-            if (!ReferenceEquals(pane, Pane) || pane.Display != requested)
+            // 対象切替・クローズ・他の調整で取り消された計算結果は捨てる。
+            AutoLevels? result = await CalculateAutoLevelsAsync(pane, job.Token);
+            if (job.IsCancellationRequested || !ReferenceEquals(pane, Pane))
             {
                 return;
             }
 
-            if (HistogramTools.ComputeAutoLevels(histogram.Bins) is { } levels)
+            if (result is { } levels)
             {
-                pane.Display = pane.Display with
+                _autoContrast = null;
+                EditDisplay(pane.Display with
                 {
                     BlackCode = levels.BlackCode,
                     WhiteCode = levels.WhiteCode,
-                };
-                Viewport.SetLut(pane.BuildLut());
-                DisplayChanged?.Invoke(this);
+                });
             }
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (OperationCanceledException) when (job.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
         {
             AppLog.Warn($"比較ペインの自動コントラストに失敗: {ex.Message}");
         }
         finally
         {
-            _adjusting = false;
+            if (ReferenceEquals(_autoContrast, job))
+            {
+                _autoContrast = null;
+            }
         }
     }
 
     private void OnResetClick(object sender, RoutedEventArgs e)
     {
-        if (Pane is null)
-        {
-            return;
-        }
-
         ActivateRequested?.Invoke(this);
-        Pane.Display = DisplaySettings.CreateDefault(Pane.Format.BitDepth);
-        Viewport.SetLut(Pane.BuildLut());
-        DisplayChanged?.Invoke(this);
+        ResetDisplay();
+    }
+
+    internal void ResetDisplay()
+    {
+        if (Pane is { } pane)
+        {
+            CancelAutoContrast();
+            EditDisplay(DisplaySettings.CreateDefault(pane.Format.BitDepth));
+        }
+    }
+
+    internal void EditDisplay(DisplaySettings settings)
+    {
+        if (Pane is not null)
+        {
+            ApplyDisplay(settings);
+            DisplayChanged?.Invoke(this);
+        }
     }
 }

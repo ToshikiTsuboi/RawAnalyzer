@@ -71,10 +71,8 @@ public class CompareModeCommandTests
     }
 
     [Fact]
-    public void AdjustPanel_IsUnavailableWhileComparing_WithTheReason()
+    public void AdjustPanel_UsesActiveComparePaneWithoutEnablingMainView()
     {
-        // 右の調整パネル(表示調整のスライダー・ボタン、ヒストグラムの切替・コピー、ホワイトバランス、カラーマトリクス、
-        // フォーマット)は通常表示を対象にする。以前は比較モード中も操作でき、比較画面に隠れた通常表示に効いた。
         var vm = new MainViewModel();
         Assert.False(vm.CanUseAdjustPanel);
         Assert.Equal("画像を開くと調整できます", vm.AdjustPanelDisabledReason);
@@ -90,8 +88,17 @@ public class CompareModeCommandTests
         changed.Clear();
         vm.IsCompareMode = true;
         Assert.False(vm.CanUseAdjustPanel);
-        Assert.Equal(CommandDisabledReasons.AdjustPanelInCompareMode, vm.AdjustPanelDisabledReason);
-        Assert.StartsWith("比較モード中は調整パネルを使えません", vm.AdjustPanelDisabledReason);
+        Assert.Equal(CommandDisabledReasons.NoActiveComparePane, vm.AdjustPanelDisabledReason);
+        Assert.Contains(nameof(MainViewModel.CanUseAdjustPanel), changed);
+        Assert.Contains(nameof(MainViewModel.AdjustPanelDisabledReason), changed);
+
+        changed.Clear();
+        vm.SetCompareAdjustTarget("A");
+        Assert.True(vm.CanUseAdjustPanel);
+        Assert.False(vm.CanUseMainView);
+        Assert.Null(vm.AdjustPanelDisabledReason);
+        Assert.Equal("表示調整 · 調整対象: A", vm.DisplayAdjustmentTitle);
+        Assert.Same(vm.CompareAdjustment, vm.DisplayAdjustmentSource);
         Assert.Contains(nameof(MainViewModel.CanUseAdjustPanel), changed);
         Assert.Contains(nameof(MainViewModel.AdjustPanelDisabledReason), changed);
 
@@ -101,6 +108,7 @@ public class CompareModeCommandTests
         Assert.Null(vm.AdjustPanelDisabledReason);
         Assert.Contains(nameof(MainViewModel.CanUseAdjustPanel), changed);
         Assert.Contains(nameof(MainViewModel.AdjustPanelDisabledReason), changed);
+        Assert.Same(vm, vm.DisplayAdjustmentSource);
     }
 
     [Fact]
@@ -113,7 +121,7 @@ public class CompareModeCommandTests
         vm.IsLoading = false;
         vm.IsCompareMode = true;
         Assert.False(vm.ShowEmptyCanvas);
-        Assert.Equal(CommandDisabledReasons.AdjustPanelInCompareMode, vm.AdjustPanelDisabledReason);
+        Assert.Equal(CommandDisabledReasons.NoActiveComparePane, vm.AdjustPanelDisabledReason);
         vm.IsCompareMode = false;
         vm.HasImage = true;
         Assert.False(vm.ShowEmptyCanvas);

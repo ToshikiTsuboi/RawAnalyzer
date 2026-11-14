@@ -108,6 +108,11 @@ public partial class MainWindow
             or nameof(MainViewModel.BlackLevel)
             or nameof(MainViewModel.WhiteLevel))
         {
+            if (_compareMode)
+            {
+                return;
+            }
+
             if (e.PropertyName is nameof(MainViewModel.BlackLevel)
                 or nameof(MainViewModel.WhiteLevel))
             {
@@ -600,12 +605,27 @@ public partial class MainWindow
 
     private void OnResetDisplayClick(object sender, RoutedEventArgs e)
     {
+        if (_compareMode)
+        {
+            CompareArea.ActivePane?.ResetDisplay();
+            return;
+        }
+
         ResetDisplayParameters();
         ApplyDisplayParametersToViews();
     }
 
-    private void OnAutoContrastClick(object sender, RoutedEventArgs e)
+    private async void OnAutoContrastClick(object sender, RoutedEventArgs e)
     {
+        if (_compareMode)
+        {
+            if (CompareArea.ActivePane is { } active)
+            {
+                await active.AutoContrastAsync();
+            }
+            return;
+        }
+
         if (_currentFormat is null)
         {
             return;

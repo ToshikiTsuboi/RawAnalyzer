@@ -8,6 +8,7 @@ using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using RawAnalyzer.App.Compare;
 using RawAnalyzer.App.ViewModels;
+using RawAnalyzer.Core;
 using Xunit;
 
 namespace RawAnalyzer.Tests;
@@ -765,18 +766,23 @@ public class CompareViewUiTests
             pane.ApplyDisplay(defaults with { GainDb = 6 });
             int changes = 0;
             pane.DisplayChanged += _ => changes++;
+            var pending = new TaskCompletionSource<AutoLevels?>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var calculate = pane.CalculateAutoLevelsAsync;
+            pane.CalculateAutoLevelsAsync = (_, _) => pending.Task;
 
             WpfTestHost.Invoke(auto);
+            await DrainAsync();
             WpfTestHost.Invoke(reset);
             await DrainAsync();
             Assert.Equal(defaults, source.Display);
-            await Task.Delay(300);
+            pending.SetResult(new AutoLevels(20, 200));
             await DrainAsync();
 
             Assert.Equal(defaults, source.Display);
             Assert.Equal(1, changes); // リセットだけ
 
             // 変えずに待てば「自動」の結果を使う(この画像では既定の全域と違う黒/白になる)
+            pane.CalculateAutoLevelsAsync = calculate;
             WpfTestHost.Invoke(auto);
             await WaitUntilAsync(() => changes == 2);
             Assert.NotEqual(defaults, source.Display);
@@ -788,7 +794,7 @@ public class CompareViewUiTests
     });
 
     // ボタンの押下と解放(移動なし)。入力の順と同じく Preview → 本体の順に送る
-    private static void Click(ComparePaneView pane, System.Windows.Input.MouseButton button)
+    internal static void Click(ComparePaneView pane, System.Windows.Input.MouseButton button)
     {
         var viewport = pane.ViewportControl;
         foreach (RoutedEvent routed in new[]

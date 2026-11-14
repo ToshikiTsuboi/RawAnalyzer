@@ -18,6 +18,9 @@ internal static class DisplayLevels
     /// <summary>表示ゲインのスライダーの下限[dB](×0.1)。</summary>
     internal const double MinGainDb = -20;
 
+    /// <summary>表示ゲインのスライダーの上限[dB](×1000)。</summary>
+    internal const double MaxGainDb = 60;
+
     /// <summary>
     /// 線形の表示ゲインを dB(20·log10(倍率))で表す。ゲインのスライダーと付随テキストで同じ換算を使う。
     /// </summary>

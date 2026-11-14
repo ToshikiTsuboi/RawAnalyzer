@@ -1,5 +1,6 @@
 using System.Windows;
 using Microsoft.Win32;
+using RawAnalyzer.App.Compare;
 using RawAnalyzer.App.Services;
 using RawAnalyzer.App.Views;
 using RawAnalyzer.Core;
@@ -12,6 +13,36 @@ public partial class MainWindow
 
     private bool _compareMode;
     private bool? _rightPanelBeforeCompare;
+
+    private void RefreshCompareAdjustment()
+    {
+        ComparePaneView? active = CompareArea.ActivePane;
+        if (active?.Pane is not { } pane)
+        {
+            _vm.SetCompareAdjustTarget(null);
+            return;
+        }
+
+        bool wasUpdating = _updatingSliders;
+        _updatingSliders = true;
+        try
+        {
+            _vm.CompareAdjustment.Load(pane.Display, pane.Format.BitDepth);
+            _vm.SetCompareAdjustTarget(active.Label);
+        }
+        finally
+        {
+            _updatingSliders = wasUpdating;
+        }
+    }
+
+    private void OnCompareAdjustmentEdited(DisplaySettings settings)
+    {
+        if (_compareMode && !_updatingSliders)
+        {
+            CompareArea.ActivePane?.EditDisplay(settings);
+        }
+    }
 
     private async void OnCompareModeClick(object sender, RoutedEventArgs e)
     {
