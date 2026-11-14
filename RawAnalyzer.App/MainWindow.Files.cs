@@ -78,17 +78,9 @@ public partial class MainWindow
         _sessionStore.Update(session => SessionStore.TouchFileFormat(session, key, format));
     }
 
-    private RawFormat? TryGetRememberedFormat(string path, long fileSize)
-    {
-        // 別のインスタンスが記憶した・F2 で直したフォーマットも使う(古い記憶で開いて記憶し直し、直したものを巻き戻さない)
-        if (!_sessionStore.Current.FileFormats.TryGetValue(SessionStore.NormalizeKey(path), out RawFormat? format))
-        {
-            return null;
-        }
-
-        // 手で編集した・壊れた session.json の未定義の列挙値などは、サイズ別の記憶と同じ基準で使わない
-        return FormatHistory.CanOpen(format, fileSize) ? format : null;
-    }
+    // 別のインスタンスが記憶した・F2 で直したフォーマットも使う。
+    private RawFormat? TryGetRememberedFormat(string path, long fileSize) =>
+        SessionStore.FindRememberedFormat(_sessionStore.Current.FileFormats, path, fileSize);
 
     /// <summary>
     /// 表示中のファイルを同じサイズの記憶から推定して開いたことをステータスバーに示す(空文字で消す)。
@@ -282,6 +274,7 @@ public partial class MainWindow
                 };
                 if (dialog.ShowDialog() != true || dialog.Result is null)
                 {
+                    RefreshFileDetails();
                     return;
                 }
 
@@ -464,6 +457,7 @@ public partial class MainWindow
         {
             _openedRawFormat = null;
         }
+        UpdateOpenedFileDetails(displayFormat, color is not null);
 
         // 読み込み後の画像情報とは別の欄に出し、このファイルを表示している間は見えるようにする
         SetMainFormatNotice(

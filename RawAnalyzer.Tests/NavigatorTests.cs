@@ -107,4 +107,52 @@ public class NavigatorUiTests
             if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
         }
     });
+
+    [Fact]
+    public Task Navigator_StaysVisibleUntilLutThumbnailIsReady() => WpfTestHost.Run(async () =>
+    {
+        string directory = Path.Combine(Path.GetTempPath(), "RawAnalyzerTests", Guid.NewGuid().ToString("N"));
+        var window = new MainWindow(directory) { ShowActivated = false };
+        var viewport = (ImageViewport)window.FindName("Viewport");
+        var format = new RawFormat { Width = 768, Height = 384, BitDepth = 16 };
+        ushort[] pixels = Enumerable.Range(0, format.Width * format.Height)
+            .Select(i => (ushort)(i % format.Width * 64)).ToArray();
+        using var image = RawImage.FromPixels(format, pixels);
+        try
+        {
+            window.Show();
+            ((RawAnalyzer.App.ViewModels.MainViewModel)window.DataContext).HasImage = true;
+            viewport.SetImage(image, format);
+            viewport.CenterOn(384, 192, 3);
+            viewport.SetPyramid(await TilePyramid.CreateAsync(image));
+            var navigator = (Border)window.FindName("NavigatorBox");
+            var preview = (Image)window.FindName("NavigatorImage");
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            while (preview.Source is null) await Task.Delay(10, timeout.Token);
+            var original = preview.Source;
+            Assert.Equal(Visibility.Visible, navigator.Visibility);
+
+            var visibilityChanges = new List<bool>();
+            navigator.IsVisibleChanged += (_, e) => visibilityChanges.Add((bool)e.NewValue);
+            viewport.SetLut(DisplayLut.Create(new DisplayParameters { Gamma = 2 }));
+            Assert.Equal(Visibility.Visible, navigator.Visibility);
+            Assert.Same(original, preview.Source);
+            await Dispatcher.Yield(DispatcherPriority.Render);
+            WpfTestHost.CaptureIfRequested((FrameworkElement)window.Content, "navigator-lut-update");
+            while (ReferenceEquals(original, preview.Source)) await Task.Delay(10, timeout.Token);
+            Assert.NotNull(preview.Source);
+            Assert.Equal(Visibility.Visible, navigator.Visibility);
+            Assert.Empty(visibilityChanges);
+
+            await viewport.ClearImageAsync();
+            Assert.Null(preview.Source);
+            Assert.Equal(Visibility.Collapsed, navigator.Visibility);
+        }
+        finally
+        {
+            await viewport.ClearImageAsync();
+            window.Close();
+            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+        }
+    });
 }

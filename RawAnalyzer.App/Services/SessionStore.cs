@@ -114,6 +114,14 @@ internal sealed class SessionStore
         }
     }
 
+    // 一覧のスクロールでは設定ファイルを読み直さず、最後に読み書きした記憶を使う。
+    internal IReadOnlyDictionary<string, RawFormat> CachedFileFormats => _state.FileFormats;
+
+    internal static RawFormat? FindRememberedFormat(
+        IReadOnlyDictionary<string, RawFormat> fileFormats, string path, long fileSize) =>
+        fileFormats.TryGetValue(NormalizeKey(path), out RawFormat? format)
+        && format is not null && FormatHistory.CanOpen(format, fileSize) ? format : null;
+
     /// <summary>状態を読み込む(起動時)。ファイルがない・壊れている・読めない場合は既定値。</summary>
     /// <returns>読み込んだ状態。</returns>
     public SessionState Load()

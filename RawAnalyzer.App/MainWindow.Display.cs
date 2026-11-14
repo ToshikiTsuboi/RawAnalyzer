@@ -700,6 +700,7 @@ public partial class MainWindow
             _formatMemory.Correct(_currentPath, _currentFileSize, previous, _currentFormat);
             _openedRawFormat = _currentFormat;
         }
+        UpdateOpenedFileDetails(format, _colorImage is not null);
 
         // チャネル別統計はパターンに依存するため作り直す。
         // 放置すると RGGB→BGGR で R と B を入れ替えた値を表示したままになる

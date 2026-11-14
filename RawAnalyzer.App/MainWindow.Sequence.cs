@@ -416,6 +416,7 @@ public partial class MainWindow
                 // カラー画像は輝度と一緒に差し替える。片方だけだと前フレームの色が残る
                 _colorImage = color;
                 _vm.IsColorImage = color is not null;
+                UpdateOpenedFileDetails(format, color is not null);
                 Task<RawImage?> pending = Viewport.ReplaceImageAsync(image, format, color: color);
 
                 // 表示モードはツールバーの選択を保つ。新しい画像で成立しないモード(カラー画像への

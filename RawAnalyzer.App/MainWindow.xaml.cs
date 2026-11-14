@@ -76,6 +76,7 @@ public partial class MainWindow : Window
         Viewport.InteractionModeChanged += OnViewportInteractionModeChanged;
         HistogramChart.PlotSizeChanged += (_, _) => RedrawHistogram();
         _session = _sessionStore.Load();
+        UpdateFileDetailsMemory();
         NavigatorEnabled = _session.NavigatorVisible;
         Viewport.NavigatorStateChanged += (_, _) => UpdateNavigator();
         PlaybackBar.SizeChanged += (_, _) => UpdateNavigatorMargin();

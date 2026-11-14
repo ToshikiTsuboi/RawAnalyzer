@@ -134,6 +134,7 @@ public partial class MainWindow
         _currentFormat = format;
         _colorImage = decoded.Color;
         _vm.IsColorImage = decoded.Color is not null;
+        UpdateOpenedFileDetails(format, decoded.Color is not null);
         _valueNote = ValueMappingNote.FromFile(decoded.ValueNote, decoded.Scaling);
         _valueScaling = decoded.Scaling;
         _tiffPageIndex = index;

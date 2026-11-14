@@ -7,15 +7,26 @@ namespace RawAnalyzer.App.Services;
 
 internal static class FileListDetails
 {
-    internal static string Describe(FileEntry entry, IReadOnlyFormatHistory history)
+    internal static string Describe(FileEntry entry, IReadOnlyFormatHistory history,
+        IReadOnlyDictionary<string, RawFormat> fileFormats)
     {
         if (ComparePane.IsRawFile(entry.Name) && entry.Length > 0)
         {
+            RawFormat? pathMemory = SessionStore.FindRememberedFormat(fileFormats, entry.FullPath, entry.Length);
+            if (RawOpenPlanner.PlanFromMemory(entry.FullPath, entry.Length, pathMemory, history)?.Format is { } remembered)
+            {
+                return FormatCandidateText.Describe(remembered, separator: " · ");
+            }
+
             var candidates = FormatCandidates.Build(entry.Length, FormatHistory.ExtensionOf(entry.Name),
                 entry.Name, history, displayedFormat: null, maxCount: 1);
             if (candidates.Count > 0)
             {
-                return FormatCandidateText.Describe(candidates[0].Format, separator: " · ");
+                FormatCandidate candidate = candidates[0];
+                bool fromMemory = candidate.Source is FormatCandidateSource.SameSizeMemory
+                    or FormatCandidateSource.MemoryFrameCount or FormatCandidateSource.MemoryHeight
+                    or FormatCandidateSource.MemoryResolution;
+                return FormatCandidateText.Describe(candidate.Format, separator: " · ", includeBayer: fromMemory);
             }
         }
 

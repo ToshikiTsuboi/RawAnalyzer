@@ -146,6 +146,7 @@ public partial class MainWindow
                 // サイズは UI スレッドの外で取る。読み込んだペインを返せなくなるので、ここでは打ち切らない
                 long loadedSize = await Task.Run(() => SafeFileSize(path));
                 _formatMemory.RememberLoaded(path, loadedSize, format, autoOpenChoice);
+                RefreshFileDetails();
 
                 // 比較ペインは F2 で開き直せないので、直し方を添えて知らせる(比較モードを抜けたら戻す)
                 if (origin == RawFormatOrigin.SizeMemory && _compareMode)

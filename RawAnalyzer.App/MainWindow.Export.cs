@@ -194,6 +194,7 @@ public partial class MainWindow
                     Endianness = choice.Endianness,
                     Bayer = savedBayer,
                 });
+                RefreshFileDetails();
             }
 
             // マルチフレームでは「どのフレームを出したか」を明示する

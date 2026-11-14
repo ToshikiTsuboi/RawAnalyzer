@@ -565,9 +565,10 @@
                                 <DataTemplate>
                                     <StackPanel ToolTip="{Binding Name}" AutomationProperties.Name="{Binding Name}">
                                         <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" />
-                                        <TextBlock Foreground="{StaticResource TextDim}" TextTrimming="CharacterEllipsis"
+                                        <TextBlock x:Name="FileDetailsText" Foreground="{StaticResource TextDim}" TextTrimming="CharacterEllipsis"
                                                    FontSize="{x:Static themes:ThemeTypography.FontSizeCaption}"
-                                                   Loaded="OnFileDetailsLoaded" DataContextChanged="OnFileDetailsDataContextChanged" />
+                                                   Loaded="OnFileDetailsLoaded" Unloaded="OnFileDetailsUnloaded"
+                                                   DataContextChanged="OnFileDetailsDataContextChanged" />
                                     </StackPanel>
                                 </DataTemplate>
                             </ListBox.ItemTemplate>

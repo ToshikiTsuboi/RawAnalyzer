@@ -21,8 +21,11 @@ public partial class MainWindow
     private int _folderGeneration;
     private string? _currentFolder;
     private readonly Dictionary<(string Path, long Length, DateTime LastWrite), Task<string>> _fileDetails = new();
+    private readonly HashSet<TextBlock> _realizedFileDetails = new();
+    private IReadOnlyDictionary<string, RawFormat> _fileDetailsPathMemory = new Dictionary<string, RawFormat>();
     private FormatHistoryEntry[] _fileDetailsHistory = [];
     private FormatHistory _fileDetailsSnapshot = new();
+    private (string Path, RawFormat Format, bool IsColor)? _openedFileDetails;
 
     private void OnOpenFolderClick(object sender, RoutedEventArgs e)
     {
@@ -80,14 +83,13 @@ public partial class MainWindow
             return true;
         }
 
-        if (generation != _folderGeneration)
+        if (_closed || generation != _folderGeneration)
         {
             return false; // 列挙中に別のフォルダが開かれた
         }
 
         _currentFolder = folder;
         _vm.FolderPath = folder;
-        _vm.ReplaceFiles(entries);
 
         // 祖先の各階層の初回の列挙は UI スレッドの外で行い、待たずに一覧の続きへ進む(別のフォルダを開いたら
         // 前の同期はやめる)
@@ -98,6 +100,8 @@ public partial class MainWindow
             session.LastFolder = folder;
             session.FileFilter = fileFilter;
         });
+        UpdateFileDetailsMemory();
+        _vm.ReplaceFiles(entries);
 
         if (selectPath is not null)
         {
@@ -142,8 +146,15 @@ public partial class MainWindow
         return entries;
     }
 
-    private void OnFileDetailsLoaded(object sender, RoutedEventArgs e) =>
-        LoadFileDetails((TextBlock)sender);
+    private void OnFileDetailsLoaded(object sender, RoutedEventArgs e)
+    {
+        var text = (TextBlock)sender;
+        _realizedFileDetails.Add(text);
+        LoadFileDetails(text);
+    }
+
+    private void OnFileDetailsUnloaded(object sender, RoutedEventArgs e) =>
+        _realizedFileDetails.Remove((TextBlock)sender);
 
     private void OnFileDetailsDataContextChanged(object sender, DependencyPropertyChangedEventArgs e)
     {
@@ -162,17 +173,24 @@ public partial class MainWindow
             return;
         }
 
-        text.Text = FileListDetails.FormatSize(entry.Length);
-        FormatHistoryEntry[] history = _formatMemory.SnapshotEntries();
-        if (!_fileDetailsHistory.SequenceEqual(history))
+        var opened = OpenedFileDetailsFor(entry);
+        if (opened is { } current)
         {
-            _fileDetailsHistory = history;
-            _fileDetailsSnapshot = new FormatHistory(history);
-            _fileDetails.Clear();
+            string actual = await Task.Run(() => FormatCandidateText.Describe(
+                current.Format, separator: " · ", isColorImage: current.IsColor));
+            if (!_closed && text.IsLoaded && ReferenceEquals(text.DataContext, entry)
+                && OpenedFileDetailsFor(entry) == current)
+            {
+                text.Text = actual;
+            }
+
+            return;
         }
 
+        text.Text = FileListDetails.FormatSize(entry.Length);
         var key = (entry.FullPath, entry.Length, entry.LastWriteTimeUtc);
         FormatHistory snapshotAtRequest = _fileDetailsSnapshot;
+        var pathsAtRequest = _fileDetailsPathMemory;
         if (!_fileDetails.TryGetValue(key, out Task<string>? details))
         {
             if (_fileDetails.Count >= 8192)
@@ -180,15 +198,68 @@ public partial class MainWindow
                 _fileDetails.Clear();
             }
 
-            details = Task.Run(() => FileListDetails.Describe(entry, snapshotAtRequest));
+            details = Task.Run(() => FileListDetails.Describe(entry, snapshotAtRequest, pathsAtRequest));
             _fileDetails.Add(key, details);
         }
 
         string description = await details;
         if (!_closed && text.IsLoaded && ReferenceEquals(text.DataContext, entry)
-            && ReferenceEquals(_fileDetailsSnapshot, snapshotAtRequest))
+            && OpenedFileDetailsFor(entry) is null
+            && ReferenceEquals(_fileDetailsSnapshot, snapshotAtRequest)
+            && ReferenceEquals(_fileDetailsPathMemory, pathsAtRequest))
         {
             text.Text = description;
+        }
+    }
+
+    private (string Path, RawFormat Format, bool IsColor)? OpenedFileDetailsFor(FileEntry entry) =>
+        _openedFileDetails is { } current && string.Equals(current.Path, entry.FullPath, StringComparison.OrdinalIgnoreCase)
+            ? current : null;
+
+    private bool UpdateFileDetailsMemory()
+    {
+        var paths = _sessionStore.CachedFileFormats;
+        FormatHistoryEntry[] history = _formatMemory.SnapshotEntries();
+        if (ReferenceEquals(_fileDetailsPathMemory, paths) && _fileDetailsHistory.SequenceEqual(history))
+        {
+            return false;
+        }
+
+        // TouchFileFormat は辞書を置き換えるので、ワーカーへ渡した記憶は後から変更されない。
+        _fileDetailsPathMemory = paths;
+        _fileDetailsHistory = history;
+        _fileDetailsSnapshot = new FormatHistory(history);
+        _fileDetails.Clear();
+        return true;
+    }
+
+    private void UpdateOpenedFileDetails(RawFormat format, bool isColor)
+    {
+        if (_currentPath is not { } path)
+        {
+            return;
+        }
+
+        string? previousPath = _openedFileDetails?.Path;
+        _openedFileDetails = (path, format, isColor);
+        RefreshFileDetails(previousPath);
+    }
+
+    private void RefreshFileDetails(string? previousPath = null)
+    {
+        if (_closed)
+        {
+            return;
+        }
+
+        bool memoryChanged = UpdateFileDetailsMemory();
+        foreach (TextBlock text in _realizedFileDetails)
+        {
+            if (text.DataContext is FileEntry entry && (memoryChanged || OpenedFileDetailsFor(entry) is not null
+                || string.Equals(previousPath, entry.FullPath, StringComparison.OrdinalIgnoreCase)))
+            {
+                LoadFileDetails(text);
+            }
         }
     }
 

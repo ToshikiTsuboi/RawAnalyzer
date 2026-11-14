@@ -3,12 +3,15 @@ using System.Windows.Input;
 using System.Windows.Media;
 using RawAnalyzer.App.Rendering;
 using RawAnalyzer.App.Services;
+using RawAnalyzer.Core;
 
 namespace RawAnalyzer.App;
 
 public partial class MainWindow
 {
     private NavigatorThumbnail? _navigatorSource;
+    private RawImage? _navigatorImage;
+    private int _navigatorFrame;
     private CancellationTokenSource? _navigatorCts;
     private double _navigatorDpi;
     private bool _navigatorEnabled = true;
@@ -34,13 +37,22 @@ public partial class MainWindow
     {
         NavigatorThumbnail? source = _navigatorEnabled && !_vm.IsCompareMode && !_closed
             ? Viewport.GetNavigatorThumbnail() : null;
+        RawImage? image = source is not null ? Viewport.Image : null;
+        int frame = Viewport.Frame;
+        bool imageChanged = !ReferenceEquals(image, _navigatorImage) || frame != _navigatorFrame;
         double dpi = VisualTreeHelper.GetDpi(Viewport).DpiScaleX;
-        if (source != _navigatorSource || dpi != _navigatorDpi)
+        if (source != _navigatorSource || imageChanged || dpi != _navigatorDpi)
         {
             _navigatorCts?.Cancel();
             _navigatorSource = source;
+            _navigatorImage = image;
+            _navigatorFrame = frame;
             _navigatorDpi = dpi;
-            NavigatorImage.Source = null;
+            if (imageChanged || source is null)
+            {
+                NavigatorImage.Source = null;
+            }
+
             UpdateNavigatorFrame();
             if (source is null)
             {
@@ -60,6 +72,11 @@ public partial class MainWindow
             }
             catch (Exception ex) when (TaskRaceGuard.IsAbandoned(ex))
             {
+                if (!cts.IsCancellationRequested && !_closed)
+                {
+                    NavigatorImage.Source = null;
+                    UpdateNavigatorFrame();
+                }
             }
             finally
             {
