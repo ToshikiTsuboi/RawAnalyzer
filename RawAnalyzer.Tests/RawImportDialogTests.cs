@@ -77,6 +77,7 @@ public class RawImportDialogTests : IDisposable
         {
             Hdr = HdrMode.LineInterleaved,
             HdrStages = 2,
+            Endianness = Endianness.Big,
         };
         memory.RememberLoaded(path, FileSize, format, autoOpen: true);
         RawImportDialog dialog = CreateDialog(path, memory, format);
@@ -89,11 +90,14 @@ public class RawImportDialogTests : IDisposable
             Assert.All(fields, field => Assert.True(
                 !string.IsNullOrWhiteSpace(AutomationProperties.GetName(field))
                     || AutomationProperties.GetLabeledBy(field) is not null, field.Name));
+            var details = Find<Expander>(dialog, "DetailsExpander");
+            var header = Assert.IsType<ToggleButton>(details.Template.FindName("HeaderSite", details));
+            Assert.Equal("詳細", new System.Windows.Automation.Peers.ToggleButtonAutomationPeer(header).GetName());
 
             string[] expected =
             [
-                "CandidateList", "WidthBox", "HeightBox", "BitDepthCombo", "PackingCombo", "EndianCombo",
-                "BayerCombo", "HeaderOffsetBox", "FrameCountBox", "HdrCombo", "HdrStagesCombo",
+                "CandidateList", "WidthBox", "HeightBox", "BitDepthCombo", "BayerCombo", "HeaderSite",
+                "PackingCombo", "EndianCombo", "HeaderOffsetBox", "FrameCountBox", "HdrCombo", "HdrStagesCombo",
                 "ExposureRatioBox", "HdrLineBlockBox", "HdrRowOffsetBox", "GuessButton", "AutoOpenCheck",
                 "ForgetSizeButton", "PresetCombo", "SavePresetButton",
             ];
@@ -335,6 +339,11 @@ public class RawImportDialogTests : IDisposable
             FieldFeedback.AssertValid(Find<TextBox>(dialog, "HeaderOffsetBox"));
             Assert.Equal($"✕ {widthReason}", note.Text); // サイズ欄には最初の理由
             Assert.False(Find<Button>(dialog, "OpenButton").IsEnabled);
+            var details = Find<Expander>(dialog, "DetailsExpander");
+            Assert.True(details.IsExpanded);
+            details.IsExpanded = false;
+            Assert.True(details.IsExpanded);
+            Assert.Equal(Visibility.Visible, Find<Grid>(dialog, "HdrDetails").Visibility);
 
             width.Text = "640";
             height.Text = "480";
@@ -345,9 +354,55 @@ public class RawImportDialogTests : IDisposable
             FieldFeedback.AssertValid(frames);
             FieldFeedback.AssertValid(ratio);
             Assert.StartsWith("✓", note.Text);
+            Assert.Equal(Visibility.Collapsed, Find<Grid>(dialog, "HdrDetails").Visibility);
             dialog.Close();
         });
     }
+
+    [Fact]
+    public Task Disclosure_ShowsHdrFieldsAndOpensNonDefaultPresetOnlyOnApply() => WpfTestHost.Run(async () =>
+    {
+        string path = CreateFile("disclosure.raw", FileSize);
+        new FormatPresetStore(Path.Combine(_directory, "settings")).Save(new Dictionary<string, RawFormat>
+        {
+            ["SensorA"] = Fmt(640, 480) with { Packing = BitPacking.Msb, Endianness = Endianness.Big },
+        });
+        RawImportDialog dialog = CreateDialog(path, null, initial: Fmt(640, 480));
+        try
+        {
+            dialog.Show();
+            await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+            var details = Find<Expander>(dialog, "DetailsExpander");
+            var hdr = Find<Grid>(dialog, "HdrDetails");
+            Assert.False(details.IsExpanded);
+            Assert.Equal(Visibility.Collapsed, hdr.Visibility);
+            CaptureIfRequested(dialog, "import-basic");
+
+            Find<ComboBox>(dialog, "PresetCombo").SelectedItem = "SensorA";
+            Assert.True(details.IsExpanded);
+            CaptureIfRequested(dialog, "import-details");
+            var header = Assert.IsType<ToggleButton>(details.Template.FindName("HeaderSite", details));
+            WpfTestHost.Toggle(header);
+            Assert.False(details.IsExpanded);
+            Find<TextBox>(dialog, "WidthBox").Text = "641";
+            Assert.False(details.IsExpanded);
+            Assert.Equal(1, Find<ComboBox>(dialog, "PackingCombo").SelectedIndex);
+
+            var layout = Find<ComboBox>(dialog, "HdrCombo");
+            layout.SelectedIndex = 2;
+            Assert.True(hdr.IsVisible);
+            var lineBlock = Find<TextBox>(dialog, "HdrLineBlockBox");
+            lineBlock.Text = "2";
+            CaptureIfRequested(dialog, "import-hdr-line-interleaved");
+            layout.SelectedIndex = 0;
+            Assert.False(hdr.IsVisible);
+            Assert.Equal("2", lineBlock.Text);
+        }
+        finally
+        {
+            dialog.Close();
+        }
+    });
 
     [Fact]
     public Task EditingAfterPreset_ReturnsPresetListToGuideRowSoReselectingRestoresIt()

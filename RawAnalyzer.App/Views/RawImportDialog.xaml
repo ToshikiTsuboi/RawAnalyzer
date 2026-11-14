@@ -59,79 +59,110 @@
             </ListBox>
         </StackPanel>
 
-        <Grid Margin="16,10,16,0">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="14" />
-                <ColumnDefinition Width="*" />
-            </Grid.ColumnDefinitions>
-            <Grid.RowDefinitions>
-                <RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition />
-                <RowDefinition /><RowDefinition /><RowDefinition />
-            </Grid.RowDefinitions>
-
-            <StackPanel Grid.Row="0" Grid.Column="0" Margin="0,0,0,8">
-                <TextBlock Text="幅 (px)" />
-                <TextBox x:Name="WidthBox" AutomationProperties.Name="幅 (px)" TextChanged="OnFieldChanged" />
-            </StackPanel>
-            <StackPanel Grid.Row="0" Grid.Column="2" Margin="0,0,0,8">
-                <TextBlock Text="高さ (px)" />
-                <TextBox x:Name="HeightBox" AutomationProperties.Name="高さ (px)" TextChanged="OnFieldChanged" />
-            </StackPanel>
-
-            <StackPanel Grid.Row="1" Grid.Column="0" Margin="0,0,0,8">
-                <TextBlock Text="ビット深度" />
-                <ComboBox x:Name="BitDepthCombo" AutomationProperties.Name="ビット深度" SelectionChanged="OnFieldChanged" />
-            </StackPanel>
-            <StackPanel Grid.Row="1" Grid.Column="2" Margin="0,0,0,8">
-                <TextBlock Text="詰め方向" />
-                <ComboBox x:Name="PackingCombo" AutomationProperties.Name="詰め方向" SelectionChanged="OnFieldChanged" />
-            </StackPanel>
-
-            <StackPanel Grid.Row="2" Grid.Column="0" Margin="0,0,0,8">
-                <TextBlock Text="エンディアン" />
-                <ComboBox x:Name="EndianCombo" AutomationProperties.Name="エンディアン" SelectionChanged="OnFieldChanged" />
-            </StackPanel>
-            <StackPanel Grid.Row="2" Grid.Column="2" Margin="0,0,0,8">
-                <TextBlock Text="Bayerパターン" />
-                <ComboBox x:Name="BayerCombo" AutomationProperties.Name="Bayerパターン" SelectionChanged="OnFieldChanged" />
-            </StackPanel>
-
-            <StackPanel Grid.Row="3" Grid.Column="0" Margin="0,0,0,8">
-                <TextBlock Text="ヘッダオフセット (byte)" />
-                <TextBox x:Name="HeaderOffsetBox" AutomationProperties.Name="ヘッダオフセット (byte)" TextChanged="OnFieldChanged" />
-            </StackPanel>
-            <StackPanel Grid.Row="3" Grid.Column="2" Margin="0,0,0,8">
-                <TextBlock Text="フレーム数" />
-                <TextBox x:Name="FrameCountBox" AutomationProperties.Name="フレーム数" TextChanged="OnFieldChanged" />
-            </StackPanel>
-
-            <StackPanel Grid.Row="4" Grid.Column="0" Margin="0,0,0,8">
-                <TextBlock Text="HDR格納レイアウト"
-                           ToolTip="ファイル上での長秒/短秒の並び。&#x0a;DOL / Staggered といったベンダー名は露光の時間関係を指すもので、&#x0a;画素の並びからは判別できないため、ここでは並びだけを指定する。" />
-                <ComboBox x:Name="HdrCombo" AutomationProperties.Name="HDR格納レイアウト" SelectionChanged="OnFieldChanged" />
-            </StackPanel>
-            <StackPanel Grid.Row="4" Grid.Column="2" Margin="0,0,0,8">
-                <TextBlock Text="HDR段数" />
-                <ComboBox x:Name="HdrStagesCombo" AutomationProperties.Name="HDR段数" SelectionChanged="OnFieldChanged" />
-            </StackPanel>
-
-            <StackPanel Grid.Row="5" Grid.Column="0" Margin="0,0,0,8">
-                <TextBlock Text="露光比 (長:短)" />
-                <TextBox x:Name="ExposureRatioBox" AutomationProperties.Name="露光比 (長:短)" TextChanged="OnFieldChanged" />
-            </StackPanel>
-            <StackPanel Grid.Row="5" Grid.Column="2" Margin="0,0,0,8">
-                <TextBlock Text="ライン単位 (行/露光, 0=自動)"
-                           ToolTip="ライン交互で1露光あたりに連続する行数。&#x0a;物理ライン1本ごとに長秒/短秒を読むセンサは 1、&#x0a;色ペア単位のセンサは 2。0でBayer有無から自動判定。&#x0a;Bayerありで奇数にすると、Raw表示ではBayerの並びがずれるため&#x0a;Bayer系の表示・チャネル別の集計はHDR分割・合成ビューで行う。" />
-                <TextBox x:Name="HdrLineBlockBox" AutomationProperties.Name="ライン単位 (行/露光, 0=自動)" TextChanged="OnFieldChanged" />
-            </StackPanel>
-
-            <StackPanel Grid.Row="6" Grid.Column="0" Margin="0,0,0,8">
-                <TextBlock Text="行オフセット (段あたり)"
-                           ToolTip="短秒側が縦にずれて格納されている場合の補正量。&#x0a;分割・合成の前に段ごとに行を揃えて切り出す。&#x0a;Bayerありで奇数にすると、Raw表示ではBayerの並びがずれるため&#x0a;Bayer系の表示・チャネル別の集計はHDR分割・合成ビューで行う。" />
-                <TextBox x:Name="HdrRowOffsetBox" AutomationProperties.Name="行オフセット (段あたり)" TextChanged="OnFieldChanged" />
-            </StackPanel>
-        </Grid>
+        <StackPanel Margin="16,10,16,0">
+            <TextBlock Text="基本" Margin="0,0,0,4" FontWeight="SemiBold" Foreground="{StaticResource TextBrush}" />
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="14" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                    <RowDefinition />
+                    <RowDefinition />
+                </Grid.RowDefinitions>
+                <StackPanel Grid.Row="0" Grid.Column="0" Margin="0,0,0,8">
+                    <TextBlock Text="幅 (px)" />
+                    <TextBox x:Name="WidthBox" AutomationProperties.Name="幅 (px)" TextChanged="OnFieldChanged" />
+                </StackPanel>
+                <StackPanel Grid.Row="0" Grid.Column="2" Margin="0,0,0,8">
+                    <TextBlock Text="高さ (px)" />
+                    <TextBox x:Name="HeightBox" AutomationProperties.Name="高さ (px)" TextChanged="OnFieldChanged" />
+                </StackPanel>
+                <StackPanel Grid.Row="1" Grid.Column="0" Margin="0,0,0,8">
+                    <TextBlock Text="ビット深度" />
+                    <ComboBox x:Name="BitDepthCombo" AutomationProperties.Name="ビット深度" SelectionChanged="OnFieldChanged" />
+                </StackPanel>
+                <StackPanel Grid.Row="1" Grid.Column="2" Margin="0,0,0,8">
+                    <TextBlock Text="Bayerパターン" />
+                    <ComboBox x:Name="BayerCombo" AutomationProperties.Name="Bayerパターン" SelectionChanged="OnFieldChanged" />
+                </StackPanel>
+            </Grid>
+            <Expander x:Name="DetailsExpander" Header="詳細" AutomationProperties.Name="詳細"
+                      Collapsed="OnDetailsCollapsed" Margin="0,0,0,8">
+                <Grid Margin="0,4,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="14" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition />
+                        <RowDefinition />
+                    </Grid.RowDefinitions>
+                    <StackPanel Grid.Row="0" Grid.Column="0" Margin="0,0,0,8">
+                        <TextBlock Text="詰め方向" />
+                        <ComboBox x:Name="PackingCombo" AutomationProperties.Name="詰め方向" SelectionChanged="OnFieldChanged" />
+                    </StackPanel>
+                    <StackPanel Grid.Row="0" Grid.Column="2" Margin="0,0,0,8">
+                        <TextBlock Text="エンディアン" />
+                        <ComboBox x:Name="EndianCombo" AutomationProperties.Name="エンディアン" SelectionChanged="OnFieldChanged" />
+                    </StackPanel>
+                    <StackPanel Grid.Row="1" Grid.Column="0" Margin="0,0,0,8">
+                        <TextBlock Text="ヘッダオフセット (byte)" />
+                        <TextBox x:Name="HeaderOffsetBox" AutomationProperties.Name="ヘッダオフセット (byte)" TextChanged="OnFieldChanged" />
+                    </StackPanel>
+                    <StackPanel Grid.Row="1" Grid.Column="2" Margin="0,0,0,8">
+                        <TextBlock Text="フレーム数" />
+                        <TextBox x:Name="FrameCountBox" AutomationProperties.Name="フレーム数" TextChanged="OnFieldChanged" />
+                    </StackPanel>
+                </Grid>
+            </Expander>
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="14" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                    <RowDefinition />
+                </Grid.RowDefinitions>
+                <StackPanel Grid.Row="0" Grid.Column="0" Margin="0,0,0,8">
+                    <TextBlock Text="HDR格納レイアウト"
+                               ToolTip="ファイル上での長秒/短秒の並び。&#x0a;DOL / Staggered といったベンダー名は露光の時間関係を指すもので、&#x0a;画素の並びからは判別できないため、ここでは並びだけを指定する。" />
+                    <ComboBox x:Name="HdrCombo" AutomationProperties.Name="HDR格納レイアウト" SelectionChanged="OnFieldChanged" />
+                </StackPanel>
+            </Grid>
+            <Grid x:Name="HdrDetails" Visibility="Collapsed">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="14" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                    <RowDefinition />
+                    <RowDefinition />
+                </Grid.RowDefinitions>
+                <StackPanel Grid.Row="0" Grid.Column="0" Margin="0,0,0,8">
+                    <TextBlock Text="HDR段数" />
+                    <ComboBox x:Name="HdrStagesCombo" AutomationProperties.Name="HDR段数" SelectionChanged="OnFieldChanged" />
+                </StackPanel>
+                <StackPanel Grid.Row="0" Grid.Column="2" Margin="0,0,0,8">
+                    <TextBlock Text="露光比 (長:短)" />
+                    <TextBox x:Name="ExposureRatioBox" AutomationProperties.Name="露光比 (長:短)" TextChanged="OnFieldChanged" />
+                </StackPanel>
+                <StackPanel Grid.Row="1" Grid.Column="0" Margin="0,0,0,8">
+                    <TextBlock Text="ライン単位 (行/露光, 0=自動)"
+                               ToolTip="ライン交互で1露光あたりに連続する行数。&#x0a;物理ライン1本ごとに長秒/短秒を読むセンサは 1、&#x0a;色ペア単位のセンサは 2。0でBayer有無から自動判定。&#x0a;Bayerありで奇数にすると、Raw表示ではBayerの並びがずれるため&#x0a;Bayer系の表示・チャネル別の集計はHDR分割・合成ビューで行う。" />
+                    <TextBox x:Name="HdrLineBlockBox" AutomationProperties.Name="ライン単位 (行/露光, 0=自動)" TextChanged="OnFieldChanged" />
+                </StackPanel>
+                <StackPanel Grid.Row="1" Grid.Column="2" Margin="0,0,0,8">
+                    <TextBlock Text="行オフセット (段あたり)"
+                               ToolTip="短秒側が縦にずれて格納されている場合の補正量。&#x0a;分割・合成の前に段ごとに行を揃えて切り出す。&#x0a;Bayerありで奇数にすると、Raw表示ではBayerの並びがずれるため&#x0a;Bayer系の表示・チャネル別の集計はHDR分割・合成ビューで行う。" />
+                    <TextBox x:Name="HdrRowOffsetBox" AutomationProperties.Name="行オフセット (段あたり)" TextChanged="OnFieldChanged" />
+                </StackPanel>
+            </Grid>
+        </StackPanel>
 
         <DockPanel Margin="16,0,16,4">
             <Button x:Name="GuessButton" DockPanel.Dock="Right" Content="サイズ推定"

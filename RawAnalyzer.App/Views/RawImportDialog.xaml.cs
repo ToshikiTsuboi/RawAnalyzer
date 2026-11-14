@@ -105,7 +105,7 @@ public partial class RawImportDialog : Window
         AutoOpenCheck.IsChecked = RememberedEntry(format)?.AutoOpen ?? true;
         UpdateMemoryNote(removed: null);
         _initializing = false;
-        UpdateSizeNote();
+        UpdateSizeNote(applyingFormat: true);
     }
 
     /// <summary>「開く」で確定されたフォーマット。</summary>
@@ -239,8 +239,8 @@ public partial class RawImportDialog : Window
             Width = width,
             Height = height,
             BitDepth = BitDepths[Math.Max(0, BitDepthCombo.SelectedIndex)],
-            Packing = PackingCombo.SelectedIndex == 1 ? BitPacking.Msb : BitPacking.Lsb,
-            Endianness = EndianCombo.SelectedIndex == 1 ? Endianness.Big : Endianness.Little,
+            Packing = SelectedPacking,
+            Endianness = SelectedEndianness,
             Bayer = BayerCombo.SelectedIndex switch
             {
                 0 => BayerPattern.Rggb,
@@ -251,13 +251,7 @@ public partial class RawImportDialog : Window
             },
             HeaderOffset = headerOffset,
             FrameCount = frameCount,
-            Hdr = HdrCombo.SelectedIndex switch
-            {
-                1 => HdrMode.Auto,
-                2 => HdrMode.LineInterleaved,
-                3 => HdrMode.FrameSequential,
-                _ => HdrMode.None,
-            },
+            Hdr = SelectedHdrMode,
             HdrStages = HdrStagesCombo.SelectedIndex == 1 ? 3 : 2,
             ExposureRatio = exposureRatio,
             HdrLineBlock = lineBlock,
@@ -265,9 +259,46 @@ public partial class RawImportDialog : Window
         };
     }
 
-    private void UpdateSizeNote()
+    private BitPacking SelectedPacking => PackingCombo.SelectedIndex == 1 ? BitPacking.Msb : BitPacking.Lsb;
+    private Endianness SelectedEndianness => EndianCombo.SelectedIndex == 1 ? Endianness.Big : Endianness.Little;
+    private HdrMode SelectedHdrMode => HdrCombo.SelectedIndex switch
+    {
+        1 => HdrMode.Auto,
+        2 => HdrMode.LineInterleaved,
+        3 => HdrMode.FrameSequential,
+        _ => HdrMode.None,
+    };
+
+    private bool HasInvalidDetails => InputFeedback.GetHasError(HeaderOffsetBox) || InputFeedback.GetHasError(FrameCountBox);
+
+    private void UpdateDisclosure(bool applyingFormat)
+    {
+        bool hasHeader = NumericInput.TryParseInteger(HeaderOffsetBox.Text, out long header) && header != 0;
+        bool hasMultipleFrames = NumericInput.TryParseInteger(FrameCountBox.Text, out int frames) && frames > 1;
+        if (RawImportDisclosure.ShouldExpandDetails(applyingFormat, HasInvalidDetails,
+            SelectedPacking, SelectedEndianness, hasHeader, hasMultipleFrames))
+        {
+            DetailsExpander.IsExpanded = true;
+        }
+
+        bool invalidHdr = InputFeedback.GetHasError(ExposureRatioBox) || InputFeedback.GetHasError(HdrLineBlockBox)
+            || InputFeedback.GetHasError(HdrRowOffsetBox);
+        HdrDetails.Visibility = RawImportDisclosure.ShowHdrDetails(SelectedHdrMode, invalidHdr)
+            ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void OnDetailsCollapsed(object sender, RoutedEventArgs e)
+    {
+        if (!_initializing && HasInvalidDetails)
+        {
+            DetailsExpander.IsExpanded = true;
+        }
+    }
+
+    private void UpdateSizeNote(bool applyingFormat = false)
     {
         RawFormat? format = TryBuildFormat(out string error);
+        UpdateDisclosure(applyingFormat);
         SyncCandidateSelection(format);
         SyncPresetSelection(format);
         if (format is null)
@@ -404,7 +435,7 @@ public partial class RawImportDialog : Window
         _initializing = true;
         ApplyFormat(_candidates[CandidateList.SelectedIndex].Format);
         _initializing = false;
-        UpdateSizeNote();
+        UpdateSizeNote(applyingFormat: true);
     }
 
     /// <summary>このファイルのキー(サイズ・拡張子)でフォーマットが記憶されていればその記憶。</summary>
@@ -482,7 +513,7 @@ public partial class RawImportDialog : Window
 
             // 照合は入力欄に入った値で行う(入力欄で表せない項目の違いで、適用した直後に案内の行へ戻さない)
             _presetFormat = TryBuildFormat(out _);
-            UpdateSizeNote();
+            UpdateSizeNote(applyingFormat: true);
         }
     }
 
@@ -506,8 +537,11 @@ public partial class RawImportDialog : Window
         int current = candidates.ToList().FindIndex(
             c => c.Width == format.Width && c.Height == format.Height);
         DimensionCandidate next = candidates[(current + 1) % candidates.Count];
+        _initializing = true;
         WidthBox.Text = next.Width.ToString(CultureInfo.InvariantCulture);
         HeightBox.Text = next.Height.ToString(CultureInfo.InvariantCulture);
+        _initializing = false;
+        UpdateSizeNote(applyingFormat: true);
     }
 
     private void OnSavePresetClick(object sender, RoutedEventArgs e)
