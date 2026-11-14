@@ -159,6 +159,7 @@ public partial class MainWindow
     private sealed record RecentCanvasFile(string FullPath)
     {
         public string FileName => Path.GetFileName(FullPath);
+        public string AccessibleName => $"{FileName} · {Folder}";
         public string? Folder
         {
             get

@@ -71,6 +71,8 @@ public partial class MainWindow : Window
             ? new FormatHistoryStore()
             : new FormatHistoryStore(settingsDirectory));
         InitializeComponent();
+        PanToggle.Checked += OnPanCheckedChanged;
+        PanToggle.Unchecked += OnPanCheckedChanged;
         Viewport.InteractionModeChanged += OnViewportInteractionModeChanged;
         _session = _sessionStore.Load();
         ApplyWindowPlacement();

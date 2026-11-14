@@ -57,6 +57,7 @@ public class MainWindowPhaseThreeUiTests
             var details = Assert.IsType<StackPanel>(button.Content);
             Assert.Equal("scene_5.png", Assert.IsType<TextBlock>(details.Children[0]).Text);
             Assert.Equal("captures", Assert.IsType<TextBlock>(details.Children[1]).Text);
+            Assert.Equal("scene_5.png · captures", new ButtonAutomationPeer(button).GetName());
             var drag = (DragEventArgs)typeof(DragEventArgs)
                 .GetConstructors(BindingFlags.NonPublic | BindingFlags.Instance)
                 .Single().Invoke(new object[]
@@ -143,10 +144,14 @@ public class MainWindowPhaseThreeUiTests
             Toggle(modes[3]);
             await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
             AssertActive(3, ViewportInteractionMode.WhiteBalancePick);
+            Toggle(modes[0]);
+            AssertActive(0, ViewportInteractionMode.Pan);
+            Toggle(modes[0]);
+            AssertActive(0, ViewportInteractionMode.Pan);
             menuModes[0].SetCurrentValue(MenuItem.IsCheckedProperty, true);
             await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
             AssertActive(1, ViewportInteractionMode.RoiSelect);
-            modes[0].RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            Toggle(modes[0]);
             AssertActive(0, ViewportInteractionMode.Pan);
         }
         finally
@@ -177,18 +182,24 @@ public class MainWindowPhaseThreeUiTests
             toolbar.IsOverflowOpen = ToolBar.GetIsOverflowItem(compare);
             await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
             Assert.True(compare.IsVisible);
-            compare.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            Toggle(compare);
             Assert.True(vm.IsCompareMode);
             Assert.True(compare.IsChecked);
             Assert.True(compareMenu.IsChecked);
             Assert.Equal(Visibility.Collapsed, strip.Visibility);
 
-            compareMenu.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+            Toggle(compare);
             await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
             Assert.False(vm.IsCompareMode);
             Assert.False(compare.IsChecked);
             Assert.False(compareMenu.IsChecked);
             Assert.True(strip.IsVisible);
+
+            compareMenu.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+            Assert.True(compare.IsChecked);
+            compareMenu.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+            await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+            Assert.False(compare.IsChecked);
 
             toolbar.IsOverflowOpen = ToolBar.GetIsOverflowItem(search);
             await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);

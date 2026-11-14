@@ -12,10 +12,16 @@ public partial class MainWindow
         InteractionHint.Tag = ViewportModeHint.For(Viewport.InteractionMode);
     }
 
-    private void OnPanClick(object sender, RoutedEventArgs e)
+    private void OnPanCheckedChanged(object sender, RoutedEventArgs e)
     {
-        ExitViewportToolMode();
-        PanToggle.IsChecked = true;
+        if (PanToggle.IsChecked == true)
+        {
+            ExitViewportToolMode();
+        }
+        else if (Viewport.InteractionMode == ViewportInteractionMode.Pan)
+        {
+            PanToggle.IsChecked = true;
+        }
     }
 
     private bool ExitViewportToolMode()

@@ -326,7 +326,8 @@
             <ToggleButton x:Name="CompareToolToggle" Content="比較" ToolBar.OverflowMode="AsNeeded"
                           controls:SpacedToolBarPanel.StartsTrailingGroup="True"
                           Style="{StaticResource CompareToolToggle}" Tag="比較モード · 複数の画像を並べて表示"
-                          IsChecked="{Binding IsCompareMode, Mode=OneWay}" Click="OnCompareModeClick" />
+                          IsChecked="{Binding IsCompareMode, Mode=OneWay}"
+                          Checked="OnCompareToolCheckedChanged" Unchecked="OnCompareToolCheckedChanged" />
             <Button x:Name="SaveToolButton" Style="{StaticResource OverflowToolButton}" Content="保存" ToolBar.OverflowMode="AsNeeded"
                     Tag="{x:Static themes:IconGlyphs.Save}" ContentTemplate="{StaticResource IconLabelContent}"
                     Click="OnSaveClick" IsEnabled="{Binding CanUseMainView}"
@@ -573,7 +574,7 @@
                         </Style>
                     </Border.Style>
                     <StackPanel IsEnabled="{Binding CanUseMainView}">
-                        <ToggleButton x:Name="PanToggle" IsChecked="True" Click="OnPanClick"
+                        <ToggleButton x:Name="PanToggle" IsChecked="True"
                                       Style="{StaticResource CanvasToolToggle}" AutomationProperties.Name="パン"
                                       Content="{x:Static themes:IconGlyphs.PanMode}" ContentTemplate="{StaticResource IconContent}"
                                       Tag="パン · ドラッグで画像を移動します (ツール使用中は Esc で終了)" />
@@ -652,7 +653,7 @@
                                   VerticalAlignment="Center">
                         <StackPanel MaxWidth="300" Margin="0,8">
                             <TextBlock Style="{StaticResource IconText}" Text="{x:Static themes:IconGlyphs.OpenFile}"
-                                       FontSize="32" HorizontalAlignment="Center"
+                                       FontSize="{x:Static themes:ThemeTypography.FontSizeHeroIcon}" HorizontalAlignment="Center"
                                        Foreground="{StaticResource AccentBrush}" />
                             <TextBlock Text="画像をここへドロップ" HorizontalAlignment="Center"
                                        FontWeight="SemiBold" Margin="0,8,0,12" />
@@ -668,6 +669,7 @@
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
                                         <Button Margin="0,0,0,3" HorizontalContentAlignment="Stretch"
+                                                AutomationProperties.Name="{Binding AccessibleName}"
                                                 ToolTip="{Binding FullPath}" Click="OnEmptyCanvasRecentClick">
                                             <StackPanel>
                                                 <TextBlock Text="{Binding FileName}" TextTrimming="CharacterEllipsis" />

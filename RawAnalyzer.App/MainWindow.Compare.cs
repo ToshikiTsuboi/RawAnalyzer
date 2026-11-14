@@ -17,6 +17,15 @@ public partial class MainWindow
         await ToggleCompareModeAsync();
     }
 
+    private async void OnCompareToolCheckedChanged(object sender, RoutedEventArgs e)
+    {
+        // メニューやコマンドによる状態変更で、トグルから同じ操作を再実行しない。
+        if ((((System.Windows.Controls.Primitives.ToggleButton)sender).IsChecked == true) != _vm.IsCompareMode)
+        {
+            await ToggleCompareModeAsync();
+        }
+    }
+
     /// <summary>比較モードへ入る/抜ける。</summary>
     private async Task ToggleCompareModeAsync()
     {
