@@ -25,14 +25,38 @@
 
         <!-- ファイルサイズにちょうど合う形式の候補(記憶・表示中の画像・ファイル名・解像度表)。選ぶと全項目に入る -->
         <StackPanel Margin="16,10,16,0">
-            <TextBlock Text="候補 (ファイルサイズに合う形式)" />
-            <ComboBox x:Name="CandidateCombo" AutomationProperties.Name="候補 (ファイルサイズに合う形式)" SelectionChanged="OnCandidateSelected">
-                <ComboBox.ItemTemplate>
+            <TextBlock x:Name="CandidateHeading" FontWeight="SemiBold" Foreground="{StaticResource TextBrush}" />
+            <Grid Margin="8,4,8,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="112" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Text="由来" />
+                <TextBlock Grid.Column="1" Text="形式" />
+            </Grid>
+            <ListBox x:Name="CandidateList" MaxHeight="124" Margin="0,2,0,0"
+                     AutomationProperties.LabeledBy="{Binding ElementName=CandidateHeading}"
+                     IsTabStop="False" KeyboardNavigation.TabNavigation="Once"
+                     ScrollViewer.VerticalScrollBarVisibility="Auto" SelectionChanged="OnCandidateSelected">
+                <ListBox.ItemContainerStyle>
+                    <Style TargetType="ListBoxItem" BasedOn="{StaticResource {x:Type ListBoxItem}}">
+                        <Setter Property="AutomationProperties.Name" Value="{Binding AccessibleName}" />
+                        <Setter Property="ToolTip" Value="{Binding AccessibleName}" />
+                    </Style>
+                </ListBox.ItemContainerStyle>
+                <ListBox.ItemTemplate>
                     <DataTemplate>
-                        <TextBlock Text="{Binding}" TextTrimming="CharacterEllipsis" MaxWidth="370" />
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="112" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="{Binding Source}" />
+                            <TextBlock Grid.Column="1" Text="{Binding Format}" TextTrimming="CharacterEllipsis" />
+                        </Grid>
                     </DataTemplate>
-                </ComboBox.ItemTemplate>
-            </ComboBox>
+                </ListBox.ItemTemplate>
+            </ListBox>
         </StackPanel>
 
         <Grid Margin="16,10,16,0">

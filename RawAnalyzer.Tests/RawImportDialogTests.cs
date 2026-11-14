@@ -92,18 +92,19 @@ public class RawImportDialogTests : IDisposable
 
             string[] expected =
             [
-                "CandidateCombo", "WidthBox", "HeightBox", "BitDepthCombo", "PackingCombo", "EndianCombo",
+                "CandidateList", "WidthBox", "HeightBox", "BitDepthCombo", "PackingCombo", "EndianCombo",
                 "BayerCombo", "HeaderOffsetBox", "FrameCountBox", "HdrCombo", "HdrStagesCombo",
                 "ExposureRatioBox", "HdrLineBlockBox", "HdrRowOffsetBox", "GuessButton", "AutoOpenCheck",
                 "ForgetSizeButton", "PresetCombo", "SavePresetButton",
             ];
-            Control start = Find<Control>(dialog, "CandidateCombo");
-            Assert.True(start.Focus());
+            Control width = Find<Control>(dialog, "WidthBox");
+            Assert.True(width.Focus());
+            Assert.True(width.MoveFocus(new TraversalRequest(FocusNavigationDirection.Previous)));
             var traversed = new List<string>();
             for (int step = 0; step < expected.Length; step++)
             {
                 var focused = Assert.IsAssignableFrom<Control>(Keyboard.FocusedElement);
-                traversed.Add(focused.Name);
+                traversed.Add(focused is ListBoxItem ? "CandidateList" : focused.Name);
                 if (step < expected.Length - 1)
                 {
                     Assert.True(focused.MoveFocus(new TraversalRequest(FocusNavigationDirection.Next)));
@@ -122,7 +123,7 @@ public class RawImportDialogTests : IDisposable
     {
         foreach (DependencyObject child in LogicalTreeHelper.GetChildren(root).OfType<DependencyObject>())
         {
-            if (child is TextBox or ComboBox or CheckBox)
+            if (child is TextBox or ComboBox or ListBox or CheckBox)
             {
                 yield return (FrameworkElement)child;
             }
@@ -197,31 +198,33 @@ public class RawImportDialogTests : IDisposable
             RawFormat displayed = Fmt(480, 640, bitDepth: 16);
 
             RawImportDialog dialog = CreateDialog(path, memory, displayed: displayed);
-            var combo = Find<ComboBox>(dialog, "CandidateCombo");
+            var list = Find<ListBox>(dialog, "CandidateList");
 
-            // 一覧は Core の候補そのもの(先頭の行は案内)
+            // 一覧は Core の候補そのもの。
             IReadOnlyList<FormatCandidate> expected = FormatCandidates.Build(
                 FileSize, ".raw", path, memory.History, displayed);
             Assert.Equal(expected, dialog.Candidates);
-            Assert.True(combo.IsEnabled);
-            Assert.Equal(expected.Count + 1, combo.Items.Count);
-            Assert.Equal($"候補から選ぶ…({expected.Count} 件)", combo.Items[0]);
-            Assert.Equal("記憶(同じサイズ): 640×480 12bit RGGB 上詰め Big", combo.Items[1]);
-            Assert.Equal("表示中の画像: 480×640 16bit モノクロ", combo.Items[2]);
-            Assert.Contains("ファイル名: 320×960 12bit RGGB 上詰め Big", combo.Items.Cast<string>());
-            Assert.Contains("解像度表: 640×480 12bit モノクロ", combo.Items.Cast<string>());
+            Assert.True(list.IsEnabled);
+            var rows = list.Items.Cast<RawImportDialog.CandidateRow>().ToArray();
+            Assert.Equal(expected.Count, rows.Length);
+            Assert.Contains($"{expected.Count} 件", Find<TextBlock>(dialog, "CandidateHeading").Text);
+            Assert.Equal(new RawImportDialog.CandidateRow("記憶(同じサイズ)", "640×480 12bit RGGB 上詰め Big"), rows[0]);
+            Assert.Equal(new RawImportDialog.CandidateRow("表示中の画像", "480×640 16bit モノクロ"), rows[1]);
+            Assert.Contains(new RawImportDialog.CandidateRow("ファイル名", "320×960 12bit RGGB 上詰め Big"), rows);
+            Assert.Contains(new RawImportDialog.CandidateRow("解像度表", "640×480 12bit モノクロ"), rows);
+            Assert.InRange(rows.Length, 5, 10);
 
             // 初期値は候補の先頭。一覧もその候補を指す
             Assert.Equal("640", Find<TextBox>(dialog, "WidthBox").Text);
             Assert.Equal(1, Find<ComboBox>(dialog, "PackingCombo").SelectedIndex);
             Assert.Equal(1, Find<ComboBox>(dialog, "EndianCombo").SelectedIndex);
             Assert.Equal(0, Find<ComboBox>(dialog, "BayerCombo").SelectedIndex);
-            Assert.Equal(1, combo.SelectedIndex);
+            Assert.Equal(0, list.SelectedIndex);
             CaptureIfRequested(dialog, "import-candidates");
 
             // 選ぶと全項目にその形式が入る(プリセットの選択と同じ)
-            int index = combo.Items.IndexOf("表示中の画像: 480×640 16bit モノクロ");
-            combo.SelectedIndex = index;
+            const int index = 1;
+            list.SelectedIndex = index;
             Assert.Equal("480", Find<TextBox>(dialog, "WidthBox").Text);
             Assert.Equal("640", Find<TextBox>(dialog, "HeightBox").Text);
             Assert.Equal("16bit", Find<ComboBox>(dialog, "BitDepthCombo").SelectedItem);
@@ -230,13 +233,13 @@ public class RawImportDialogTests : IDisposable
             Assert.Equal(4, Find<ComboBox>(dialog, "BayerCombo").SelectedIndex);
             Assert.StartsWith("✓", Find<TextBlock>(dialog, "SizeNoteText").Text);
             Assert.True(Find<Button>(dialog, "OpenButton").IsEnabled);
-            Assert.Equal(index, combo.SelectedIndex);
+            Assert.Equal(index, list.SelectedIndex);
 
-            // 手で変えて候補と違う値になったら、一覧は案内の行に戻る(戻せばまたその候補を指す)
+            // 手で変えて候補と違う値になったら、未選択に戻る(値を戻せばまたその候補を指す)。
             Find<TextBox>(dialog, "HeightBox").Text = "641";
-            Assert.Equal(0, combo.SelectedIndex);
+            Assert.Equal(-1, list.SelectedIndex);
             Find<TextBox>(dialog, "HeightBox").Text = "640";
-            Assert.Equal(index, combo.SelectedIndex);
+            Assert.Equal(index, list.SelectedIndex);
             dialog.Close();
         });
     }
@@ -377,9 +380,9 @@ public class RawImportDialogTests : IDisposable
             Assert.Equal("SensorA", presets.SelectedItem);
 
             // 候補を選んでプリセットと違う値になっても案内の行へ戻る
-            var candidates = Find<ComboBox>(dialog, "CandidateCombo");
-            int other = Enumerable.Range(1, dialog.Candidates.Count)
-                .First(i => dialog.Candidates[i - 1].Format != Fmt(640, 480, bayer: BayerPattern.Gbrg));
+            var candidates = Find<ListBox>(dialog, "CandidateList");
+            int other = Enumerable.Range(0, dialog.Candidates.Count)
+                .First(i => dialog.Candidates[i].Format != Fmt(640, 480, bayer: BayerPattern.Gbrg));
             candidates.SelectedIndex = other;
             Assert.Equal(0, presets.SelectedIndex);
             dialog.Close();
@@ -441,9 +444,10 @@ public class RawImportDialogTests : IDisposable
 
             RawImportDialog dialog = CreateDialog(path, CreateMemory());
 
-            var combo = Find<ComboBox>(dialog, "CandidateCombo");
-            Assert.False(combo.IsEnabled);
-            Assert.Single(combo.Items);
+            var list = Find<ListBox>(dialog, "CandidateList");
+            Assert.False(list.IsEnabled);
+            Assert.Empty(list.Items);
+            Assert.Equal(-1, list.SelectedIndex);
             Assert.Empty(dialog.Candidates);
 
             // 候補も初期値もなければ従来どおりの既定値
@@ -452,6 +456,47 @@ public class RawImportDialogTests : IDisposable
             dialog.Close();
         });
     }
+
+    [Fact]
+    public Task CandidateList_ArrowKeysApplyAndScrollToTheSelectedRow() => WpfTestHost.Run(async () =>
+    {
+        string path = CreateFile("cap_320x960.raw", FileSize);
+        FormatMemory memory = CreateMemory();
+        foreach (int width in new[] { 80, 96, 100, 120, 128, 160, 192, 200, 240, 256, 300, 320 })
+        {
+            memory.RememberLoaded(path, FileSize, Fmt(width, 307200 / width), autoOpen: false);
+        }
+        RawImportDialog dialog = CreateDialog(path, memory, initial: Fmt(640, 480, 8));
+        try
+        {
+            dialog.Show();
+            await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+            var list = Find<ListBox>(dialog, "CandidateList");
+            Assert.Equal(10, list.Items.Count);
+            Assert.Equal(-1, list.SelectedIndex);
+            var widthBox = Find<TextBox>(dialog, "WidthBox");
+            Assert.True(widthBox.Focus());
+            Assert.True(widthBox.MoveFocus(new TraversalRequest(FocusNavigationDirection.Previous)));
+            Assert.IsType<ListBoxItem>(Keyboard.FocusedElement);
+
+            for (int i = 0; i < list.Items.Count; i++)
+            {
+                var focused = Assert.IsType<ListBoxItem>(Keyboard.FocusedElement);
+                focused.RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(list),
+                    Environment.TickCount, Key.Down) { RoutedEvent = Keyboard.KeyDownEvent });
+            }
+            await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+            Assert.Equal(9, list.SelectedIndex);
+            Assert.Equal(dialog.Candidates[9].Format.Width.ToString(), widthBox.Text);
+            var selected = Assert.IsType<ListBoxItem>(list.ItemContainerGenerator.ContainerFromIndex(9));
+            Rect bounds = selected.TransformToAncestor(list).TransformBounds(new Rect(selected.RenderSize));
+            Assert.InRange(bounds.Bottom, 1, list.ActualHeight);
+        }
+        finally
+        {
+            dialog.Close();
+        }
+    });
 
     [Fact]
     public Task AutoOpenCheck_StartsFromRememberedFlagAndIsReturned()

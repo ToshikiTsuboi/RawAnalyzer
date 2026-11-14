@@ -32,6 +32,11 @@ public partial class RawImportDialog : Window
     private bool _initializing = true;
     private bool _syncingCandidates;
 
+    internal sealed record CandidateRow(string Source, string Format)
+    {
+        public string AccessibleName => $"{Source}: {Format}";
+    }
+
     // 選択中のプリセットを適用した直後の入力値。入力がこれと食い違ったら一覧を案内の行へ戻す
     private RawFormat? _presetFormat;
     private bool _syncingPresets;
@@ -112,7 +117,7 @@ public partial class RawImportDialog : Window
     /// </summary>
     public bool AutoOpenNextTime => AutoOpenCheck.IsChecked == true;
 
-    /// <summary>候補一覧の中身(先頭ほど有力。一覧の2行目以降に対応する)。</summary>
+    /// <summary>候補一覧の中身(先頭ほど有力)。</summary>
     internal IReadOnlyList<FormatCandidate> Candidates => _candidates;
 
     private IReadOnlyDictionary<string, RawFormat> LoadPresetsSafe()
@@ -320,7 +325,7 @@ public partial class RawImportDialog : Window
     }
 
     /// <summary>
-    /// 候補一覧を作り直す(先頭の行は案内。候補がなければ一覧を無効にする)。
+    /// 候補一覧を作り直す(候補がなければ一覧を無効にする)。
     /// </summary>
     private void RefreshCandidates()
     {
@@ -330,18 +335,11 @@ public partial class RawImportDialog : Window
         _syncingCandidates = true;
         try
         {
-            CandidateCombo.Items.Clear();
-            CandidateCombo.Items.Add(_candidates.Count > 0
-                ? $"候補から選ぶ…({_candidates.Count} 件)"
-                : "候補なし(ファイルサイズに合う形式が見つかりません)");
-            foreach (FormatCandidate candidate in _candidates)
-            {
-                CandidateCombo.Items.Add(FormatCandidateText.Display(candidate));
-            }
-
-            CandidateCombo.SelectedIndex = 0;
-            CandidateCombo.IsEnabled = _candidates.Count > 0;
-            CandidateCombo.ToolTip =
+            CandidateHeading.Text = $"候補 (ファイルサイズに合う形式・{_candidates.Count} 件)";
+            CandidateList.ItemsSource = _candidates.Select(candidate => new CandidateRow(
+                FormatCandidateText.SourceLabel(candidate.Source), FormatCandidateText.Describe(candidate.Format))).ToArray();
+            CandidateList.IsEnabled = _candidates.Count > 0;
+            CandidateList.ToolTip =
                 "ファイルサイズにちょうど合う形式を、同じサイズの記憶 → 表示中の画像 → 記憶から推定 → " +
                 "ファイル名の「幅x高さ」 → 解像度表 の順に並べます。選ぶと全項目に入ります。";
         }
@@ -351,23 +349,27 @@ public partial class RawImportDialog : Window
         }
     }
 
-    /// <summary>入力中の値と同じ候補を一覧で選択状態にする(なければ先頭の案内の行)。</summary>
+    /// <summary>入力中の値と同じ候補を一覧で選択状態にする(なければ未選択)。</summary>
     /// <param name="current">入力中の値(不正なら null)。</param>
     private void SyncCandidateSelection(RawFormat? current)
     {
-        int index = 0;
+        int index = -1;
         for (int i = 0; current is not null && i < _candidates.Count; i++)
         {
             if (_candidates[i].Format == current)
             {
-                index = i + 1;
+                index = i;
                 break;
             }
         }
 
         _syncingCandidates = true;
-        CandidateCombo.SelectedIndex = index;
+        CandidateList.SelectedIndex = index;
         _syncingCandidates = false;
+        if (CandidateList.SelectedItem is { } row)
+        {
+            CandidateList.ScrollIntoView(row);
+        }
     }
 
     /// <summary>
@@ -393,15 +395,14 @@ public partial class RawImportDialog : Window
 
     private void OnCandidateSelected(object sender, SelectionChangedEventArgs e)
     {
-        if (_initializing || _syncingCandidates || CandidateCombo.SelectedIndex <= 0
-            || CandidateCombo.SelectedIndex > _candidates.Count)
+        if (_initializing || _syncingCandidates || CandidateList.SelectedIndex < 0)
         {
             return;
         }
 
         // プリセットの選択と同じく、全項目にその形式を入れる
         _initializing = true;
-        ApplyFormat(_candidates[CandidateCombo.SelectedIndex - 1].Format);
+        ApplyFormat(_candidates[CandidateList.SelectedIndex].Format);
         _initializing = false;
         UpdateSizeNote();
     }
