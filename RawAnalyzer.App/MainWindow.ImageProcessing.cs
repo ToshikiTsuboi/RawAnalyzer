@@ -365,7 +365,13 @@ public partial class MainWindow
         string frameNote = _tiffStack is not null ? TiffPageNote
             : source.FrameCount > 1 ? $" [フレーム {frame + 1}/{source.FrameCount}]" : "";
         var dialog = new ImageProcessingDialog(NoiseSourceName() + (_tiffStack is null ? frameNote : ""), source.Width, source.Height,
-            pattern, sourceColor is not null, binning) { Owner = this };
+            pattern, sourceColor is not null, binning)
+        {
+            Owner = this,
+            ReadPreviewRegion = (area, token) => ProcessingPreview.ReadRaw(source, frame, area, token),
+            ReadColorPreviewRegion = sourceColor is null ? null : (area, token) => ProcessingPreview.ReadColor(sourceColor, area, token),
+            PreviewDisplay = new DisplayParameters(_blackPoint, _whitePoint, _vm.Gain, _vm.Gamma, _vm.Contrast),
+        };
         if (dialog.ShowDialog() != true || dialog.Result is not { } choice)
         {
             return;
@@ -378,16 +384,12 @@ public partial class MainWindow
             IProgress<double> pixelsProgress = new PixelProgress(progress, sourceColor is null ? 1 : 0.9);
             if (sourceColor is not null)
             {
-                processedColor = choice.Filter is { } filter
-                    ? ImageFilters.Apply(sourceColor, filter, pixelsProgress, ct)
-                    : ImageBinning.Apply(sourceColor, choice.Factor, choice.Mode, pixelsProgress, ct);
+                processedColor = ProcessingPreview.Apply(sourceColor, choice, pixelsProgress, ct);
                 processed = processedColor.ToLuminance(ct);
             }
             else
             {
-                processed = choice.Filter is { } filter
-                    ? ImageFilters.Apply(source, filter, frame, pattern, pixelsProgress, ct)
-                    : ImageBinning.Apply(source, choice.Factor, choice.Mode, frame, pattern, pixelsProgress, ct);
+                processed = ProcessingPreview.Apply(source, choice, frame, pattern, pixelsProgress, ct);
             }
 
             ct.ThrowIfCancellationRequested();
