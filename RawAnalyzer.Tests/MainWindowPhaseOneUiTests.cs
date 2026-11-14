@@ -112,8 +112,9 @@ public class MainWindowPhaseOneUiTests
 
             var panel = (Border)window.FindName("RightPanel");
             var scroll = Descendants<ScrollViewer>(panel).First();
-            Assert.Equal(1280, window.ActualWidth, 0);
-            Assert.Equal(820, window.ActualHeight, 0);
+
+            // ウィンドウ全体の寸法は検証しない。画面の狭い環境(CI のランナーなど)では、既定の 1280×820 が
+            // 画面に合わせて切り詰められる。前提は、右パネルが既定の幅でスクロールバーが出ていること
             Assert.Equal(240, panel.ActualWidth, 0);
             Assert.Equal(Visibility.Visible, scroll.ComputedVerticalScrollBarVisibility);
 

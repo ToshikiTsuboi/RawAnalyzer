@@ -108,8 +108,20 @@ public class FileListVirtualizationTests
             await WaitUntil(() => FindDetail(list)?.Text == "1920×1080 · 12bit · BGGR");
             await WaitUntil(() => FindDetail(list, 1)?.Text == "1920×1080 · 12bit · RGGB");
 
-            ((Button)window.FindName("NextFrameButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-            await WaitUntil(() => window.Title.Contains(Path.GetFileName(nextPath), StringComparison.Ordinal));
+            // ファイル送りは、連番の検出が済む前や、実行中の処理・読み込みと重なったときは黙ってやめる
+            // (遅い環境では Bayer 変更の後処理と重なる)。移るまで押し直す。送りの途中の押下は無視され、
+            // 番号とタイトルは同じ UI ターンで替わるので、行き過ぎない
+            var next = (Button)window.FindName("NextFrameButton");
+            await WaitUntil(() =>
+            {
+                if (window.Title.Contains(Path.GetFileName(nextPath), StringComparison.Ordinal))
+                {
+                    return true;
+                }
+
+                next.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                return false;
+            });
             Assert.Equal(BayerPattern.Bggr, viewport.Image!.Format.Bayer);
             await WaitUntil(() => FindDetail(list, 1)?.Text == "1920×1080 · 12bit · BGGR");
             await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
