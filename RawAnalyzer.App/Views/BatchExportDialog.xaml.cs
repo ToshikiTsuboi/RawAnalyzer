@@ -138,38 +138,56 @@ public partial class BatchExportDialog : Window
     private readonly int _frameWidth;
     private readonly int _frameHeight;
     private readonly string _sourceFolder;
+    private readonly IReadOnlyList<string> _targets;
+    private readonly bool _rawTargets;
+    private readonly int _rawFrameCount;
+    private int? _firstPageCount;
+    private long? _knownTiffBytes;
+    private bool _checkedTotal;
+    private readonly SemaphoreSlim _sizeSlot = new(1, 1);
+    private CancellationTokenSource? _sizeCheck;
+    internal Func<IReadOnlyList<string>, int?, bool, CancellationToken, (int?, long?)> ReadSizes { get; init; } =
+        ExportSize.ReadBatchSizes;
 
     // 「参照…」の始めるフォルダを確かめている・選択ダイアログを出している間
     private bool _browsing;
 
     /// <summary>ダイアログを生成する。</summary>
-    /// <param name="targetCount">対象ファイル数。</param>
+    /// <param name="targets">書き出し対象ファイルの一覧。</param>
     /// <param name="defaultOutputFolder">出力先の初期値。</param>
     /// <param name="rawTargets">対象がrawか(falseならTIFF等の連番画像)。</param>
     /// <param name="frameWidth">1フレームの幅(ビットレート目安の表示用。0なら表示しない)。</param>
     /// <param name="frameHeight">1フレームの高さ。</param>
-    /// <param name="tiffPageCount">単一TIFFスタック内のページ数。通常は1。</param>
+    /// <param name="tiffPageCount">最初の入力ファイルのページ数。未知ならnull。</param>
     /// <param name="sourceFolder">
     /// 出力先の相対パスの基準にする元画像のフォルダ。null なら出力先の初期値の親フォルダ。
     /// </param>
+    /// <param name="rawFrameCount">各 RAW のフレーム数。</param>
+    /// <param name="knownTiffBytes">全入力の寸法・枚数が既知の場合の非圧縮 TIFF 合計バイト数。</param>
     public BatchExportDialog(
-        int targetCount,
+        IReadOnlyList<string> targets,
         string defaultOutputFolder,
         bool rawTargets = true,
         int frameWidth = 0,
         int frameHeight = 0,
-        int tiffPageCount = 1,
-        string? sourceFolder = null)
+        int? tiffPageCount = null,
+        string? sourceFolder = null, int rawFrameCount = 1, long? knownTiffBytes = null)
     {
         InitializeComponent();
         _frameWidth = frameWidth;
         _frameHeight = frameHeight;
         _sourceFolder = sourceFolder ?? Path.GetDirectoryName(defaultOutputFolder) ?? "";
-        TargetInfoText.Text = tiffPageCount > 1
+        _targets = targets;
+        _rawTargets = rawTargets;
+        _rawFrameCount = rawFrameCount;
+        _firstPageCount = tiffPageCount;
+        _knownTiffBytes = knownTiffBytes;
+        TargetList.ItemsSource = targets;
+        TargetInfoText.Text = !rawTargets && targets.Count == 1 && tiffPageCount > 1
             ? $"対象: TIFFスタック 1 件・全 {tiffPageCount} ページ"
             : rawTargets
-            ? $"対象: フォーマットが一致するrawファイル {targetCount} 件"
-            : $"対象: 連番の画像ファイル {targetCount} 件";
+            ? $"対象: フォーマットが一致するrawファイル {targets.Count} 件"
+            : $"対象: 連番の画像ファイル {targets.Count} 件";
         if (!rawTargets)
         {
             // カラー画像は既にRGBなので、現像段(WB/マトリクス/デモザイク)は適用されない
@@ -183,6 +201,8 @@ public partial class BatchExportDialog : Window
         OutputFolderBox.Text = defaultOutputFolder;
         FormatCombo.SelectedIndex = 0;
         UpdateQualityNote();
+        Loaded += (_, _) => UpdateOutputPreview();
+        Closed += (_, _) => _sizeCheck?.Cancel();
     }
 
     /// <summary>「実行」で確定された選択。</summary>
@@ -210,6 +230,76 @@ public partial class BatchExportDialog : Window
             DisplayLutCheck.Visibility = BatchTiffOutput.IsTiff(SelectedFormat)
                 ? Visibility.Collapsed
                 : Visibility.Visible;
+        }
+        UpdateOutputPreview();
+    }
+
+    private void UpdateOutputPreview()
+    {
+        if (OutputExample is null || TotalEstimate is null || _targets is not { Count: > 0 })
+            return;
+
+        var format = SelectedFormat;
+        bool video = format is BatchFormat.AviMjpeg or BatchFormat.Mp4H264;
+        bool tiff = BatchTiffOutput.IsTiff(format);
+        int? count = _rawTargets ? _rawFrameCount : _firstPageCount;
+        bool needTotal = !_rawTargets && tiff && _knownTiffBytes is null && !_checkedTotal;
+        bool pending = !_rawTargets && IsLoaded && (needTotal || (!video && count is null));
+        _sizeCheck?.Cancel();
+        ShowOutputPreview(pending);
+        if (pending)
+            _ = UpdateSizesAsync(needTotal);
+    }
+
+    private void ShowOutputPreview(bool pending)
+    {
+        var format = SelectedFormat;
+        bool video = format is BatchFormat.AviMjpeg or BatchFormat.Mp4H264;
+        int? count = _rawTargets ? _rawFrameCount : _firstPageCount;
+        string path = video ? OutputPaths.BatchVideoPath("", _targets[0], format)
+            : count is int pages ? OutputPaths.BatchImagePath("", _targets[0], 0, pages, !_rawTargets && pages > 1,
+                OutputPaths.BatchImageExtension(format))
+            : pending ? "ページ構成を確認中…" : "ページ構成を取得できません";
+        OutputExample.Text = $"出力ファイル名の例 · {path}";
+        TotalEstimate.Text = !BatchTiffOutput.IsTiff(format) ? "合計サイズ · 圧縮率により変動"
+            : _knownTiffBytes is long bytes ? $"見込みの合計サイズ · {bytes:N0} バイト"
+            : pending ? "合計サイズ · 寸法と枚数を確認中…"
+            : "合計サイズ · 全画像の寸法と枚数を確定できないため算出不可";
+    }
+
+    private async Task UpdateSizesAsync(bool needTotal)
+    {
+        using var cancellation = new CancellationTokenSource();
+        _sizeCheck = cancellation;
+        CancellationToken token = cancellation.Token;
+        int? first = _firstPageCount;
+        try
+        {
+            await _sizeSlot.WaitAsync(token);
+            try
+            {
+                var (pages, total) = await Task.Run(() => ReadSizes(_targets, first, needTotal, token), token);
+                token.ThrowIfCancellationRequested();
+                _firstPageCount = pages;
+                if (needTotal)
+                {
+                    _checkedTotal = true;
+                    _knownTiffBytes = total;
+                }
+                ShowOutputPreview(false);
+            }
+            finally
+            {
+                _sizeSlot.Release();
+            }
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
+        {
+        }
+        finally
+        {
+            if (ReferenceEquals(_sizeCheck, cancellation))
+                _sizeCheck = null;
         }
     }
 

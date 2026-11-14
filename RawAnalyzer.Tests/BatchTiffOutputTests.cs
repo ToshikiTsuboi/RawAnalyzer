@@ -65,7 +65,7 @@ public class BatchExportDialogFormatTests
     {
         // raw code のまま書く TIFF(K4)を 16bitフルスケールの TIFF の隣に足した。選択肢の並びと形式の対応、
         // TIFF ではどちらも表示調整の焼き込みを出さず、動画だけフレームレート・品質を出すこと
-        var dialog = new BatchExportDialog(3, Path.Combine(Path.GetTempPath(), "export"));
+        var dialog = new BatchExportDialog(new[] { @"C:\capture\scene_001.raw", @"C:\capture\scene_002.raw", @"C:\capture\scene_003.raw" }, Path.Combine(Path.GetTempPath(), "export"));
         try
         {
             var combo = (ComboBox)dialog.FindName("FormatCombo");

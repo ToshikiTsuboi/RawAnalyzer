@@ -449,11 +449,17 @@ public partial class MainWindow
         }
 
         string folder = Path.GetDirectoryName(_currentPath)!;
+        int? firstPageCount = string.Equals(targets[0], _currentPath, StringComparison.OrdinalIgnoreCase)
+            ? _tiffStack?.PageCount ?? 1
+            : null;
         var dialog = new BatchExportDialog(
-            targets.Count, Path.Combine(folder, "export"), rawTargets,
+            targets, Path.Combine(folder, "export"), rawTargets,
             _currentFormat?.Width ?? 0, _currentFormat?.Height ?? 0,
-            _tiffStack is { PageNavigationEnabled: true } stack ? stack.PageCount : 1,
-            sourceFolder: folder)
+            firstPageCount,
+            sourceFolder: folder, rawFrameCount: format.FrameCount,
+            knownTiffBytes: rawTargets || (targets.Count == 1 && _tiffStack is null)
+                ? ExportSize.ForBatchTiff(format.Width, format.Height,
+                    rawTargets ? (long)targets.Count * format.FrameCount : 1) : null)
         {
             Owner = this,
         };
@@ -504,10 +510,7 @@ public partial class MainWindow
         int width = format.Width;
         int height = format.Height;
         bool video = choice.Format is BatchFormat.AviMjpeg or BatchFormat.Mp4H264;
-        string videoPath = Path.Combine(
-            choice.OutputFolder,
-            Path.GetFileNameWithoutExtension(targets[0])
-                + (choice.Format == BatchFormat.Mp4H264 ? "_seq.mp4" : "_seq.avi"));
+        string videoPath = OutputPaths.BatchVideoPath(choice.OutputFolder, targets[0], choice.Format);
 
         // 動画は一時ファイルへ書き切ってから置換する。最終パスへ直接書くと、
         // 失敗・キャンセル時に上書き対象だった既存の動画を失う
@@ -587,7 +590,7 @@ public partial class MainWindow
                                 bool jpeg = choice.Format == BatchFormat.Jpeg8;
                                 string outputPath = OutputPaths.BatchImagePath(
                                     choice.OutputFolder, file, entry.Index, entry.Count, entry.IsTiffPage,
-                                    BatchTiffOutput.IsTiff(choice.Format) ? ".tif" : jpeg ? ".jpg" : ".png");
+                                    OutputPaths.BatchImageExtension(choice.Format));
                                 sourceGuard.EnsureNotSource(outputPath);
                                 if (BatchTiffOutput.IsTiff(choice.Format))
                                 {

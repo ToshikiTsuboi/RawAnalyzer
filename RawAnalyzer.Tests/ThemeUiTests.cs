@@ -58,7 +58,7 @@ public class ThemeUiTests
             new NoiseMeasureDialog("sample.raw", null, 4095, false, 0, new object()),
             new DefectPixelWindow(),
             new SaveDialog(100, bitDepth: 12),
-            new BatchExportDialog(3, directory),
+            new BatchExportDialog(new[] { @"C:\capture\scene_001.raw", @"C:\capture\scene_002.raw", @"C:\capture\scene_003.raw" }, directory),
             new ImageProcessingDialog("sample.raw", 640, 480, BayerPattern.Rggb, false, true),
             new ImageCalculatorDialog("A", directory, expectedSize: 640 * 480 * 2),
         ];

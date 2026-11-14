@@ -1,5 +1,6 @@
 ﻿using System.IO;
 using RawAnalyzer.Core;
+using RawAnalyzer.App.Views;
 
 namespace RawAnalyzer.App.Services;
 
@@ -8,6 +9,13 @@ namespace RawAnalyzer.App.Services;
 /// </summary>
 internal static class OutputPaths
 {
+    internal static string BatchVideoPath(string folder, string source, BatchFormat format) =>
+        Path.Combine(folder, Path.GetFileNameWithoutExtension(source)
+            + (format == BatchFormat.Mp4H264 ? "_seq.mp4" : "_seq.avi"));
+
+    internal static string BatchImageExtension(BatchFormat format) =>
+        BatchTiffOutput.IsTiff(format) ? ".tif" : format == BatchFormat.Jpeg8 ? ".jpg" : ".png";
+
     /// <summary>
     /// 書き込み中の一時ファイルのパスを作る(完了後に最終パスへ置換する用)。
     /// </summary>

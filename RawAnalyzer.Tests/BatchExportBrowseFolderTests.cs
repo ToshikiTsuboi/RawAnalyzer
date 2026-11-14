@@ -23,7 +23,7 @@ public class BatchExportBrowseFolderTests
         // (exe の場所など)基準で探していた。「実行」と同じく元画像のフォルダを基準に解決する
         return WpfTestHost.Run(() =>
         {
-            var dialog = new BatchExportDialog(3, Path.Combine(SourceFolder, "export"), sourceFolder: SourceFolder);
+            var dialog = new BatchExportDialog(new[] { @"C:\capture\scene_001.raw", @"C:\capture\scene_002.raw", @"C:\capture\scene_003.raw" }, Path.Combine(SourceFolder, "export"), sourceFolder: SourceFolder);
             ((TextBox)dialog.FindName("OutputFolderBox")).Text = input;
 
             Assert.Equal(expected, dialog.BrowseStartFolder());
@@ -36,7 +36,7 @@ public class BatchExportBrowseFolderTests
     {
         return WpfTestHost.Run(() =>
         {
-            var dialog = new BatchExportDialog(3, Path.Combine(SourceFolder, "export"), sourceFolder: SourceFolder);
+            var dialog = new BatchExportDialog(new[] { @"C:\capture\scene_001.raw", @"C:\capture\scene_002.raw", @"C:\capture\scene_003.raw" }, Path.Combine(SourceFolder, "export"), sourceFolder: SourceFolder);
             ((TextBox)dialog.FindName("OutputFolderBox")).Text = "out\0put";
 
             Assert.Null(dialog.BrowseStartFolder());

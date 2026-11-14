@@ -16,6 +16,17 @@
     </Window.Resources>
     <StackPanel Margin="16,14">
         <TextBlock x:Name="TargetInfoText" Foreground="{StaticResource TextBrush}" Margin="0,0,0,10" />
+        <Expander x:Name="TargetsSection" Header="対象ファイル" Margin="0,0,0,10">
+            <ListBox x:Name="TargetList" MaxHeight="130" AutomationProperties.Name="対象ファイル"
+                     ScrollViewer.CanContentScroll="True" ScrollViewer.VerticalScrollBarVisibility="Auto"
+                     VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
+                <ListBox.ItemTemplate>
+                    <DataTemplate>
+                        <TextBlock Text="{Binding}" TextTrimming="CharacterEllipsis" ToolTip="{Binding}" />
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+        </Expander>
         <TextBlock x:Name="ProcessingNoteText" Margin="0,0,0,10" TextWrapping="Wrap"
                    Visibility="Collapsed" />
         <TextBlock Text="出力形式(現在の表示調整/WB/マトリクスを焼き込み)" />
@@ -29,6 +40,8 @@
             <ComboBoxItem Content="AVI動画 (MJPEG・現像/LUT焼き込み)" />
             <ComboBoxItem Content="MP4動画 (H.264・現像/LUT焼き込み)" />
         </ComboBox>
+        <TextBlock x:Name="OutputExample" Margin="0,6,0,0" TextWrapping="Wrap" />
+        <TextBlock x:Name="TotalEstimate" Margin="0,3,0,0" TextWrapping="Wrap" />
 
         <CheckBox x:Name="DisplayLutCheck" Margin="0,10,0,0" IsChecked="True"
                   Foreground="{StaticResource TextDim}" FontSize="{x:Static themes:ThemeTypography.FontSizeBody}"
