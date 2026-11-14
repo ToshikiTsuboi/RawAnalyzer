@@ -1,6 +1,5 @@
 ﻿using System.Collections.ObjectModel;
 using System.IO;
-using System.Windows.Media;
 using RawAnalyzer.App.Compare;
 using RawAnalyzer.App.Mvvm;
 using RawAnalyzer.App.Rendering;
@@ -16,8 +15,9 @@ namespace RawAnalyzer.App.ViewModels;
 /// ファイルサイズ(バイト)。不明なら-1。列挙時に取得済みの値を保持しておき、
 /// 仮想スタック判定のたびに GetFileAttributesEx を撃ち直さないようにする。
 /// </param>
+/// <param name="LastWriteTimeUtc">列挙時に取得した更新時刻。</param>
 public sealed record FileEntry(
-    string Name, string FullPath, bool IsDirectory = false, long Length = -1);
+    string Name, string FullPath, bool IsDirectory = false, long Length = -1, DateTime LastWriteTimeUtc = default);
 
 /// <summary>
 /// メインウィンドウのViewModel。表示状態(テキスト・スライダー値・ヒストグラム)を保持する。
@@ -44,7 +44,7 @@ public sealed class MainViewModel : ObservableObject
     private string _processingStateTooltip = "";
     private string _formatNoticeText = "";
     private string _formatNoticeToolTip = "";
-    private string _cursorStatusText = "";
+    private CursorReadout.Text? _cursorReadout;
     private string _zoomStatusText = "";
     private string _zoomPercentText = "—";
     private string _cursorOverlayText = "";
@@ -75,7 +75,6 @@ public sealed class MainViewModel : ObservableObject
     private double _sequenceIndex;
     private double _sequenceMax;
     private string _sequenceLabel = "";
-    private ImageSource? _histogramSource;
     private string _histMeanSigmaText = "— / —";
     private string _histMinMaxText = "— / —";
     private string _histMedianModeText = "— / —";
@@ -434,12 +433,22 @@ public sealed class MainViewModel : ObservableObject
     /// <summary>推定の通知を出すか。</summary>
     public bool HasFormatNotice => _formatNoticeText.Length > 0;
 
-    /// <summary>ステータスバー中央のカーソル位置情報。</summary>
-    public string CursorStatusText
+    internal void SetCursorStatus(CursorReadout.Text? readout)
     {
-        get => _cursorStatusText;
-        set => SetProperty(ref _cursorStatusText, value);
+        if (_cursorReadout == readout)
+        {
+            return;
+        }
+
+        _cursorReadout = readout;
+        OnPropertyChanged(nameof(CursorCoordinatesText));
+        OnPropertyChanged(nameof(CursorValueText));
+        OnPropertyChanged(nameof(CursorChannelText));
     }
+
+    public string CursorCoordinatesText => _cursorReadout?.Coordinates ?? "";
+    public string CursorValueText => _cursorReadout?.Value ?? "";
+    public string CursorChannelText => _cursorReadout?.Channel ?? "";
 
     /// <summary>ステータスバー右端のズーム/レベル情報。</summary>
     public string ZoomStatusText
@@ -681,13 +690,6 @@ public sealed class MainViewModel : ObservableObject
     {
         get => _sequenceLabel;
         set => SetProperty(ref _sequenceLabel, value);
-    }
-
-    /// <summary>ヒストグラム画像。</summary>
-    public ImageSource? HistogramSource
-    {
-        get => _histogramSource;
-        set => SetProperty(ref _histogramSource, value);
     }
 
     /// <summary>ヒストグラム統計 mean/σ。</summary>

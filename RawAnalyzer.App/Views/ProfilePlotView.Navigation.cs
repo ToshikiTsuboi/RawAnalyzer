@@ -121,6 +121,7 @@ public partial class ProfilePlotView
 
     private void OnPlotMouseDown(object sender, MouseButtonEventArgs e)
     {
+        ClearHover();
         if (e.ClickCount == 2)
         {
             ResetView();
@@ -139,14 +140,18 @@ public partial class ProfilePlotView
 
     private void OnPlotMouseMove(object sender, MouseEventArgs e)
     {
-        if (_panOrigin is not { } start) return;
+        Point position = e.GetPosition(PlotCanvas);
+        if (_panOrigin is not { } start)
+        {
+            ShowHover(position.X);
+            return;
+        }
         if (e.LeftButton != MouseButtonState.Pressed)
         {
             EndPan();
             return;
         }
 
-        Point position = e.GetPosition(PlotCanvas);
         PanFrom(_panHorizontal, _panVertical, position - start);
         e.Handled = true;
     }

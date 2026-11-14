@@ -16,9 +16,11 @@ internal static class CursorReadout
     /// <summary>
     /// 表示文。
     /// </summary>
-    /// <param name="Status">ステータスバーの文。</param>
+    /// <param name="Coordinates">ステータスバーの座標。</param>
+    /// <param name="Value">ステータスバーの値。</param>
+    /// <param name="Channel">ステータスバーのチャネル。</param>
     /// <param name="Overlay">キャンバス左上のオーバーレイの文。</param>
-    internal readonly record struct Text(string Status, string Overlay);
+    internal readonly record struct Text(string Coordinates, string Value, string Channel, string Overlay);
 
     /// <summary>
     /// 元画像の座標 (x, y) の画素値の表示文を作る。
@@ -62,7 +64,7 @@ internal static class CursorReadout
             int b = b16 >> shift;
             (int luma, int cb, int cr) = ColorConvert.RgbToYCbCr(r, g, b, (1 << color.BitDepth) - 1);
             return new Text(
-                $"({x}, {y}) RGB=({r}, {g}, {b}) YCbCr=({luma}, {cb}, {cr})",
+                $"({x}, {y})", $"RGB=({r}, {g}, {b}) YCbCr=({luma}, {cb}, {cr})", "RGB",
                 $"({x}, {y})  RGB: {r} {g} {b}  YCbCr: {luma} {cb} {cr}");
         }
 
@@ -74,7 +76,7 @@ internal static class CursorReadout
             ? BayerHelper.GetLabel(BayerChannel.None)
             : BayerHelper.GetLabel(BayerHelper.GetChannel(format.Bayer, x, y, image.SegmentWidth));
         return new Text(
-            $"({x}, {y}) raw={code}",
+            $"({x}, {y})", $"raw={code}", channel,
             $"({x}, {y})  raw: {code} / {maxCode}  {channel}");
     }
 }

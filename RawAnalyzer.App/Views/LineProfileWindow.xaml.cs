@@ -30,6 +30,8 @@ public partial class LineProfileWindow : Window
         InitializeComponent();
         Plot.TableBuilder = BuildTableCore;
         Plot.CsvFileName = () => IsHorizontal ? $"profile_y{_pointY}.csv" : $"profile_x{_pointX}.csv";
+        Plot.HoverIndexChanged += index => HoverPixelChanged?.Invoke(index is int i
+            ? IsHorizontal ? (i, _pointY) : (_pointX, i) : null);
         _ready = true;
         Update();
         Closed += (_, _) => Plot.EndInteraction();
@@ -55,6 +57,8 @@ public partial class LineProfileWindow : Window
 
     /// <summary>水平/垂直の切替時に発火する(true=水平)。</summary>
     public event Action<bool>? DirectionChanged;
+
+    internal event Action<(int X, int Y)?>? HoverPixelChanged;
 
     /// <summary>現在水平プロファイル表示か。</summary>
     public bool IsHorizontal => HorizontalRadio?.IsChecked != false;

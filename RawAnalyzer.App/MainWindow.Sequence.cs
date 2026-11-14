@@ -432,6 +432,7 @@ public partial class MainWindow
                     SyncLevelControlsToActiveBitDepth();
                     UpdateFormatPanel(format);
                     _histogram = null;
+                    RedrawHistogram();
                     _channelHistograms = null;
 
                     // 現像LUT(白飛びの判定に素材のビット深度を使う)は、カラー現像のまま送った場合に

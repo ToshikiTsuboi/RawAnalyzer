@@ -13,6 +13,38 @@ namespace RawAnalyzer.Tests;
 public class LineProfileWindowTests
 {
     [Fact]
+    public Task Hover_ReportsSourcePixelForEachDirectionAndClearsOnDataChange() => WpfTestHost.Run(() =>
+    {
+        var window = NewWindow();
+        try
+        {
+            window.SetProfiles([10, 20, 30], [40, 50, 60], 1, 1, 255);
+            var plot = (ProfilePlotView)window.FindName("Plot");
+            var canvas = ProfileWindowParts.Find<Canvas>(window, "PlotCanvas");
+            var hover = ProfileWindowParts.Find<TextBlock>(window, "HoverText");
+            var points = new List<(int X, int Y)?>();
+            window.HoverPixelChanged += points.Add;
+            plot.ShowHover(canvas.ActualWidth);
+            Assert.Equal((2, 1), points[^1]);
+            Assert.Contains("2 px", hover.Text);
+            Assert.Contains("30", hover.Text);
+
+            var vertical = (RadioButton)window.FindName("VerticalRadio");
+            vertical.IsChecked = true;
+            Assert.Null(points[^1]);
+            plot.ShowHover(canvas.ActualWidth);
+            Assert.Equal((1, 2), points[^1]);
+            Assert.Contains("60", hover.Text);
+            window.ShowOutsideImage(3, 3, 2, 2, 255);
+            Assert.Null(points[^1]);
+        }
+        finally
+        {
+            window.Close();
+        }
+    });
+
+    [Fact]
     public Task ScaleModes_UpdateAxesAndKeepRawStatistics() => WpfTestHost.Run(() =>
     {
         // 手動入力欄の表示文字列("998.5")を比較するため、このテストだけ文化を固定する。

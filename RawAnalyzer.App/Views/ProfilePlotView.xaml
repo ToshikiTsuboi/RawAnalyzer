@@ -63,7 +63,8 @@
                 <Canvas x:Name="PlotCanvas" ClipToBounds="True" SizeChanged="OnCanvasSizeChanged"
                         Background="Transparent" MouseWheel="OnPlotMouseWheel"
                         MouseLeftButtonDown="OnPlotMouseDown" MouseMove="OnPlotMouseMove"
-                        MouseLeftButtonUp="OnPlotMouseUp" LostMouseCapture="OnPlotLostMouseCapture">
+                        MouseLeftButtonUp="OnPlotMouseUp" LostMouseCapture="OnPlotLostMouseCapture"
+                        MouseLeave="OnPlotMouseLeave">
                     <Canvas.ContextMenu>
                         <ContextMenu>
                             <MenuItem Header="全体表示に戻す" Click="OnResetViewClick" />
@@ -77,6 +78,14 @@
                     </Canvas.ContextMenu>
                 </Canvas>
             </Border>
+            <Canvas x:Name="HoverLayer" Grid.Column="1" Grid.Row="0" Margin="1"
+                    IsHitTestVisible="False" ClipToBounds="True" Visibility="Collapsed">
+                <Line x:Name="HoverLine" Stroke="{StaticResource WarningBrush}" StrokeThickness="1" />
+                <Border x:Name="HoverReadout" Background="{StaticResource OverlayScrimBrush}" CornerRadius="3" Padding="6,3">
+                    <TextBlock x:Name="HoverText" FontFamily="Consolas" Foreground="{StaticResource TextBrush}"
+                               FontSize="{x:Static themes:ThemeTypography.FontSizeCaption}" TextWrapping="Wrap" />
+                </Border>
+            </Canvas>
 
             <!-- 計算中・断る理由はグラフの上に出す(マウス操作はグラフへ通す) -->
             <TextBlock x:Name="OverlayText" Grid.Column="1" Grid.Row="0" IsHitTestVisible="False"

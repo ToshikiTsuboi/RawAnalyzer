@@ -37,6 +37,12 @@ public partial class MainWindow
 
     private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
+        if (e.PropertyName == nameof(MainViewModel.IsCompareMode))
+        {
+            UpdateNavigator();
+            return;
+        }
+
         if (e.PropertyName is nameof(MainViewModel.HistogramIsLog)
             or nameof(MainViewModel.HistogramIsCumulative))
         {

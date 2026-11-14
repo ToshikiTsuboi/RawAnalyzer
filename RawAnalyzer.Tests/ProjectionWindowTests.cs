@@ -18,6 +18,33 @@ namespace RawAnalyzer.Tests;
 public class ProjectionWindowTests
 {
     [Fact]
+    public Task Hover_ReadsMeanAndVisibleExtremesAtTheRoiCoordinate() => WpfTestHost.Run(() =>
+    {
+        var window = NewWindow(ProjectionDirection.Horizontal);
+        try
+        {
+            ShowRoiResult(window);
+            var plot = (ProfilePlotView)window.FindName("Plot");
+            var canvas = Find<Canvas>(window, "PlotCanvas");
+            plot.ShowHover(canvas.ActualWidth / 2);
+            var hover = Find<TextBlock>(window, "HoverText");
+            Assert.Contains("101 px", hover.Text);
+            Assert.Contains("平均", hover.Text);
+            Assert.Contains("最大", hover.Text);
+            Assert.Contains("最小", hover.Text);
+            CaptureIfRequested(window, "projection-hover");
+            Find<CheckBox>(window, "ExtremesCheck").IsChecked = false;
+            plot.ShowHover(canvas.ActualWidth / 2);
+            Assert.DoesNotContain("最大", hover.Text);
+            Assert.DoesNotContain("最小", hover.Text);
+        }
+        finally
+        {
+            window.Close();
+        }
+    });
+
+    [Fact]
     public Task Result_DrawsMeanWithMaxAndMinAndNamesTheDirection() => WpfTestHost.Run(() =>
     {
         var window = NewWindow(ProjectionDirection.Horizontal);

@@ -158,6 +158,8 @@
                           IsCheckable="True" IsChecked="{Binding LeftPanelVisible}" />
                 <MenuItem Header="調整パネル" InputGestureText="Ctrl+R"
                           IsCheckable="True" IsChecked="{Binding RightPanelVisible}" />
+                <MenuItem x:Name="NavigatorMenuItem" Header="ナビゲータ" IsCheckable="True"
+                          Click="OnNavigatorMenuClick" />
                 <Separator />
                 <MenuItem Header="ゼブラ (飽和/黒潰れ警告)" IsCheckable="True"
                           IsChecked="{Binding ZebraOn}"
@@ -357,24 +359,56 @@
                 </TextBlock>
 
                 <!-- 加工済みかどうかは一時メッセージで上書きされてはいけないので独立させる -->
-                <Border DockPanel.Dock="Right" Margin="12,0,12,0" Padding="6,1"
-                        CornerRadius="3" VerticalAlignment="Center"
-                        Background="{StaticResource AccentSoftBrush}"
-                        BorderBrush="{StaticResource AccentBrush}" BorderThickness="1"
-                        ToolTip="{Binding ProcessingStateTooltip}"
-                        Visibility="{Binding IsProcessed,
-                                     Converter={StaticResource BoolToVis}}">
-                    <TextBlock Text="{Binding ProcessingStateText}" FontFamily="Consolas"
-                               FontSize="{x:Static themes:ThemeTypography.FontSizeCaption}" Foreground="{StaticResource AccentBrush}" />
-                </Border>
+                <Button x:Name="ProcessedBadge" DockPanel.Dock="Right" Margin="12,0" Padding="6,1"
+                        Style="{StaticResource AccentButton}" VerticalAlignment="Center" MaxWidth="165"
+                        Background="{StaticResource AccentSoftBrush}" FontFamily="Consolas"
+                        FontSize="{x:Static themes:ThemeTypography.FontSizeCaption}"
+                        Content="{Binding ProcessingStateText}" ToolTip="{Binding ProcessingStateTooltip}"
+                        IsEnabled="{Binding CanUseMainView}" Click="OnProcessedBadgeClick"
+                        Visibility="{Binding IsProcessed, Converter={StaticResource BoolToVis}}">
+                    <Button.ContentTemplate>
+                        <DataTemplate>
+                            <TextBlock Text="{Binding}" TextTrimming="CharacterEllipsis" />
+                        </DataTemplate>
+                    </Button.ContentTemplate>
+                    <Button.ContextMenu>
+                        <ContextMenu>
+                            <MenuItem x:Name="RestoreOriginalMenuItem" Header="元の画像に戻す" Click="OnRestoreOriginalClick" />
+                        </ContextMenu>
+                    </Button.ContextMenu>
+                </Button>
+                <Grid x:Name="CursorStatus" DockPanel.Dock="Right" Width="422" Margin="8,0"
+                      TextElement.FontFamily="Consolas" TextElement.Foreground="{StaticResource TextDim}"
+                      TextElement.FontSize="{x:Static themes:ThemeTypography.FontSizeCaption}">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="126" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="30" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Text="{Binding CursorCoordinatesText}" TextTrimming="CharacterEllipsis" />
+                    <TextBlock x:Name="CursorStatusValue" Grid.Column="1" Text="{Binding CursorValueText}"
+                               TextTrimming="CharacterEllipsis" ToolTip="{Binding CursorValueText}" />
+                    <TextBlock Grid.Column="2" Text="{Binding CursorChannelText}" TextAlignment="Center" />
+                    <Grid.Style>
+                        <Style TargetType="Grid">
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding CanUseMainView}" Value="False">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Grid.Style>
+                </Grid>
                 <TextBlock FontFamily="Consolas" FontSize="{x:Static themes:ThemeTypography.FontSizeCaption}" TextTrimming="CharacterEllipsis"
-                           Foreground="{StaticResource TextDim}" Margin="0,0,24,0">
+                           Foreground="{StaticResource TextDim}">
                     <TextBlock.Style>
                         <Style TargetType="TextBlock">
                             <Setter Property="Text" Value="{Binding ImageInfoText}" />
+                            <Setter Property="ToolTip" Value="{Binding ImageInfoText}" />
                             <Style.Triggers>
                                 <DataTrigger Binding="{Binding IsCompareMode}" Value="True">
                                     <Setter Property="Text" Value="{Binding CompareImageInfoText}" />
+                                    <Setter Property="ToolTip" Value="{Binding CompareImageInfoText}" />
                                 </DataTrigger>
                             </Style.Triggers>
                         </Style>
@@ -400,8 +434,6 @@
                                FontSize="{x:Static themes:ThemeTypography.FontSizeCaption}" Foreground="{StaticResource TextDim}"
                                Margin="6,0,0,0" VerticalAlignment="Center" MinWidth="30" />
                 </StackPanel>
-                <TextBlock Text="{Binding CursorStatusText}" FontFamily="Consolas" FontSize="{x:Static themes:ThemeTypography.FontSizeCaption}"
-                           Foreground="{StaticResource TextDim}" />
             </DockPanel>
         </Border>
 
@@ -524,10 +556,21 @@
                         </DockPanel>
                         <ListBox x:Name="FileListBox" Grid.Row="3" ItemsSource="{Binding FilteredFiles}"
                                  SelectedItem="{Binding SelectedFile}"
-                                 DisplayMemberPath="Name"
+                                 ScrollViewer.CanContentScroll="True" ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                 VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
                                  ScrollViewer.VerticalScrollBarVisibility="Auto"
                                  MouseDoubleClick="OnFileListDoubleClick"
                                  PreviewMouseRightButtonDown="OnFileListPreviewRightClick">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <StackPanel ToolTip="{Binding Name}" AutomationProperties.Name="{Binding Name}">
+                                        <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Foreground="{StaticResource TextDim}" TextTrimming="CharacterEllipsis"
+                                                   FontSize="{x:Static themes:ThemeTypography.FontSizeCaption}"
+                                                   Loaded="OnFileDetailsLoaded" DataContextChanged="OnFileDetailsDataContextChanged" />
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
                             <ListBox.ContextMenu>
                                 <ContextMenu>
                                     <MenuItem Header="開く" Click="OnFileCtxOpenClick" />
@@ -765,6 +808,18 @@
                                 ValueChanged="OnSeqSliderChanged" />
                     </DockPanel>
                 </Border>
+                <Border x:Name="NavigatorBox" Grid.Column="1" HorizontalAlignment="Right" VerticalAlignment="Bottom"
+                        Visibility="Collapsed" BorderThickness="1" Padding="2"
+                        Background="{StaticResource OverlayPanelBrush}" BorderBrush="{StaticResource BorderBrushLight}"
+                        ToolTip="クリックまたはドラッグして表示位置を移動">
+                    <Canvas x:Name="NavigatorSurface" ClipToBounds="True" Cursor="Hand"
+                            MouseLeftButtonDown="OnNavigatorMouseDown" MouseMove="OnNavigatorMouseMove"
+                            MouseLeftButtonUp="OnNavigatorMouseUp">
+                        <Image x:Name="NavigatorImage" Stretch="None" />
+                        <Rectangle x:Name="NavigatorFrame" Stroke="{StaticResource AccentBrush}" StrokeThickness="2"
+                                   Fill="{StaticResource AccentSoftBrush}" IsHitTestVisible="False" />
+                    </Canvas>
+                </Border>
                 <Border x:Name="LevelOverlayBox" Grid.Column="1" HorizontalAlignment="Right"
                         VerticalAlignment="Bottom" IsHitTestVisible="False" Tag="{Binding LevelOverlayText}">
                     <Border.Style>
@@ -909,18 +964,19 @@
                                                Visibility="{Binding HistogramIsSampled,
                                                    Converter={StaticResource BoolToVis}}" />
                                 </WrapPanel>
-                                <Image Source="{Binding HistogramSource}" Height="70" Stretch="Fill"
-                                       SnapsToDevicePixels="True" Cursor="Hand"
-                                       ToolTip="右クリックでデータ保存/コピー">
-                                    <Image.ContextMenu>
+                                <controls:HistogramView x:Name="HistogramChart" Height="87" SnapsToDevicePixels="True"
+                                                        BlackLevel="{Binding BlackLevel}" WhiteLevel="{Binding WhiteLevel}"
+                                                        MaxCode="{Binding BlackLevelMax, Mode=OneWay}"
+                                                        ToolTip="ハンドルをドラッグして黒・白レベルを調整。右クリックでデータ保存/コピー">
+                                    <controls:HistogramView.ContextMenu>
                                         <ContextMenu>
                                             <MenuItem Header="データをコピー (Excel貼り付け用)"
                                                       Click="OnHistogramCopyClick" />
                                             <MenuItem Header="CSVで保存…"
                                                       Click="OnHistogramSaveCsvClick" />
                                         </ContextMenu>
-                                    </Image.ContextMenu>
-                                </Image>
+                                    </controls:HistogramView.ContextMenu>
+                                </controls:HistogramView>
                                 <DockPanel Margin="0,6,0,0">
                                     <TextBlock Style="{StaticResource RowLabel}" Text="mean / σ" />
                                     <TextBlock DockPanel.Dock="Right" Style="{StaticResource RowValue}"

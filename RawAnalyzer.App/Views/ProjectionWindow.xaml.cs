@@ -165,7 +165,7 @@ public partial class ProjectionWindow : Window
         // 射影は平均(実数)で 1 code 未満のムラを見る値なので、統計の最小・最大・P-P は小数で出す
         Plot.SetData(new ProfilePlotData(
             profile.Mean, maxCode, axis.Origin, IntegerValues: false,
-            ExtraSeries: new[] { new ProfileSeries(profile.Max, MaxStroke), new ProfileSeries(profile.Min, MinStroke) }));
+            ExtraSeries: new[] { new ProfileSeries(profile.Max, MaxStroke, "最大"), new ProfileSeries(profile.Min, MinStroke, "最小") }));
     }
 
     /// <summary>

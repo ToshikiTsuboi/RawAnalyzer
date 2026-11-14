@@ -50,6 +50,7 @@ public partial class MainWindow
         StopPlayback();
         _compareMode = true;
         _vm.IsCompareMode = true;
+        Viewport.ClearGhostCursor();
         CompareArea.Visibility = Visibility.Visible;
 
         // 開いている画像があれば最初のペイン(A)として読み直す。

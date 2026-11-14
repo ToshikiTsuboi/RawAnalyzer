@@ -7,6 +7,26 @@ namespace RawAnalyzer.Tests;
 public class ProfilePlotNavigationTests
 {
     [Theory]
+    [InlineData(0, 100)]
+    [InlineData(56, 107)]
+    [InlineData(200, 125)]
+    public void HoverIndex_RoundTripsInZoomedRange(double x, int expected)
+    {
+        var range = new ProfileAxisRange(100, 125);
+        Assert.Equal(expected, ProfilePlotNavigation.ToDataIndex(x, range, 200, 1000));
+        Assert.Equal(x, ProfilePlotNavigation.ToCanvasX(expected, range, 200), 9);
+    }
+
+    [Fact]
+    public void HoverIndex_IgnoresEmptyAndOutOfRangePositions()
+    {
+        Assert.Null(ProfilePlotNavigation.ToDataIndex(0, new(-3e9, 999), 700, 1000));
+        Assert.Null(ProfilePlotNavigation.ToDataIndex(-1, new(0, 100), 100, 101));
+        Assert.Null(ProfilePlotNavigation.ToDataIndex(0, new(0, 100), 100, 0));
+        Assert.Equal(0, ProfilePlotNavigation.ToDataIndex(50, ProfilePlotNavigation.FullHorizontal(1), 100, 1));
+    }
+
+    [Theory]
     [InlineData(0)]
     [InlineData(1)]
     public void Zoom_KeepsCursorAnchorFixed(double fraction)

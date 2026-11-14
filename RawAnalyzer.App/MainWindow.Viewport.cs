@@ -36,9 +36,7 @@ public partial class MainWindow
         RawFormat? format = ActiveFormat;
         if (image is null || format is null || !e.IsInsideImage)
         {
-            _lastCursorInside = false;
-            _vm.CursorStatusText = "";
-            _vm.CursorOverlayText = "";
+            ClearCursorReadout();
             return;
         }
 
@@ -61,7 +59,7 @@ public partial class MainWindow
         _lastCursorX = sourceX;
         _lastCursorY = sourceY;
         _lastCursorInside = true;
-        _vm.CursorStatusText = text.Status;
+        _vm.SetCursorStatus(text);
         _vm.CursorOverlayText = text.Overlay;
     }
 
@@ -81,7 +79,7 @@ public partial class MainWindow
             && CursorReadout.Compose(image, format, _colorImage, _lastCursorX, _lastCursorY, Viewport.Frame)
                 is { } text)
         {
-            _vm.CursorStatusText = text.Status;
+            _vm.SetCursorStatus(text);
             _vm.CursorOverlayText = text.Overlay;
             return;
         }
@@ -100,7 +98,7 @@ public partial class MainWindow
     private void ClearCursorReadout()
     {
         _lastCursorInside = false;
-        _vm.CursorStatusText = "";
+        _vm.SetCursorStatus(null);
         _vm.CursorOverlayText = "";
     }
 

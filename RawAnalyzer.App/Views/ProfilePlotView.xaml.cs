@@ -15,7 +15,8 @@ namespace RawAnalyzer.App.Views;
 /// <summary>グラフに重ねて描く線(射影の各位置の最大・最小など)。統計・表には使わない。</summary>
 /// <param name="Values">値(主の線と同じ長さ・同じ座標)。</param>
 /// <param name="Stroke">線の色。</param>
-internal sealed record ProfileSeries(double[] Values, Color Stroke);
+/// <param name="Label">ホバー時の系列名。</param>
+internal sealed record ProfileSeries(double[] Values, Color Stroke, string Label);
 
 /// <summary>グラフに出すデータ。</summary>
 /// <param name="Values">主の線(統計・表・自動の縦軸の元)。</param>
@@ -129,6 +130,7 @@ public partial class ProfilePlotView : UserControl
         int previousCount = _data.Values.Length;
         long previousOffset = _data.CoordinateOffset;
         EndPan();
+        ClearHover();
         _data = data with { MaxCode = Math.Max(1, data.MaxCode) };
         _statsMessage = null;
         _overlayMessage = null;
@@ -246,6 +248,7 @@ public partial class ProfilePlotView : UserControl
     internal void EndInteraction()
     {
         EndPan();
+        ClearHover();
         _busyTimer?.Stop();
         AxisFormatPopup.IsOpen = false;
     }
@@ -318,6 +321,7 @@ public partial class ProfilePlotView : UserControl
             return;
         }
 
+        ClearHover();
         PlotCanvas.Children.Clear();
         double[] data = _data.Values;
         double width = PlotCanvas.ActualWidth;

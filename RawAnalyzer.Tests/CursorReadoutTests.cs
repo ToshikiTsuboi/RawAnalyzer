@@ -34,8 +34,10 @@ public class CursorReadoutTests
 
         Assert.NotNull(frame0);
         Assert.NotNull(frame1);
-        Assert.Equal("(1, 1) raw=100", frame0.Value.Status);
-        Assert.Equal("(1, 1) raw=900", frame1.Value.Status);
+        Assert.Equal("(1, 1)", frame0.Value.Coordinates);
+        Assert.Equal("raw=100", frame0.Value.Value);
+        Assert.Equal("raw=900", frame1.Value.Value);
+        Assert.Equal("B", frame1.Value.Channel);
         Assert.Equal("(1, 1)  raw: 900 / 4095  B", frame1.Value.Overlay);
     }
 
@@ -177,7 +179,9 @@ public class CursorReadoutTests
 
         Assert.NotNull(text);
         (int y, int cb, int cr) = ColorConvert.RgbToYCbCr(255, 0, 0, 255);
-        Assert.Equal($"(0, 1) RGB=(255, 0, 0) YCbCr=({y}, {cb}, {cr})", text.Value.Status);
+        Assert.Equal("(0, 1)", text.Value.Coordinates);
+        Assert.Equal($"RGB=(255, 0, 0) YCbCr=({y}, {cb}, {cr})", text.Value.Value);
+        Assert.Equal("RGB", text.Value.Channel);
         Assert.Equal($"(0, 1)  RGB: 255 0 0  YCbCr: {y} {cb} {cr}", text.Value.Overlay);
     }
 }

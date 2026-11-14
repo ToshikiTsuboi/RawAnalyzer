@@ -456,6 +456,7 @@ public sealed partial class ImageViewport : FrameworkElement
         _overlay = null;
         _demosaicCache.Clear();
         _bitmap = null;
+        NavigatorStateChanged?.Invoke(this, EventArgs.Empty);
         try
         {
             await _renderTask;
@@ -580,6 +581,7 @@ public sealed partial class ImageViewport : FrameworkElement
     {
         _renderCts?.Cancel();
         _bayerPyramid = null;
+        NavigatorStateChanged?.Invoke(this, EventArgs.Empty);
         try
         {
             await _renderTask;

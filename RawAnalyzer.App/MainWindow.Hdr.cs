@@ -425,6 +425,7 @@ public partial class MainWindow
         // 前の画像(元画像・前の派生ビュー)のヒストグラムを捨てる。下の RefreshHistogram が終わるまでに自動コントラストを
         // 押すと、別のビット深度・別の画像の分布で黒/白を決めてしまう(画像を開く・処理結果へ差し替える経路と同じ)
         _histogram = null;
+        RedrawHistogram();
         _channelHistograms = null;
 
         // 派生ビューは計算を始めたときの Bayer で作った画像。表示中は右パネルの Bayer を選べなくする
@@ -570,6 +571,7 @@ public partial class MainWindow
 
         // 派生ビューのヒストグラムを捨ててから元画像で作り直す(できるまでの自動コントラストは何もしない)
         _histogram = null;
+        RedrawHistogram();
         _channelHistograms = null;
         RefreshHistogram(roi: null);
 

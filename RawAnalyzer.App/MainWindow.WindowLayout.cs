@@ -63,6 +63,7 @@ public partial class MainWindow
         bool whiteBalanceExpanded = WhiteBalanceSection.IsExpanded;
         bool colorMatrixExpanded = ColorMatrixSection.IsExpanded;
         bool formatExpanded = FormatSection.IsExpanded;
+        bool navigatorVisible = NavigatorEnabled;
         string fileFilter = _vm.FileFilterText;
         // フルスクリーン中は(フルスクリーンのための最大化ではなく)フルスクリーンに入る前の状態を保存する
         bool maximized = FullscreenWindowState.IsMaximizedToSave(
@@ -86,6 +87,7 @@ public partial class MainWindow
             session.WhiteBalanceExpanded = whiteBalanceExpanded;
             session.ColorMatrixExpanded = colorMatrixExpanded;
             session.FormatExpanded = formatExpanded;
+            session.NavigatorVisible = navigatorVisible;
             session.FileFilter = fileFilter;
             session.WindowMaximized = maximized;
             session.WindowLeft = left;

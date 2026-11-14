@@ -139,6 +139,7 @@ public partial class MainWindow
         _tiffPageIndex = index;
         _sequenceIndex = index;
         _histogram = null;
+        RedrawHistogram();
         _channelHistograms = null;
         ClearDefectSource();
         Viewport.SetDefectMarkers(null);

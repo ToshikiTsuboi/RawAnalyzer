@@ -74,7 +74,14 @@ public partial class MainWindow : Window
         PanToggle.Checked += OnPanCheckedChanged;
         PanToggle.Unchecked += OnPanCheckedChanged;
         Viewport.InteractionModeChanged += OnViewportInteractionModeChanged;
+        HistogramChart.PlotSizeChanged += (_, _) => RedrawHistogram();
         _session = _sessionStore.Load();
+        NavigatorEnabled = _session.NavigatorVisible;
+        Viewport.NavigatorStateChanged += (_, _) => UpdateNavigator();
+        PlaybackBar.SizeChanged += (_, _) => UpdateNavigatorMargin();
+        PlaybackBar.IsVisibleChanged += (_, _) => UpdateNavigatorMargin();
+        LevelOverlayBox.SizeChanged += (_, _) => UpdateNavigatorMargin();
+        LevelOverlayBox.IsVisibleChanged += (_, _) => UpdateNavigatorMargin();
         ApplyWindowPlacement();
 
         // パネルの表示状態は、変更通知(隠す前に今の幅を控える CapturePanelWidths)を購読する前に入れ、
@@ -174,6 +181,7 @@ public partial class MainWindow : Window
         Closed += async (_, _) =>
         {
             _closed = true;
+            _navigatorCts?.Cancel();
             ReplaceLoadCts(null);
             CancelAnalysis();
             _profileWindow?.Close();

@@ -194,6 +194,11 @@ public partial class MainWindow
         _mainBayerPyramid = null;
         _derivedBayerPyramid?.Dispose();
         _derivedBayerPyramid = null;
+        if (_correctionLabel is null)
+        {
+            _processedSourceFrame = Viewport.Frame;
+        }
+
         _currentImage?.Dispose();
         _currentImage = processed;
         ClearDefectSource();
@@ -206,6 +211,7 @@ public partial class MainWindow
         _valueNote = _valueNote?.After(valueChange ?? ValueMappingChange.None);
         _histogram = null;
         _channelHistograms = null;
+        RedrawHistogram();
         _vm.HasRoi = false;
         ClearCursorReadout();
         // 演算結果の16bit化や寸法変更に合わせてUIを更新する。

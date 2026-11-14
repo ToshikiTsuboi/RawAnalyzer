@@ -12,6 +12,7 @@ namespace RawAnalyzer.App;
 public partial class MainWindow
 {
     private CancellationTokenSource? _analysisCts;
+    private CancellationTokenSource? _histogramPlotCts;
 
     private void ReplaceAnalysisCts(CancellationTokenSource? next)
     {
@@ -34,7 +35,10 @@ public partial class MainWindow
     private void CancelAnalysis()
     {
         ReplaceAnalysisCts(null);
+        _histogramPlotCts?.Cancel();
         ReplaceProfileCts(null);
+        _profileReadoutSource = null;
+        Viewport.ClearGhostCursor();
         CancelProjectionJob();
     }
     private HistogramResult? _histogram;
@@ -43,6 +47,7 @@ public partial class MainWindow
     // _histogram の集計の対象とした画素数(間引く前)。表(CSV・コピー)に間引いたサンプル数であることを書く
     private long _histogramPopulation;
     private LineProfileWindow? _profileWindow;
+    private AnalysisSource? _profileReadoutSource;
 
     // ---- ヒストグラム・ROI解析 ----
 
@@ -76,12 +81,15 @@ public partial class MainWindow
         var cts = new CancellationTokenSource();
         ReplaceAnalysisCts(cts);
         RoiHistogram analysis;
+        HistogramMetrics metrics;
         try
         {
-            analysis = await Task.Run(
-                () => RoiAnalysis.ComputeHistogram(
-                    image, frame, target, pattern, byChannel, cts.Token),
-                cts.Token);
+            (analysis, metrics) = await Task.Run(() =>
+            {
+                RoiHistogram result = RoiAnalysis.ComputeHistogram(image, frame, target, pattern, byChannel, cts.Token);
+                cts.Token.ThrowIfCancellationRequested();
+                return (result, ImageAnalysis.ComputeHistogramMetrics(result.Histogram));
+            }, cts.Token);
         }
         catch (Exception ex) when (TaskRaceGuard.IsAbandoned(ex))
         {
@@ -107,7 +115,6 @@ public partial class MainWindow
         _vm.HistMeanSigmaText = $"{stats.Mean:F1} / {stats.Sigma:F1}";
         _vm.HistMinMaxText = $"{stats.Min} / {stats.Max}";
 
-        HistogramMetrics metrics = ImageAnalysis.ComputeHistogramMetrics(result);
         _vm.HistMedianModeText = $"{metrics.Median} / {metrics.Mode}";
         _vm.HistPercentileText = $"{metrics.P1} / {metrics.P99}";
         _vm.HistClipText = $"{metrics.SaturatedPercent:F2}% / {metrics.ZeroPercent:F2}%";
@@ -194,17 +201,40 @@ public partial class MainWindow
         return $"{stats.Mean:F1} / {stats.Sigma:F1}";
     }
 
-    private void RedrawHistogram()
+    private async void RedrawHistogram()
     {
-        if (_histogram is null)
+        _histogramPlotCts?.Cancel();
+        if (_histogram is not { } histogram)
         {
-            _vm.HistogramSource = null;
+            HistogramChart.SetPlot(null);
             return;
         }
 
-        _vm.HistogramSource = _channelHistograms is { Count: 4 } channels
-            ? HistogramRenderer.RenderChannels(channels, _vm.HistogramIsLog, _vm.HistogramIsCumulative)
-            : HistogramRenderer.Render(_histogram.Bins, _vm.HistogramIsLog, _vm.HistogramIsCumulative);
+        using var cts = new CancellationTokenSource();
+        _histogramPlotCts = cts;
+        var channels = _channelHistograms;
+        int columns = HistogramChart.ColumnCount;
+        bool log = _vm.HistogramIsLog;
+        bool cumulative = _vm.HistogramIsCumulative;
+        try
+        {
+            HistogramPlot plot = await Task.Run(
+                () => HistogramPlot.Create(histogram.Bins, channels, columns, log, cumulative, cts.Token), cts.Token);
+            if (!cts.IsCancellationRequested && !_closed)
+            {
+                HistogramChart.SetPlot(plot);
+            }
+        }
+        catch (OperationCanceledException) when (cts.IsCancellationRequested)
+        {
+        }
+        finally
+        {
+            if (ReferenceEquals(_histogramPlotCts, cts))
+            {
+                _histogramPlotCts = null;
+            }
+        }
     }
 
     private void OnHistogramRefreshClick(object sender, RoutedEventArgs e)
@@ -314,6 +344,7 @@ public partial class MainWindow
     /// </remarks>
     private void RefreshLineProfile()
     {
+        Viewport.ClearGhostCursor();
         if (_profileWindow is not { } window)
         {
             return;
@@ -377,6 +408,19 @@ public partial class MainWindow
             }
 
             _profileWindow = new LineProfileWindow { Owner = this };
+            _profileWindow.HoverPixelChanged += point =>
+            {
+                if (!_compareMode && _profileReadoutSource?.IsCurrent(ActiveImage, Viewport.Frame) == true
+                    && point is { } pixel
+                    && Viewport.TryMapSourceToDisplay(pixel.X, pixel.Y, out int x, out int y))
+                {
+                    Viewport.SetGhostCursor(x + 0.5, y + 0.5);
+                }
+                else
+                {
+                    Viewport.ClearGhostCursor();
+                }
+            };
             _profileWindow.DirectionChanged += horizontal =>
             {
                 // 基準点が範囲外で断面を出していないときは、マーカーを出さない
@@ -391,7 +435,9 @@ public partial class MainWindow
             _profileWindow.Closed += (_, _) =>
             {
                 _profileWindow = null;
+                _profileReadoutSource = null;
                 Viewport.ClearProfileMarker();
+                Viewport.ClearGhostCursor();
             };
             _profileWindow.Show();
         }
@@ -399,12 +445,14 @@ public partial class MainWindow
         int maxCode = (1 << ActiveFormat!.BitDepth) - 1;
         if (data is null)
         {
+            _profileReadoutSource = null;
             // 寸法の違う画像へ送った・差し替えたため、基準点が範囲外になった
             _profileWindow.ShowOutsideImage(sourceX, sourceY, image.Width, image.Height, maxCode);
             Viewport.ClearProfileMarker();
         }
         else
         {
+            _profileReadoutSource = analyzed;
             _profileWindow.SetProfiles(data.Row, data.Column, sourceX, sourceY, maxCode);
 
             // 表示座標(e.X, e.Y)で渡すと、分割⇔非分割の切替後にプロファイルと別の行・列を指す

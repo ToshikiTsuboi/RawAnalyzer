@@ -177,6 +177,7 @@ public sealed partial class ImageViewport
 
     private void RequestRender(bool fast)
     {
+        NavigatorStateChanged?.Invoke(this, EventArgs.Empty);
         _renderCts?.Cancel();
         _fastRenderPending = false;
         if (_image is null || ActualWidth < 1 || ActualHeight < 1)
@@ -256,6 +257,39 @@ public sealed partial class ImageViewport
                 ArrayPool<byte>.Shared.Return(buffer);
             }
         });
+    }
+
+    internal event EventHandler? NavigatorStateChanged;
+
+    internal NavigatorThumbnail? GetNavigatorThumbnail()
+    {
+        if (_image is not { } image || _pyramidFrame != _frame || _pyramid?.Levels.LastOrDefault() is not { } gray)
+        {
+            return null;
+        }
+
+        var mode = _displayMode;
+        bool bayerMode = _format?.Bayer != BayerPattern.None && mode is
+            ViewportDisplayMode.BayerColor or ViewportDisplayMode.ColorDevelop or ViewportDisplayMode.ChannelSplit;
+        RawImage? bayer = null;
+        int factor = 1;
+        if (bayerMode && _bayerPyramidFrame == _frame && _bayerPyramid is { } pyramid)
+        {
+            factor = pyramid.SelectFactor(1.0 / BayerPyramid.MaxFactor);
+            bayer = pyramid.GetLevel(factor);
+        }
+
+        if (bayerMode && bayer is null)
+        {
+            // Bayer の縮小段がまだない間は、Raw の絵を別の表示モードの全体図として出さない。
+            return null;
+        }
+
+        int width = IsChannelSplitLayout ? image.Width & ~1 : image.Width;
+        int height = IsChannelSplitLayout ? image.Height & ~1 : image.Height;
+        return new NavigatorThumbnail(gray, bayer, factor, width, height, mode,
+            _format?.Bayer ?? BayerPattern.None, _lut,
+            mode == ViewportDisplayMode.ColorDevelop ? _developLuts : null, _segmentLuts, _segmentWidth, _colorImage);
     }
 
     private void Present(

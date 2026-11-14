@@ -38,8 +38,9 @@ internal static class FormatCandidateText
     /// フレーム数・HDR は既定と違うときだけ出す。
     /// </summary>
     /// <param name="format">フォーマット。</param>
+    /// <param name="separator">寸法・ビット深度などの区切り。</param>
     /// <returns>表示する文。</returns>
-    internal static string Describe(RawFormat format)
+    internal static string Describe(RawFormat format, string separator = " ")
     {
         var parts = new List<string>
         {
@@ -85,6 +86,6 @@ internal static class FormatCandidateText
             parts.Add($"HDR {layout} {format.HdrStages.ToString(CultureInfo.InvariantCulture)}段");
         }
 
-        return string.Join(" ", parts);
+        return string.Join(separator, parts);
     }
 }

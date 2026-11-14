@@ -1,5 +1,6 @@
 using System.IO;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Input;
 using Microsoft.Win32;
 using System.Windows.Threading;
@@ -19,6 +20,9 @@ public partial class MainWindow
     private int _recentMenuGeneration;
     private int _folderGeneration;
     private string? _currentFolder;
+    private readonly Dictionary<(string Path, long Length, DateTime LastWrite), Task<string>> _fileDetails = new();
+    private FormatHistoryEntry[] _fileDetailsHistory = [];
+    private FormatHistory _fileDetailsSnapshot = new();
 
     private void OnOpenFolderClick(object sender, RoutedEventArgs e)
     {
@@ -121,20 +125,71 @@ public partial class MainWindow
                 f.Extension, StringComparer.OrdinalIgnoreCase))
             .OrderBy(f => f.FullName, NaturalOrderComparer.Instance))
         {
-            long length;
+            long length = -1;
+            DateTime lastWrite = default;
             try
             {
                 length = info.Length;
+                lastWrite = info.LastWriteTimeUtc;
             }
-            catch (Exception)
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
-                length = -1;
             }
 
-            entries.Add(new FileEntry(info.Name, info.FullName, IsDirectory: false, length));
+            entries.Add(new FileEntry(info.Name, info.FullName, IsDirectory: false, length, lastWrite));
         }
 
         return entries;
+    }
+
+    private void OnFileDetailsLoaded(object sender, RoutedEventArgs e) =>
+        LoadFileDetails((TextBlock)sender);
+
+    private void OnFileDetailsDataContextChanged(object sender, DependencyPropertyChangedEventArgs e)
+    {
+        var text = (TextBlock)sender;
+        if (text.IsLoaded)
+        {
+            LoadFileDetails(text);
+        }
+    }
+
+    private async void LoadFileDetails(TextBlock text)
+    {
+        if (text.DataContext is not FileEntry entry)
+        {
+            text.Text = "";
+            return;
+        }
+
+        text.Text = FileListDetails.FormatSize(entry.Length);
+        FormatHistoryEntry[] history = _formatMemory.SnapshotEntries();
+        if (!_fileDetailsHistory.SequenceEqual(history))
+        {
+            _fileDetailsHistory = history;
+            _fileDetailsSnapshot = new FormatHistory(history);
+            _fileDetails.Clear();
+        }
+
+        var key = (entry.FullPath, entry.Length, entry.LastWriteTimeUtc);
+        FormatHistory snapshotAtRequest = _fileDetailsSnapshot;
+        if (!_fileDetails.TryGetValue(key, out Task<string>? details))
+        {
+            if (_fileDetails.Count >= 8192)
+            {
+                _fileDetails.Clear();
+            }
+
+            details = Task.Run(() => FileListDetails.Describe(entry, snapshotAtRequest));
+            _fileDetails.Add(key, details);
+        }
+
+        string description = await details;
+        if (!_closed && text.IsLoaded && ReferenceEquals(text.DataContext, entry)
+            && ReferenceEquals(_fileDetailsSnapshot, snapshotAtRequest))
+        {
+            text.Text = description;
+        }
     }
 
     private void OnFileListDoubleClick(object sender, MouseButtonEventArgs e)
