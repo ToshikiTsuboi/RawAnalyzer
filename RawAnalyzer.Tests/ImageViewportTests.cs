@@ -985,7 +985,7 @@ public class ImageViewportTests
     /// ほかのスレッドと共有されることがあり(同じ机上で別のアプリの入力が進むなど)、全体を流すとまれに直後の
     /// Keyboard.Modifiers が None に戻って失敗していた(OS の入力状態に頼らない)。
     /// </remarks>
-    private static void PressWithControl(UIElement target, Key key)
+    internal static void PressWithControl(UIElement target, Key key)
     {
         _controlHeld ??= new ControlHeldKeyboard();
         Assert.Equal(ModifierKeys.Control, _controlHeld.Modifiers);

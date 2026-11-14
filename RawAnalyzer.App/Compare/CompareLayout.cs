@@ -1,16 +1,35 @@
 namespace RawAnalyzer.App.Compare;
 
+internal enum CompareLayoutMode
+{
+    Auto,
+    Horizontal,
+    Vertical,
+    Grid,
+}
+
 /// <summary>各画像がアスペクト比を保って収まる比較グリッドを選ぶ。</summary>
 internal static class CompareLayout
 {
     internal static (int Rows, int Columns) Choose(
         double areaWidth, double areaHeight, IReadOnlyList<double> imageAspects,
-        double paneChromeWidth, double paneChromeHeight, (int Rows, int Columns) current)
+        double paneChromeWidth, double paneChromeHeight, (int Rows, int Columns) current,
+        CompareLayoutMode mode = CompareLayoutMode.Auto)
     {
         int count = imageAspects.Count;
         if (count <= 1)
         {
             return (1, 1);
+        }
+
+        switch (mode)
+        {
+            case CompareLayoutMode.Horizontal:
+                return (1, count);
+            case CompareLayoutMode.Vertical:
+                return (count, 1);
+            case CompareLayoutMode.Grid:
+                return ((count + 1) / 2, 2);
         }
 
         (int Rows, int Columns) best = count >= 3 ? (2, 2) : (1, count);

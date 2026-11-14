@@ -7,10 +7,59 @@ internal readonly record struct PaneNameDisplay(string Prefix, string Difference
 {
     internal string FullName => Prefix + Difference + Suffix;
 
-    internal PaneNameDisplay ForWidth(double availableWidth, double fullWidth) =>
-        fullWidth <= availableWidth || (Difference.Length == 0 && Suffix.Length == 0)
-            ? this
-            : new(Prefix.Length > 0 ? "…" : "", Difference, Suffix.Length > 0 ? "…" : "");
+    internal PaneNameDisplay ForWidth(double availableWidth, double fullWidth, Func<string, double> measure)
+    {
+        if (fullWidth <= availableWidth || Difference.Length == 0)
+        {
+            return this;
+        }
+
+        var (prefixText, difference, suffixText) = this;
+        int[] prefixStarts = StringInfo.ParseCombiningCharacters(prefixText);
+        int[] suffixStarts = StringInfo.ParseCombiningCharacters(suffixText);
+        int prefixCount = 0;
+        int suffixCount = 0;
+        PaneNameDisplay shown = Slice(0, 0);
+        bool expanded;
+        do
+        {
+            expanded = false;
+            // 差分に隣接する書記素を前後から交互に足す。先頭側の文脈を先に試す。
+            if (prefixCount < prefixStarts.Length && Fits(Slice(prefixCount + 1, suffixCount)))
+            {
+                prefixCount++;
+                expanded = true;
+            }
+
+            if (suffixCount < suffixStarts.Length && Fits(Slice(prefixCount, suffixCount + 1)))
+            {
+                suffixCount++;
+                expanded = true;
+            }
+        }
+        while (expanded);
+
+        return shown;
+
+        bool Fits(PaneNameDisplay candidate)
+        {
+            if (measure(candidate.FullName) > availableWidth)
+            {
+                return false;
+            }
+
+            shown = candidate;
+            return true;
+        }
+
+        PaneNameDisplay Slice(int left, int right)
+        {
+            string prefix = left == prefixStarts.Length ? prefixText
+                : left == 0 ? "…" : "…" + prefixText[prefixStarts[^left]..];
+            string suffix = right == suffixStarts.Length ? suffixText : suffixText[..suffixStarts[right]] + "…";
+            return new PaneNameDisplay(prefix, difference, suffix);
+        }
+    }
 
     internal static PaneNameDisplay[] ForFiles(IReadOnlyList<string> names)
     {

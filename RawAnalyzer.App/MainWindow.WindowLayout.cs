@@ -57,7 +57,8 @@ public partial class MainWindow
         double leftPanelWidth = _leftPanelWidth;
         double rightPanelWidth = _rightPanelWidth;
         bool leftPanelVisible = _vm.LeftPanelVisible;
-        bool rightPanelVisible = _vm.RightPanelVisible;
+        bool rightPanelVisible = _rightPanelBeforeCompare ?? _vm.RightPanelVisible;
+        var compareLayoutMode = CompareArea.LayoutMode;
         bool displayExpanded = DisplaySection.IsExpanded;
         bool histogramExpanded = HistogramSection.IsExpanded;
         bool whiteBalanceExpanded = WhiteBalanceSection.IsExpanded;
@@ -82,6 +83,7 @@ public partial class MainWindow
             session.RightPanelWidth = rightPanelWidth;
             session.LeftPanelVisible = leftPanelVisible;
             session.RightPanelVisible = rightPanelVisible;
+            session.CompareLayoutMode = compareLayoutMode;
             session.DisplayExpanded = displayExpanded;
             session.HistogramExpanded = histogramExpanded;
             session.WhiteBalanceExpanded = whiteBalanceExpanded;

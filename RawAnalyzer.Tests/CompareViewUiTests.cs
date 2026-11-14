@@ -99,19 +99,21 @@ public class CompareViewUiTests
             {
                 Assert.True(await view.AddPaneFromPathAsync(fixture.Path));
             }
-            await ArrangeAsync(view, 240, 460);
+            await ArrangeAsync(view, 320, 460);
             var aName = (TextBlock)PaneAt(view, 0).FindName("FileNameText");
             var bName = (TextBlock)PaneAt(view, 1).FindName("FileNameText");
-            Assert.Equal("…a…", string.Concat(aName.Inlines.OfType<Run>().Select(run => run.Text)));
-            Assert.Equal("…b…", string.Concat(bName.Inlines.OfType<Run>().Select(run => run.Text)));
+            int aLength = aName.Text.Length;
+            int bLength = bName.Text.Length;
+            Assert.Contains("a_", aName.Text);
+            Assert.Contains("b_", bName.Text);
             Assert.True(aName.ActualWidth >= 24);
             Assert.True(bName.ActualWidth >= 24);
             Assert.Equal(a.Path, aName.ToolTip);
             Assert.Equal(b.Path, bName.ToolTip);
             WpfTestHost.CaptureIfRequested(view, "compare-filename-minimum");
             await LayoutAsync(view, 480, 460);
-            Assert.Equal("…a…", string.Concat(aName.Inlines.OfType<Run>().Select(run => run.Text)));
-            Assert.Equal("…b…", string.Concat(bName.Inlines.OfType<Run>().Select(run => run.Text)));
+            Assert.True(aName.Text.Length > aLength);
+            Assert.True(bName.Text.Length > bLength);
             WpfTestHost.CaptureIfRequested(view, "compare-filename-differences");
         }
         finally
@@ -164,18 +166,19 @@ public class CompareViewUiTests
         int calls = 0;
         view.PanePicker = _ => { calls++; return picker.Task; };
         var add = (Button)view.FindName("AddImageButton");
-        add.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        WpfTestHost.Invoke(add);
+        await DrainAsync();
         Assert.False(add.IsEnabled);
         Assert.Equal("読込中…", add.Content);
         Assert.False(await view.AddPaneFromPathAsync(fixture.Path));
-        add.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Assert.Throws<ElementNotEnabledException>(() => WpfTestHost.Invoke(add));
         Assert.Equal(1, calls);
         picker.SetResult(null);
         await DrainAsync();
         Assert.True(add.IsEnabled);
         Assert.Equal(0, view.PaneCount);
         view.PanePicker = async token => await ComparePane.LoadAsync(fixture.Path, null, token);
-        add.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        WpfTestHost.Invoke(add);
         try
         {
             await WaitUntilAsync(() => view.PaneCount == 1 && add.IsEnabled);
@@ -206,7 +209,8 @@ public class CompareViewUiTests
                 var closing = (ComparePaneView)grid.Children[0];
                 Button close = Descendants<Button>(closing).Single(button =>
                     AutomationProperties.GetName(button) == "ペインを閉じる");
-                close.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                WpfTestHost.Invoke(close);
+                await DrainAsync();
                 await DrainAsync();
                 Assert.Equal(count, view.PaneCount);
                 Assert.Equal(count, grid.Children.Count);
@@ -701,6 +705,47 @@ public class CompareViewUiTests
     });
 
     [Fact]
+    public Task HeaderLinkAndReset_ShareConditionsAndClearOrangeChips() => WpfTestHost.Run(async () =>
+    {
+        using var a = new ImageFixture(fileName: "scene_a.png");
+        using var b = new ImageFixture(fileName: "scene_b.png");
+        var view = NewView();
+        try
+        {
+            Assert.True(await view.AddPaneFromPathAsync(a.Path));
+            Assert.True(await view.AddPaneFromPathAsync(b.Path));
+            await LayoutAsync(view, 550, 480);
+            ComparePaneView first = PaneAt(view, 0);
+            ComparePaneView second = PaneAt(view, 1);
+            DisplaySettings defaults = first.Pane!.Display;
+            first.ApplyDisplay(defaults with { GainDb = 6 });
+            second.ApplyDisplay(defaults with { GainDb = 3 });
+
+            WpfTestHost.Invoke((Button)first.FindName("ResetButton"));
+            await DrainAsync();
+            Assert.Equal(defaults, first.Pane.Display);
+            Assert.Equal(3, second.Pane!.Display.GainDb);
+            var secondChips = (StackPanel)second.FindName("ChipsPanel");
+            var gain = (TextBlock)((Border)secondChips.Children[0]).Child;
+            Assert.Equal(RawAnalyzer.App.Themes.ThemeColors.Warning, ((SolidColorBrush)gain.Foreground).Color);
+            WpfTestHost.CaptureIfRequested(view, "compare-header-chips");
+
+            WpfTestHost.Toggle((ToggleButton)first.FindName("LinkToggle"));
+            WpfTestHost.Toggle((ToggleButton)second.FindName("LinkToggle"));
+            Assert.True(first.IsLinked && second.IsLinked);
+            WpfTestHost.Invoke((Button)first.FindName("ResetButton"));
+            await DrainAsync();
+            Assert.Equal(defaults, second.Pane.Display);
+            gain = (TextBlock)((Border)secondChips.Children[0]).Child;
+            Assert.Same(gain.FindResource("TextDim"), gain.Foreground);
+        }
+        finally
+        {
+            await view.CloseAllAsync();
+        }
+    });
+
+    [Fact]
     public Task AutoContrast_DisplayChangedWhileComputing_KeepsTheLaterChange() => WpfTestHost.Run(async () =>
     {
         // レビュー 2026-10-03 races の横展開。ペインの「自動」のヒストグラムを UI スレッドの外で計算する間に「リセット」で
@@ -713,16 +758,17 @@ public class CompareViewUiTests
             Assert.True(await view.AddPaneFromPathAsync(fixture.Path));
             await LayoutAsync(view, 1280, 720);
             ComparePaneView pane = PaneAt(view, 0);
-            var auto = (MenuItem)pane.FindName("AutoButton");
-            var reset = (MenuItem)pane.FindName("ResetItem");
+            var auto = (Button)pane.FindName("AutoButton");
+            var reset = (Button)pane.FindName("ResetButton");
             ComparePane source = pane.Pane!;
             DisplaySettings defaults = DisplaySettings.CreateDefault(source.Format.BitDepth);
             pane.ApplyDisplay(defaults with { GainDb = 6 });
             int changes = 0;
             pane.DisplayChanged += _ => changes++;
 
-            auto.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
-            reset.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+            WpfTestHost.Invoke(auto);
+            WpfTestHost.Invoke(reset);
+            await DrainAsync();
             Assert.Equal(defaults, source.Display);
             await Task.Delay(300);
             await DrainAsync();
@@ -731,7 +777,7 @@ public class CompareViewUiTests
             Assert.Equal(1, changes); // リセットだけ
 
             // 変えずに待てば「自動」の結果を使う(この画像では既定の全域と違う黒/白になる)
-            auto.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+            WpfTestHost.Invoke(auto);
             await WaitUntilAsync(() => changes == 2);
             Assert.NotEqual(defaults, source.Display);
         }
@@ -802,7 +848,7 @@ public class CompareViewUiTests
     {
         Button close = Descendants<Button>(PaneAt(view, index)).Single(button =>
             AutomationProperties.GetName(button) == "ペインを閉じる");
-        close.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        WpfTestHost.Invoke(close);
         await DrainAsync();
     }
 

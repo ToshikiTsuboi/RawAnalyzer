@@ -1,4 +1,8 @@
 using System.Windows;
+using System.Windows.Automation.Peers;
+using System.Windows.Automation.Provider;
+using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
@@ -26,6 +30,16 @@ internal static class WpfTestHost
         Dispatcher dispatcher = await Host.Value;
         await dispatcher.InvokeAsync(action).Task.Unwrap().WaitAsync(TimeSpan.FromSeconds(30));
     }
+
+    internal static void Invoke(Button button) => Invoke(new ButtonAutomationPeer(button));
+
+    internal static void Invoke(MenuItem item) => Invoke(new MenuItemAutomationPeer(item));
+
+    private static void Invoke(AutomationPeer peer) =>
+        ((IInvokeProvider)peer.GetPattern(PatternInterface.Invoke)!).Invoke();
+
+    internal static void Toggle(ToggleButton button) =>
+        ((IToggleProvider)new ToggleButtonAutomationPeer(button).GetPattern(PatternInterface.Toggle)!).Toggle();
 
     internal static void CaptureIfRequested(FrameworkElement view, string name)
     {

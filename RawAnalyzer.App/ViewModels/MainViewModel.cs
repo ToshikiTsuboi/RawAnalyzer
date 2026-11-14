@@ -313,6 +313,7 @@ public sealed class MainViewModel : ObservableObject
         {
             if (SetProperty(ref _isCompareMode, value))
             {
+                OnPropertyChanged(nameof(ShowMainViewTools));
                 OnPropertyChanged(nameof(CanUseMainView));
                 OnPropertyChanged(nameof(MainViewDisabledReason));
                 OnPropertyChanged(nameof(CanChangeFormat));
@@ -327,6 +328,9 @@ public sealed class MainViewModel : ObservableObject
             }
         }
     }
+
+    /// <summary>通常表示用のツールバー項目を表示するか。</summary>
+    public bool ShowMainViewTools => !IsCompareMode;
 
     /// <summary>右の調整パネルを操作できるか。通常表示に画像があるときだけ操作できる。</summary>
     public bool CanUseAdjustPanel => CanUseMainView;

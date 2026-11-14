@@ -3,6 +3,7 @@
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:themes="clr-namespace:RawAnalyzer.App.Themes"
+             xmlns:compare="clr-namespace:RawAnalyzer.App.Compare"
              AllowDrop="True" Drop="OnDrop" DragOver="OnDragOver"
              Background="{StaticResource CanvasBrush}">
     <DockPanel>
@@ -10,7 +11,7 @@
                 BorderBrush="{StaticResource BorderBrushDark}" BorderThickness="0,0,0,1"
                 Padding="8,4">
             <DockPanel>
-                <Button DockPanel.Dock="Right" Content="比較を終了" Tag="{x:Static themes:IconGlyphs.Close}"
+                <Button x:Name="ExitCompareButton" DockPanel.Dock="Right" Content="比較を終了" Tag="{x:Static themes:IconGlyphs.Close}"
                         ContentTemplate="{StaticResource IconLabelContent}"
                         Click="OnExitClick" FontSize="{x:Static themes:ThemeTypography.FontSizeBody}" Padding="8,2"
                         MinHeight="26" Margin="8,2,0,2" VerticalAlignment="Top" />
@@ -27,6 +28,18 @@
                             ContentTemplate="{StaticResource IconLabelContent}" Click="OnAddImageClick"
                             FontSize="{x:Static themes:ThemeTypography.FontSizeBody}" Padding="10,2" MinHeight="26" Margin="0,2,12,2"
                             AutomationProperties.Name="比較画像を追加" />
+                    <Button x:Name="LayoutButton" Click="OnLayoutMenuClick"
+                            FontSize="{x:Static themes:ThemeTypography.FontSizeBody}" Padding="8,2" MinHeight="26"
+                            Margin="0,2,10,2" ToolTip="比較レイアウトを切り替える">
+                        <Button.ContextMenu>
+                            <ContextMenu Placement="Bottom">
+                                <MenuItem Header="自動" Tag="{x:Static compare:CompareLayoutMode.Auto}" Click="OnLayoutSelected" />
+                                <MenuItem Header="横並び" Tag="{x:Static compare:CompareLayoutMode.Horizontal}" Click="OnLayoutSelected" />
+                                <MenuItem Header="縦並び" Tag="{x:Static compare:CompareLayoutMode.Vertical}" Click="OnLayoutSelected" />
+                                <MenuItem Header="グリッド" Tag="{x:Static compare:CompareLayoutMode.Grid}" Click="OnLayoutSelected" />
+                            </ContextMenu>
+                        </Button.ContextMenu>
+                    </Button>
                     <StackPanel Orientation="Horizontal" Margin="0,2,10,2" Height="26">
                         <TextBlock Text="同期:" FontSize="{x:Static themes:ThemeTypography.FontSizeCaption}" Margin="0,0,4,0" VerticalAlignment="Center"
                                    Foreground="{StaticResource TextDim}" />

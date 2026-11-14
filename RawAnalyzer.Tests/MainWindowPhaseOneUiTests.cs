@@ -41,7 +41,9 @@ public class MainWindowPhaseOneUiTests
             var button = (ToggleButton)toolbar.Template.FindName("OverflowButton", toolbar);
 
             var pinned = Assert.IsType<StackPanel>(toolbar.Items[0]);
-            Assert.Equal(6, pinned.Children.OfType<Button>().Count());
+            Assert.Equal(2, pinned.Children.OfType<Button>().Count());
+            var mainViewTools = (StackPanel)window.FindName("MainViewTools");
+            Assert.Equal(4, mainViewTools.Children.OfType<Button>().Count());
             Assert.IsType<ComboBox>(window.FindName("DisplayModeCombo"));
             Assert.False(ToolBar.GetIsOverflowItem(pinned));
             Assert.True(new Rect(toolbar.RenderSize).Contains(BoundsIn(pinned, toolbar)));
@@ -56,7 +58,7 @@ public class MainWindowPhaseOneUiTests
             Assert.Equal(firstOverflow >= 0, button.IsVisible);
             if (firstOverflow >= 0)
             {
-                button.IsChecked = true;
+                WpfTestHost.Toggle(button);
                 await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
                 Assert.True(toolbar.IsOverflowOpen);
                 Assert.True(overflow.IsVisible);
@@ -81,23 +83,10 @@ public class MainWindowPhaseOneUiTests
 
             if (width == 720)
             {
-                vm.IsCompareMode = true;
-                foreach (FrameworkElement item in items)
-                {
-                    if (item.Name is "ZebraToggle" or "SaveToolButton")
-                    {
-                        Assert.False(item.IsEnabled);
-                        Assert.Equal(CommandDisabledReasons.CompareMode, item.ToolTip);
-                        Assert.True(ToolTipService.GetShowOnDisabled(item));
-                    }
-                    else
-                    {
-                        Assert.True(item.IsEnabled);
-                    }
-                }
-                vm.IsCompareMode = false;
                 WpfTestHost.CaptureIfRequested((FrameworkElement)overflow.Parent, "main-toolbar-overflow-720");
-                toolbar.IsOverflowOpen = false;
+                WpfTestHost.Toggle(button);
+                await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+                Assert.False(toolbar.IsOverflowOpen);
             }
             if (width is 720 or 1280)
             {
@@ -239,8 +228,10 @@ public class MainWindowPhaseOneUiTests
         }
     });
 
-    [Fact]
-    public Task CompareFileNames_MixedRawNamesRemainDistinctAtWindowWidth720() => WpfTestHost.Run(async () =>
+    [Theory]
+    [InlineData(3)]
+    [InlineData(4)]
+    public Task CompareFileNames_MixedRawNamesRemainDistinctAtWindowWidth720(int paneCount) => WpfTestHost.Run(async () =>
     {
         using var settings = new TemporaryDirectory();
         Directory.CreateDirectory(settings.Path);
@@ -251,40 +242,72 @@ public class MainWindowPhaseOneUiTests
             window.Show();
             await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
             Assert.Equal(720, window.ActualWidth, 0);
-            var menu = (Menu)window.FindName("MainMenuBar");
-            var viewMenu = menu.Items.OfType<MenuItem>().Single(item => Equals(item.Header, "表示(_V)"));
-            var compareItem = viewMenu.Items.OfType<MenuItem>().Single(item =>
-                Equals(item.Header, "比較モード (複数画像を並べる)"));
-            compareItem.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+            WpfTestHost.Toggle((ToggleButton)window.FindName("CompareToolToggle"));
             Assert.True(compare.IsVisible);
+            var layout = (Button)compare.FindName("LayoutButton");
+            WpfTestHost.Invoke(layout);
+            await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+            WpfTestHost.Invoke(layout.ContextMenu.Items.OfType<MenuItem>()
+                .Single(item => Equals(item.Header, "グリッド")));
+            await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
 
             var format = new RawFormat { Width = 1920, Height = 1080, BitDepth = 12, Bayer = BayerPattern.Rggb };
-            compare.PaneLoader = async (path, token) => await ComparePane.LoadAsync(path, format, token);
-            string[] paths = PaneNameDisplayTests.MixedNames.Select(name => Path.Combine(settings.Path, name)).ToArray();
+            string[] paths = PaneNameDisplayTests.PairedNames.Take(paneCount)
+                .Select(name => Path.Combine(settings.Path, name)).ToArray();
+            var add = (Button)compare.FindName("AddImageButton");
             foreach (string path in paths)
             {
                 await using (FileStream file = File.Create(path))
                 {
                     file.SetLength(2L * format.Width * format.Height);
                 }
-                Assert.True(await compare.AddPaneFromPathAsync(path));
+                compare.PanePicker = async token => await ComparePane.LoadAsync(path, format, token);
+                int expectedCount = compare.PaneCount + 1;
+                WpfTestHost.Invoke(add);
+                await WaitUntilAsync(() => compare.PaneCount == expectedCount);
             }
             await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
             var grid = (UniformGrid)compare.FindName("PaneGrid");
-            Assert.Equal(3, grid.Children.Count);
-            for (int i = 0; i < 2; i++)
+            Assert.Equal(paneCount, grid.Children.Count);
+            Assert.Equal((2, 2), (grid.Rows, grid.Columns));
+            var names = grid.Children.Cast<ComparePaneView>()
+                .Select(pane => (TextBlock)pane.FindName("FileNameText")).ToArray();
+            Assert.All(names, name => Assert.True(name.ActualWidth >= 80));
+            if (paneCount == 4)
             {
-                var pane = (ComparePaneView)grid.Children[i];
-                var name = (TextBlock)pane.FindName("FileNameText");
-                string difference = i == 0 ? "a" : "b";
-                Run[] runs = name.Inlines.OfType<Run>().ToArray();
-                Assert.Equal($"…{difference}…", string.Concat(runs.Select(run => run.Text)));
-                Assert.Equal(difference, Assert.Single(runs, run =>
-                    ReferenceEquals(run.Foreground, name.FindResource("AccentBrush"))).Text);
-                Assert.Equal(paths[i], name.ToolTip);
-                Assert.True(name.ActualWidth >= 24);
+                foreach (TextBlock name in names)
+                {
+                    name.Width = 80;
+                }
+                await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
             }
-            WpfTestHost.CaptureIfRequested(compare, "compare-mixed-raw-720");
+            var shown = new HashSet<string>();
+            for (int i = 0; i < paneCount; i++)
+            {
+                TextBlock name = names[i];
+                Run[] runs = name.Inlines.OfType<Run>().ToArray();
+                string rendered = string.Concat(runs.Select(run => run.Text));
+                Assert.True(shown.Add(rendered), $"重複した表示名 {rendered}");
+                if (paneCount == 4 || i < 2)
+                {
+                    string difference = i % 2 == 0 ? "a" : "b";
+                    Assert.True(rendered.Length > 3);
+                    Assert.EndsWith("…", rendered);
+                    Assert.Equal(difference, Assert.Single(runs, run =>
+                        ReferenceEquals(run.Foreground, name.FindResource("AccentBrush"))).Text);
+                }
+                Assert.Equal(paths[i], name.ToolTip);
+            }
+            if (paneCount == 4)
+            {
+                WpfTestHost.CaptureIfRequested((FrameworkElement)window.Content, "compare-4-raw-name-width-80");
+                foreach (TextBlock name in names)
+                {
+                    name.ClearValue(FrameworkElement.WidthProperty);
+                }
+                await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+            }
+            WpfTestHost.CaptureIfRequested((FrameworkElement)window.Content, $"compare-{paneCount}-raw-720");
         }
         finally
         {
@@ -292,6 +315,186 @@ public class MainWindowPhaseOneUiTests
             window.Close();
         }
     });
+
+    [Theory]
+    [InlineData(true, false, true)]
+    [InlineData(false, false, false)]
+    [InlineData(false, true, true)]
+    [InlineData(true, true, false)]
+    public Task CompareMode_RestoresRightPanelUnlessUserChangesIt(
+        bool initiallyVisible, bool changeInCompare, bool expectedVisible) => WpfTestHost.Run(async () =>
+    {
+        using var settings = new TemporaryDirectory();
+        new SessionStore(settings.Path).Update(state => state.RightPanelVisible = initiallyVisible);
+        var window = new MainWindow(settings.Path) { Width = 720, ShowActivated = false };
+        try
+        {
+            window.Show();
+            await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+            var compare = (CompareView)window.FindName("CompareArea");
+            var right = (Border)window.FindName("RightPanel");
+            var show = (Button)window.FindName("RightEdgeStrip");
+            var tools = (StackPanel)window.FindName("MainViewTools");
+            var zebra = (ToggleButton)window.FindName("ZebraToggle");
+            var save = (Button)window.FindName("SaveToolButton");
+            var search = (Button)window.FindName("CommandSearchToolButton");
+            var toggle = (ToggleButton)window.FindName("CompareToolToggle");
+            var toolbar = (ToolBar)window.FindName("ToolBarPanel");
+            double initialWidth = right.ActualWidth;
+            Assert.Equal(initiallyVisible, right.IsVisible);
+
+            WpfTestHost.Toggle(toggle);
+            await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+            Assert.True(compare.IsVisible);
+            Assert.False(right.IsVisible);
+            Assert.True(show.IsVisible);
+            Assert.All(new FrameworkElement[] { tools, zebra, save }, item =>
+                Assert.Equal(Visibility.Collapsed, item.Visibility));
+            Assert.True(toggle.IsVisible);
+            Assert.True(search.IsVisible);
+            Assert.False(toolbar.HasOverflowItems);
+
+            if (changeInCompare)
+            {
+                WpfTestHost.Invoke(show);
+                await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+                Assert.True(right.IsVisible);
+                if (!expectedVisible)
+                {
+                    WpfTestHost.Invoke((Button)window.FindName("HideRightPanelButton"));
+                    await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+                    Assert.False(right.IsVisible);
+                }
+            }
+
+            WpfTestHost.Invoke((Button)compare.FindName("ExitCompareButton"));
+            await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+            Assert.False(compare.IsVisible);
+            Assert.Equal(expectedVisible, right.IsVisible);
+            Assert.True(tools.IsVisible);
+            Assert.All(new FrameworkElement[] { zebra, save }, item =>
+                Assert.Equal(Visibility.Visible, item.Visibility));
+            if (initiallyVisible && expectedVisible)
+            {
+                Assert.Equal(initialWidth, right.ActualWidth);
+            }
+        }
+        finally
+        {
+            window.Close();
+        }
+    });
+
+    [Fact]
+    public Task CompareLayout_AutomationSelectionSurvivesWindowRestart() => WpfTestHost.Run(async () =>
+    {
+        using var settings = new TemporaryDirectory();
+        var window = new MainWindow(settings.Path) { ShowActivated = false };
+        try
+        {
+            window.Show();
+            await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+            WpfTestHost.Toggle((ToggleButton)window.FindName("CompareToolToggle"));
+            var compare = (CompareView)window.FindName("CompareArea");
+            var layout = (Button)compare.FindName("LayoutButton");
+            Assert.Equal(CompareLayoutMode.Auto, compare.LayoutMode);
+            WpfTestHost.Invoke(layout);
+            await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+            Assert.True(layout.ContextMenu.IsOpen);
+            var vertical = layout.ContextMenu.Items.OfType<MenuItem>().Single(item => Equals(item.Header, "縦並び"));
+            WpfTestHost.Invoke(vertical);
+            await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+            Assert.False(layout.ContextMenu.IsOpen);
+            Assert.Equal(CompareLayoutMode.Vertical, compare.LayoutMode);
+        }
+        finally
+        {
+            window.Close();
+        }
+
+        var reopened = new MainWindow(settings.Path);
+        try
+        {
+            var compare = (CompareView)reopened.FindName("CompareArea");
+            Assert.Equal(CompareLayoutMode.Vertical, compare.LayoutMode);
+            Assert.Equal("配置: 縦並び", ((Button)compare.FindName("LayoutButton")).Content);
+            Assert.True(((MainViewModel)reopened.DataContext).RightPanelVisible);
+        }
+        finally
+        {
+            reopened.Close();
+        }
+    });
+
+    [Fact]
+    public Task CompareCursor_ReportsSynchronizedCodesAndClearsWhenComparisonEnds() => WpfTestHost.Run(async () =>
+    {
+        using var settings = new TemporaryDirectory();
+        Directory.CreateDirectory(settings.Path);
+        var format = new RawFormat { Width = 16, Height = 16, BitDepth = 12 };
+        var window = new MainWindow(settings.Path) { Width = 720, ShowActivated = false };
+        var compare = (CompareView)window.FindName("CompareArea");
+        try
+        {
+            window.Show();
+            await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+            WpfTestHost.Toggle((ToggleButton)window.FindName("CompareToolToggle"));
+            var add = (Button)compare.FindName("AddImageButton");
+            for (int i = 0; i < 2; i++)
+            {
+                string path = Path.Combine(settings.Path, $"cursor-{i}.raw");
+                using (var file = new BinaryWriter(File.Create(path)))
+                {
+                    ushort value = (ushort)(1432 - 34 * i);
+                    for (int pixel = 0; pixel < format.Width * format.Height; pixel++)
+                    {
+                        file.Write(value);
+                    }
+                }
+
+                compare.PanePicker = async token => await ComparePane.LoadAsync(path, format, token);
+                int expectedCount = i + 1;
+                WpfTestHost.Invoke(add);
+                await WaitUntilAsync(() => compare.PaneCount == expectedCount);
+            }
+
+            await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+            var grid = (UniformGrid)compare.FindName("PaneGrid");
+            var second = (ComparePaneView)grid.Children[1];
+            ImageViewportTests.PressWithControl(second.ViewportControl, Key.Right);
+            var status = (TextBlock)window.FindName("CompareCursorStatus");
+            await WaitUntilAsync(() => status.Text.EndsWith("A 1432 · B 1398 · Δ −34"));
+            Assert.Matches(@"^x \d+ · y \d+ · A 1432 · B 1398 · Δ −34$", status.Text);
+            Assert.True(status.IsVisible);
+            WpfTestHost.CaptureIfRequested((FrameworkElement)window.Content, "compare-cursor-status-720");
+
+            ImageViewportTests.PressWithControl(second.ViewportControl, Key.Escape);
+            Assert.Empty(status.Text);
+            Assert.False(status.IsVisible);
+            ImageViewportTests.PressWithControl(second.ViewportControl, Key.Right);
+            await WaitUntilAsync(() => status.IsVisible);
+
+            WpfTestHost.Invoke((Button)compare.FindName("ExitCompareButton"));
+            await WaitUntilAsync(() => !compare.IsVisible);
+            Assert.Empty(status.Text);
+            Assert.False(status.IsVisible);
+        }
+        finally
+        {
+            await compare.CloseAllAsync();
+            window.Close();
+        }
+    });
+
+    private static async Task WaitUntilAsync(Func<bool> ready)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (!ready())
+        {
+            Assert.False(timeout.IsCancellationRequested, "比較画面の更新が完了しませんでした。");
+            await Task.Delay(10);
+        }
+    }
 
     [Fact]
     public Task ImageOverlays_HideEmptyBoxesAndMoveLevelAbovePlayback() => WpfTestHost.Run(async () =>

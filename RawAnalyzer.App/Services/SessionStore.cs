@@ -1,5 +1,6 @@
 ﻿using System.IO;
 using System.Text.Json;
+using RawAnalyzer.App.Compare;
 using RawAnalyzer.Core;
 
 namespace RawAnalyzer.App.Services;
@@ -41,6 +42,9 @@ internal sealed class SessionState
 
     /// <summary>右パネルを表示していたか。</summary>
     public bool RightPanelVisible { get; set; } = true;
+
+    /// <summary>比較ペインの配置。未保存なら表示領域に応じて選ぶ。</summary>
+    public CompareLayoutMode CompareLayoutMode { get; set; }
 
     public bool DisplayExpanded { get; set; } = true;
     public bool HistogramExpanded { get; set; } = true;

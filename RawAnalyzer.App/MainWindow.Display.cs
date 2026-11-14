@@ -86,6 +86,12 @@ public partial class MainWindow
         if (e.PropertyName is nameof(MainViewModel.LeftPanelVisible)
             or nameof(MainViewModel.RightPanelVisible))
         {
+            if (e.PropertyName == nameof(MainViewModel.RightPanelVisible))
+            {
+                // 比較中に利用者が開閉した場合は、その状態を終了時にも維持する。
+                _rightPanelBeforeCompare = null;
+            }
+
             CapturePanelWidths();
             UpdatePanelLayout();
             return;

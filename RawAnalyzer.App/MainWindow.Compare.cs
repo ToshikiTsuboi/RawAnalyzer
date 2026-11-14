@@ -11,6 +11,7 @@ public partial class MainWindow
     // ---- 比較モード ----
 
     private bool _compareMode;
+    private bool? _rightPanelBeforeCompare;
 
     private async void OnCompareModeClick(object sender, RoutedEventArgs e)
     {
@@ -50,6 +51,9 @@ public partial class MainWindow
         StopPlayback();
         _compareMode = true;
         _vm.IsCompareMode = true;
+        bool rightPanelWasVisible = _vm.RightPanelVisible;
+        _vm.RightPanelVisible = false;
+        _rightPanelBeforeCompare = rightPanelWasVisible;
         Viewport.ClearGhostCursor();
         CompareArea.Visibility = Visibility.Visible;
 
@@ -75,6 +79,11 @@ public partial class MainWindow
         CompareArea.Visibility = Visibility.Collapsed;
         _compareMode = false;
         _vm.IsCompareMode = false;
+        if (_rightPanelBeforeCompare is bool rightPanelWasVisible)
+        {
+            _rightPanelBeforeCompare = null;
+            _vm.RightPanelVisible = rightPanelWasVisible;
+        }
 
         // 比較ペインの推定の通知から、表示中のファイルの通知へ戻す
         _vm.FormatNoticeText = _mainFormatNotice;

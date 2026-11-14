@@ -3,6 +3,7 @@ namespace RawAnalyzer.App.Themes;
 /// <summary>Segoe Fluent Icons と Segoe MDL2 Assets が共有するグリフ。</summary>
 internal static class IconGlyphs
 {
+    public const string Brightness = "\uE706";
     public const string Add = "\uE710";
     public const string Close = "\uE711";
     public const string More = "\uE712";

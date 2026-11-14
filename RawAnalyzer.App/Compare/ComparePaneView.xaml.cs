@@ -276,7 +276,7 @@ public partial class ComparePaneView : UserControl
 
     private void RefreshFileName()
     {
-        PaneNameDisplay display = _nameDisplay.ForWidth(FileNameText.ActualWidth, _fullNameWidth);
+        PaneNameDisplay display = _nameDisplay.ForWidth(FileNameText.ActualWidth, _fullNameWidth, MeasureFileName);
         if (_shownName == display)
         {
             return;
@@ -359,13 +359,7 @@ public partial class ComparePaneView : UserControl
         CloseRequested?.Invoke(this);
     }
 
-    private void OnAdjustMenuClick(object sender, RoutedEventArgs e)
-    {
-        var button = (Button)sender;
-        ActivateRequested?.Invoke(this);
-        button.ContextMenu.PlacementTarget = button;
-        button.ContextMenu.IsOpen = true;
-    }
+    private void OnLinkChanged(object sender, RoutedEventArgs e) => ActivateRequested?.Invoke(this);
 
     private async void OnAutoClick(object sender, RoutedEventArgs e)
     {
@@ -375,6 +369,7 @@ public partial class ComparePaneView : UserControl
             return;
         }
 
+        ActivateRequested?.Invoke(this);
         _adjusting = true;
         try
         {
@@ -418,6 +413,7 @@ public partial class ComparePaneView : UserControl
             return;
         }
 
+        ActivateRequested?.Invoke(this);
         Pane.Display = DisplaySettings.CreateDefault(Pane.Format.BitDepth);
         Viewport.SetLut(Pane.BuildLut());
         DisplayChanged?.Invoke(this);

@@ -28,7 +28,7 @@ internal static class CommandDisabledReasons
     /// </summary>
     public const string AdjustPanelInCompareMode =
         "比較モード中は調整パネルを使えません(比較ペインではなく、比較画面に隠れた通常表示の画像が対象になるため)。" +
-        "比較ペインの表示は、各ペインの「⋯」にある「自動」「リセット」と比較バーの「条件を揃える」で調整してください。";
+        "比較ペインの表示は、各ペインの「自動」「リセット」と比較バーの「条件を揃える」で調整してください。";
 
     /// <summary>送れるフレーム・ページ・ファイルがない(フレーム送り・再生)。</summary>
     public const string NoSequence =

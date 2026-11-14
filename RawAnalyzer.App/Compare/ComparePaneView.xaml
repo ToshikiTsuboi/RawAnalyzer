@@ -9,7 +9,9 @@
             <Setter Property="Foreground" Value="{StaticResource TextDim}" />
             <Setter Property="BorderBrush" Value="{StaticResource BorderBrushDark}" />
             <Setter Property="BorderThickness" Value="1" />
-            <Setter Property="Padding" Value="3,1" />
+            <Setter Property="Width" Value="21" />
+            <Setter Property="Height" Value="23" />
+            <Setter Property="Padding" Value="0" />
             <Setter Property="FontSize" Value="{x:Static themes:ThemeTypography.FontSizeBody}" />
             <Setter Property="VerticalAlignment" Value="Center" />
             <Setter Property="FocusVisualStyle" Value="{StaticResource AccentFocusVisual}" />
@@ -38,7 +40,9 @@
             <Setter Property="Foreground" Value="{StaticResource TextDim}" />
             <Setter Property="BorderBrush" Value="{StaticResource BorderBrushDark}" />
             <Setter Property="BorderThickness" Value="1" />
-            <Setter Property="Padding" Value="3,1" />
+            <Setter Property="Width" Value="21" />
+            <Setter Property="Height" Value="23" />
+            <Setter Property="Padding" Value="0" />
             <Setter Property="FontSize" Value="{x:Static themes:ThemeTypography.FontSizeBody}" />
             <Setter Property="VerticalAlignment" Value="Center" />
             <Setter Property="FocusVisualStyle" Value="{StaticResource AccentFocusVisual}" />
@@ -88,22 +92,17 @@
                     <Button DockPanel.Dock="Right" Content="{x:Static themes:IconGlyphs.Close}" ContentTemplate="{StaticResource IconContent}" Style="{StaticResource HeaderButton}"
                             Click="OnCloseClick" AutomationProperties.Name="ペインを閉じる"
                             ToolTip="このペインを閉じる" />
-                    <Button DockPanel.Dock="Right" Content="{x:Static themes:IconGlyphs.More}" ContentTemplate="{StaticResource IconContent}" Style="{StaticResource HeaderButton}"
-                            Click="OnAdjustMenuClick" AutomationProperties.Name="ペインの表示調整"
-                            ToolTip="ペインの表示調整">
-                        <Button.ContextMenu>
-                            <ContextMenu Placement="Bottom">
-                                <MenuItem x:Name="AutoButton" Header="自動" Click="OnAutoClick"
-                                          AutomationProperties.Name="自動"
-                                          ToolTip="このペインだけ自動コントラスト (0.35%クリップ)" />
-                                <MenuItem x:Name="ResetItem" Header="リセット" Click="OnResetClick"
-                                          AutomationProperties.Name="リセット"
-                                          ToolTip="このペインの表示調整を初期値へ戻す" />
-                            </ContextMenu>
-                        </Button.ContextMenu>
-                    </Button>
+                    <Button x:Name="AutoButton" DockPanel.Dock="Right" Content="{x:Static themes:IconGlyphs.Brightness}"
+                            ContentTemplate="{StaticResource IconContent}" Style="{StaticResource HeaderButton}"
+                            Click="OnAutoClick" AutomationProperties.Name="自動コントラスト"
+                            ToolTip="このペインの自動コントラスト (0.35%クリップ)" />
+                    <Button x:Name="ResetButton" DockPanel.Dock="Right" Content="{x:Static themes:IconGlyphs.Refresh}"
+                            ContentTemplate="{StaticResource IconContent}" Style="{StaticResource HeaderButton}"
+                            Click="OnResetClick" AutomationProperties.Name="表示調整をリセット"
+                            ToolTip="このペインの表示調整を初期値へ戻す" />
                     <ToggleButton x:Name="LinkToggle" DockPanel.Dock="Right" Content="{x:Static themes:IconGlyphs.Link}" ContentTemplate="{StaticResource IconContent}"
                                   Style="{StaticResource HeaderToggle}"
+                                  Checked="OnLinkChanged" Unchecked="OnLinkChanged"
                                   AutomationProperties.Name="調整リンク"
                                   ToolTip="調整をリンク: オンにしたペイン同士で自動/リセットの結果を共有 (黒/白は%FS換算)" />
                     <TextBlock x:Name="FileNameText" FontSize="{x:Static themes:ThemeTypography.FontSizeBody}" Margin="2,0"
