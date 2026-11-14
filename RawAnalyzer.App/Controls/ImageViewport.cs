@@ -258,6 +258,8 @@ public sealed partial class ImageViewport : FrameworkElement
             sourceX, sourceY, _image.Width & ~1, _image.Height & ~1, out displayX, out displayY);
     }
 
+    internal event EventHandler? InteractionModeChanged;
+
     /// <summary>
     /// マウス操作モード。設定するとカーソル形状も切り替わる
     /// (右パネルを畳んでいてもモードが分かるようにするため)。
@@ -280,6 +282,7 @@ public sealed partial class ImageViewport : FrameworkElement
                 ViewportInteractionMode.WhiteBalancePick => Cursors.UpArrow,
                 _ => Cursors.Arrow,
             };
+            InteractionModeChanged?.Invoke(this, EventArgs.Empty);
         }
     }
 

@@ -12,23 +12,60 @@ namespace RawAnalyzer.Tests;
 public class FullscreenEscapeTests
 {
     [Fact]
-    public Task Escape_ClearsThePixelCursorBeforeLeavingFullscreen() => WpfTestHost.Run(() =>
+    public Task Escape_ClosesDropDownThenClearsCursorThenExitsToolThenExitsFullscreen() => WpfTestHost.Run(async () =>
     {
         // ビューポートは Esc で画素カーソルを消す(KeyDown で処理済みにする)。以前はウィンドウの PreviewKeyDown
         // (ルートが最初)でフルスクリーンを解除していたため、画素カーソルを消す前にフルスクリーンが解除され、
         // カーソルは残った(ショートカット一覧の「Esc: 画素カーソルを消す」と食い違った)
         var viewport = new EscapeConsumer { HasCursor = true };
-        var window = new Border { Child = viewport };
+        var combo = new ComboBox { Items = { "Raw", "Bayer" } };
+        var window = new Window
+        {
+            Content = new StackPanel { Children = { combo, viewport } },
+            ShowActivated = false, Width = 300, Height = 200,
+        };
         bool fullscreen = true;
-        FullscreenEscape.Attach(window, () => fullscreen, () => fullscreen = false);
+        bool toolMode = true;
+        FullscreenEscape.Attach(window, () => fullscreen, () => fullscreen = false, () =>
+        {
+            if (viewport.ClearCursor())
+            {
+                return true;
+            }
 
-        PressEscape(viewport);
-        Assert.False(viewport.HasCursor);
-        Assert.True(fullscreen);
+            bool wasInToolMode = toolMode;
+            toolMode = false;
+            return wasInToolMode;
+        });
 
-        // もう一度押すと(消すカーソルがないので)フルスクリーンを解除する
-        PressEscape(viewport);
-        Assert.False(fullscreen);
+        try
+        {
+            window.Show();
+            combo.IsDropDownOpen = true;
+            await System.Windows.Threading.Dispatcher.Yield();
+            Assert.True(combo.IsDropDownOpen);
+            Assert.True(PressEscape(combo).Handled);
+            Assert.False(combo.IsDropDownOpen);
+            Assert.True(viewport.HasCursor);
+            Assert.True(toolMode);
+            Assert.True(fullscreen);
+
+            PressEscape(viewport);
+            Assert.False(viewport.HasCursor);
+            Assert.True(toolMode);
+            Assert.True(fullscreen);
+
+            PressEscape(viewport);
+            Assert.False(toolMode);
+            Assert.True(fullscreen);
+
+            PressEscape(viewport);
+            Assert.False(fullscreen);
+        }
+        finally
+        {
+            window.Close();
+        }
     });
 
     [Fact]
@@ -37,7 +74,7 @@ public class FullscreenEscapeTests
         var viewport = new EscapeConsumer();
         var window = new Border { Child = viewport };
         int exits = 0;
-        FullscreenEscape.Attach(window, () => false, () => exits++);
+        FullscreenEscape.Attach(window, () => false, () => exits++, () => false);
 
         KeyEventArgs args = PressEscape(viewport);
         Assert.Equal(0, exits);
@@ -70,6 +107,13 @@ public class FullscreenEscapeTests
     {
         public bool HasCursor { get; set; }
 
+        internal bool ClearCursor()
+        {
+            bool wasVisible = HasCursor;
+            HasCursor = false;
+            return wasVisible;
+        }
+
         protected override void OnKeyDown(KeyEventArgs e)
         {
             base.OnKeyDown(e);
@@ -78,9 +122,8 @@ public class FullscreenEscapeTests
                 return;
             }
 
-            if (e.Key == Key.Escape && HasCursor)
+            if (e.Key == Key.Escape && ClearCursor())
             {
-                HasCursor = false;
                 e.Handled = true;
             }
         }

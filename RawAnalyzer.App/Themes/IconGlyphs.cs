@@ -23,9 +23,11 @@ internal static class IconGlyphs
     public const string CollapsePane = "\uE89F";
     public const string ExpandPane = "\uE8A0";
     public const string ZoomIn = "\uE8A3";
+    public const string SelectAll = "\uE8B3";
     public const string Folder = "\uE8B7";
     public const string OpenFile = "\uE8E5";
     public const string Info = "\uE946";
+    public const string PanMode = "\uECE9";
     public const string Drive = "\uEDA2";
     public const string Eyedropper = "\uEF3C";
 }

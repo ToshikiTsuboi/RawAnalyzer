@@ -10,7 +10,7 @@ namespace RawAnalyzer.App.Controls;
 /// <summary>
 /// 数値入力・目盛・値域表示を備えた調整行。
 /// スライダー、直接入力(Enter/フォーカス外れ/ショートカットでのコマンド実行前に確定)、ホイール操作、
-/// ラベルのダブルクリックで既定値へリセットに対応する。
+/// リセットボタンとラベルのダブルクリックで既定値へ戻せる。
 /// </summary>
 public partial class NumericSliderRow : UserControl
 {
@@ -63,7 +63,7 @@ public partial class NumericSliderRow : UserControl
             nameof(Decimals), typeof(int), typeof(NumericSliderRow),
             new PropertyMetadata(2, OnRangeChanged));
 
-    /// <summary>既定値(ラベルのダブルクリックで復帰)。</summary>
+    /// <summary>リセットボタンとラベルのダブルクリックで戻す値。</summary>
     public static readonly DependencyProperty DefaultValueProperty =
         DependencyProperty.Register(
             nameof(DefaultValue), typeof(double), typeof(NumericSliderRow),
@@ -204,7 +204,7 @@ public partial class NumericSliderRow : UserControl
 
     private void Refresh()
     {
-        if (_updating || ValueSlider is null)
+        if (_updating || ValueSlider is null || ResetButton is null)
         {
             return;
         }
@@ -223,6 +223,7 @@ public partial class NumericSliderRow : UserControl
             : Minimum;
         ValueSlider.Value = displayed;
         ValueBox.Text = displayed.ToString(Format, CultureInfo.InvariantCulture);
+        ResetButton.Visibility = Value.Equals(ResetValue) ? Visibility.Hidden : Visibility.Visible;
 
         // 欄を値で書き直したので、打ちかけの入力は残っていない。印が残ると、あとで
         // フォーカスが離れたときに表示桁へ丸めた値で確定し直し、触っていない値が動く
@@ -442,7 +443,26 @@ public partial class NumericSliderRow : UserControl
     {
         if (e.ClickCount == 2)
         {
-            Value = Math.Clamp(DefaultValue, Minimum, Maximum);
+            ResetToDefault();
         }
+    }
+
+    private double ResetValue => Math.Clamp(DefaultValue, Minimum, Maximum);
+
+    private void OnResetClick(object sender, RoutedEventArgs e)
+    {
+        // リセット後にボタンを隠しても、キーボード操作を同じ行で続けられるようにする。
+        if (ResetButton.IsKeyboardFocused)
+        {
+            ValueSlider.Focus();
+        }
+
+        ResetToDefault();
+    }
+
+    private void ResetToDefault()
+    {
+        SetCurrentValue(ValueProperty, ResetValue);
+        Refresh();
     }
 }

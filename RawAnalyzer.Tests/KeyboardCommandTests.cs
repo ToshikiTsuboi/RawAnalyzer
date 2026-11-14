@@ -1,4 +1,5 @@
 using System.Windows.Input;
+using RawAnalyzer.App.Controls;
 using RawAnalyzer.App.Services;
 using RawAnalyzer.App.Views;
 using Xunit;
@@ -7,6 +8,14 @@ namespace RawAnalyzer.Tests;
 
 public class KeyboardCommandTests
 {
+    [Theory]
+    [InlineData(ViewportInteractionMode.Pan, null)]
+    [InlineData(ViewportInteractionMode.RoiSelect, "ドラッグで範囲を選択 · Esc で終了")]
+    [InlineData(ViewportInteractionMode.LineProfile, "クリックで行を選択 · Esc で終了")]
+    [InlineData(ViewportInteractionMode.WhiteBalancePick, "無彩色の点をクリック · Esc で終了")]
+    public void ModeHint_ExplainsTheActiveTool(ViewportInteractionMode mode, string? expected) =>
+        Assert.Equal(expected, ViewportModeHint.For(mode));
+
     [Theory]
     [InlineData(Key.F1, ModifierKeys.None, "F1")]          // 既定分岐(キー名そのまま)
     [InlineData(Key.D3, ModifierKeys.Control, "Ctrl+3")]   // D0〜D9 は数字へ

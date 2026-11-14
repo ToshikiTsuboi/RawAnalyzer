@@ -15,6 +15,27 @@ namespace RawAnalyzer.Tests;
 public class NumericSliderRowTests
 {
     [Fact]
+    public Task ResetButton_AppearsOnlyWhenValueDiffersAndRestoresDefault() => WpfTestHost.Run(() =>
+    {
+        var row = NewRow(decimals: 2, step: 0.05, maximum: 4);
+        row.DefaultValue = row.Value = 1;
+        var reset = (Button)row.FindName("ResetButton");
+        Assert.Equal(Visibility.Hidden, reset.Visibility);
+
+        row.Value = 1.75;
+        Assert.Equal(Visibility.Visible, reset.Visibility);
+        row.DefaultValue = 1.75;
+        Assert.Equal(Visibility.Hidden, reset.Visibility);
+
+        row.DefaultValue = 2.25;
+        Assert.Equal(Visibility.Visible, reset.Visibility);
+        reset.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Assert.Equal(2.25, row.Value);
+        Assert.Equal("2.25", row.ValueBox.Text);
+        Assert.Equal(Visibility.Hidden, reset.Visibility);
+    });
+
+    [Fact]
     public Task StandardLayout_CentersLabelThumbAndValueBox() => WpfTestHost.Run(() =>
     {
         var row = NewRow(decimals: 0, step: 1, maximum: 65535);

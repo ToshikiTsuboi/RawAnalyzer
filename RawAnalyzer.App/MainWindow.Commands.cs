@@ -152,12 +152,12 @@ public partial class MainWindow
 
     /// <summary>
     /// 右の調整パネルの切替(ヒストグラムの表示の切替)の前提。比較モード中はパネルごと無効にするので、キー・パレットも断る。
-    /// 比較モードでなければ、画像がなくても従来どおり切り替えられる。
+    /// 通常表示に画像があるときだけ切り替えられる。
     /// </summary>
     private bool AdjustPanelAvailable() => _vm.CanUseAdjustPanel;
 
-    /// <summary>右の調整パネルの切替を実行できない理由(比較モード中)。</summary>
-    private string AdjustPanelReason() => CommandDisabledReasons.CompareMode;
+    /// <summary>右の調整パネルの切替を実行できない理由。</summary>
+    private string AdjustPanelReason() => _vm.AdjustPanelDisabledReason ?? "";
 
     /// <summary>フレーム送り・再生(送れるフレームがあり、比較モードでないこと)の理由。</summary>
     private string NoSequenceReason() => CommandDisabledReasons.ForSequence(_vm.HasImage, _compareMode);

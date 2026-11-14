@@ -42,6 +42,12 @@ internal sealed class SessionState
     /// <summary>右パネルを表示していたか。</summary>
     public bool RightPanelVisible { get; set; } = true;
 
+    public bool DisplayExpanded { get; set; } = true;
+    public bool HistogramExpanded { get; set; } = true;
+    public bool WhiteBalanceExpanded { get; set; } = true;
+    public bool ColorMatrixExpanded { get; set; }
+    public bool FormatExpanded { get; set; }
+
     /// <summary>ファイルパス(小文字正規化)→ 最後に使ったRawFormat。</summary>
     public Dictionary<string, RawFormat> FileFormats { get; set; } = new();
 }

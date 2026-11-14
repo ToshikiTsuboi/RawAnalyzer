@@ -272,6 +272,9 @@ public sealed class MainViewModel : ObservableObject
                 OnPropertyChanged(nameof(ChangeFormatToolTip));
                 OnPropertyChanged(nameof(CanUseMainView));
                 OnPropertyChanged(nameof(MainViewDisabledReason));
+                OnPropertyChanged(nameof(CanUseAdjustPanel));
+                OnPropertyChanged(nameof(AdjustPanelDisabledReason));
+                OnPropertyChanged(nameof(ShowEmptyCanvas));
             }
         }
     }
@@ -317,6 +320,7 @@ public sealed class MainViewModel : ObservableObject
                 OnPropertyChanged(nameof(ChangeFormatToolTip));
                 OnPropertyChanged(nameof(CanUseAdjustPanel));
                 OnPropertyChanged(nameof(AdjustPanelDisabledReason));
+                OnPropertyChanged(nameof(ShowEmptyCanvas));
                 OnPropertyChanged(nameof(CanEditBayer));
                 OnPropertyChanged(nameof(BayerEditToolTip));
                 OnPropertyChanged(nameof(CanOpenSelectedFileWithFormat));
@@ -325,18 +329,16 @@ public sealed class MainViewModel : ObservableObject
         }
     }
 
-    /// <summary>右の調整パネルを操作できるか(比較モードでないとき)。</summary>
-    /// <remarks>
-    /// 調整パネル(表示調整のスライダー・ボタン、ヒストグラムの切替・コピー、ホワイトバランス、カラーマトリクス、
-    /// フォーマット)は通常表示を対象にするので、比較モード中はパネルの中身ごと無効にし、上端に
-    /// <see cref="AdjustPanelDisabledReason"/> を示す(<see cref="CanUseMainView"/> と同じく、比較画面に隠れた
-    /// 通常表示に効かせない)。比較モードでなければ、個々の項目の条件(画像の有無など)は従来どおり。
-    /// </remarks>
-    public bool CanUseAdjustPanel => !_isCompareMode;
+    /// <summary>右の調整パネルを操作できるか。通常表示に画像があるときだけ操作できる。</summary>
+    public bool CanUseAdjustPanel => CanUseMainView;
 
     /// <summary>調整パネルを使えない理由(パネルの上端に示す)。使えるときは null。</summary>
     public string? AdjustPanelDisabledReason =>
-        _isCompareMode ? CommandDisabledReasons.AdjustPanelInCompareMode : null;
+        IsCompareMode ? CommandDisabledReasons.AdjustPanelInCompareMode
+        : HasImage ? null : "画像を開くと調整できます";
+
+    /// <summary>空のキャンバスに画像の開き方を示すか。</summary>
+    public bool ShowEmptyCanvas => !HasImage && !IsCompareMode && !IsLoading;
 
     /// <summary>
     /// 通常表示(メインの画像・ビューポート)を操作できるか。画像を開いていて、比較モードでないとき。
@@ -357,7 +359,13 @@ public sealed class MainViewModel : ObservableObject
     public bool IsLoading
     {
         get => _isLoading;
-        set => SetProperty(ref _isLoading, value);
+        set
+        {
+            if (SetProperty(ref _isLoading, value))
+            {
+                OnPropertyChanged(nameof(ShowEmptyCanvas));
+            }
+        }
     }
 
     /// <summary>読み込みの進捗率(0〜100)。</summary>

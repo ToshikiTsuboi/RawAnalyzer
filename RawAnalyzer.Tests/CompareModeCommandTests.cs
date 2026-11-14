@@ -75,13 +75,19 @@ public class CompareModeCommandTests
     {
         // 右の調整パネル(表示調整のスライダー・ボタン、ヒストグラムの切替・コピー、ホワイトバランス、カラーマトリクス、
         // フォーマット)は通常表示を対象にする。以前は比較モード中も操作でき、比較画面に隠れた通常表示に効いた。
-        // 比較モードでなければ、画像がなくても従来どおり操作できる(比較モードの間だけ無効にして理由を示す)
         var vm = new MainViewModel();
-        Assert.True(vm.CanUseAdjustPanel);
-        Assert.Null(vm.AdjustPanelDisabledReason);
+        Assert.False(vm.CanUseAdjustPanel);
+        Assert.Equal("画像を開くと調整できます", vm.AdjustPanelDisabledReason);
 
         var changed = new List<string>();
         vm.PropertyChanged += (_, e) => changed.Add(e.PropertyName ?? "");
+        vm.HasImage = true;
+        Assert.True(vm.CanUseAdjustPanel);
+        Assert.Null(vm.AdjustPanelDisabledReason);
+        Assert.Contains(nameof(MainViewModel.CanUseAdjustPanel), changed);
+        Assert.Contains(nameof(MainViewModel.AdjustPanelDisabledReason), changed);
+
+        changed.Clear();
         vm.IsCompareMode = true;
         Assert.False(vm.CanUseAdjustPanel);
         Assert.Equal(CommandDisabledReasons.AdjustPanelInCompareMode, vm.AdjustPanelDisabledReason);
@@ -95,6 +101,24 @@ public class CompareModeCommandTests
         Assert.Null(vm.AdjustPanelDisabledReason);
         Assert.Contains(nameof(MainViewModel.CanUseAdjustPanel), changed);
         Assert.Contains(nameof(MainViewModel.AdjustPanelDisabledReason), changed);
+    }
+
+    [Fact]
+    public void EmptyCanvas_IsAvailableOnlyWithoutImageCompareOrLoading()
+    {
+        var vm = new MainViewModel();
+        Assert.True(vm.ShowEmptyCanvas);
+        vm.IsLoading = true;
+        Assert.False(vm.ShowEmptyCanvas);
+        vm.IsLoading = false;
+        vm.IsCompareMode = true;
+        Assert.False(vm.ShowEmptyCanvas);
+        Assert.Equal(CommandDisabledReasons.AdjustPanelInCompareMode, vm.AdjustPanelDisabledReason);
+        vm.IsCompareMode = false;
+        vm.HasImage = true;
+        Assert.False(vm.ShowEmptyCanvas);
+        vm.HasImage = false;
+        Assert.True(vm.ShowEmptyCanvas);
     }
 
     [Fact]

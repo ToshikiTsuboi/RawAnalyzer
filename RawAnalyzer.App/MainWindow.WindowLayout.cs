@@ -58,6 +58,11 @@ public partial class MainWindow
         double rightPanelWidth = _rightPanelWidth;
         bool leftPanelVisible = _vm.LeftPanelVisible;
         bool rightPanelVisible = _vm.RightPanelVisible;
+        bool displayExpanded = DisplaySection.IsExpanded;
+        bool histogramExpanded = HistogramSection.IsExpanded;
+        bool whiteBalanceExpanded = WhiteBalanceSection.IsExpanded;
+        bool colorMatrixExpanded = ColorMatrixSection.IsExpanded;
+        bool formatExpanded = FormatSection.IsExpanded;
         string fileFilter = _vm.FileFilterText;
         // フルスクリーン中は(フルスクリーンのための最大化ではなく)フルスクリーンに入る前の状態を保存する
         bool maximized = FullscreenWindowState.IsMaximizedToSave(
@@ -76,6 +81,11 @@ public partial class MainWindow
             session.RightPanelWidth = rightPanelWidth;
             session.LeftPanelVisible = leftPanelVisible;
             session.RightPanelVisible = rightPanelVisible;
+            session.DisplayExpanded = displayExpanded;
+            session.HistogramExpanded = histogramExpanded;
+            session.WhiteBalanceExpanded = whiteBalanceExpanded;
+            session.ColorMatrixExpanded = colorMatrixExpanded;
+            session.FormatExpanded = formatExpanded;
             session.FileFilter = fileFilter;
             session.WindowMaximized = maximized;
             session.WindowLeft = left;
@@ -109,7 +119,7 @@ public partial class MainWindow
             "  ドラッグ: パン / ダブルクリック: 全体表示\n" +
             "  ズーム3200%以上で画素上にraw値を表示\n\n" +
             "解析\n" +
-            "  ROI: ツールバーのROIを押してドラッグで矩形選択\n" +
+            "  ROI: キャンバス左側のROIを押してドラッグで矩形選択\n" +
             "  ラインプロファイル: モードを押して画素をクリック\n" +
             "  ヒストグラム/プロファイルは右クリックでデータ保存\n\n" +
             "ホワイトバランス\n" +

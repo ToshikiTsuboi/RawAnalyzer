@@ -13,7 +13,7 @@ internal enum ProjectionDirection
 }
 
 /// <summary>
-/// 射影の向きと流儀の説明(ツールバー・メニュー・コマンドパレット・窓の「？」・横軸の見出しで同じ文言を使う)。
+/// 射影の向きと流儀の説明(ツールストリップ・メニュー・コマンドパレット・窓の「？」・横軸の見出しで同じ文言を使う)。
 /// </summary>
 /// <remarks>
 /// 「水平射影」は流儀によって逆の向きを指す。EMVA 1288 は結果を並べる軸で呼び(水平射影 = 各列の平均を x に並べる
@@ -41,7 +41,7 @@ internal static class ProjectionText
         direction == ProjectionDirection.Horizontal ? "x" : "y";
 
     /// <summary>
-    /// 向きと流儀の説明。ツールバーのボタンのツールチップと窓の「？」の先頭に出す。
+    /// 向きと流儀の説明。ツールストリップのボタンのツールチップと窓の「？」の先頭に出す。
     /// </summary>
     /// <param name="direction">向き。</param>
     /// <returns>説明文。</returns>
@@ -53,13 +53,14 @@ internal static class ProjectionText
           "縦方向のシェーディングを見ます。EMVA 1288 の vertical profile と同じ向きです。" +
           "平均する方向で呼ぶ流儀(HALCON など)では「水平射影」にあたります。";
 
-    /// <summary>ツールバーのボタンのツールチップ。</summary>
+    /// <summary>ツールストリップのボタンのツールチップ。</summary>
     /// <param name="direction">向き。</param>
     /// <returns>ツールチップの文。</returns>
     internal static string ToolbarToolTip(ProjectionDirection direction) =>
         Explanation(direction) + "\n\n" +
         $"押すとすぐ計算して{Name(direction)}の窓を開きます(もう一度押すと閉じます)。" +
-        "対象は ROI があれば ROI、なければ画像全体です。";
+        "対象は ROI があれば ROI、なければ画像全体です。" +
+        $"\nショートカット: {(direction == ProjectionDirection.Horizontal ? "H" : "V")}";
 
     /// <summary>窓の「？」のツールチップ。</summary>
     /// <param name="direction">向き。</param>

@@ -66,6 +66,64 @@
         <TextBlock Style="{StaticResource IconText}" Text="{Binding}" />
     </DataTemplate>
 
+    <Style TargetType="Expander">
+        <Setter Property="Background" Value="{StaticResource Panel2Brush}" />
+        <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+        <Setter Property="BorderBrush" Value="{StaticResource BorderBrushDark}" />
+        <Setter Property="BorderThickness" Value="0,0,0,1" />
+        <Setter Property="Padding" Value="12,4,12,10" />
+        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Expander">
+                    <Border BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}">
+                        <DockPanel>
+                            <ToggleButton x:Name="HeaderSite" DockPanel.Dock="Top"
+                                          IsChecked="{Binding IsExpanded, RelativeSource={RelativeSource TemplatedParent}, Mode=TwoWay}"
+                                          Content="{TemplateBinding Header}" ContentTemplate="{TemplateBinding HeaderTemplate}"
+                                          Foreground="{TemplateBinding Foreground}" Background="{TemplateBinding Background}"
+                                          FontSize="{x:Static themes:ThemeTypography.FontSizeCaption}" FontWeight="SemiBold"
+                                          FocusVisualStyle="{StaticResource AccentFocusVisual}">
+                                <ToggleButton.Template>
+                                    <ControlTemplate TargetType="ToggleButton">
+                                        <Border x:Name="HeaderBorder" Padding="12,8" Background="{TemplateBinding Background}">
+                                            <DockPanel>
+                                                <Path x:Name="Arrow" DockPanel.Dock="Left" Width="9" Height="9"
+                                                      Margin="0,0,7,0" VerticalAlignment="Center" StrokeThickness="1.25"
+                                                      Stroke="{Binding Foreground, RelativeSource={RelativeSource TemplatedParent}}"
+                                                      Data="M 2,1 L 6,4.5 L 2,8" />
+                                                <ContentPresenter RecognizesAccessKey="True" />
+                                            </DockPanel>
+                                        </Border>
+                                        <ControlTemplate.Triggers>
+                                            <Trigger Property="IsChecked" Value="True">
+                                                <Setter TargetName="Arrow" Property="Data" Value="M 1,2 L 4.5,6 L 8,2" />
+                                            </Trigger>
+                                            <Trigger Property="IsMouseOver" Value="True">
+                                                <Setter TargetName="HeaderBorder" Property="Background" Value="{StaticResource HoverBrush}" />
+                                            </Trigger>
+                                            <Trigger Property="IsEnabled" Value="False">
+                                                <Setter Property="Foreground" Value="{StaticResource TextFaint}" />
+                                            </Trigger>
+                                        </ControlTemplate.Triggers>
+                                    </ControlTemplate>
+                                </ToggleButton.Template>
+                            </ToggleButton>
+                            <ContentPresenter x:Name="ExpandSite" Margin="{TemplateBinding Padding}"
+                                              HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                              Visibility="Collapsed" />
+                        </DockPanel>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsExpanded" Value="True">
+                            <Setter TargetName="ExpandSite" Property="Visibility" Value="Visible" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
     <!-- ボタンの Tag にグリフ、Content に表示と読み上げ用のラベルを持つ。 -->
     <DataTemplate x:Key="IconLabelContent">
         <StackPanel Orientation="Horizontal">

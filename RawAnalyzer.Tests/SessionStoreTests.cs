@@ -49,6 +49,37 @@ public class SessionStoreTests : IDisposable
     }
 
     [Fact]
+    public void AdjustmentSections_UseDefaultsForOldSessionsAndRoundTripChanges()
+    {
+        Directory.CreateDirectory(_directory);
+        File.WriteAllText(Path.Combine(_directory, "session.json"), """{"WindowWidth":1024}""");
+        SessionStore store = Start();
+        SessionState defaults = store.Current;
+        Assert.True(defaults.DisplayExpanded);
+        Assert.True(defaults.HistogramExpanded);
+        Assert.True(defaults.WhiteBalanceExpanded);
+        Assert.False(defaults.ColorMatrixExpanded);
+        Assert.False(defaults.FormatExpanded);
+
+        store.Update(session =>
+        {
+            session.DisplayExpanded = false;
+            session.HistogramExpanded = false;
+            session.WhiteBalanceExpanded = false;
+            session.ColorMatrixExpanded = true;
+            session.FormatExpanded = true;
+        });
+
+        SessionState saved = Start().Current;
+        Assert.False(saved.DisplayExpanded);
+        Assert.False(saved.HistogramExpanded);
+        Assert.False(saved.WhiteBalanceExpanded);
+        Assert.True(saved.ColorMatrixExpanded);
+        Assert.True(saved.FormatExpanded);
+        Assert.Equal(1024, saved.WindowWidth);
+    }
+
+    [Fact]
     public void TwoInstances_FileFormatsRememberedInEach_AreKept()
     {
         // B が起動した後に A で記憶したフォーマットは、B の記憶の保存で消えない

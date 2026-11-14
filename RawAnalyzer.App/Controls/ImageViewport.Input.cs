@@ -232,10 +232,8 @@ public sealed partial class ImageViewport
             return;
         }
 
-        if (e.Key == Key.Escape && _keyCursorVisible)
+        if (e.Key == Key.Escape && ClearKeyboardCursor())
         {
-            _keyCursorVisible = false;
-            InvalidateVisual();
             e.Handled = true;
             return;
         }
@@ -275,9 +273,19 @@ public sealed partial class ImageViewport
         RestartIdleTimer();
     }
 
-    /// <summary>
-    /// 画素カーソルを移動し、必要なら見える位置までスクロールする。
-    /// </summary>
+    internal bool ClearKeyboardCursor()
+    {
+        if (!_keyCursorVisible || _image is null)
+        {
+            return false;
+        }
+
+        _keyCursorVisible = false;
+        InvalidateVisual();
+        return true;
+    }
+
+    /// <summary>画素カーソルを移動し、必要なら見える位置までスクロールする。</summary>
     private void MoveKeyboardCursor(int dx, int dy)
     {
         if (_image is null)

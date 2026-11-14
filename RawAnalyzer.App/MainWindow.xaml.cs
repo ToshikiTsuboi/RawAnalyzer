@@ -71,6 +71,7 @@ public partial class MainWindow : Window
             ? new FormatHistoryStore()
             : new FormatHistoryStore(settingsDirectory));
         InitializeComponent();
+        Viewport.InteractionModeChanged += OnViewportInteractionModeChanged;
         _session = _sessionStore.Load();
         ApplyWindowPlacement();
 
@@ -79,6 +80,11 @@ public partial class MainWindow : Window
         // XAML の既定幅(220/240)のままの列の幅を控え、保存していた幅を(表示したままの側の幅も)上書きしていた
         _vm.LeftPanelVisible = _session.LeftPanelVisible;
         _vm.RightPanelVisible = _session.RightPanelVisible;
+        DisplaySection.IsExpanded = _session.DisplayExpanded;
+        HistogramSection.IsExpanded = _session.HistogramExpanded;
+        WhiteBalanceSection.IsExpanded = _session.WhiteBalanceExpanded;
+        ColorMatrixSection.IsExpanded = _session.ColorMatrixExpanded;
+        FormatSection.IsExpanded = _session.FormatExpanded;
         UpdatePanelLayout();
         DataContext = _vm;
         _vm.PropertyChanged += OnViewModelPropertyChanged;
@@ -106,10 +112,10 @@ public partial class MainWindow : Window
         VerticalProjectionMenu.ToolTip = ProjectionText.Explanation(ProjectionDirection.Vertical);
 
         // ショートカットはコマンド表(MainWindow.Commands.cs)から一括で捌く。
-        // Escだけはビューポートの画素カーソル解除を優先するため個別に扱う(バブルの KeyDown で、
-        // フォーカス中のコントロールが使わなかったときだけフルスクリーンを解除する)
+        // Esc はフォーカス中のコントロール、画素カーソル、ツールモード、フルスクリーンの順で扱う。
         PreviewKeyDown += OnWindowPreviewKeyDown;
-        FullscreenEscape.Attach(this, () => _vm.IsFullscreen, () => _vm.IsFullscreen = false);
+        FullscreenEscape.Attach(this, () => _vm.IsFullscreen, () => _vm.IsFullscreen = false,
+            CancelViewportInteraction);
         RebuildRecentMenu();
         InitFolderTree();
         CompareArea.PanePicker = PickComparePaneAsync;

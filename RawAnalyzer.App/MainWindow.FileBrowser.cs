@@ -156,10 +156,26 @@ public partial class MainWindow
 
     // ---- メニュー・エクスポート ----
 
+    private sealed record RecentCanvasFile(string FullPath)
+    {
+        public string FileName => Path.GetFileName(FullPath);
+        public string? Folder
+        {
+            get
+            {
+                string? parent = Path.GetDirectoryName(FullPath);
+                string? name = Path.GetFileName(parent);
+                return string.IsNullOrEmpty(name) ? parent : name;
+            }
+        }
+    }
+
     private void RebuildRecentMenu()
     {
         RecentMenu.Items.Clear();
         List<string> recent = _recentFiles.Load();
+        int generation = ++_recentMenuGeneration;
+        UpdateEmptyCanvasRecent(recent);
         if (recent.Count == 0)
         {
             RecentMenu.Items.Add(new System.Windows.Controls.MenuItem
@@ -178,47 +194,53 @@ public partial class MainWindow
                 Header = AccessKeyText.Escape(Path.GetFileName(path)),
                 ToolTip = path,
             };
-            string captured = path;
-            item.Click += async (_, _) =>
-            {
-                // 実在はメニューを作り直したときにしか確かめないので、その後に消えた・接続が切れたファイルの項目も
-                // 残っている。開く前に UI スレッドを止めずに確かめ、無ければ一度だけ知らせてメニューから外す
-                // (確かめずに開くと、フォルダを読み込めない警告に続けて、実在しない raw にフォーマット指定ダイアログを出していた)
-                int deferredRequests = ++_deferredOpenRequests;
-                int openRequests = _openRequests;
-                int folderGeneration = _folderGeneration;
-                bool exists = await Task.Run(() => File.Exists(captured));
-                if (deferredRequests != _deferredOpenRequests
-                    || openRequests != _openRequests || folderGeneration != _folderGeneration)
-                {
-                    // 確かめている間に別のファイル・フォルダが開かれた、または確認を待つ別の要求を受け付けた
-                    // (後から来た方を優先する)
-                    return;
-                }
-
-                if (!exists)
-                {
-                    AppMessage.Show(this,
-                        $"ファイルが見つかりません(移動・削除されたか、ネットワークに接続できません)。\n{captured}",
-                        "最近使ったファイル", MessageBoxButton.OK, MessageBoxImage.Warning);
-                    RemoveRecentMenuItems(new[] { captured });
-                    return;
-                }
-
-                if (AddToCompareInstead(new[] { captured }))
-                {
-                    return;
-                }
-
-                await LoadFolderAndOpenAsync(captured);
-            };
+            item.Click += async (_, _) => await OpenRecentFileAsync(path);
             RecentMenu.Items.Add(item);
         }
 
         // 存在確認は切断されたNAS/UNCパスでSMBタイムアウトまでブロックするため、
         // メニューは先に出してから裏で確認し、消えていた項目だけ後から取り除く
-        int generation = ++_recentMenuGeneration;
         _ = PruneMissingRecentItemsAsync(generation, recent);
+    }
+
+    private void UpdateEmptyCanvasRecent(IEnumerable<string> paths)
+    {
+        EmptyCanvasRecent.ItemsSource = paths.Take(5)
+            .Select(path => new RecentCanvasFile(path)).ToArray();
+    }
+
+    private async void OnEmptyCanvasRecentClick(object sender, RoutedEventArgs e)
+    {
+        if (((FrameworkElement)sender).DataContext is RecentCanvasFile recent)
+        {
+            await OpenRecentFileAsync(recent.FullPath);
+        }
+    }
+
+    private async Task OpenRecentFileAsync(string path)
+    {
+        // 切断されたネットワーク上の履歴も UI を止めずに確認し、後発の要求を優先する。
+        int deferredRequests = ++_deferredOpenRequests;
+        int openRequests = _openRequests;
+        int folderGeneration = _folderGeneration;
+        bool exists = await Task.Run(() => File.Exists(path));
+        if (_closed || deferredRequests != _deferredOpenRequests
+            || openRequests != _openRequests || folderGeneration != _folderGeneration)
+        {
+            return;
+        }
+
+        if (!exists)
+        {
+            AppMessage.Show(this,
+                $"ファイルが見つかりません(移動・削除されたか、ネットワークに接続できません)。\n{path}",
+                "最近使ったファイル", MessageBoxButton.OK, MessageBoxImage.Warning);
+            RemoveRecentMenuItems(new[] { path });
+        }
+        else if (!AddToCompareInstead(new[] { path }))
+        {
+            await LoadFolderAndOpenAsync(path);
+        }
     }
 
     /// <summary>最近使ったファイルのうち実在しないものをメニューから取り除く。</summary>
@@ -238,7 +260,7 @@ public partial class MainWindow
             return;
         }
 
-        if (generation != _recentMenuGeneration || missing.Count == 0)
+        if (_closed || generation != _recentMenuGeneration || missing.Count == 0)
         {
             return; // 確認中に作り直された(結果は古い)
         }
@@ -258,6 +280,8 @@ public partial class MainWindow
             RecentMenu.Items.Remove(item);
         }
 
+        UpdateEmptyCanvasRecent(RecentMenu.Items.OfType<System.Windows.Controls.MenuItem>()
+            .Select(item => item.ToolTip).OfType<string>());
         if (RecentMenu.Items.Count == 0)
         {
             RecentMenu.Items.Add(new System.Windows.Controls.MenuItem
@@ -554,14 +578,19 @@ public partial class MainWindow
 
     private void OnFileDragOver(object sender, DragEventArgs e)
     {
-        e.Effects = e.Data.GetDataPresent(DataFormats.FileDrop)
+        bool isFileDrop = e.Data.GetDataPresent(DataFormats.FileDrop);
+        EmptyCanvas.Tag = isFileDrop;
+        e.Effects = isFileDrop
             ? DragDropEffects.Copy
             : DragDropEffects.None;
         e.Handled = true;
     }
 
+    private void OnFileDragLeave(object sender, DragEventArgs e) => EmptyCanvas.Tag = false;
+
     private async void OnFileDrop(object sender, DragEventArgs e)
     {
+        EmptyCanvas.Tag = false;
         if (e.Data.GetData(DataFormats.FileDrop) is not string[] { Length: > 0 } paths)
         {
             return;
