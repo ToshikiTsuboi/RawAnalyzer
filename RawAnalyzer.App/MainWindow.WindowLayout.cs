@@ -66,6 +66,7 @@ public partial class MainWindow
         bool formatExpanded = FormatSection.IsExpanded;
         bool navigatorVisible = NavigatorEnabled;
         string fileFilter = _vm.FileFilterText;
+        string[] usedCommands = _usedCommands;
         // フルスクリーン中は(フルスクリーンのための最大化ではなく)フルスクリーンに入る前の状態を保存する
         bool maximized = FullscreenWindowState.IsMaximizedToSave(
             WindowState, _vm.IsFullscreen, _preFullscreenState);
@@ -91,6 +92,8 @@ public partial class MainWindow
             session.FormatExpanded = formatExpanded;
             session.NavigatorVisible = navigatorVisible;
             session.FileFilter = fileFilter;
+            if (usedCommands.Length > 0)
+                session.RecentCommands = PaletteHistory.Combine(usedCommands, session.RecentCommands ?? []);
             session.WindowMaximized = maximized;
             session.WindowLeft = left;
             session.WindowTop = top;

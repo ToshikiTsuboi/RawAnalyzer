@@ -3,14 +3,19 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:themes="clr-namespace:RawAnalyzer.App.Themes"
         Title="コマンドパレット" Width="620" Height="420"
-        Background="{StaticResource PanelBrush}" Foreground="{StaticResource TextBrush}"
-        WindowStartupLocation="CenterOwner" ResizeMode="NoResize"
-        ShowInTaskbar="False"
+        Background="Transparent" Foreground="{StaticResource TextBrush}"
+        WindowStartupLocation="Manual" ResizeMode="NoResize"
+        ShowInTaskbar="False" WindowStyle="None" AllowsTransparency="True"
         PreviewKeyDown="OnWindowPreviewKeyDown">
     <Window.Resources>
         <BooleanToVisibilityConverter x:Key="BoolToVis" />
     </Window.Resources>
-    <DockPanel Margin="12">
+    <Border Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource BorderBrushDark}"
+            BorderThickness="1" CornerRadius="8" Margin="14" Padding="12">
+        <Border.Effect>
+            <DropShadowEffect BlurRadius="16" ShadowDepth="3" Opacity="0.65" />
+        </Border.Effect>
+    <DockPanel>
         <TextBox x:Name="FilterBox" DockPanel.Dock="Top" FontSize="{x:Static themes:ThemeTypography.FontSizeEmphasis}" Padding="8,6"
                  TextChanged="OnFilterChanged"
                  AutomationProperties.Name="コマンドを検索" />
@@ -57,4 +62,5 @@
             </ListBox.ItemTemplate>
         </ListBox>
     </DockPanel>
+    </Border>
 </Window>

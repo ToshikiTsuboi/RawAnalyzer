@@ -11,7 +11,7 @@ public class ToolWindowChromeTests
     [Fact]
     public Task Dialogs_UseStandardWindowStyle() => WpfTestHost.Run(() =>
     {
-        Window[] dialogs = [new AboutWindow(), new ShortcutHelpWindow([]), new CommandPaletteWindow([])];
+        Window[] dialogs = [new AboutWindow(), new ShortcutHelpWindow([])];
         foreach (Window dialog in dialogs)
         {
             try

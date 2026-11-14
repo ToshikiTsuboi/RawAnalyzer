@@ -49,6 +49,17 @@ public class SessionStoreTests : IDisposable
     }
 
     [Fact]
+    public void RecentCommandsPersistAtMostEightDistinctIds()
+    {
+        SessionStore store = Start();
+        Assert.Null(store.Current.RecentCommands);
+        string[] commands = Enumerable.Range(0, 10).Select(i => $"c{i}").ToArray();
+        store.Update(session => session.RecentCommands = PaletteHistory.Combine(
+            ["c5", "palette", "c5", "c2"], commands));
+        Assert.Equal(new[] { "c5", "c2", "c0", "c1", "c3", "c4", "c6", "c7" }, Start().Current.RecentCommands);
+    }
+
+    [Fact]
     public void AdjustmentSections_UseDefaultsForOldSessionsAndRoundTripChanges()
     {
         Directory.CreateDirectory(_directory);

@@ -20,6 +20,42 @@ namespace RawAnalyzer.Tests;
 public class CommandPaletteWindowTests
 {
     [Fact]
+    public Task EmptySearchShowsRecentCommandsAndExcludesThePaletteItself() => WpfTestHost.Run(() =>
+    {
+        AppCommand open = Command("open", "画像を開く…", null);
+        AppCommand help = Command("help", "ショートカット一覧", null);
+        AppCommand folder = Command("folder", "フォルダを開く…", null);
+        AppCommand palette = Command("palette", "コマンドパレット", null);
+        var window = new CommandPaletteWindow([open, help, folder, palette], ["folder", "help", "palette"])
+            { ShowActivated = false };
+        try
+        {
+            window.Show();
+            var list = (ListBox)window.FindName("CommandList");
+            var filter = (TextBox)window.FindName("FilterBox");
+            IEnumerable<string> Order() => list.Items.Cast<CommandPaletteWindow.PaletteRow>().Select(row => row.Command.Id);
+            Assert.Equal(new[] { "folder", "help", "open" }, Order());
+            Assert.Equal(WindowStyle.None, window.WindowStyle);
+            WpfTestHost.CaptureDialogIfRequested(window, "d7-command-palette");
+            filter.Text = "開く";
+            Assert.Equal(new[] { "open", "folder" }, Order());
+            filter.Text = "コマンドパレット";
+            Assert.Empty(list.Items);
+        }
+        finally
+        {
+            window.Close();
+        }
+    });
+
+    [Theory]
+    [InlineData(true, false, true)]
+    [InlineData(true, true, false)]
+    [InlineData(false, false, false)]
+    public void DeactivationClosesOnlyALoadedWindowThatIsNotClosing(bool loaded, bool closing, bool expected)
+        => Assert.Equal(expected, CommandPaletteWindow.ShouldCloseOnDeactivated(loaded, closing));
+
+    [Fact]
     public Task DisabledCommand_LooksDisabled_AndEnterExplainsInsteadOfDoingNothing() => WpfTestHost.Run(() =>
     {
         bool executed = false;

@@ -15,6 +15,7 @@ public partial class MainWindow
     private IReadOnlyList<AppCommand>? _commands;
     private CommandPaletteWindow? _paletteWindow;
     private ShortcutHelpWindow? _shortcutWindow;
+    private string[] _usedCommands = [];
 
     /// <summary>全コマンド(遅延構築)。</summary>
     private IReadOnlyList<AppCommand> Commands => _commands ??= BuildCommands();
@@ -74,6 +75,8 @@ public partial class MainWindow
         try
         {
             command.Execute();
+            if (command.Id != PaletteHistory.PaletteId)
+                _usedCommands = PaletteHistory.Combine([command.Id], _usedCommands);
         }
         catch (Exception ex)
         {
@@ -95,7 +98,9 @@ public partial class MainWindow
             return;
         }
 
-        _paletteWindow = new CommandPaletteWindow(Commands) { Owner = this };
+        _paletteWindow = new CommandPaletteWindow(Commands, PaletteHistory.Combine(_usedCommands, _session.RecentCommands ?? []))
+            { Owner = this };
+        _paletteWindow.PositionOverOwner();
         _paletteWindow.Closed += (_, _) =>
         {
             AppCommand? chosen = _paletteWindow?.SelectedCommand;

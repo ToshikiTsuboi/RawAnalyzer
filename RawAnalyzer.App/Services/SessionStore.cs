@@ -52,6 +52,7 @@ internal sealed class SessionState
     public bool ColorMatrixExpanded { get; set; }
     public bool FormatExpanded { get; set; }
     public bool NavigatorVisible { get; set; } = true;
+    public string[]? RecentCommands { get; set; }
 
     /// <summary>ファイルパス(小文字正規化)→ 最後に使ったRawFormat。</summary>
     public Dictionary<string, RawFormat> FileFormats { get; set; } = new();
