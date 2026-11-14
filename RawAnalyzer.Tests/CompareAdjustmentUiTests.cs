@@ -293,6 +293,40 @@ public class CompareAdjustmentUiTests
         Assert.Equal(0, changes);
     });
 
+    [Fact]
+    public Task AutoContrast_DiscardsPendingResultAfterResetOfDefaultPane() => WpfTestHost.Run(async () =>
+    {
+        using var fixture = new TestWindow();
+        await fixture.EnterCompareAsync();
+        ComparePaneView pane = await fixture.AddPaneAsync(12);
+        DisplaySettings defaults = DisplaySettings.CreateDefault(12);
+        Assert.Equal(defaults, pane.Pane!.Display);
+        var result = new TaskCompletionSource<AutoLevels?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        CancellationToken? runningToken = null;
+        pane.CalculateAutoLevelsAsync = (_, token) =>
+        {
+            runningToken = token;
+            return result.Task;
+        };
+
+        Task auto = pane.AutoContrastAsync();
+        Assert.NotNull(runningToken);
+        try
+        {
+            // 値は既定のままなのでリセットしても表示調整は変わらないが、計算は取り消す。
+            WpfTestHost.Invoke(Find<Button>(fixture.Window, "DisplayResetButton"));
+            await DrainAsync();
+            Assert.True(runningToken.Value.IsCancellationRequested);
+        }
+        finally
+        {
+            result.SetResult(new AutoLevels(100, 700));
+        }
+
+        await auto; // 計算結果の後処理が終わってから確かめる。
+        Assert.Equal(defaults, pane.Pane.Display);
+    });
+
     private static T Find<T>(FrameworkElement parent, string name) => Assert.IsAssignableFrom<T>(parent.FindName(name));
 
     private static AppCommand Command(MainWindow window, string id) =>

@@ -435,6 +435,9 @@ public partial class ComparePaneView : UserControl
     {
         if (Pane is { } pane)
         {
+            // リセットは明示的な操作なので、値が既定のままでも計算中の自動コントラストを取り消す
+            // (ApplyDisplay は値が変わらないと何もしないため、ここで取り消さないと後から自動の結果が適用される)
+            CancelAutoContrast();
             EditDisplay(DisplaySettings.CreateDefault(pane.Format.BitDepth));
         }
     }
