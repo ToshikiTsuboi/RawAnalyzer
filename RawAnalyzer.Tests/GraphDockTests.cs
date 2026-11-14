@@ -23,6 +23,34 @@ namespace RawAnalyzer.Tests;
 public class GraphDockTests
 {
     [Fact]
+    public void TabLabels_NameTheGraphAndDifferFromTheProfileDirectionChoices()
+    {
+        string[] labels = Enum.GetValues<GraphKind>().Select(kind => GraphDock.TabLabel(kind)).ToArray();
+        Assert.Equal(new[] { "プロファイル", "水平射影", "垂直射影" }, labels);
+
+        // グラフと一緒に出る名前は、ラインプロファイルの向きの選択肢(水平・垂直)と同じにしない。
+        Assert.DoesNotContain("水平", labels);
+        Assert.DoesNotContain("垂直", labels);
+
+        // 帯だけの表示では短い名前にする(省略記号で1文字だけ残る表示にしない)。
+        Assert.Equal(new[] { "断面", "水平", "垂直" },
+            Enum.GetValues<GraphKind>().Select(kind => GraphDock.TabLabel(kind, compact: true)));
+    }
+
+    [Theory]
+    [InlineData(200, 3, true)]   // 幅720で左右のパネルを開いたときの帯
+    [InlineData(269, 3, true)]
+    [InlineData(270, 3, false)]
+    [InlineData(200, 1, false)]
+    public void TabLabels_AreCompactOnlyWhenTheBandIsTooNarrow(double width, int tabCount, bool compact)
+    {
+        Assert.Equal(compact, GraphDock.UseCompactTabLabels(width, tabCount));
+
+        // グラフを表示できる最小の幅では、タブが3つでも正式な名前が収まる。
+        Assert.False(GraphDock.UseCompactTabLabels(20 + 92 + 2 + GraphDock.MinimumPlotWidth, 3));
+    }
+
+    [Fact]
     public Task DockKeepsPlotSpaceAndViewportOverlaysThenUsesTheTabBandWhenSpaceRunsOut() => WpfTestHost.Run(async () =>
     {
         using var fixture = new Fixture();

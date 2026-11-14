@@ -94,6 +94,7 @@ public partial class GraphDock : UserControl
         }
 
         Visibility = Visibility.Visible;
+        UpdateTabLabels(width);
         double band = TabBand.Height;
         Entry? selected = SelectedKind is GraphKind kind ? _open.GetValueOrDefault(kind) : null;
         double maximum = Math.Max(0, availableHeight - MinimumImageHeight - SplitterHeight);
@@ -241,12 +242,40 @@ public partial class GraphDock : UserControl
         GraphContent.Child = graph;
     }
 
-    private static string TabLabel(GraphKind kind) => kind switch
+    // タブ1つに正式な名前を出すのに要る幅と、帯の右端の2つのボタンの幅(どちらも目安)。
+    private const double FullTabWidth = 66;
+    private const double BandButtonsWidth = 72;
+
+    /// <summary>帯に正式な名前が収まらないか(収まらないときは短い名前にする)。</summary>
+    /// <remarks>
+    /// グラフを表示できる幅(<see cref="PlotSideChrome"/> + <see cref="MinimumPlotWidth"/>)では常に収まるので、
+    /// 短い名前になるのは帯だけの表示のときに限られる。
+    /// </remarks>
+    internal static bool UseCompactTabLabels(double width, int tabCount) =>
+        width < tabCount * FullTabWidth + BandButtonsWidth;
+
+    // ラインプロファイルの向きを選ぶ「水平」「垂直」と紛れないよう、射影は「射影」まで書く。
+    // 短い名前は帯だけの表示(グラフと向きの選択肢が出ていないとき)に使い、省略記号で1文字だけ残る表示にしない。
+    // 正式な名前はツールチップと読み上げ名でも示す。
+    internal static string TabLabel(GraphKind kind, bool compact = false) => (kind, compact) switch
     {
-        GraphKind.LineProfile => "断面",
-        GraphKind.HorizontalProjection => "水平",
+        (GraphKind.LineProfile, false) => "プロファイル",
+        (GraphKind.HorizontalProjection, false) => "水平射影",
+        (GraphKind.VerticalProjection, false) => "垂直射影",
+        (GraphKind.LineProfile, true) => "断面",
+        (GraphKind.HorizontalProjection, true) => "水平",
         _ => "垂直",
     };
+
+    private void UpdateTabLabels(double width)
+    {
+        bool compact = UseCompactTabLabels(width, GraphTabs.Items.Count);
+        foreach (TabItem tab in GraphTabs.Items.OfType<TabItem>())
+        {
+            if (tab.Tag is GraphKind kind)
+                tab.Header = TabLabel(kind, compact);
+        }
+    }
 
     private sealed class Entry(GraphView graph, TabItem tab)
     {
