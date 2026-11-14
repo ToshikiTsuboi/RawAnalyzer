@@ -1,8 +1,11 @@
 using System.Windows.Controls;
 using System.Windows;
+using System.Windows.Automation.Peers;
+using System.Windows.Automation.Provider;
 using System.Windows.Controls.Primitives;
 using System.Windows.Documents;
 using System.Windows.Input;
+using System.Windows.Media;
 using RawAnalyzer.App.Services;
 using RawAnalyzer.App.Views;
 using RawAnalyzer.Core;
@@ -298,8 +301,8 @@ public class DefectPixelWindowTests
     });
 
     [Theory]
-    [InlineData(BayerPattern.Rggb, "段1 R: mean=", "段2 B: mean=")]
-    [InlineData(BayerPattern.None, "段1: mean=", "段2: mean=")]
+    [InlineData(BayerPattern.Rggb, "段1 R", "段2 B")]
+    [InlineData(BayerPattern.None, "段1", "段2")]
     public Task SegmentedResult_ShowsThresholdsPerSegment(
         BayerPattern pattern, string firstLine, string lastLine) => WpfTestHost.Run(() =>
     {
@@ -307,6 +310,7 @@ public class DefectPixelWindowTests
         // (段を示さないと同じチャネル名の行が段の数だけ並び、モノクロは閾値が1つも出なかった)
         var window = new DefectPixelWindow();
         var summary = (TextBlock)window.FindName("SummaryText");
+        var thresholds = (ListView)window.FindName("ThresholdList");
         const int segment = 16;
         var codes = new ushort[segment * 2 * 16];
         for (int i = 0; i < codes.Length; i++)
@@ -317,9 +321,10 @@ public class DefectPixelWindowTests
         using RawImage image = TestImages.FromCodes(codes, segment * 2, 16, 12, pattern);
         window.ShowResult(DefectPixelDetector.Detect(image, pattern: pattern, segmentWidth: segment), 4095);
 
-        Assert.Contains(firstLine, summary.Text);
-        Assert.Contains(lastLine, summary.Text);
-        Assert.Contains("段", summary.Text.Split('\n')[0]);
+        var labels = thresholds.Items.Cast<DefectPixelWindow.ThresholdRow>().Select(row => row.Label);
+        Assert.Contains(firstLine, labels);
+        Assert.Contains(lastLine, labels);
+        Assert.Contains("段は左から", summary.Text);
         window.Close();
     });
 
@@ -337,8 +342,95 @@ public class DefectPixelWindowTests
         Assert.True(((Button)window.FindName("CopyButton")).IsEnabled);
         Assert.True(((Button)window.FindName("SaveCsvButton")).IsEnabled);
         Assert.False(((Button)window.FindName("CorrectButton")).IsEnabled);
+        Assert.Equal(Visibility.Visible, ((TextBlock)window.FindName("EmptyResult")).Visibility);
         Assert.Equal("x,y,raw_code,type", window.BuildTable(',')!.TrimEnd());
         window.Close();
+    });
+
+    [Fact]
+    public Task SortedRowsKeepTheSamePixelsAndExportOrder() => WpfTestHost.Run(async () =>
+    {
+        var window = new DefectPixelWindow { ShowActivated = false };
+        try
+        {
+            window.Show();
+            window.ShowResult(DetectNoDefects(), 4095);
+            WpfTestHost.CaptureDialogIfRequested(window, "d5-defects-empty");
+            DefectDetectionResult result = DetectTwoDefects();
+            window.ShowResult(result, 4095);
+            var list = (ListView)window.FindName("DefectList");
+            Assert.Equal(result.Defects, list.Items.Cast<DefectPixelWindow.DefectRow>().Select(row => row.Source));
+            string? csv = window.BuildTable(',');
+            window.UpdateLayout();
+            var header = Descendants(list).OfType<GridViewColumnHeader>()
+                .Single(item => Equals(item.Content, "偏差 (σ)"));
+            ((IInvokeProvider)new GridViewColumnHeaderAutomationPeer(header).GetPattern(PatternInterface.Invoke)!).Invoke();
+            for (int i = 0; i < 100 && ((DefectPixelWindow.DefectRow)list.Items[0]).Source.Type != DefectType.Dead; i++)
+                await Task.Delay(20);
+            var sorted = list.Items.Cast<DefectPixelWindow.DefectRow>().ToArray();
+            Assert.Equal(DefectType.Dead, sorted[0].Source.Type);
+            Assert.Equal(result.Deviation(sorted[0].Source), sorted[0].Deviation);
+            Assert.Equal(csv, window.BuildTable(','));
+            WpfTestHost.CaptureDialogIfRequested(window, "d5-defects-sorted");
+
+            window.UpdateLayout();
+            var row = (ListViewItem)list.ItemContainerGenerator.ContainerFromIndex(0);
+            DefectPixel? activated = null;
+            window.DefectActivated += pixel => activated = pixel;
+            list.RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, Environment.TickCount, MouseButton.Left)
+            {
+                RoutedEvent = Control.MouseDoubleClickEvent,
+                Source = row,
+            });
+            Assert.Equal(sorted[0].Source, activated);
+        }
+        finally
+        {
+            window.Close();
+        }
+    });
+
+    private static IEnumerable<DependencyObject> Descendants(DependencyObject root)
+    {
+        for (int i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++)
+        {
+            DependencyObject child = VisualTreeHelper.GetChild(root, i);
+            yield return child;
+            foreach (DependencyObject nested in Descendants(child))
+                yield return nested;
+        }
+    }
+
+    [Fact]
+    public Task CappedResultsKeepTheNoticeAndOnlyRealizeVisibleRows() => WpfTestHost.Run(async () =>
+    {
+        var (result, rows) = await Task.Run(() =>
+        {
+            const int size = 340;
+            using RawImage image = TestImages.FromCodes(
+                Enumerable.Range(0, size * size).Select(i => (ushort)(i % 2 == 0 ? 200 : 1800)).ToArray(),
+                size, size, bitDepth: 12);
+            var result = DefectPixelDetector.Detect(image, sigmaFactor: 0.5);
+            return (result, DefectPixelWindow.PrepareRows(result));
+        });
+        var window = new DefectPixelWindow { ShowActivated = false };
+        try
+        {
+            window.Show();
+            window.ShowResult(result, rows, 4095);
+            await window.SortAsync(nameof(DefectPixelWindow.DefectRow.Code));
+            window.UpdateLayout();
+            var list = (ListView)window.FindName("DefectList");
+            Assert.Equal(100_000, list.Items.Count);
+            Assert.Contains("上限で打ち切り", ((TextBlock)window.FindName("SummaryText")).Text);
+            Assert.InRange(Descendants(list).OfType<ListViewItem>().Count(), 1, 100);
+            Assert.Equal(200, ((DefectPixelWindow.DefectRow)list.Items[0]).Code);
+            Assert.Equal(1800, ((DefectPixelWindow.DefectRow)list.Items[^1]).Code);
+        }
+        finally
+        {
+            window.Close();
+        }
     });
 
     [Fact]

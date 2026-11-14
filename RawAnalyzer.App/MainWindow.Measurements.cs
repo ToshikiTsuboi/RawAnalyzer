@@ -108,13 +108,18 @@ public partial class MainWindow
 
         // 巨大画像では数十秒かかるため、進捗表示とキャンセルを付ける
         DefectDetectionResult? result = null;
+        DefectPixelWindow.ResultRows? rows = null;
         ProgressWindow progress = ProgressWindow.Run(
             this,
             "欠陥画素を検出中…",
             (report, ct) => Task.Run(
-                () => result = DefectPixelDetector.Detect(
+                () =>
+                {
+                    result = DefectPixelDetector.Detect(
                     image, frame, sigma, detectHot, detectDead,
-                    pattern: pattern, progress: report, cancellationToken: ct, segmentWidth: segmentWidth),
+                    pattern: pattern, progress: report, cancellationToken: ct, segmentWidth: segmentWidth);
+                    rows = DefectPixelWindow.PrepareRows(result, ct);
+                },
                 ct));
 
         if (progress.Error is not null)
@@ -127,7 +132,7 @@ public partial class MainWindow
 
         // 検出中に表示中の画像・フレーム・Bayerパターンが替わっていたら、結果は表示中の画像を
         // いまの条件で検出したものではないので採用しない(旧条件の一覧で補正させない)
-        if (progress.WasCanceled || result is null || _defectWindow is null
+        if (progress.WasCanceled || result is null || rows is null || _defectWindow is null
             || !source.IsCurrent(ActiveImage, Viewport.Frame, ActiveFormat?.Bayer ?? BayerPattern.None))
         {
             _defectWindow?.ResetRunButton();
@@ -136,7 +141,7 @@ public partial class MainWindow
 
         // HDR表示中の検出結果は派生ビューの座標・画素のもので、HDR素材(Raw表示を含む)の補正は断る。
         // 一覧・移動・コピー・CSV は使えるようにし、断られるだけの補正ボタンは有効にせず理由を示す
-        _defectWindow.ShowResult(result, maxCode,
+        _defectWindow.ShowResult(result, rows, maxCode,
             correctionUnavailableReason: _currentFormat is null ? null
                 : DefectCorrectionAvailability.Refusal(
                     _compareMode, _currentFormat, _derivedImage is not null, _colorImage is not null));

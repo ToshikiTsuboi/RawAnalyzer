@@ -1,4 +1,4 @@
-﻿using System.Globalization;
+using System.Windows.Data;
 using System.Text;
 using System.Windows;
 using System.Windows.Controls;
@@ -33,6 +33,7 @@ public partial class DefectPixelWindow : Window
     public DefectPixelWindow()
     {
         InitializeComponent();
+        Closed += (_, _) => _sort?.Cancel();
     }
 
     /// <summary>「検出実行」が押されたときに発火する(σ係数, 白点, 黒点)。</summary>
@@ -45,95 +46,147 @@ public partial class DefectPixelWindow : Window
     public event Action<DefectDetectionResult, DefectCorrectionMethod>? CorrectionRequested;
 
     /// <summary>リスト表示用の行アイテム。</summary>
-    public sealed record DefectRow(int Index, int X, int Y, int Code, string TypeLabel)
+    public sealed record DefectRow(int Index, int X, int Y, int Code, string TypeLabel, double? Deviation)
     {
         /// <summary>元の欠陥画素。</summary>
         public required DefectPixel Source { get; init; }
     }
 
-    /// <summary>検出結果を表示する。</summary>
-    /// <remarks>
-    /// 補正に使えない結果(HDR表示中の検出など)でも、一覧・移動・コピー・CSV保存は使える。
-    /// 「この欠陥を補正」だけは有効にせず(押しても断られるだけになる)、理由を一覧の上に示す。
-    /// </remarks>
-    /// <param name="result">検出結果。</param>
-    /// <param name="maxCode">ビット深度の最大raw code。</param>
-    /// <param name="correctionUnavailableReason">
-    /// この結果で補正できない理由と次にすること。補正できる結果ならnull。
-    /// </param>
-    public void ShowResult(
-        DefectDetectionResult result, int maxCode, string? correctionUnavailableReason = null)
+    internal sealed record ThresholdRow(string Label, double Mean, double Sigma, double Hot, double Dead);
+    internal sealed record ResultRows(DefectRow[] Defects, ThresholdRow[] Thresholds, int HotCount);
+
+    private ResultRows? _rows;
+    private readonly SemaphoreSlim _sortSlot = new(1, 1);
+    private CancellationTokenSource? _sort;
+    private string? _sortField;
+    private bool _descending;
+    private GridViewColumn? _sortColumn;
+    private string? _sortHeader;
+
+    internal static ResultRows PrepareRows(DefectDetectionResult result, CancellationToken token = default)
+    {
+        var rows = new DefectRow[result.Defects.Count];
+        int hotCount = 0;
+        for (int i = 0; i < rows.Length; i++)
+        {
+            token.ThrowIfCancellationRequested();
+            DefectPixel d = result.Defects[i];
+            bool hot = d.Type == DefectType.Hot;
+            if (hot)
+                hotCount++;
+            rows[i] = new(i + 1, d.X, d.Y, d.Code, hot ? "白点" : "黒点", result.Deviation(d)) { Source = d };
+        }
+
+        ThresholdRow[] thresholds = result.ChannelThresholds.Count == 0
+            ? [new("全体", result.Statistics.Mean, result.Statistics.Sigma, result.HotThreshold, result.DeadThreshold)]
+            : result.ChannelThresholds.Select(t => new ThresholdRow(
+                result.SegmentCount == 1 ? t.Channel.ToString()
+                    : t.Channel == BayerChannel.None ? $"段{t.Segment + 1}" : $"段{t.Segment + 1} {t.Channel}",
+                t.Mean, t.Sigma, t.HotThreshold, t.DeadThreshold)).ToArray();
+        return new(rows, thresholds, hotCount);
+    }
+
+    internal void ShowResult(DefectDetectionResult result, int maxCode, string? correctionUnavailableReason = null) =>
+        ShowResult(result, PrepareRows(result), maxCode, correctionUnavailableReason);
+
+    internal void ShowResult(DefectDetectionResult result, ResultRows rows, int maxCode,
+        string? correctionUnavailableReason = null)
     {
         SetResult(result);
         _resultShown = true;
         _correctable = correctionUnavailableReason is null;
-        var sb = new StringBuilder();
-        if (result.ChannelThresholds.Count > 0)
-        {
-            // Bayerはチャネル間の感度差が大きいため、チャネル別の閾値で判定している。
-            // HDR分割ビューは段(露光)ごとにも分けて判定している(左の段から長秒→短秒)
-            bool bySegment = result.SegmentCount > 1;
-            bool byChannel = result.ChannelThresholds.Any(t => t.Channel != BayerChannel.None);
-            sb.Append(bySegment ? (byChannel ? "閾値 (段×チャネル別" : "閾値 (段別") : "閾値 (チャネル別")
-                .Append(bySegment ? "・段は左から長秒→短秒" : "")
-                .Append(", max=").Append(maxCode).AppendLine("):");
-            foreach (DefectChannelThreshold t in result.ChannelThresholds)
-            {
-                sb.Append("  ");
-                if (bySegment)
-                {
-                    sb.Append("段").Append(t.Segment + 1).Append(t.Channel != BayerChannel.None ? " " : "");
-                }
-
-                if (t.Channel != BayerChannel.None)
-                {
-                    sb.Append(t.Channel);
-                }
-
-                sb.Append(": mean=")
-                    .Append(t.Mean.ToString("F1", CultureInfo.InvariantCulture))
-                    .Append(" σ=").Append(t.Sigma.ToString("F2", CultureInfo.InvariantCulture))
-                    .Append("  白点>")
-                    .Append(t.HotThreshold.ToString("F1", CultureInfo.InvariantCulture))
-                    .Append(" / 黒点<")
-                    .Append(t.DeadThreshold.ToString("F1", CultureInfo.InvariantCulture))
-                    .AppendLine();
-            }
-        }
-        else
-        {
-            sb.Append($"mean={result.Statistics.Mean:F1}  σ={result.Statistics.Sigma:F2}  ")
-                .AppendLine(
-                    $"閾値: 白点>{result.HotThreshold:F1} / " +
-                    $"黒点<{result.DeadThreshold:F1} (max={maxCode})");
-        }
-
-        sb.Append($"検出: 白点 {result.HotCount} / 黒点 {result.DeadCount}")
-            .Append(result.Truncated ? "  ⚠ 上限で打ち切り" : "");
-        if (correctionUnavailableReason is not null)
-        {
-            sb.AppendLine().Append(correctionUnavailableReason);
-        }
-
-        SummaryText.Text = sb.ToString();
-
-        var rows = new List<DefectRow>(result.Defects.Count);
-        for (int i = 0; i < result.Defects.Count; i++)
-        {
-            DefectPixel d = result.Defects[i];
-            rows.Add(new DefectRow(
-                i + 1, d.X, d.Y, d.Code,
-                d.Type == DefectType.Hot ? "白点" : "黒点")
-            {
-                Source = d,
-            });
-        }
-
-        DefectList.ItemsSource = rows;
+        _rows = rows;
+        string region = result.SegmentCount > 1 ? " · 段は左から長秒→短秒" : "";
+        string cap = result.Truncated ? "  ⚠ 上限で打ち切り" : "";
+        SummaryText.Text = $"検出: 白点 {rows.HotCount} / 黒点 {rows.Defects.Length - rows.HotCount}{cap}"
+            + $"\n判定統計 · 最大コード {maxCode}{region}"
+            + (correctionUnavailableReason is null ? "" : $"\n{correctionUnavailableReason}");
+        ThresholdList.ItemsSource = rows.Thresholds;
+        ThresholdList.Visibility = Visibility.Visible;
+        EmptyResult.Visibility = rows.Defects.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
+        DefectList.ItemsSource = rows.Defects;
+        DefectList.Visibility = rows.Defects.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
         RunButton.IsEnabled = true;
-        CorrectButton.IsEnabled = _correctable && result.Defects.Count > 0;
+        CorrectButton.IsEnabled = _correctable && rows.Defects.Length > 0;
     }
 
+    private async void OnSortClick(object sender, RoutedEventArgs e)
+    {
+        if (e.OriginalSource is GridViewColumnHeader
+            { Role: GridViewColumnHeaderRole.Normal, Column: { DisplayMemberBinding: Binding binding } column })
+            await SortAsync(binding.Path.Path, column);
+    }
+
+    internal async Task SortAsync(string field, GridViewColumn? column = null)
+    {
+        if (_rows is not { Defects.Length: > 0 } rows)
+            return;
+
+        bool descending = _sortField == field && !_descending;
+        _sortField = field;
+        _descending = descending;
+        if (_sortColumn is not null)
+            _sortColumn.Header = _sortHeader;
+        _sortColumn = column;
+        _sortHeader = column?.Header as string;
+        if (column is not null)
+            column.Header = _sortHeader + (descending ? " ↓" : " ↑");
+
+        _sort?.Cancel();
+        using var cancellation = new CancellationTokenSource();
+        _sort = cancellation;
+        CancellationToken token = cancellation.Token;
+        try
+        {
+            await _sortSlot.WaitAsync(token);
+            DefectRow[] ordered;
+            try
+            {
+                ordered = await Task.Run(() =>
+                {
+                    IEnumerable<DefectRow> Sort<TKey>(Func<DefectRow, TKey> key)
+                    {
+                        TKey ReadKey(DefectRow row)
+                        {
+                            token.ThrowIfCancellationRequested();
+                            return key(row);
+                        }
+
+                        return descending ? rows.Defects.OrderByDescending(ReadKey) : rows.Defects.OrderBy(ReadKey);
+                    }
+
+                    return (field switch
+                    {
+                        nameof(DefectRow.X) => Sort(row => row.X),
+                        nameof(DefectRow.Y) => Sort(row => row.Y),
+                        nameof(DefectRow.Code) => Sort(row => row.Code),
+                        nameof(DefectRow.TypeLabel) => Sort(row => row.TypeLabel),
+                        nameof(DefectRow.Deviation) => Sort(row => row.Deviation),
+                        _ => Sort(row => row.Index),
+                    }).ToArray();
+                }, token);
+            }
+            finally
+            {
+                _sortSlot.Release();
+            }
+            if (!token.IsCancellationRequested)
+            {
+                var selected = DefectList.SelectedItem;
+                DefectList.ItemsSource = ordered;
+                if (selected is not null)
+                    DefectList.SelectedItem = selected;
+            }
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
+        {
+        }
+        finally
+        {
+            if (ReferenceEquals(_sort, cancellation))
+                _sort = null;
+        }
+    }
     private void OnCorrectClick(object sender, RoutedEventArgs e)
     {
         if (_result is null || _result.Defects.Count == 0 || !_correctable)
@@ -206,7 +259,11 @@ public partial class DefectPixelWindow : Window
     private void ClearResult(string notice)
     {
         SetResult(null);
+        _rows = null;
         DefectList.ItemsSource = null;
+        ThresholdList.ItemsSource = null;
+        ThresholdList.Visibility = Visibility.Collapsed;
+        EmptyResult.Visibility = Visibility.Collapsed;
         CorrectButton.IsEnabled = false;
         SummaryText.Text = notice;
     }
@@ -223,6 +280,11 @@ public partial class DefectPixelWindow : Window
     /// <param name="result">表示する検出結果。破棄したときはnull。</param>
     private void SetResult(DefectDetectionResult? result)
     {
+        _sort?.Cancel();
+        _sortField = null;
+        if (_sortColumn is not null)
+            _sortColumn.Header = _sortHeader;
+        _sortColumn = null;
         _result = result;
         CopyButton.IsEnabled = result is not null;
         SaveCsvButton.IsEnabled = result is not null;
@@ -268,8 +330,8 @@ public partial class DefectPixelWindow : Window
 
     private void OnListDoubleClick(object sender, MouseButtonEventArgs e)
     {
-        if (IsRowDoubleClick(e.OriginalSource as DependencyObject, e.ChangedButton)
-            && DefectList.SelectedItem is DefectRow row)
+        if (e.ChangedButton == MouseButton.Left
+            && FindDefectRow(e.OriginalSource as DependencyObject)?.Content is DefectRow row)
         {
             DefectActivated?.Invoke(row.Source);
         }
@@ -286,25 +348,23 @@ public partial class DefectPixelWindow : Window
     /// <param name="changedButton">押したボタン。</param>
     /// <returns>行の上での左ボタンのダブルクリックならtrue。</returns>
     internal static bool IsRowDoubleClick(DependencyObject? originalSource, MouseButton changedButton)
-    {
-        if (changedButton != MouseButton.Left)
-        {
-            return false;
-        }
+        => changedButton == MouseButton.Left && FindDefectRow(originalSource) is not null;
 
+    private static ListViewItem? FindDefectRow(DependencyObject? originalSource)
+    {
         // 行の中の文字(Run)はビジュアルではないので、論理ツリーの親もたどる
         for (DependencyObject? element = originalSource; element is not null and not ListView;)
         {
-            if (element is ListViewItem)
+            if (element is ListViewItem row)
             {
-                return true;
+                return row;
             }
 
             DependencyObject? parent = element is Visual or Visual3D ? VisualTreeHelper.GetParent(element) : null;
             element = parent ?? LogicalTreeHelper.GetParent(element);
         }
 
-        return false;
+        return null;
     }
 
     /// <summary>コピー(Excel用)・CSV保存に使う一覧の表を作る。</summary>
@@ -335,7 +395,7 @@ public partial class DefectPixelWindow : Window
         ClipboardHelper.TrySetText(BuildTable('\t'));
     }
 
-    private void OnSaveCsvClick(object sender, RoutedEventArgs e)
+    private async void OnSaveCsvClick(object sender, RoutedEventArgs e)
     {
         string? table = BuildTable(',');
         if (table is null)
@@ -350,7 +410,11 @@ public partial class DefectPixelWindow : Window
         };
         if (dialog.ShowDialog(this) == true)
         {
-            ClipboardHelper.WriteTextOrWarn(this, dialog.FileName, table, "欠陥画素リスト保存");
+            string path = dialog.FileName;
+            string? error = await Task.Run(() => ClipboardHelper.TryWriteText(path, table, out string? reason) ? null : reason);
+            if (IsVisible && error is not null)
+                AppMessage.Show(this, $"保存に失敗しました: {error}", "欠陥画素リスト保存",
+                    MessageBoxButton.OK, MessageBoxImage.Warning);
         }
     }
 

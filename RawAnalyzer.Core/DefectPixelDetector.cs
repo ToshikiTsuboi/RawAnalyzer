@@ -36,7 +36,8 @@ public sealed class DefectDetectionResult
     internal DefectDetectionResult(
         IReadOnlyList<DefectPixel> defects, RegionStatistics statistics,
         double hotThreshold, double deadThreshold, bool truncated,
-        IReadOnlyList<DefectChannelThreshold> channelThresholds, int segmentCount = 1)
+        IReadOnlyList<DefectChannelThreshold> channelThresholds, int segmentCount,
+        int segmentSize, int phaseSegmentWidth, BayerPattern pattern)
     {
         Defects = defects;
         Statistics = statistics;
@@ -45,6 +46,34 @@ public sealed class DefectDetectionResult
         Truncated = truncated;
         ChannelThresholds = channelThresholds;
         SegmentCount = segmentCount;
+        _segmentSize = segmentSize;
+        _phaseSegmentWidth = phaseSegmentWidth;
+        _pattern = pattern;
+    }
+
+    private readonly int _segmentSize;
+    private readonly int _phaseSegmentWidth;
+    private readonly BayerPattern _pattern;
+
+    /// <summary>指定した検出画素の、判定時の平均からの符号付き偏差を σ 単位で返す。σ が 0 の場合は null。</summary>
+    public double? Deviation(DefectPixel pixel)
+    {
+        if (ChannelThresholds.Count == 0)
+            return Statistics.Sigma > 0 ? (pixel.Code - Statistics.Mean) / Statistics.Sigma : null;
+
+        int segment = pixel.X / _segmentSize;
+        int phaseX = pixel.X - BayerHelper.SegmentStart(pixel.X, _phaseSegmentWidth);
+        BayerChannel channel = BayerHelper.GetChannel(_pattern, phaseX, pixel.Y);
+        int entriesPerSegment = ChannelThresholds.Count / SegmentCount;
+        int first = segment * entriesPerSegment;
+        for (int i = first; i < first + entriesPerSegment; i++)
+        {
+            DefectChannelThreshold threshold = ChannelThresholds[i];
+            if (threshold.Channel == channel)
+                return threshold.Sigma > 0 ? (pixel.Code - threshold.Mean) / threshold.Sigma : null;
+        }
+
+        return null;
     }
 
     /// <summary>
@@ -364,6 +393,7 @@ public static class DefectPixelDetector
 
         progress?.Report(1.0);
         return new DefectDetectionResult(
-            defects, stats, scalarHot, scalarDead, truncated, channelThresholds, segments);
+            defects, stats, scalarHot, scalarDead, truncated, channelThresholds, segments,
+            segmentSize, phaseSegmentWidth, pattern);
     }
 }
