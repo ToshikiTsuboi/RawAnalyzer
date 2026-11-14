@@ -377,6 +377,11 @@ public static unsafe partial class TiffLoader
     }
 
     /// <summary>ヘッダとページ表から全ページの寸法を取得する。画素データは展開しない。</summary>
+    /// <param name="path">調べる TIFF ファイルのパス。</param>
+    /// <param name="cancellationToken">読み取りを取り消すトークン。</param>
+    /// <returns>
+    /// ページ順の幅と高さ(画素単位)。ファイルを開けない、ヘッダが無効、ページがない、または幅・高さが正でない場合は null。
+    /// </returns>
     public static IReadOnlyList<(int Width, int Height)>? ReadPageDimensions(
         string path, CancellationToken cancellationToken = default)
     {

@@ -39,7 +39,7 @@
                                     <DataTemplate>
                                         <Grid Margin="0,3">
                                             <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="144" />
+                                                <ColumnDefinition Width="172" />
                                                 <ColumnDefinition Width="*" />
                                             </Grid.ColumnDefinitions>
                                             <ItemsControl ItemsSource="{Binding Keys}" AutomationProperties.Name="{Binding Gesture}">

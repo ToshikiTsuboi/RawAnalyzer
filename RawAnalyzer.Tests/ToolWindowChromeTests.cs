@@ -44,8 +44,10 @@ public class ToolWindowChromeTests
                     var progress = owner.OwnedWindows.OfType<ProgressWindow>().Single();
                     var bar = (ProgressBar)progress.FindName("Bar");
                     Assert.Equal(42, bar.Value);
+                    var cancel = (Button)progress.FindName("CancelButton");
+                    Assert.Same(progress.FindResource(typeof(Button)), cancel.Style);
                     WpfTestHost.CaptureDialogIfRequested(progress, "d9-progress");
-                    WpfTestHost.Invoke((Button)progress.FindName("CancelButton"));
+                    WpfTestHost.Invoke(cancel);
                 }, DispatcherPriority.Background);
                 await canceled.Task.WaitAsync(TimeSpan.FromSeconds(5));
                 await owner.Dispatcher.InvokeAsync(() =>

@@ -20,6 +20,6 @@
             </DockPanel>
         </Border>
         <Button x:Name="CancelButton" Content="キャンセル" HorizontalAlignment="Right" Margin="0,12,0,0"
-                Style="{StaticResource PrimaryButton}" Click="OnCancelClick" />
+                Click="OnCancelClick" />
     </StackPanel>
 </Window>

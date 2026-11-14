@@ -4,6 +4,8 @@ using System.Windows.Controls.Primitives;
 using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Threading;
+using RawAnalyzer.App;
 using RawAnalyzer.App.Services;
 using RawAnalyzer.App.Views;
 using Xunit;
@@ -19,6 +21,46 @@ namespace RawAnalyzer.Tests;
 [Collection("WPF UI")]
 public class CommandPaletteWindowTests
 {
+    [Fact]
+    public Task ShortcutCommandsDoNotEnterPaletteHistory() => WpfTestHost.Run(async () =>
+    {
+        string settings = Path.Combine(Path.GetTempPath(), "RawAnalyzerTests", Guid.NewGuid().ToString("N"));
+        var main = new MainWindow(settings) { ShowActivated = false, Width = 1280 };
+        try
+        {
+            main.Show();
+            SendKey(main, Key.F11);
+            Assert.Equal(WindowStyle.None, main.WindowStyle);
+            SendKey(main, Key.F11);
+            Assert.Equal(WindowStyle.SingleBorderWindow, main.WindowStyle);
+
+            CommandPaletteWindow palette = await OpenPalette();
+            var list = (ListBox)palette.FindName("CommandList");
+            Assert.NotEqual("fullscreen", ((CommandPaletteWindow.PaletteRow)list.Items[0]).Command.Id);
+            ((TextBox)palette.FindName("FilterBox")).Text = "フルスクリーン切替";
+            PressEnter(palette);
+            Assert.Equal(WindowStyle.None, main.WindowStyle);
+            SendKey(main, Key.F11);
+
+            palette = await OpenPalette();
+            list = (ListBox)palette.FindName("CommandList");
+            Assert.Equal("fullscreen", ((CommandPaletteWindow.PaletteRow)list.Items[0]).Command.Id);
+        }
+        finally
+        {
+            main.Close();
+            if (Directory.Exists(settings))
+                Directory.Delete(settings, recursive: true);
+        }
+
+        async Task<CommandPaletteWindow> OpenPalette()
+        {
+            WpfTestHost.Invoke((Button)main.FindName("CommandSearchToolButton"));
+            await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+            return main.OwnedWindows.OfType<CommandPaletteWindow>().Single();
+        }
+    });
+
     [Fact]
     public Task EmptySearchShowsRecentCommandsAndExcludesThePaletteItself() => WpfTestHost.Run(() =>
     {
@@ -311,9 +353,11 @@ public class CommandPaletteWindowTests
     }
 
     /// <summary>パレットで Enter を押す(パレットはウィンドウの PreviewKeyDown でキーを捌く)。</summary>
-    private static void PressEnter(Window window)
+    private static void PressEnter(Window window) => SendKey(window, Key.Enter);
+
+    private static void SendKey(Window window, Key key)
     {
-        var args = new KeyEventArgs(Keyboard.PrimaryDevice, new TestInputSource(), Environment.TickCount, Key.Enter)
+        var args = new KeyEventArgs(Keyboard.PrimaryDevice, new TestInputSource(), Environment.TickCount, key)
         {
             RoutedEvent = Keyboard.PreviewKeyDownEvent,
         };

@@ -1,6 +1,8 @@
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Media;
 using RawAnalyzer.App.Services;
 using RawAnalyzer.App.Views;
 using Xunit;
@@ -56,7 +58,17 @@ public class ShortcutHelpWindowTests
             }
             Assert.Equal(2, window.ColumnCount);
             Assert.True(Position(1).X > Position(0).X);
-            WpfTestHost.CaptureDialogIfRequested(window, "d8-shortcuts");
+            foreach (string gesture in new[] { "Ctrl+Shift + ↑↓←→", "Ctrl+Alt + ↑↓←→" })
+            {
+                var keys = Descendants(list).OfType<ItemsControl>()
+                    .Single(element => AutomationProperties.GetName(element) == gesture);
+                Assert.Equal(6, keys.Items.Count);
+                double[] positions = Enumerable.Range(0, 6).Select(i =>
+                    ((FrameworkElement)keys.ItemContainerGenerator.ContainerFromIndex(i))
+                        .TranslatePoint(new Point(0, 0), keys).Y).ToArray();
+                Assert.InRange(positions.Max() - positions.Min(), 0, 1);
+            }
+            WpfTestHost.CaptureDialogIfRequested(window, "d8-shortcuts-two-columns");
             window.Width = 500;
             await Layout();
             Assert.Equal(1, window.ColumnCount);
@@ -65,7 +77,6 @@ public class ShortcutHelpWindowTests
             ((TextBox)window.FindName("FilterBox")).Text = "Ctrl Shift P コマンドパレット";
             await Layout();
             Assert.Equal("操作", Assert.Single(list.Items.Cast<ShortcutHelpWindow.ShortcutGroup>()).Category);
-            WpfTestHost.CaptureDialogIfRequested(window, "d8-shortcuts-filtered");
         }
         finally
         {
@@ -79,6 +90,17 @@ public class ShortcutHelpWindowTests
             window.UpdateLayout();
         }
     });
+
+    private static IEnumerable<DependencyObject> Descendants(DependencyObject root)
+    {
+        for (int i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++)
+        {
+            DependencyObject child = VisualTreeHelper.GetChild(root, i);
+            yield return child;
+            foreach (DependencyObject nested in Descendants(child))
+                yield return nested;
+        }
+    }
 
     private static AppCommand Command(string id, string category, string title, Key key,
         ModifierKeys modifiers = ModifierKeys.Control) =>

@@ -67,7 +67,8 @@ public partial class MainWindow
 
     /// <summary>コマンドを実行する(例外はログへ送り、UIは落とさない)。</summary>
     /// <param name="command">実行するコマンド。</param>
-    private void RunCommand(AppCommand command)
+    /// <param name="fromPalette">パレットで選んだ操作を履歴へ記録するか。</param>
+    private void RunCommand(AppCommand command, bool fromPalette = false)
     {
         // ショートカットはフォーカスを動かさないので、数値欄に打ちかけの値があれば先に確定し、
         // 欄に見えている値で処理させる(メニュー・パレットへはフォーカスが移った時点で確定済み)
@@ -75,7 +76,7 @@ public partial class MainWindow
         try
         {
             command.Execute();
-            if (command.Id != PaletteHistory.PaletteId)
+            if (fromPalette)
                 _usedCommands = PaletteHistory.Combine([command.Id], _usedCommands);
         }
         catch (Exception ex)
@@ -107,7 +108,7 @@ public partial class MainWindow
             _paletteWindow = null;
             if (chosen is not null)
             {
-                RunCommand(chosen);
+                RunCommand(chosen, fromPalette: true);
             }
         };
         _paletteWindow.Show();

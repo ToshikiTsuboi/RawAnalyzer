@@ -5,6 +5,44 @@ namespace RawAnalyzer.Tests;
 
 public class DefectPixelDetectorTests
 {
+    [Fact]
+    public void Deviation_MonochromeUsesWholeImageMoments()
+    {
+        using RawImage image = TestImages.FromCodes([10, 14, 10, 14], 2, 2, 12);
+        DefectDetectionResult result = DefectPixelDetector.Detect(image, sigmaFactor: 0.5);
+        // mean = 12, population σ = 2.
+        Assert.Equal(1, result.Deviation(new(1, 0, 14, DefectType.Hot)));
+        Assert.Equal(-1, result.Deviation(new(0, 0, 10, DefectType.Dead)));
+    }
+
+    [Fact]
+    public void Deviation_BayerUsesTheMatchingChannel()
+    {
+        using RawImage image = TestImages.FromCodes(
+            [10, 70, 10, 70, 20, 90, 20, 90, 10, 70, 18, 70, 20, 90, 20, 90], 4, 4, 12);
+        DefectDetectionResult result = DefectPixelDetector.Detect(image, pattern: BayerPattern.Rggb);
+        // R = [10, 10, 10, 18]. mean = 12, population σ = sqrt(12).
+        Assert.Equal(Math.Sqrt(3), result.Deviation(new(2, 2, 18, DefectType.Hot))!.Value, 12);
+    }
+
+    [Fact]
+    public void Deviation_SegmentsUseTheirOwnMoments()
+    {
+        using RawImage image = TestImages.FromCodes([10, 14, 100, 120, 10, 14, 100, 120], 4, 2, 12);
+        DefectDetectionResult result = DefectPixelDetector.Detect(image, segmentWidth: 2);
+        // The second segment has mean = 110 and population σ = 10.
+        Assert.Equal(-1, result.Deviation(new(2, 0, 100, DefectType.Dead)));
+        Assert.Equal(1, result.Deviation(new(3, 0, 120, DefectType.Hot)));
+    }
+
+    [Fact]
+    public void Deviation_ZeroSigmaReturnsNull()
+    {
+        using RawImage image = TestImages.FromCodes([10, 10, 10, 10], 2, 2, 12);
+        DefectDetectionResult result = DefectPixelDetector.Detect(image);
+        Assert.Null(result.Deviation(new(0, 0, 10, DefectType.Hot)));
+    }
+
     /// <summary>ほぼフラット(±1のディザ)な画面に欠陥を埋め込む。</summary>
     private static ushort[] MakeFlatWithDefects(
         int width, int height, ushort baseCode, params (int X, int Y, ushort Code)[] defects)
