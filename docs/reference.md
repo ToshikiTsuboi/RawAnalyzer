@@ -85,7 +85,7 @@ README から外した細かな挙動のまとめ。操作できない場面で�
 
 ## HDR
 
-<img src="images/import-hdr.png" width="360" alt="HDRの設定">
+<img src="images/import-hdr.png" width="560" alt="HDRの設定">
 
 - 格納レイアウトは「行交互」「フレーム連結」で持つ(DOL / Staggered は露光の時間関係の名前で、画素の並びからは判別できない)
 - **ライン単位**(1 露光あたりの連続行数)か**行オフセット**が奇数だと、ファイル上の行の偶奇が Bayer の並びと合わない。
