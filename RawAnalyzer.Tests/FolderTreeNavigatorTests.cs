@@ -93,11 +93,13 @@ public class FolderTreeNavigatorTests(ITestOutputHelper output)
     {
         // 列挙中に右クリックの「再読込」で作り直したら、前の列挙の結果は後から終わっても足さない
         using var firstGate = new ManualResetEventSlim();
+        using var firstStarted = new ManualResetEventSlim();
         int calls = 0;
         var navigator = new FolderTreeNavigator(path =>
         {
             if (Interlocked.Increment(ref calls) == 1)
             {
+                firstStarted.Set();
                 firstGate.Wait(TimeSpan.FromSeconds(10));
                 return [Entry(@"Z:\proj\old")];
             }
@@ -108,6 +110,10 @@ public class FolderTreeNavigatorTests(ITestOutputHelper output)
         item.IsExpanded = true;
 
         Task first = navigator.PopulateAsync(item);
+
+        // 1回目の列挙が走り始めてから再読込する。スレッドプールの開始順は保証されないので、待たないと再読込の
+        // 列挙が先に走って「1回目」として止まり、古い結果と新しい結果の役が入れ替わる(遅い環境でまれに起きた)
+        Assert.True(await Task.Run(() => firstStarted.Wait(TimeSpan.FromSeconds(10))));
         await navigator.RefreshAsync(item);
         firstGate.Set();
         await first;
